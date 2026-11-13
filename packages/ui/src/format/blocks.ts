@@ -4,6 +4,8 @@ import type { Header } from "@cc-dump/proxy/format";
 
 export type Category = "user" | "assistant" | "tools" | "system" | "metadata" | "thinking";
 
+// What a media source is the source of: an image the view shows as one, or a document it names.
+export type Medium = "image" | "document";
 export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
 
 // [LAW:locality-or-seam] What a block shows, in kinds the view renders without knowing the API: a new block type, or a
@@ -12,7 +14,7 @@ export type Part =
   | { kind: "text"; label?: string; text: string }
   | { kind: "json"; label?: string; value: unknown }
   | { kind: "fields"; label?: string; fields: Header[] }
-  | { kind: "media"; label?: string; source: Source };
+  | { kind: "media"; label?: string; of: Medium; source: Source };
 
 export type Block = { category: Category; name: string; parts: Part[] };
 
@@ -103,11 +105,13 @@ const thinking = () => "thinking" as const;
 const toolUse: Entry = {
   category: tools,
   name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
-  parts: (fields) => [
-    { kind: "fields", fields: [["id", fields.string("id")]] },
-    { kind: "json", label: "input", value: fields.value("input") },
-  ],
+  parts: (fields) => [{ kind: "fields", fields: [["id", fields.string("id")]] }, inputPart(fields.value("input"))],
 };
+// A tool's input: the API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as
+// the text it is.
+function inputPart(input: unknown): Part {
+  return typeof input === "string" ? { kind: "text", label: "input so far", text: input } : { kind: "json", label: "input", value: input };
+}
 // A tool result's content is optional: a result may say only that its tool failed.
 const toolResult: Entry = {
   category: tools,
@@ -123,7 +127,7 @@ const serverToolResult: Entry = {
     { kind: "json", label: "content", value: fields.value("content") },
   ],
 };
-const ofSource: Entry = { category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), role) };
+const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), of, role) });
 
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
@@ -158,8 +162,8 @@ const entries = new Map<string, Entry>([
   ["text_editor_code_execution_tool_result", serverToolResult],
   ["tool_search_tool_result", serverToolResult],
   ["container_upload", { category: tools, parts: () => [] }],
-  ["image", ofSource],
-  ["document", ofSource],
+  ["image", ofSource("image")],
+  ["document", ofSource("document")],
   [
     "search_result",
     {
@@ -198,17 +202,17 @@ function contentParts(content: unknown, role: Role): Part[] {
 
 // An image's or a document's source: media the view shows, the text a text document holds, or the blocks of a
 // content document. A source of another type is shown as its JSON.
-function sourceParts(source: unknown, role: Role): Part[] {
+function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
   const fields = readObject(source, "source");
   const type = fields.string("type");
   const parts = ((): Part[] => {
     switch (type) {
       case "base64":
-        return [{ kind: "media", source: { type, media_type: fields.string("media_type"), data: fields.string("data") } }];
+        return [{ kind: "media", of, source: { type, media_type: fields.string("media_type"), data: fields.string("data") } }];
       case "url":
-        return [{ kind: "media", source: { type, url: fields.string("url") } }];
+        return [{ kind: "media", of, source: { type, url: fields.string("url") } }];
       case "file":
-        return [{ kind: "media", source: { type, file_id: fields.string("file_id") } }];
+        return [{ kind: "media", of, source: { type, file_id: fields.string("file_id") } }];
       case "text":
         return [{ kind: "text", text: fields.string("data") }];
       case "content":

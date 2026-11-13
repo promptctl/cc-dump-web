@@ -66,6 +66,16 @@ describe("segments", () => {
     expect(joined(segments(text))).toBe(text);
   });
 
+  it("opens and closes sections only at tags starting a line, not at tags mentioned within one", () => {
+    const text = `<system-reminder>\nMention: the <system-reminder> tag, closed by </system-reminder>.\n${lines(LONG)}</system-reminder>\n`;
+    expect(segments(text)).toMatchObject([{ kind: "region", line: 0, lines: LONG + 3 }]);
+  });
+
+  it("takes a backtick line with a backtick in its info string as code inline, not a fence", () => {
+    const text = "```js```\n" + lines(LONG + 1);
+    expect(segments(text)).toEqual([{ kind: "text", text }]);
+  });
+
   it("names a region by its opening line, which stays its line when a section around it closes", () => {
     const open = "<analysis>\n```py\n" + lines(LONG) + "```\n";
     expect(segments(open)).toMatchObject([{ kind: "text", text: "<analysis>\n" }, { kind: "region", line: 1 }]);

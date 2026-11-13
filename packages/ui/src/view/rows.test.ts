@@ -39,6 +39,14 @@ describe("layout", () => {
     first.rows.forEach((row, index) => expect(later.rows[index]).toBe(row));
   });
 
+  it("is the layout before when no exchange's rows changed, as when only traffic the view does not show arrived", () => {
+    const format = createFormatter();
+    const layOut = createLayout();
+    const a = request("a", body);
+    const first = layOut(format(exchanges(a)));
+    expect(layOut(format(exchanges([...a, ...request("b", body).map((event) => ({ ...event, ...(event.type === "request" ? { url: "/v1/messages/count_tokens" } : {}) }))])))).toBe(first);
+  });
+
   it("lays a changed exchange's unchanged groups out as the same rows, as a request's while its response arrives", () => {
     const format = createFormatter();
     const layOut = createLayout();

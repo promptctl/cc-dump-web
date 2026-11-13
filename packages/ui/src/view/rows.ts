@@ -33,7 +33,9 @@ export function createLayout(): (formatted: FormattedExchange[]) => Layout {
     groups.set(group, rows);
     return rows;
   };
-  let last: { exchanges: ExchangeRows[]; keys: Keys } = { exchanges: [], keys: keysOf([]) };
+  // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
+  // ones before is the layout before, as when only traffic the view does not show arrived.
+  let last: { exchanges: ExchangeRows[]; layout: Layout } = { exchanges: [], layout: { rows: [], keys: keysOf([]) } };
   return (formatted) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
@@ -41,11 +43,13 @@ export function createLayout(): (formatted: FormattedExchange[]) => Layout {
       laidOut.set(exchange, own);
       return own;
     });
-    const same = exchanges.length === last.exchanges.length && exchanges.every((own, index) => own.keys === last.exchanges[index]!.keys);
-    last = { exchanges, keys: same ? last.keys : keysOf(exchanges) };
+    const sameAs = (pick: (own: ExchangeRows) => unknown) =>
+      exchanges.length === last.exchanges.length && exchanges.every((own, index) => pick(own) === pick(last.exchanges[index]!));
+    if (sameAs((own) => own.rows)) return last.layout;
     const rows: Row[] = [];
     for (const own of exchanges) for (const row of own.rows) rows.push(row);
-    return { rows, keys: last.keys };
+    last = { exchanges, layout: { rows, keys: sameAs((own) => own.keys) ? last.layout.keys : keysOf(exchanges) } };
+    return last.layout;
   };
 }
 
@@ -106,10 +110,10 @@ export function describeSize(size: number): string {
   return Number(thousands) < 1000 ? `${thousands}k chars` : `${(size / 1_000_000).toFixed(1)}M chars`;
 }
 
-// Whether a row shows expanded: a block the reader toggled as they left it, and otherwise as its category starts, the
-// user's and the assistant's expanded, the rest collapsed (docs/design/01-mvp.md, F4). Rows of other kinds are a line.
-export function isExpanded(toggled: Record<string, boolean>, row: Row): boolean {
-  return row.kind === "block" && (toggled[row.key] ?? (row.block.category === "user" || row.block.category === "assistant"));
+// Whether a row shows expanded: a block as its category starts, the user's and the assistant's expanded and the rest
+// collapsed (docs/design/01-mvp.md, F4), unless the reader flipped it. Rows of other kinds are a line.
+export function isExpanded(flipped: Record<string, true>, row: Row): boolean {
+  return row.kind === "block" && (flipped[row.key] === true) !== (row.block.category === "user" || row.block.category === "assistant");
 }
 
 // A row's height before it is measured, in pixels: one line, or a block's content at about 100 characters a line.

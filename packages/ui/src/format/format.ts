@@ -169,7 +169,10 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
   const { text } = body;
   if (headerValues(side.head?.headers ?? [], "content-type")[0]?.toLowerCase().startsWith("text/event-stream")) {
     const stream = sides.reassemble(side, body);
-    return [...(stream.message === undefined ? [] : messageBlocks(stream.message)), ...each("event", stream.blocks), ...one("tail", leftover("stream tail", stream.tail))];
+    // The text after the last complete event is the event still arriving until the side is complete, and only then
+    // left over, as a stream cut short leaves it: shown earlier, it would come and go as each frame's bytes end.
+    const tail = side.completedBy === undefined ? "" : stream.tail;
+    return [...(stream.message === undefined ? [] : messageBlocks(stream.message)), ...each("event", stream.blocks), ...one("tail", leftover("stream tail", tail))];
   }
   if (!whole) return one("body", leftover("response body so far", text));
   return fitting(

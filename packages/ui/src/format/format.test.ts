@@ -123,7 +123,7 @@ describe("format", () => {
     ]);
 
     // The content each shows: the image, the text document, the tool result's text and image, the streamed message.
-    expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "media", source: png }]);
+    expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "media", of: "image", source: png }]);
     expect(group(formatted, "user")[2]!.parts).toEqual([
       { kind: "text", text: "Quarterly notes" },
       { kind: "json", label: "source fields", value: { media_type: "text/plain" } },
@@ -132,7 +132,7 @@ describe("format", () => {
     expect(group(formatted, "user", 1)[0]!.parts).toEqual([
       { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
       { kind: "text", text: "Read 1 image" },
-      { kind: "media", source: png },
+      { kind: "media", of: "image", source: png },
     ]);
     const [, thinking, text, toolUse, , usage, message] = group(formatted, "response");
     // A field of an event that nothing reads lands on the block the event builds: the thinking delta's estimate.
@@ -211,7 +211,7 @@ describe("format", () => {
     expect(responses[2]).toEqual([{ key: "end", category: "assistant", name: "error", parts: [{ kind: "text", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
   });
 
-  it("shows a stream as far as it has arrived, and the part not yet whole", () => {
+  it("shows a stream as far as it has arrived, its tool's input so far as text, and once it is cut short what was not yet whole", () => {
     const sofar = sse([
       messageStart,
       { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } },
@@ -219,9 +219,12 @@ describe("format", () => {
     ]);
     const cut = `${sofar}event: content_block_delta\ndata: {"type":"content_bl`;
     const headers: Header[] = [["Content-Type", "text/event-stream"]];
-    const blocks = group(one([...request("a", { model: "m", messages: [] }), ...response("a", 200, headers, Buffer.from(cut), false)]), "response");
-    expect(blocks.find(({ name }) => name === "tool_use: Bash")!.parts).toContainEqual({ kind: "json", label: "input", value: '{"command": "l' });
-    expect(blocks.at(-1)).toEqual({ key: "tail", category: "metadata", name: "stream tail", parts: [{ kind: "text", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
+    const arriving = [...request("a", { model: "m", messages: [] }), ...response("a", 200, headers, Buffer.from(cut), false)];
+    const blocks = group(one(arriving), "response");
+    expect(blocks.find(({ name }) => name === "tool_use: Bash")!.parts).toContainEqual({ kind: "text", label: "input so far", text: '{"command": "l' });
+    expect(blocks.map(({ key }) => key)).not.toContain("tail");
+    const cutShort = group(one([...arriving, end("a")]), "response");
+    expect(cutShort.find(({ key }) => key === "tail")).toEqual({ key: "tail", category: "metadata", name: "stream tail", parts: [{ kind: "text", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
   });
 
   it("shows why a body is not decoded yet, and what is left of a request body not complete", () => {

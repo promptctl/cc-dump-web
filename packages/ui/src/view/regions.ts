@@ -11,10 +11,11 @@ export type Segment = { kind: "text"; text: string } | { kind: "region"; line: n
 // A region longer than this many lines collapses; a shorter one stays in its text.
 export const LONG = 12;
 
-// A line opening a fenced code block (CommonMark: three or more backticks or tildes, indented at most three spaces).
-const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-// A tag, opening or closing (`/`); one closing itself (`/>`) opens nothing.
-const anyTag = /<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>/g;
+// A line opening a fenced code block (CommonMark: three or more backticks or tildes, indented at most three spaces; a
+// backtick fence's info string holds no backtick, so a line like ```js``` is code inline, not a fence).
+const fence = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
+// A line that starts with a tag, opening or closing (`/`). An opening tag closed on the same line opens no section.
+const lineTag = /^\s*<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>/;
 
 export function segments(text: string): Segment[] {
   // Each line keeps its line end, so the segments join back into the text.
@@ -23,8 +24,9 @@ export function segments(text: string): Segment[] {
 }
 
 // A text's lines, read once in order: each fenced code block and each XML-tagged section, by its opening line. A
-// section is a tag opening its line and closed on a later one; a closing tag closes the last tag of its name still
-// open, so a section quoting another of its name closes at its own closing tag, and a tag inside a code block is code.
+// section is a line starting with an opening tag and a later line starting with its closing tag, as Claude Code writes
+// a system reminder; a closing line closes the last section of its name still open, so a section quoting another of
+// its name closes at its own. A tag mentioned within a line, or inside a code block, opens and closes nothing.
 type Scanned = { lines: string[]; fences: Map<number, Fence>; sections: Map<number, Section> };
 // A fenced code block: its label, and its closing line, undefined when the text ends before one.
 type Fence = { label: string; close: number | undefined };
@@ -34,8 +36,8 @@ type Section = { name: string; close: number };
 function scan(lines: string[]): Scanned {
   const fences = new Map<number, Fence>();
   const sections = new Map<number, Section>();
-  // The tags still open, by name, the innermost last: the line each is on, and whether it opens that line.
-  const open = new Map<string, { line: number; opensLine: boolean }[]>();
+  // The lines of the sections still open, by their tag's name, the innermost last.
+  const open = new Map<string, number[]>();
   for (let at = 0; at < lines.length; ) {
     const line = lines[at]!;
     const code = fence.exec(line.trimEnd());
@@ -47,17 +49,13 @@ function scan(lines: string[]): Scanned {
       at = close === undefined ? lines.length : close + 1;
       continue;
     }
-    const indent = line.length - line.trimStart().length;
-    for (const { 0: whole, 1: closing, 2: name, index } of line.matchAll(anyTag)) {
-      if (whole.endsWith("/>")) continue;
-      const stack = open.get(name!) ?? [];
-      open.set(name!, stack);
-      if (closing === undefined) {
-        stack.push({ line: at, opensLine: index === indent });
-        continue;
-      }
-      const opened = stack.pop();
-      if (opened?.opensLine && opened.line < at) sections.set(opened.line, { name: name!, close: at });
+    const [, closing, name] = lineTag.exec(line) ?? [];
+    if (name !== undefined) {
+      const stack = open.get(name) ?? [];
+      open.set(name, stack);
+      if (closing === undefined && !line.includes(`</${name}>`)) stack.push(at);
+      const opened = closing === undefined ? undefined : stack.pop();
+      if (opened !== undefined) sections.set(opened, { name, close: at });
     }
     at++;
   }

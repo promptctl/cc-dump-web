@@ -14,7 +14,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   // Fast Refresh keeps state but re-runs memos, so an edited module's layout is the one used.
   const layOut = useMemo(() => createLayout(), []);
   const { rows, keys } = useMemo(() => layOut(formatted), [layOut, formatted]);
-  const toggled = useView((state) => state.toggled);
+  const flipped = useView((state) => state.flipped);
   const scroller = useRef<HTMLElement>(null);
   // The UI is not built with React Compiler, so nothing memoizes the virtualizer's functions.
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -22,7 +22,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     count: rows.length,
     getScrollElement: () => scroller.current,
     getItemKey: keys.at,
-    estimateSize: (index) => estimateHeight(rows[index]!, isExpanded(toggled, rows[index]!)),
+    estimateSize: (index) => estimateHeight(rows[index]!, isExpanded(flipped, rows[index]!)),
     overscan: 10,
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
@@ -133,10 +133,10 @@ function ExchangeLine({ exchange: { request, response, end }, reading }: { excha
 // switches between them.
 function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
   const { key, block, size } = row;
-  const open = useView((state) => isExpanded(state.toggled, row));
+  const open = useView((state) => isExpanded(state.flipped, row));
   return (
     <div className="pl-12 pr-4">
-      <button type="button" className="flex w-full gap-3 text-left hover:bg-muted" onClick={() => view.toggle(key, open)}>
+      <button type="button" className="flex w-full gap-3 text-left hover:bg-muted" onClick={() => view.toggle(key)}>
         <span className="w-3 text-muted-foreground">{open ? "▾" : "▸"}</span>
         <span className="w-20 text-muted-foreground">{block.category}</span>
         <span className="flex-1 truncate">{block.name}</span>
@@ -180,10 +180,10 @@ function PartContent({ part, partKey }: { part: Part; partKey: string }) {
         </dl>
       );
     case "media": {
-      const { source } = part;
+      const { of, source } = part;
       switch (source.type) {
         case "base64":
-          return source.media_type.startsWith("image/") ? (
+          return of === "image" ? (
             <img className="max-h-96" src={`data:${source.media_type};base64,${source.data}`} alt={source.media_type} />
           ) : (
             <p>
@@ -191,7 +191,7 @@ function PartContent({ part, partKey }: { part: Part; partKey: string }) {
             </p>
           );
         case "url":
-          return <p className="break-all">{source.url}</p>;
+          return of === "image" ? <img className="max-h-96" src={source.url} alt={source.url} /> : <p className="break-all">{source.url}</p>;
         case "file":
           return <p>file {source.file_id}</p>;
       }
@@ -221,9 +221,9 @@ function segmentViews(list: Segment[], partKey: string): ReactNode[] {
 // line it opens on.
 function RegionView({ region, partKey }: { region: Extract<Segment, { kind: "region" }>; partKey: string }) {
   const regionKey = `${partKey}/${region.line}`;
-  const open = useView((state) => state.toggled[regionKey] ?? false);
+  const open = useView((state) => state.flipped[regionKey] === true);
   const line = (
-    <button type="button" className="text-muted-foreground hover:bg-muted" onClick={() => view.toggle(regionKey, open)}>
+    <button type="button" className="text-muted-foreground hover:bg-muted" onClick={() => view.toggle(regionKey)}>
       {open ? "▾" : "▸"} {region.label} · {region.lines} lines
     </button>
   );
