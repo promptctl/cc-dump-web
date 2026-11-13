@@ -89,13 +89,14 @@ async function atLineStart(reading: Reading, position: number) {
   return position === 0 || (await bytesAt(reading, position - 1, 1))[0] === 0x0a;
 }
 
-// Up to `length` bytes of the recording from `position`. The writer's word: the live recording has no file
-// until its first append, so it has no bytes. Each read opens the file and closes it before it returns,
-// so a reader that leaves mid-read holds nothing open.
+// Up to `length` bytes of the recording from `position`. The writer's word: the live recording's bytes are
+// the ones below `written`, and with none there may be no file. Each read opens the file and closes it
+// before it returns, so a reader that leaves mid-read holds nothing open.
 async function bytesAt({ path, live }: Reading, position: number, length: number) {
-  if (live?.appended() === 0) return Buffer.alloc(0);
+  const readable = Math.max(0, Math.min(length, (live?.written() ?? Infinity) - position));
+  if (readable === 0) return Buffer.alloc(0);
   await using file = await open(path);
-  const { bytesRead, buffer } = await file.read(Buffer.alloc(length), 0, length, position);
+  const { bytesRead, buffer } = await file.read(Buffer.alloc(readable), 0, readable, position);
   return buffer.subarray(0, bytesRead);
 }
 
@@ -147,13 +148,13 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
 
   async function fill(): Promise<void> {
     try {
-      const appended = live?.appended();
+      const written = live?.written();
       const bytes = await bytesAt(reading, offset + pending.length, 64 * 1024);
       if (stream.destroyed) return;
       if (bytes.length > 0) return pushLines(bytes);
       // An append during the read: what it appended is still catching up. Appends are synchronous on this
       // thread, so none can fall between this check and the subscription below.
-      if (live?.appended() !== appended) return fill();
+      if (live?.written() !== written) return fill();
       catchUp({ outcome: "ok" });
       if (!live) {
         stream.push(`event: end\ndata: ${JSON.stringify({ unterminated_bytes: pending.length })}\n\n`);

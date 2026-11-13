@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
 
@@ -29,25 +29,30 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & (
 export type Recorder = (trace_id: string) => (seen: Seen) => void;
 
 // The run's recording: where it is, how to record an exchange into it, and the writer's word on its growth,
-// which only the writer knows. `appended` counts the events appended so far (zero: no file yet), and each
-// `onAppend` listener is called after every append until the function it returned is called.
+// which only the writer knows. `written` is the length in bytes of the whole events written so far, all a
+// reader may read: past it the file may hold part of a line a failed write left, and before the first event
+// there may be no file. Each `onAppend` listener is called after every append until the function it
+// returned is called.
 export type Recording = {
   name: string;
   path: string;
   record: Recorder;
-  appended: () => number;
+  written: () => number;
   onAppend: (listener: () => void) => () => void;
 };
 
 // Each event is appended before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
+// [LAW:one-source-of-truth] An event is written at `written`, not at the file's end, so a write that fails
+// part-way leaves its fragment only past `written`, where the next event overwrites it: every line in the
+// file is a whole event. A fragment holds no newline, since a line's only newline is its last byte.
 // [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
 // event, written with `end`, counts what was written and what failed, and names the first failure. A
 // write that fails is counted and never stops or alters the agent's traffic. Writes are synchronous,
 // so a disk that stalls stalls forwarding with it: that is the price of the kill guarantee above.
 export function createRecording(log: Log, path: string): Recording {
   mkdirSync(dirname(path), { recursive: true });
-  let appended = 0;
+  let written = 0;
   const listeners = new Set<() => void>();
   const record: Recorder = (trace_id) => {
     const span = startSpan(trace_id);
@@ -55,12 +60,12 @@ export function createRecording(log: Log, path: string): Recording {
     let failure: string | undefined;
     return (seen) => {
       const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
-      const line = `${JSON.stringify(event)}\n`;
+      const line = Buffer.from(`${JSON.stringify(event)}\n`);
       try {
-        appendFileSync(path, line);
+        writeAt(path, written, line);
         counts.events_written++;
-        counts.bytes_written += Buffer.byteLength(line);
-        appended++;
+        counts.bytes_written += line.length;
+        written += line.length;
         for (const listener of listeners) listener();
       } catch (error) {
         counts.events_failed++;
@@ -75,12 +80,23 @@ export function createRecording(log: Log, path: string): Recording {
     name: basename(path),
     path,
     record,
-    appended: () => appended,
+    written: () => written,
     onAppend: (listener) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
   };
+}
+
+// Writes all of `bytes` at `position`, creating the file, or throws: a write that comes back short is
+// carried on from where it stopped, as appendFileSync does.
+function writeAt(path: string, position: number, bytes: Buffer) {
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT);
+  try {
+    for (let done = 0; done < bytes.length; ) done += writeSync(fd, bytes, done, bytes.length - done, position + done);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function recorded(seen: Seen) {
