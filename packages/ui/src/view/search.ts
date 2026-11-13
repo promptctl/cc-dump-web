@@ -1,16 +1,17 @@
 import type { Block, Part } from "../format/blocks.ts";
 import type { KeyedBlock } from "../format/format.ts";
-import { rowIndex } from "./position.ts";
-import { lengthOf, regionKey, segments, type Segment } from "./regions.ts";
-import { startsExpanded, type Keys, type Row } from "./rows.ts";
+import { rowIndex, type Position } from "./position.ts";
+import { regionKey, segments, type Segment } from "./regions.ts";
+import type { Keys, Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts the shown categories' blocks show, counted,
 // stepped through in order, and cut out of each text for highlighting.
 
-type BlockRow = Extract<Row, { kind: "block" }>;
+export type BlockRow = Extract<Row, { kind: "block" }>;
 
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text.
-// [LAW:types-are-the-program] A text only grows at its end, so a match keeps its place as the text streams in.
+// A text part only grows at its end as it streams, so a match in it keeps its place. A text replaced at its address, as
+// a tool's input so far is by its JSON once whole, names by that offset whichever match starts there now, or none.
 export type Match = { key: string; at: string; start: number };
 
 // A match's characters in its text, from `start` up to `end`.
@@ -80,8 +81,8 @@ export type FoundBlock = { row: BlockRow; index: number; count: number; before: 
 export type Found = { count: number; blocks: FoundBlock[]; byKey: Map<string, FoundBlock> };
 
 // A search of rows for a pattern. [LAW:no-shared-mutable-globals] Its cache is its own: each block's count for each
-// pattern, kept under the block, which the formatter returns as the same object while it is unchanged, so a frame of a
-// streaming response counts only the blocks that changed.
+// pattern, kept under the block, which the formatter returns as the same object while its side of the exchange is
+// unchanged, so a frame counts only the blocks of the side it changed.
 export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
   const counted = new WeakMap<RegExp, WeakMap<KeyedBlock, number>>();
   return (rows, pattern) => {
@@ -120,18 +121,19 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
   return index === -1 ? undefined : block.before + index + 1;
 }
 
-// A step to a match, and what must show expanded for it to be on screen: its block, unless the match is on the block's
-// line, and the regions holding it, by key, which all start collapsed.
-export type Step = { match: Match; block: { key: string; startsExpanded: boolean } | undefined; regions: string[] };
+// A step to a match, and what must show expanded for it to be on screen: its block's row, unless the match is on the
+// block's line, and the regions holding it, by key, which all start collapsed.
+export type Step = { match: Match; block: BlockRow | undefined; regions: string[] };
 
 export type Direction = "next" | "previous";
 
 // The match after or before `current`, in the order the conversation shows them, wrapping at either end; undefined
 // when there is no match. A current whose row is not listed stands just after the row `rowIndex` gives for it, as the
 // view does: the row listed before it when its category is hidden, or the row it was inside when the formatter replaced
-// it. So the steps go on from where it was. With no current, or one whose exchange is not among the rows, the first
-// step goes to the first match, or back to the last.
-export function adjacent(found: Found, current: Match | undefined, direction: Direction, pattern: RegExp, keys: Keys): Step | undefined {
+// it. So the steps go on from where it was. With no current, the steps start from the view's `position`: its top row's
+// matches first going on, and the matches above it going back. One whose exchange is not among the rows goes to the
+// first match, or back to the last.
+export function adjacent(found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
@@ -143,8 +145,13 @@ export function adjacent(found: Found, current: Match | undefined, direction: Di
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(own.row, past);
   }
-  const index = current === undefined ? undefined : rowIndex(current.key, keys.indexOf);
-  const place = index === undefined ? (forward ? -Infinity : Infinity) : keys.at(index) === current!.key ? index : index + 0.5;
+  // Where the step starts among the rows; `own`: where it stands against its row when the row is listed.
+  const placeOf = (key: string, own: number) => {
+    const index = rowIndex(key, keys.indexOf);
+    return index === undefined ? (forward ? -Infinity : Infinity) : keys.at(index) === key ? index + own : index + 0.5;
+  };
+  const place =
+    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
@@ -152,30 +159,22 @@ export function adjacent(found: Found, current: Match | undefined, direction: Di
 }
 
 function stepTo(row: BlockRow, { match, shown }: { match: Match; shown: Shown }): Step {
-  const block = { key: row.key, startsExpanded: startsExpanded(row.block) };
   switch (shown.in) {
     case "line":
       return { match, block: undefined, regions: [] };
     case "content":
-      return { match, block, regions: [] };
+      return { match, block: row, regions: [] };
     case "regions":
-      return { match, block, regions: regionsAround(segments(shown.text), match.start, 0).map((line) => regionKey(partKey(row.key, shown.at), line)) };
+      return { match, block: row, regions: regionsAround(segments(shown.text), match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
   }
 }
 
-// The opening lines of the regions holding offset `start`, outermost first; `from`: where the segments start in the text.
-function regionsAround(list: Segment[], start: number, from: number): number[] {
-  let at = from;
-  for (const segment of list) {
-    const end = at + lengthOf(segment);
-    if (start < end) {
-      if (segment.kind === "text") return [];
-      const body = at + segment.open.length;
-      return [segment.line, ...(start >= body ? regionsAround(segment.body, start, body) : [])];
-    }
-    at = end;
-  }
-  return [];
+// The opening lines of the regions holding offset `start`, outermost first. One on a region's closing line is in no
+// segment of its body.
+function regionsAround(list: Segment[], start: number): number[] {
+  const segment = list.find(({ end }) => start < end);
+  if (segment?.kind !== "region") return [];
+  return [segment.line, ...(start >= segment.start + segment.open.length ? regionsAround(segment.body, start) : [])];
 }
 
 // A piece of a text: plain, or part of the match starting at `match`.
@@ -186,7 +185,8 @@ export function pieces(slice: string, from: number, ranges: Range[]): Piece[] {
   const to = from + slice.length;
   const out: Piece[] = [];
   let at = from;
-  for (const { start, end } of ranges.filter((range) => range.end > from && range.start < to)) {
+  for (let index = firstEndingAfter(ranges, from); index < ranges.length && ranges[index]!.start < to; index++) {
+    const { start, end } = ranges[index]!;
     const begin = Math.max(start, at);
     if (begin > at) out.push({ text: slice.slice(at - from, begin - from), match: undefined });
     const stop = Math.min(end, to);
@@ -195,6 +195,19 @@ export function pieces(slice: string, from: number, ranges: Range[]): Piece[] {
   }
   if (at < to) out.push({ text: slice.slice(at - from), match: undefined });
   return out;
+}
+
+// The index of the first of `ranges` ending after `offset`. A text's matches are in order and apart, so a binary search
+// finds it, and a text cut into many slices is not scanned whole for each.
+function firstEndingAfter(ranges: Range[], offset: number): number {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (ranges[middle]!.end <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
 // [LAW:one-source-of-truth] The id a match's mark carries in the page, by which the view finds it.

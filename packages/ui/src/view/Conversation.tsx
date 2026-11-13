@@ -6,11 +6,11 @@ import type { Exchange } from "../exchanges.ts";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { positionAt, rowIndex } from "./position.ts";
-import { lengthOf, regionKey, segments, type Segment } from "./regions.ts";
+import { regionKey, segments, type Segment } from "./regions.ts";
 import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { SearchBar } from "./SearchBar.tsx";
-import { address, adjacent, createSearch, find, jsonText, matchId, ordinal, partKey, patternOf, pieces, type Direction, type Match, type Range } from "./search.ts";
+import { address, adjacent, createSearch, find, jsonText, matchId, ordinal, partKey, patternOf, pieces, type Direction, type Range } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -107,18 +107,23 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const pattern = useMemo(() => patternOf(query), [query]);
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(rows, pattern), [search, rows, pattern]);
-  const marks = useMemo(() => ({ pattern, current }), [pattern, current]);
+  const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
-  // is put at the match's line, a few lines below the top.
+  // is put at the match's line, a few of its lines below the top.
   const stepTo = (direction: Direction) => {
-    const next = adjacent(found, current, direction, pattern, keys);
+    const next = adjacent(found, current, useView.getState().position, direction, pattern, keys);
     if (next === undefined) return;
     flushSync(() => view.goTo(next));
     const mark = scroller.current!.querySelector(`mark[data-match="${CSS.escape(matchId(next.match))}"]`);
     // [LAW:no-silent-failure] A step goes only to a match found in a row listed, so it is on screen once committed.
     if (mark === null) throw new Error(`The match stepped to is not on screen: ${matchId(next.match)}`);
-    const row = mark.closest("[data-index]")!;
-    view.moveTo({ at: "row", key: next.match.key, offset: Math.max(0, mark.getBoundingClientRect().top - row.getBoundingClientRect().top - lead) });
+    const row = mark.closest<HTMLElement>("[data-index]")!;
+    const rowBox = row.getBoundingClientRect();
+    // The step opened the row in this commit, which the virtualizer would see only once a resize is observed, after the
+    // view had resolved the offset against the height the row had: its height is committed now.
+    flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
+    const lead = leadLines * parseFloat(getComputedStyle(mark).lineHeight);
+    view.moveTo({ at: "row", key: next.match.key, offset: Math.max(0, mark.getBoundingClientRect().top - rowBox.top - lead) });
     latest.current("choose");
   };
 
@@ -131,14 +136,14 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
 
   return (
     <>
-      <SearchBar count={found.count} ordinal={ordinal(found, current, pattern)} onStep={stepTo} />
+      <SearchBar count={found.count} ordinal={currentOrdinal} onStep={stepTo} />
       {/* The browser's own scroll anchoring would be a second writer of the offset. */}
       <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
         {rows.length === 0 ? (
           <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
         ) : (
           <Hold.Provider value={hold}>
-            <Marks.Provider value={marks}>
+            <Marks.Provider value={pattern}>
               <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => (
                   <div
@@ -173,8 +178,8 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   );
 }
 
-// How far above a match's line the view starts once stepped to it: three lines, so the lines before it are in view.
-const lead = 48;
+// How many of a match's lines the view starts above it once stepped to it, so the lines before it are in view.
+const leadLines = 3;
 
 // The control in each state of follow mode: whether it is pressed, its label and its title.
 const followStates = {
@@ -187,38 +192,35 @@ const followStates = {
   off: { pressed: false, label: "Follow off", title: "Click to follow the newest content." },
 } as const;
 
-// The search's pattern and its current match, for every text shown to mark its matches with.
-const Marks = createContext<{ pattern: RegExp; current: Match | undefined } | undefined>(undefined);
+// The search's pattern, for every text shown to mark its matches with.
+const Marks = createContext<RegExp | undefined>(undefined);
 
-function useMarks() {
-  const marks = useContext(Marks);
-  if (marks === undefined) throw new Error("A text is shown outside a Conversation");
-  return marks;
-}
+// Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
+// in this text.
+type Where = { blockKey: string; at: string; ranges: Range[]; current: number | undefined };
 
-// Where a text is, `at` its address in the block `blockKey`, and its matches.
-type Where = { blockKey: string; at: string; ranges: Range[] };
-
-// A text's matches, found again only when the text or the pattern changes.
-function useRanges(text: string): Range[] {
-  const { pattern } = useMarks();
-  return useMemo(() => find(pattern, text), [pattern, text]);
+// A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
+// current match leaves and enters.
+function useWhere(blockKey: string, at: string, text: string): Where {
+  const pattern = useContext(Marks);
+  if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
+  const ranges = useMemo(() => find(pattern, text), [pattern, text]);
+  const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
+  return { blockKey, at, ranges, current };
 }
 
 // A whole text, its matches marked.
 function MarkedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
-  return <Marked slice={text} from={0} where={{ blockKey, at, ranges: useRanges(text) }} />;
+  return <Marked slice={text} from={0} where={useWhere(blockKey, at, text)} />;
 }
 
 // A slice of a text, starting at `from` in it, its matches marked and the current one marked apart.
-function Marked({ slice, from, where: { blockKey, at, ranges } }: { slice: string; from: number; where: Where }) {
-  const { current } = useMarks();
-  const isCurrent = (start: number) => current !== undefined && current.key === blockKey && current.at === at && current.start === start;
+function Marked({ slice, from, where: { blockKey, at, ranges, current } }: { slice: string; from: number; where: Where }) {
   return pieces(slice, from, ranges).map(({ text, match }, index) =>
     match === undefined ? (
       <span key={index}>{text}</span>
     ) : (
-      <mark key={index} data-match={matchId({ key: blockKey, at, start: match })} className={isCurrent(match) ? "bg-match-current text-foreground" : "bg-match text-foreground"}>
+      <mark key={index} data-match={matchId({ key: blockKey, at, start: match })} className={match === current ? "bg-match-current text-foreground" : "bg-match text-foreground"}>
         {text}
       </mark>
     ),
@@ -368,23 +370,18 @@ function JsonView({ value, blockKey, at }: { value: unknown; blockKey: string; a
 // A text with its long regions (code blocks, tagged sections), each collapsing and expanding as a block does.
 function TextView({ text, blockKey, at }: { text: string; blockKey: string; at: string }) {
   const segmented = useMemo(() => segments(text), [text]);
-  const ranges = useRanges(text);
-  return <pre className="break-words whitespace-pre-wrap">{segmentViews(segmented, 0, { blockKey, at, ranges })}</pre>;
+  return <pre className="break-words whitespace-pre-wrap">{segmentViews(segmented, useWhere(blockKey, at, text))}</pre>;
 }
 
-// Segments of a text starting at offset `from` in it.
-function segmentViews(list: Segment[], from: number, where: Where): ReactNode[] {
-  let at = from;
-  return list.map((segment, index) => {
-    const start = at;
-    at += lengthOf(segment);
-    return segment.kind === "text" ? <Marked key={index} slice={segment.text} from={start} where={where} /> : <RegionView key={index} region={segment} from={start} where={where} />;
-  });
+function segmentViews(list: Segment[], where: Where): ReactNode[] {
+  return list.map((segment, index) =>
+    segment.kind === "text" ? <Marked key={index} slice={segment.text} from={segment.start} where={where} /> : <RegionView key={index} region={segment} where={where} />,
+  );
 }
 
 // A long region starts collapsed: its line names it and how many lines it spans. It is kept by its part's key and the
-// line it opens on. `from`: where it starts in its text.
-function RegionView({ region, from, where }: { region: Extract<Segment, { kind: "region" }>; from: number; where: Where }) {
+// line it opens on.
+function RegionView({ region, where }: { region: Extract<Segment, { kind: "region" }>; where: Where }) {
   const key = regionKey(partKey(where.blockKey, where.at), region.line);
   const open = useView((state) => state.flipped[key] === true);
   const hold = useContext(Hold);
@@ -404,9 +401,9 @@ function RegionView({ region, from, where }: { region: Extract<Segment, { kind: 
     <span>
       {line}
       {"\n"}
-      <Marked slice={region.open} from={from} where={where} />
-      {segmentViews(region.body, from + region.open.length, where)}
-      <Marked slice={region.close} from={from + lengthOf(region) - region.close.length} where={where} />
+      <Marked slice={region.open} from={region.start} where={where} />
+      {segmentViews(region.body, where)}
+      <Marked slice={region.close} from={region.end - region.close.length} where={where} />
     </span>
   ) : (
     <span>

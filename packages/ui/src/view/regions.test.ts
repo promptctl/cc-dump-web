@@ -6,14 +6,19 @@ const lines = (count: number, word = "line") => Array.from({ length: count }, (_
 // The text a list of segments shows when every region is expanded.
 const joined = (list: Segment[]): string => list.map((segment) => (segment.kind === "text" ? segment.text : segment.open + joined(segment.body) + segment.close)).join("");
 
+// The segments, at any depth, whose characters are not the text's from their start up to their end.
+const misplaced = (list: Segment[], text: string): Segment[] =>
+  list.flatMap((segment) => [...(text.slice(segment.start, segment.end) === joined([segment]) ? [] : [segment]), ...(segment.kind === "region" ? misplaced(segment.body, text) : [])]);
+
 describe("segments", () => {
   it("finds a long fenced code block and keeps its body as code", () => {
     const code = "```ts\n" + lines(LONG, "<b>") + "```\n";
     const text = `Before.\n${code}After.`;
+    const body = lines(LONG, "<b>");
     expect(segments(text)).toEqual([
-      { kind: "text", text: "Before.\n" },
-      { kind: "region", line: 1, label: "```ts", lines: LONG + 2, open: "```ts\n", body: [{ kind: "text", text: lines(LONG, "<b>") }], close: "```\n" },
-      { kind: "text", text: "After." },
+      { kind: "text", text: "Before.\n", start: 0, end: 8 },
+      { kind: "region", line: 1, label: "```ts", lines: LONG + 2, open: "```ts\n", body: [{ kind: "text", text: body, start: 14, end: 14 + body.length }], close: "```\n", start: 8, end: 8 + code.length },
+      { kind: "text", text: "After.", start: 8 + code.length, end: text.length },
     ]);
     expect(joined(segments(text))).toBe(text);
   });
@@ -25,27 +30,30 @@ describe("segments", () => {
     expect(section).toMatchObject({ kind: "region", label: "<system-reminder>", lines: LONG + 7, close: "</system-reminder>\n" });
     expect((section as { body: Segment[] }).body.map((segment) => segment.kind)).toEqual(["text", "region"]);
     expect(joined(segments(text))).toBe(text);
+    expect(misplaced(segments(text), text)).toEqual([]);
   });
 
   it("keeps a region of at most LONG lines in its text", () => {
     const text = "```\n" + lines(LONG - 2) + "```\n";
-    expect(segments(text)).toEqual([{ kind: "text", text }]);
+    expect(segments(text)).toEqual([{ kind: "text", text, start: 0, end: text.length }]);
   });
 
   it("runs a fence the text does not close to the end, as a block still streaming does", () => {
     const text = "```py\n" + lines(LONG);
-    expect(segments(text)).toEqual([{ kind: "region", line: 0, label: "```py", lines: LONG + 1, open: "```py\n", body: [{ kind: "text", text: lines(LONG) }], close: "" }]);
+    expect(segments(text)).toEqual([
+      { kind: "region", line: 0, label: "```py", lines: LONG + 1, open: "```py\n", body: [{ kind: "text", text: lines(LONG), start: 6, end: text.length }], close: "", start: 0, end: text.length },
+    ]);
   });
 
   it("takes a tag the text does not close, or closes on its own line, as text", () => {
     const text = `<thinking>\n${lines(LONG + 1)}<command-name>/clear</command-name>\n${lines(LONG + 1)}`;
-    expect(segments(text)).toEqual([{ kind: "text", text }]);
+    expect(segments(text)).toEqual([{ kind: "text", text, start: 0, end: text.length }]);
   });
 
   it("closes a fence only with a fence of its own character, at least as long", () => {
     const text = "````\n```\n~~~~\n" + lines(LONG) + "````\nafter\n";
     expect(segments(text)[0]).toMatchObject({ kind: "region", label: "````", lines: LONG + 4 });
-    expect(segments(text)[1]).toEqual({ kind: "text", text: "after\n" });
+    expect(segments(text)[1]).toEqual({ kind: "text", text: "after\n", start: text.length - 6, end: text.length });
   });
 
   it("does not close a section at its closing tag inside a code block", () => {
@@ -73,7 +81,7 @@ describe("segments", () => {
 
   it("takes a backtick line with a backtick in its info string as code inline, not a fence", () => {
     const text = "```js```\n" + lines(LONG + 1);
-    expect(segments(text)).toEqual([{ kind: "text", text }]);
+    expect(segments(text)).toEqual([{ kind: "text", text, start: 0, end: text.length }]);
   });
 
   it("names a region by its opening line, which stays its line when a section around it closes", () => {

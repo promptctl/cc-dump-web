@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Position } from "./position.ts";
+import { isExpanded } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: each block or region they flipped from how it
@@ -23,22 +24,24 @@ export const useView = create<View>()(
 );
 
 export const view = {
-  toggle: (key: string) =>
-    useView.setState(({ flipped }) => {
-      const { [key]: was, ...rest } = flipped;
-      return { flipped: was ? rest : { ...rest, [key]: true } };
-    }),
+  toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
   moveTo: (position: Position) => useView.setState({ position }),
   search: (query: string) => useView.setState({ search: { query, current: undefined } }),
   // A step to a match: it becomes current, its block and the regions holding it show expanded, and the view moves to
   // its row, which the step then refines to the match's line.
   goTo: ({ match, block, regions }: Step) =>
     useView.setState(({ flipped, search }) => {
-      const next = { ...flipped };
-      // Flipped exactly when it does not start expanded.
-      if (block?.startsExpanded === true) delete next[block.key];
-      if (block?.startsExpanded === false) next[block.key] = true;
-      for (const key of regions) next[key] = true;
-      return { flipped: next, position: { at: "row", key: match.key, offset: 0 }, search: { ...search, current: match } };
+      const opened = block === undefined || isExpanded(flipped, block) ? flipped : flip(flipped, block.key);
+      return {
+        flipped: { ...opened, ...Object.fromEntries(regions.map((key) => [key, true] as const)) },
+        position: { at: "row", key: match.key, offset: 0 },
+        search: { ...search, current: match },
+      };
     }),
 };
+
+// The flips with `key` flipped.
+function flip(flipped: Record<string, true>, key: string): Record<string, true> {
+  const { [key]: was, ...rest } = flipped;
+  return was ? rest : { ...rest, [key]: true };
+}

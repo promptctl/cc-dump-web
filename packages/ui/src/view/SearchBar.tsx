@@ -17,7 +17,8 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
         value={query}
         onChange={(event) => view.search(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Enter") return;
+          // The Enter that commits an input method's composition is typing, not a step.
+          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
           event.preventDefault();
           onStep(event.shiftKey ? "previous" : "next");
         }}
