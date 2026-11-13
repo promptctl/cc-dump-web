@@ -58,8 +58,8 @@ export default defineConfig(
       ],
       "no-restricted-imports": [
         "error",
-        // Every part's address module, by package or by path.
-        { patterns: [{ group: ["@cc-dump/*/address", "**/address", "**/address.ts"], message: reachedThroughConnection }] },
+        // Every part's address module, by package or by path (imports in this repo name their .ts).
+        { patterns: [{ group: ["@cc-dump/*/address", "**/address.ts"], message: reachedThroughConnection }] },
       ],
     },
   },

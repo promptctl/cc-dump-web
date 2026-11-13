@@ -20,7 +20,7 @@ export function App({ connection }: { connection: Connection }) {
         <main className="flex-1 overflow-y-auto">
           <ol className="divide-y font-mono text-xs">
             {shown.map((exchange) => (
-              <ExchangeLine key={exchange.trace_id} exchange={exchange} />
+              <ExchangeLine key={exchange.trace_id} exchange={exchange} reading={reading.state === "reading"} />
             ))}
           </ol>
         </main>
@@ -29,7 +29,8 @@ export function App({ connection }: { connection: Connection }) {
   );
 }
 
-function ExchangeLine({ exchange: { request, response, end } }: { exchange: Exchange }) {
+// `reading`: whether the read can still bring this exchange its end.
+function ExchangeLine({ exchange: { request, response, end }, reading }: { exchange: Exchange; reading: boolean }) {
   return (
     <li className="flex gap-3 px-4 py-1.5">
       {request ? (
@@ -46,7 +47,7 @@ function ExchangeLine({ exchange: { request, response, end } }: { exchange: Exch
       )}
       {/* How it ended, beside its status: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-destructive" : "text-muted-foreground"} title={end?.error}>
-        {end?.outcome ?? "pending"}
+        {end?.outcome ?? (reading ? "pending" : "no end read")}
       </span>
     </li>
   );

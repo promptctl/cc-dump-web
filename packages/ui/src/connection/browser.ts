@@ -7,9 +7,14 @@ import type { Connection } from "./connection.ts";
 export function createBrowserConnection(origin = `http://${location.hostname}:${READER_PORT}`): Connection {
   return {
     recordings: async (signal) => {
-      const res = await fetch(`${origin}/recordings`, { signal });
-      if (!res.ok) throw new Error(`GET /recordings: ${res.status} ${res.statusText}`);
-      return parseListings(await res.text());
+      const url = `${origin}/recordings`;
+      try {
+        const res = await fetch(url, { signal });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return parseListings(await res.text());
+      } catch (error) {
+        throw new Error(`GET ${url}`, { cause: error });
+      }
     },
     read: (name, reader, signal) => {
       signal.throwIfAborted();

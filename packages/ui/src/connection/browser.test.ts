@@ -58,6 +58,15 @@ describe("the browser connection", () => {
     ]);
   });
 
+  it("fails a list it could not get, naming what it asked", async () => {
+    const { proxy } = await proxyAndConnection();
+    const origin = `http://127.0.0.1:${proxy.proxyPort}`; // the proxy's own port, which forwards and has no list
+    await expect(createBrowserConnection(origin).recordings(new AbortController().signal)).rejects.toMatchObject({
+      message: `GET ${origin}/recordings`,
+      cause: expect.any(Error),
+    });
+  });
+
   it("reads a finished recording's events, then its end", async () => {
     const { connection } = await proxyAndConnection();
     const read = reading(connection, finishedName);
