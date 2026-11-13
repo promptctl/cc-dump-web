@@ -135,7 +135,12 @@ describe("format", () => {
       { kind: "media", source: png },
     ]);
     const [, thinking, text, toolUse, , usage, message] = group(formatted, "response");
-    expect(thinking!.parts).toEqual([{ kind: "text", text: "" }, { kind: "fields", fields: [["signature", "4 characters"]] }]);
+    // A field of an event that nothing reads lands on the block the event builds: the thinking delta's estimate.
+    expect(thinking!.parts).toEqual([
+      { kind: "text", text: "" },
+      { kind: "fields", fields: [["signature", "4 characters"]] },
+      { kind: "json", label: "fields", value: { estimated_tokens: 50 } },
+    ]);
     expect(text!.parts).toEqual([{ kind: "text", text: "Red and blue." }]);
     expect(toolUse!.parts).toContainEqual({ kind: "json", label: "input", value: { command: "ls" } });
     expect(usage!.parts).toEqual([{ kind: "json", value: { input_tokens: 2, output_tokens: 90 } }]);
@@ -318,5 +323,40 @@ describe("format", () => {
     ]);
     const returned = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
     expect(group(streamedMessage, "response").slice(1)).toEqual(group(returned, "response").slice(1));
+  });
+
+  it("builds a stream's blocks and message from what its events carry, and shows an event that breaks the stream", () => {
+    const blocks = group(
+      one([
+        ...request("a", { model: "m", messages: [] }),
+        ...streamed("a", [
+          messageStart,
+          // A thinking block may start without its signature, which its delta then begins.
+          { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+          { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "c2ln" } },
+          { type: "content_block_stop", index: 0 },
+          { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } },
+          { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command": ' } },
+          { type: "content_block_stop", index: 1 },
+          { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+          messageDelta,
+          { type: "message_stop", metrics: { latency_ms: 812 } },
+        ]),
+      ]),
+      "response",
+    );
+    expect(blocks.find(({ name }) => name === "thinking")!.parts).toEqual([{ kind: "text", text: "" }, { kind: "fields", fields: [["signature", "4 characters"]] }]);
+    const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
+    expect(notApplied).toEqual([
+      expect.stringMatching(/^content_block_stop event: the block's streamed input is not JSON/),
+      "content_block_start event: content block 1 has already started",
+    ]);
+    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "json", label: "fields", value: expect.objectContaining({ metrics: { latency_ms: 812 } }) });
+  });
+
+  it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {
+    const [, ...body] = response("a", 200, [], gzipSync("{}"));
+    const blocks = group(one([...body, end("a")]), "response");
+    expect(blocks[0]).toEqual({ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "the body is not UTF-8: what is not is shown as U+FFFD" }] });
   });
 });

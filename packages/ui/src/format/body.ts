@@ -23,9 +23,9 @@ export function decodeBody(headers: Header[], chunks: { base64: string }[], comp
         bytes = concat(decoded);
       }
     }
-    return { text: utf8(bytes, complete), error: undefined };
+    return utf8(bytes, complete);
   } catch (error) {
-    return { text: utf8(bytes, complete), error: error instanceof Error ? error.message : String(error) };
+    return { text: utf8(bytes, complete).text, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -68,8 +68,13 @@ function contentCodings(headers: Header[]): string[] {
 }
 
 // A body not complete may end inside a character: its bytes wait for the rest instead of decoding to U+FFFD.
-function utf8(bytes: Uint8Array, final: boolean): string {
-  return new TextDecoder().decode(bytes, { stream: !final });
+// [LAW:no-silent-failure] Bytes that are not UTF-8, binary or still encoded, are shown as U+FFFD and said to be.
+function utf8(bytes: Uint8Array, final: boolean): Body {
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: !final }), error: undefined };
+  } catch {
+    return { text: new TextDecoder().decode(bytes, { stream: !final }), error: "the body is not UTF-8: what is not is shown as U+FFFD" };
+  }
 }
 
 function concat(chunks: Uint8Array[]): Uint8Array {

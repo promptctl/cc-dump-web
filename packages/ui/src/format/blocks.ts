@@ -33,9 +33,9 @@ export function fitting<T>(format: () => T, misfit: (reason: string) => T): T {
   }
 }
 
-// A value shown as its raw JSON, with why it is not shown as what it was read as.
-export function raw(category: Category, name: string, reason: string, value: unknown): Block {
-  return { category, name, parts: [{ kind: "text", label: "does not fit", text: reason }, { kind: "json", value }] };
+// A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
+export function raw(category: Category, name: string, reason: string, received: Part): Block {
+  return { category, name, parts: [{ kind: "text", label: "does not fit", text: reason }, received] };
 }
 
 export function parseJson(text: string, what: string): unknown {
@@ -169,7 +169,7 @@ export function formatBlock(block: unknown, role: Role): Block {
       const parts = entry.parts(fields, role);
       return { category: entry.category(role), name: entry.name?.(fields) ?? type, parts: [...parts, ...restParts(fields, "fields")] };
     },
-    (reason) => raw(entry.category(role), type, reason, block),
+    (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
 }
 

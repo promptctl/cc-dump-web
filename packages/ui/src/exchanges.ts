@@ -69,7 +69,7 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
 
 // The end completes a side that began and whose trailers were never recorded: it was cut short, or their write failed.
 // A side that never began has no body to complete; one already complete is left as it was.
-function ended(side: { complete: boolean; latest: RecordedEvent | undefined }, end: Of<"end">) {
+function ended(side: RequestSide | ResponseSide, end: Of<"end">) {
   if (side.complete || side.latest === undefined) return;
   side.complete = true;
   side.latest = end;

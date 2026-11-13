@@ -62,7 +62,7 @@ function requestBody(text: string, complete: boolean): { blocks: Block[]; messag
       // Every other field is a parameter, so one the API adds is shown with the rest.
       return { blocks: [{ category: "metadata", name: "parameters", parts: [{ kind: "json", value: body.rest() }] }, ...tools, ...system], messages };
     },
-    (reason) => ({ blocks: [{ category: "metadata", name: "request body", parts: [{ kind: "text", label: "does not fit", text: reason }, { kind: "text", text }] }], messages: [] }),
+    (reason) => ({ blocks: [raw("metadata", "request body", reason, { kind: "text", text })], messages: [] }),
   );
 }
 
@@ -81,7 +81,7 @@ function messageGroup(message: unknown): Group {
         blocks: [...blocks.map((block) => formatBlock(block, role)), ...(rest.length === 0 ? [] : [{ category: "metadata" as const, name: "message", parts: rest }])],
       };
     },
-    (reason) => ({ title: "message", blocks: [raw("metadata", "message", reason, message)] }),
+    (reason) => ({ title: "message", blocks: [raw("metadata", "message", reason, { kind: "json", value: message })] }),
   );
 }
 
@@ -134,7 +134,7 @@ function responseBody(headers: Header[], text: string, complete: boolean): Block
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => [{ category: "metadata", name: "response body", parts: [{ kind: "text", label: "does not fit", text: reason }, { kind: "text", text }] }],
+    (reason) => [raw("metadata", "response body", reason, { kind: "text", text })],
   );
 }
 
@@ -153,7 +153,7 @@ function messageBlocks(message: Record<string, unknown>): Block[] {
         { category: "metadata", name: "message", parts: restParts(fields, "fields") },
       ];
     },
-    (reason) => [raw("metadata", "message", reason, message)],
+    (reason) => [raw("metadata", "message", reason, { kind: "json", value: message })],
   );
 }
 

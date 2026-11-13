@@ -22,7 +22,7 @@ export function App({ connection }: { connection: Connection }) {
         </div>
       </header>
       {shown.length === 0 ? (
-        <main className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No exchanges yet.</main>
+        <main className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</main>
       ) : (
         <main className="flex-1 overflow-y-auto">
           <ol className="divide-y font-mono text-xs">
