@@ -71,6 +71,10 @@ async function read(reading: Reading, position: number | undefined, res: ServerR
   if (position === undefined || !(await atLineStart(reading, position))) {
     return void res.writeHead(400, { "content-type": "text/plain", ...cors }).end("from must be 0 or the id of an event\n");
   }
+  // A request cut while its recording was looked up, by its client or its server's close, has ended and its
+  // event is written: there is no one to read to. One still open has not ended, so the read's subscription
+  // to `ended` comes in time.
+  if (res.destroyed) return;
   // Flushed now, not with the first event: a reader of an empty live recording is connected before it has one.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...cors }).flushHeaders();
   // A read that fails is the request's failure, and the response is cut, as the proxy cuts a stream the
@@ -123,9 +127,8 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
     log({ event: "catch_up", ...span.end(), ...ending, recording: name, live: live !== undefined, from, to: offset, events_read: eventsRead, unterminated_bytes: pending.length });
   };
   // [LAW:one-source-of-truth] Why a read cut short ended is the request's to say (the client left, or the
-  // server was closed). Subscribed as the read starts, as the proxy subscribes an exchange's recorded `end`:
-  // promise callbacks run in the order they were subscribed, so a stop that cuts a read under way has this
-  // written before its `close` resolves.
+  // server was closed). Subscribed as the read starts, as the proxy subscribes an exchange's recorded `end`,
+  // so a stop that cuts the read has this written before its `close` resolves.
   void ended.then(catchUp);
 
   const stream = new Readable({

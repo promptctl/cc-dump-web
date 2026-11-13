@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
-import { serve } from "@cc-dump/log";
+import { setImmediate } from "node:timers/promises";
+import { serve, type Event } from "@cc-dump/log";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
@@ -239,6 +240,36 @@ describe("createReader", () => {
     expect(caughtUp.events_read).toBeGreaterThan(0);
     expect(caughtUp.events_read).toBeLessThan(20_000);
     expect(close).toMatchObject({ event: "close", outcome: "ok", requests_open: 1 });
+  });
+
+  it("starts no read for a reader its server stopped while the recording was looked up, so its events all come before the close", async () => {
+    const recording = createRecording(() => {}, join(recordingsDir(), liveName));
+    const { promise: listed, resolve: list } = Promise.withResolvers<void>();
+    // The reader reads the live recording's name once the directory is listed.
+    const watched = Object.defineProperty({ ...recording }, "name", { get: () => (list(), recording.name) });
+    const logged: Event[] = [];
+    const log = (event: Event) => void logged.push(event);
+    const handle = createReader(log, watched);
+    let closed: Promise<void> | undefined;
+    const reader = await serve(
+      log,
+      (req, res, work) => {
+        handle(req, res, work);
+        closed = reader.close();
+      },
+      0,
+    );
+
+    await expect(send(reader.port, { path: `/recordings/${liveName}` })).rejects.toThrow(/socket hang up/);
+    await closed;
+    await listed;
+    await setImmediate();
+
+    expect(logged.map(({ event, outcome }) => [event, outcome])).toEqual([
+      ["listen", "ok"],
+      ["request", "stopped"],
+      ["close", "ok"],
+    ]);
   });
 
   it("sends each event written whole after a write that failed part-way as its own event", async () => {

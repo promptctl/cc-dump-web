@@ -46,6 +46,8 @@ export function logged<T>(log: Log, event: string, facts: Facts, work: () => T e
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
 // what the client is sent when that happens is the handler's decision, made before or after `fail`.
 // `ended` resolves when the response closes, with the ending the event records.
+// [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
+// a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
 export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Promise<Ending> };
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
@@ -73,20 +75,13 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
   log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
   return {
     port: bound,
-    close: async () => {
-      const span = startSpan();
+    close: () => {
       // [LAW:no-ambient-temporal-coupling] The server's close can come before the close of a response it
       // cut, which is when that request's event is written, so each cut request's `ended` is awaited too.
       const cut = [...inFlight];
       const closed = new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
       server.closeAllConnections();
-      try {
-        await Promise.all([closed, ...cut]);
-      } catch (error) {
-        log({ event: "close", ...span.end(), outcome: "error", error: describeError(error), port: bound });
-        throw error;
-      }
-      log({ event: "close", ...span.end(), outcome: "ok", port: bound, requests_open: cut.length });
+      return loggedAll(log, "close", { port: bound, requests_open: cut.length }, [closed, ...cut]);
     },
   };
 }
@@ -95,20 +90,26 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
 // every server, so each request still open is cut and its event written, then writes its own event, naming
 // the signal. Nothing is left holding the event loop, so the process exits by itself, once stdout has drained.
 // Both listeners go with the first signal: a second finds none and kills the process at once, node's default,
-// the way out of a shutdown that hangs. A server that fails to close rejects, and the process dies of it.
+// the way out of a shutdown that hangs. A server that fails to close rejects, and the process dies of it once
+// every server is closed.
 export function shutdownOnSignal(log: Log, servers: Serving[]) {
   const shutdown = (signal: NodeJS.Signals) => {
     process.off("SIGINT", shutdown).off("SIGTERM", shutdown);
-    const span = startSpan();
-    void Promise.all(servers.map(({ close }) => close())).then(
-      () => log({ event: "shutdown", ...span.end(), outcome: "ok", signal }),
-      (error: unknown) => {
-        log({ event: "shutdown", ...span.end(), outcome: "error", error: describeError(error), signal });
-        throw error;
-      },
-    );
+    void loggedAll(log, "shutdown", { signal }, servers.map(({ close }) => close()));
   };
   process.on("SIGINT", shutdown).on("SIGTERM", shutdown);
+}
+
+// A unit of work that is several at once: its event is written once every one has settled, so one that
+// fails cuts none of the others short, and then the first failure is rethrown.
+async function loggedAll(log: Log, event: string, facts: Facts, work: Promise<unknown>[]) {
+  const span = startSpan();
+  const failure = (await Promise.allSettled(work)).find((result) => result.status === "rejected");
+  if (failure) {
+    log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(failure.reason) });
+    throw failure.reason;
+  }
+  log({ event, ...facts, ...span.end(), outcome: "ok" });
 }
 
 function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>): Server {

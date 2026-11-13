@@ -200,6 +200,23 @@ describe("serve", () => {
     expect(await next()).toMatchObject({ event: "close", outcome: "error", port, error: expect.stringContaining("ERR_SERVER_NOT_RUNNING") });
   });
 
+  it("writes a failed close's event only after the events of the requests it cut", async () => {
+    const { log, next } = eventLog();
+    const { port, close } = await serve(log, (_req, res) => res.writeHead(200).flushHeaders(), 0);
+    await next();
+    const res = await send(port, { path: "/" });
+
+    const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
+    const closed = close();
+    await expect(close()).rejects.toThrow(/ERR_SERVER_NOT_RUNNING|not running/);
+    await closed;
+    await cut;
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "stopped" });
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", requests_open: 1 });
+    expect(await next()).toMatchObject({ event: "close", outcome: "error", requests_open: 1 });
+  });
+
   it("records and rethrows a port that is already taken", async () => {
     const { port } = await serving(() => {});
     const { log, next } = eventLog();
