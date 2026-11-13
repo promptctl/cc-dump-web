@@ -17,22 +17,24 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
       }
     },
     read: (name, reader, signal) => {
-      const stream = eventStream(`${origin}/recordings/${encodeURIComponent(name)}`, signal, reader.failed);
+      const url = `${origin}/recordings/${encodeURIComponent(name)}`;
+      const stream = eventStream(url, signal, reader.failed);
       stream.on("message", parseRecordedEvent, reader.event);
-      // A finished recording's end is the read's last message: closed on it, or the EventSource reconnects and reads
-      // the recording again.
+      // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
+      // reconnects and reads the recording again, or into the same failure.
       stream.on("end", parseRecordingEnd, (end) => {
         stream.close();
         reader.end(end);
       });
+      stream.on("failed", parseReadFailure, ({ message }) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) })));
     },
     status: (watcher, signal) => eventStream(`${origin}/status`, signal, watcher.failed).on("message", parseProxyStatus, watcher.status),
   };
 }
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported
-// to `failed`: a message that does not parse (what follows it cannot be trusted), the reader's `failed` event, or the
-// request not being served. `on` delivers each message of a type, parsed.
+// to `failed`: a message that does not parse (what follows it cannot be trusted), the request not being served, or
+// one its user reports with `fail`. `on` delivers each message of a type, parsed.
 function eventStream(url: string, signal: AbortSignal, failed: (error: Error) => void) {
   signal.throwIfAborted();
   const source = new EventSource(url);
@@ -63,7 +65,6 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
       },
       listening,
     );
-  on("failed", parseReadFailure, ({ message }) => fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) })));
   // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection. One that
   // leaves it CLOSED is a request the reader did not serve (a name not listed, a position that is no event's, a server
   // error), and the EventSource does not say which: the reader's request event in the proxy's log does.
@@ -75,5 +76,5 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
     },
     listening,
   );
-  return { on, close };
+  return { on, close, fail };
 }

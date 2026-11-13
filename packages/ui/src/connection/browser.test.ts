@@ -187,41 +187,29 @@ describe("the browser connection", () => {
 
   it("follows the proxy's status: the running proxy's source is unchanged", async () => {
     const { connection } = await proxyAndConnection();
-    expect(await statusing(connection).next()).toEqual({ status: { changed_source: [] } });
+    expect(await statusing(connection).next()).toEqual({ status: { state: "watching", changed_source: [] } });
   });
 
-  it("delivers each status as it changes", async () => {
-    const reader = await serving((_req, res) => {
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"changed_source":[]}\n\n`, () => res.write(`data: {"changed_source":["/proxy/src/proxy.ts"]}\n\n`));
-    });
-    const status = statusing(createBrowserConnection(reader.url));
-    expect([await status.next(), await status.next()]).toEqual([{ status: { changed_source: [] } }, { status: { changed_source: ["/proxy/src/proxy.ts"] } }]);
-  });
-
-  it("reports a status the proxy failed as failed, with its error, and closes it so it is not followed again", async () => {
+  it("delivers each status as it changes, a failed watch's too, and goes on following", async () => {
     const sources = watchEventSources();
+    const statuses: ProxyStatus[] = [
+      { state: "watching", changed_source: [] },
+      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
+      { state: "failed", message: "EMFILE: too many open files, watch" },
+    ];
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.end(`data: {"changed_source":[]}\n\nevent: failed\ndata: {"message":"EMFILE: too many open files, watch"}\n\n`);
+      res.write(statuses.map((status) => `data: ${JSON.stringify(status)}\n\n`).join(""));
     });
     const status = statusing(createBrowserConnection(reader.url));
-    expect([await status.next(), await status.next()]).toEqual([
-      { status: { changed_source: [] } },
-      {
-        failed: expect.objectContaining({
-          message: `GET ${reader.url}/status`,
-          cause: expect.objectContaining({ message: "the reader failed: EMFILE: too many open files, watch" }),
-        }),
-      },
-    ]);
-    expect(sources.map((source) => source.readyState)).toEqual([EventSource.CLOSED]);
+    expect([await status.next(), await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
+    expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
 
   it("reports a status that does not parse as failed", async () => {
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"changed_source":"proxy.ts"}\n\n`);
+      res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\n`);
     });
     expect(await statusing(createBrowserConnection(reader.url)).next()).toEqual({
       failed: expect.objectContaining({

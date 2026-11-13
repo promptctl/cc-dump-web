@@ -1,42 +1,38 @@
 import { readFileSync, watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { describeError, startSpan, type Handler, type Log } from "@cc-dump/log";
-import type { ProxyStatus, ReadFailure } from "./format.ts";
+import type { ProxyStatus } from "./format.ts";
 import { sha256, type Source } from "./source.ts";
 
-// [LAW:types-are-the-program] Whether the proxy runs the source on disk. `changed`: the files whose text on disk
-// differs from the text the proxy runs, or that are gone; a restart is pending while there is one. A watch that
-// failed says so, and is never an empty `changed`: a dead watch must not read as nothing pending.
-export type SourceState = { state: "watching"; changed: string[] } | { state: "failed"; error: Error };
-
-// The watch's state now, and a listener called after each change of it, until the function it returned is called.
-export type SourceWatch = { state: () => SourceState; onChanged: (listener: () => void) => () => void };
+// [LAW:one-source-of-truth] The watch's state is the status `GET /status` sends (format.ts): the state now, and a
+// listener called after each change of it, until the function it returned is called.
+export type SourceWatch = { state: () => ProxyStatus; onChanged: (listener: () => void) => () => void };
 
 // Watches the directory of each file of `source`. Every event in one checks every file against the text the proxy
 // runs (fs.watch does not always name the file), synchronously, so no two checks interleave. The watchers are not
 // persistent: they never hold the process open past its shutdown. A watch fails once and stays failed, its
-// watchers closed: watching again takes the restart that is then pending anyway.
+// watchers closed: watching again takes a restart of the proxy.
 // [LAW:nothing-unseen] Starting the watch is a `watch_source` event, each check a `source_check` event, and a
-// watcher's error a `source_watch` event.
+// watcher's error a `source_watch` event: the failed state carries the error's message, and its event the whole error.
 export function watchSource(log: Log, source: Source): SourceWatch {
-  let state: SourceState = { state: "watching", changed: [] };
+  let state: ProxyStatus = { state: "watching", changed_source: [] };
   const listeners = new Set<() => void>();
   const watchers: FSWatcher[] = [];
-  const become = (next: SourceState) => {
+  const become = (next: ProxyStatus) => {
     if (JSON.stringify(next) === JSON.stringify(state)) return;
     state = next;
     for (const listener of listeners) listener();
   };
   const failWith = (error: unknown) => {
     for (const watcher of watchers) watcher.close();
-    become({ state: "failed", error: error instanceof Error ? error : new Error(String(error)) });
+    become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
   const check = () => {
     const span = startSpan();
     try {
       const changed = [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path);
       log({ event: "source_check", ...span.end(), outcome: "ok", files_checked: source.size, changed_source: changed });
-      become({ state: "watching", changed });
+      become({ state: "watching", changed_source: changed });
     } catch (error) {
       log({ event: "source_check", ...span.end(), outcome: "error", error: describeError(error), files_checked: source.size });
       failWith(error);
@@ -82,25 +78,14 @@ function onDisk(path: string) {
 }
 
 // `GET /status` on the reader port: Server-Sent Events, one per state of the watch, the state now first, until the
-// reader leaves or the server closes. A failed watch ends the stream with a `failed` event, the one way a failure
-// after the headers reaches an EventSource (it takes a cut stream for a dropped connection, and reconnects).
+// reader leaves or the server closes. A failed watch is one more state, not the stream's end: the stream stays open,
+// so a reader's EventSource sees the proxy's restart as a dropped connection and reconnects to the restarted proxy.
 export function createStatus(watch: SourceWatch): Handler {
-  return (req, res, { fail }) => {
+  return (req, res) => {
     if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    const send = () => {
-      const now = watch.state();
-      if (now.state === "watching") {
-        const status: ProxyStatus = { changed_source: now.changed };
-        return void res.write(`data: ${JSON.stringify(status)}\n\n`);
-      }
-      stop();
-      fail(now.error);
-      const failure: ReadFailure = { message: now.error.message };
-      res.end(`event: failed\ndata: ${JSON.stringify(failure)}\n\n`);
-    };
-    const stop = watch.onChanged(send);
-    res.on("close", stop);
+    const send = () => void res.write(`data: ${JSON.stringify(watch.state())}\n\n`);
+    res.on("close", watch.onChanged(send));
     send();
   };
 }

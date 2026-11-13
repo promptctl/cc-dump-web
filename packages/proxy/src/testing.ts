@@ -1,8 +1,40 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Event } from "@cc-dump/log";
-import { eventLog } from "@cc-dump/log/testing";
+import { eventLog, send } from "@cc-dump/log/testing";
 import { expect, onTestFinished } from "vitest";
+
+export type ServerSentEvent = { id?: string; event?: string; data: string };
+
+// A Server-Sent Events client of the reader port: `next()` resolves with each event as it arrives.
+export async function subscribe(port: number, path: string, headers: Record<string, string> = {}) {
+  const res = await send(port, { path, headers });
+  const arrived: ServerSentEvent[] = [];
+  const waiting: ((event: ServerSentEvent) => void)[] = [];
+  let text = "";
+  res.setEncoding("utf8");
+  res.on("data", (chunk: string) => {
+    text += chunk;
+    for (let at = text.indexOf("\n\n"); at !== -1; at = text.indexOf("\n\n")) {
+      const fields = text
+        .slice(0, at)
+        .split("\n")
+        .map((line) => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]);
+      text = text.slice(at + 2);
+      const event = { data: "", ...Object.fromEntries(fields) } as ServerSentEvent;
+      const waiter = waiting.shift();
+      if (waiter) waiter(event);
+      else arrived.push(event);
+    }
+  });
+  const next = () => new Promise<ServerSentEvent>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve)));
+  const take = async (n: number) => {
+    const events: ServerSentEvent[] = [];
+    while (events.length < n) events.push(await next());
+    return events;
+  };
+  return { res, next, take };
+}
 
 // Built as main.ts builds the proxy: its source recorded before the rest of it loads, then `startProxy`.
 const script = `

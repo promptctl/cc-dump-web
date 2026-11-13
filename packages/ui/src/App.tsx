@@ -79,6 +79,9 @@ function ProxyState({ status }: { status: StatusReading }) {
     case "connecting":
       return null;
     case "status": {
+      if (status.status.state === "failed") {
+        return <p className="text-xs text-destructive">Proxy source not watched, a restart watches it again: {status.status.message}</p>;
+      }
       const changed = status.status.changed_source;
       return changed.length === 0 ? null : (
         <p className="text-xs font-medium" title={changed.join("\n")}>

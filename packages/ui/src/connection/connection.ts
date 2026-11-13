@@ -1,7 +1,8 @@
 import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 
-// [LAW:locality-or-seam] The UI's one way to the backend: it names recordings and reads them, and how they are
-// reached is the implementation's alone (the browser on the proxy's reader today; an Electron shell later).
+// [LAW:locality-or-seam] The UI's one way to the backend: it names recordings, reads them, and follows the proxy's
+// status, and how they are reached is the implementation's alone (the browser on the proxy's reader today; an
+// Electron shell later).
 export type Connection = {
   // The recordings, oldest first.
   recordings: (signal: AbortSignal) => Promise<Listing[]>;
@@ -10,7 +11,8 @@ export type Connection = {
   // throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
   // The proxy's status now and at each change, across restarts of the proxy (the restarted proxy's status follows),
-  // until it fails or `signal` aborts it, which reports nothing. A signal already aborted throws its reason.
+  // until `signal` aborts it, which reports nothing, or it fails: a status it cannot read, not the proxy's failed
+  // watch, which is a status. A signal already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
 };
 

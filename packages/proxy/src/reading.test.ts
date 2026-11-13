@@ -11,7 +11,7 @@ import { createProxy } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import { parseReadFailure, type RecordedEvent } from "./format.ts";
 import { createRecording, type Recording } from "./recording.ts";
-import { proxyProcess } from "./testing.ts";
+import { proxyProcess, subscribe, type ServerSentEvent } from "./testing.ts";
 
 // A recordings directory, removed when the test finishes, with the run's recording in it.
 function recordingsDir() {
@@ -39,38 +39,6 @@ async function proxyAndReader(dir = recordingsDir(), wrap = (recording: Recordin
 }
 
 const linesOf = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean);
-
-type ServerSentEvent = { id?: string; event?: string; data: string };
-
-// A Server-Sent Events client: `next()` resolves with each event as it arrives.
-async function subscribe(port: number, path: string, headers: Record<string, string> = {}) {
-  const res = await send(port, { path, headers });
-  const arrived: ServerSentEvent[] = [];
-  const waiting: ((event: ServerSentEvent) => void)[] = [];
-  let text = "";
-  res.setEncoding("utf8");
-  res.on("data", (chunk: string) => {
-    text += chunk;
-    for (let at = text.indexOf("\n\n"); at !== -1; at = text.indexOf("\n\n")) {
-      const fields = text
-        .slice(0, at)
-        .split("\n")
-        .map((line) => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]);
-      text = text.slice(at + 2);
-      const event = { data: "", ...Object.fromEntries(fields) } as ServerSentEvent;
-      const waiter = waiting.shift();
-      if (waiter) waiter(event);
-      else arrived.push(event);
-    }
-  });
-  const next = () => new Promise<ServerSentEvent>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve)));
-  const take = async (n: number) => {
-    const events: ServerSentEvent[] = [];
-    while (events.length < n) events.push(await next());
-    return events;
-  };
-  return { res, next, take };
-}
 
 // What a reader should be sent for `lines`, starting at byte `from`: each line, its id the offset past it.
 function expected(lines: string[], from = 0) {

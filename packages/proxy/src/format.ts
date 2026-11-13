@@ -32,9 +32,10 @@ export type RecordingEnd = { unterminated_bytes: number };
 // The whole error, stack and all, is the request's log event's.
 export type ReadFailure = { message: string };
 
-// Each message of `GET /status`: the proxy's source files whose text on disk differs from the text it runs. While
-// there is one, a restart of the proxy is pending.
-export type ProxyStatus = { changed_source: string[] };
+// Each message of `GET /status`: whether the proxy runs the source on disk. `changed_source`: the files whose text on
+// disk differs from the text the proxy runs, or that are gone; a restart of the proxy is pending while there is one.
+// A watch that failed says so, and is never an empty `changed_source`: a dead watch must not read as nothing pending.
+export type ProxyStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
@@ -58,7 +59,9 @@ export function parseReadFailure(json: string): ReadFailure {
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {
-  return { changed_source: fields(parseJson(json, "proxy status"), "proxy status").strings("changed_source") };
+  const f = fields(parseJson(json, "proxy status"), "proxy status");
+  const state = f.oneOf("state", statusStates);
+  return state === "watching" ? { state, changed_source: f.strings("changed_source") } : { state, message: f.string("message") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {
@@ -96,6 +99,7 @@ const recordedTypes: Record<Recorded["type"], true> = {
   end: true,
 };
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
+const statusStates: Record<ProxyStatus["state"], true> = { watching: true, failed: true };
 
 function parseJson(text: string, what: string): unknown {
   try {

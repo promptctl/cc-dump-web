@@ -1,13 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Event } from "@cc-dump/log";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseProxyStatus, parseReadFailure } from "./format.ts";
+import { parseProxyStatus, type ProxyStatus } from "./format.ts";
 import { sha256 } from "./source.ts";
-import { createStatus, watchSource, type SourceState, type SourceWatch } from "./status.ts";
+import { createStatus, watchSource, type SourceWatch } from "./status.ts";
+import { subscribe } from "./testing.ts";
 
 // Two source files in a directory of their own, recorded as they are now.
 function sourceFiles() {
@@ -26,8 +26,8 @@ async function watching(source: Map<string, string>, dir: string) {
   const { log, next: nextEvent } = eventLog();
   const logged: Event[] = [];
   const watch = watchSource((event) => (logged.push(event), log(event)), source);
-  const states: SourceState[] = [];
-  const waiting: ((state: SourceState) => void)[] = [];
+  const states: ProxyStatus[] = [];
+  const waiting: ((state: ProxyStatus) => void)[] = [];
   onTestFinished(watch.onChanged(() => (waiting.length ? waiting.shift()!(watch.state()) : states.push(watch.state()))));
   expect([await nextEvent(), await nextEvent()]).toMatchObject([{ event: "watch_source" }, { event: "source_check" }]);
   const checked = nextEvent();
@@ -36,7 +36,7 @@ async function watching(source: Map<string, string>, dir: string) {
     live = await Promise.race([checked.then(() => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 20))]);
   }
   logged.length = 0;
-  return { watch, logged, next: () => new Promise<SourceState>((resolve) => (states.length ? resolve(states.shift()!) : waiting.push(resolve))) };
+  return { watch, logged, next: () => new Promise<ProxyStatus>((resolve) => (states.length ? resolve(states.shift()!) : waiting.push(resolve))) };
 }
 
 describe("watchSource", () => {
@@ -44,7 +44,7 @@ describe("watchSource", () => {
     const { source } = sourceFiles();
     const logged: Event[] = [];
     const watch = watchSource((event) => void logged.push(event), source);
-    expect(watch.state()).toEqual({ state: "watching", changed: [] });
+    expect(watch.state()).toEqual({ state: "watching", changed_source: [] });
     expect(logged).toMatchObject([
       { event: "watch_source", outcome: "ok", files: 2, directories: 1 },
       { event: "source_check", outcome: "ok", files_checked: 2, changed_source: [] },
@@ -56,11 +56,11 @@ describe("watchSource", () => {
     const { next } = await watching(source, dir);
     const original = readFileSync(first);
     writeFileSync(first, "export const first = 10;\n");
-    expect(await next()).toEqual({ state: "watching", changed: [first] });
+    expect(await next()).toEqual({ state: "watching", changed_source: [first] });
     writeFileSync(first, original);
-    expect(await next()).toEqual({ state: "watching", changed: [] });
+    expect(await next()).toEqual({ state: "watching", changed_source: [] });
     unlinkSync(second);
-    expect(await next()).toEqual({ state: "watching", changed: [second] });
+    expect(await next()).toEqual({ state: "watching", changed_source: [second] });
   });
 
   it("fails, and says so, when a file cannot be checked", () => {
@@ -69,13 +69,13 @@ describe("watchSource", () => {
     mkdirSync(unreadable);
     const logged: Event[] = [];
     const watch = watchSource((event) => void logged.push(event), new Map([...source, [unreadable, "0"]]));
-    expect(watch.state()).toMatchObject({ state: "failed", error: { code: "EISDIR" } });
+    expect(watch.state()).toEqual({ state: "failed", message: expect.stringContaining("EISDIR") });
     expect(logged.at(-1)).toMatchObject({ event: "source_check", outcome: "error", error: expect.stringContaining("EISDIR") });
   });
 });
 
 // A watch the test sets the state of.
-function fakeWatch(initial: SourceState) {
+function fakeWatch(initial: ProxyStatus) {
   let state = initial;
   const listeners = new Set<() => void>();
   const watch: SourceWatch = {
@@ -88,79 +88,38 @@ function fakeWatch(initial: SourceState) {
   return {
     watch,
     listeners,
-    become: (next: SourceState) => {
+    become: (next: ProxyStatus) => {
       state = next;
       for (const listener of listeners) listener();
     },
   };
 }
 
-// The Server-Sent Events of a response, as they arrive: `next()` resolves with each, or with "closed" at the end.
-function events(res: IncomingMessage) {
-  const arrived: ({ event: string; data: string } | "closed")[] = [];
-  const waiting: ((arrival: (typeof arrived)[number]) => void)[] = [];
-  const arrive = (arrival: (typeof arrived)[number]) => (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival));
-  let text = "";
-  res.setEncoding("utf8");
-  res.on("data", (chunk: string) => {
-    text += chunk;
-    for (let end = text.indexOf("\n\n"); end !== -1; end = text.indexOf("\n\n")) {
-      const lines = text.slice(0, end).split("\n");
-      text = text.slice(end + 2);
-      const field = (name: string) => lines.find((line) => line.startsWith(`${name}: `))?.slice(name.length + 2);
-      arrive({ event: field("event") ?? "message", data: field("data") ?? "" });
-    }
-  });
-  res.on("end", () => arrive("closed"));
-  return () => new Promise<(typeof arrived)[number]>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve)));
-}
-
 describe("GET /status", () => {
-  it("sends the status now, then at each change, until the reader leaves", async () => {
-    const { watch, become, listeners } = fakeWatch({ state: "watching", changed: [] });
+  it("sends the status now, then at each change, a failed watch's too, until the reader leaves", async () => {
+    const { watch, become, listeners } = fakeWatch({ state: "watching", changed_source: [] });
     const { port, next } = await serving(createStatus(watch));
-    const res = await send(port, { path: "/status" });
+    const { res, next: nextEvent } = await subscribe(port, "/status");
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("text/event-stream");
-    const nextEvent = events(res);
     const status = async () => {
-      const arrival = await nextEvent();
-      if (arrival === "closed") throw new Error("the stream closed");
-      expect(arrival.event).toBe("message");
-      return parseProxyStatus(arrival.data);
+      const event = await nextEvent();
+      expect(event.event).toBeUndefined();
+      return parseProxyStatus(event.data);
     };
-    expect(await status()).toEqual({ changed_source: [] });
-    become({ state: "watching", changed: ["/src/proxy.ts"] });
-    expect(await status()).toEqual({ changed_source: ["/src/proxy.ts"] });
+    expect(await status()).toEqual({ state: "watching", changed_source: [] });
+    become({ state: "watching", changed_source: ["/src/proxy.ts"] });
+    expect(await status()).toEqual({ state: "watching", changed_source: ["/src/proxy.ts"] });
+    become({ state: "failed", message: "EMFILE: too many open files, watch" });
+    expect(await status()).toEqual({ state: "failed", message: "EMFILE: too many open files, watch" });
+    expect(res.complete).toBe(false);
     res.destroy();
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", url: "/status", status: 200 });
     expect(listeners.size).toBe(0);
   });
 
-  it("ends the stream with a failed event when the watch fails, and fails the request with its error", async () => {
-    const { watch, become, listeners } = fakeWatch({ state: "watching", changed: [] });
-    const { port, next } = await serving(createStatus(watch));
-    const nextEvent = events(await send(port, { path: "/status" }));
-    expect(await nextEvent()).toEqual({ event: "message", data: JSON.stringify({ changed_source: [] }) });
-    become({ state: "failed", error: new Error("EMFILE: too many open files, watch") });
-    const failed = await nextEvent();
-    expect(failed).toMatchObject({ event: "failed" });
-    expect(parseReadFailure((failed as { data: string }).data)).toEqual({ message: "EMFILE: too many open files, watch" });
-    expect(await nextEvent()).toBe("closed");
-    expect(await next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining("EMFILE"), status: 200 });
-    expect(listeners.size).toBe(0);
-  });
-
-  it("ends at once with a failed event when the watch has already failed", async () => {
-    const { watch } = fakeWatch({ state: "failed", error: new Error("EISDIR: illegal operation on a directory, read") });
-    const { port } = await serving(createStatus(watch));
-    const nextEvent = events(await send(port, { path: "/status" }));
-    expect(await nextEvent()).toMatchObject({ event: "failed", data: JSON.stringify({ message: "EISDIR: illegal operation on a directory, read" }) });
-    expect(await nextEvent()).toBe("closed");
-  });
-
   it("refuses a method other than GET", async () => {
-    const { watch } = fakeWatch({ state: "watching", changed: [] });
+    const { watch } = fakeWatch({ state: "watching", changed_source: [] });
     const { port } = await serving(createStatus(watch));
     const res = await send(port, { method: "POST", path: "/status", headers: { "content-length": "0" } });
     expect(res.statusCode).toBe(405);
