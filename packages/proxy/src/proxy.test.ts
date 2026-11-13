@@ -11,12 +11,13 @@ async function upstreamServing(handler: RequestListener): Promise<URL> {
   return new URL(`http://127.0.0.1:${port}`);
 }
 
-// A port that was just bound and released, so a connection to it is refused.
+// A port that was just bound and released, so a connection to it is refused. localhost, because
+// it resolves to more than one address on most hosts, and refusal by all of them is an AggregateError.
 async function refusingAddress(): Promise<URL> {
   const server = createServer();
   const port = await listen(() => {}, server, 0);
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  return new URL(`http://127.0.0.1:${port}`);
+  return new URL(`http://localhost:${port}`);
 }
 
 async function proxyTo(upstream: URL) {
@@ -28,10 +29,9 @@ async function proxyTo(upstream: URL) {
 // Raw node:http on the agent's side, so bytes are compared as sent (fetch would decompress gzip).
 type Sent = { method?: string; path: string; headers?: Record<string, string>; body?: Buffer };
 
+// The caller frames the body: node's default framing for a GET is none at all.
 async function send(port: number, { method = "GET", path, headers = {}, body }: Sent): Promise<IncomingMessage> {
-  // node frames a GET body only when told its length.
-  const length = body ? { "content-length": String(body.length) } : {};
-  const req = request({ port, method, path, headers: { ...headers, ...length } });
+  const req = request({ port, method, path, headers });
   req.end(body);
   const [res] = (await once(req, "response")) as [IncomingMessage];
   return res;
@@ -48,22 +48,24 @@ function pairs(rawHeaders: string[]): [string, string][] {
 }
 
 describe("createProxy", () => {
+  const body = Buffer.from([0x00, 0xff, 0x80, 0x7b, 0x0a, 0xc3]);
+
   it.each([
-    { method: "POST", path: "/v1/messages?beta=true" },
-    { method: "GET", path: "/v1/models?limit=1" },
-  ])("forwards $method $path with its body byte-for-byte", async ({ method, path }) => {
+    { method: "POST", path: "/v1/messages?beta=true", framing: { "content-length": String(body.length) } },
+    { method: "GET", path: "/v1/models?limit=1", framing: { "content-length": String(body.length) } },
+    { method: "GET", path: "/v1/models", framing: { "transfer-encoding": "chunked" } },
+  ])("forwards $method $path with its body byte-for-byte, framed by $framing", async ({ method, path, framing }) => {
     let received!: { method: string | undefined; url: string | undefined; headers: [string, string][]; body: Buffer };
     const upstream = await upstreamServing(async (req, res) => {
       received = { method: req.method, url: req.url, headers: pairs(req.rawHeaders), body: await bytesOf(req) };
       res.end();
     });
     const { port } = await proxyTo(upstream);
-    const body = Buffer.from([0x00, 0xff, 0x80, 0x7b, 0x0a, 0xc3]);
 
     const res = await send(port, {
       method,
       path,
-      headers: { "x-api-key": "sk-test", "X-Custom": "a", connection: "x-hop", "x-hop": "1" },
+      headers: { "x-api-key": "sk-test", "X-Custom": "a", connection: "x-hop", "x-hop": "1", ...framing },
       body,
     });
     await bytesOf(res);
@@ -158,7 +160,32 @@ describe("createProxy", () => {
     expect(await next()).toMatchObject({ outcome: "aborted" });
   });
 
-  it("refuses an upstream that is not http or https", () => {
-    expect(() => createProxy(() => {}, new URL("ftp://example.com"))).toThrow(/http or https/);
+  it("closes the upstream request when the agent leaves before the response starts", async () => {
+    let upstreamClosed!: () => void;
+    const closedUpstream = new Promise<void>((resolve) => (upstreamClosed = resolve));
+    let requestArrived!: () => void;
+    const arrived = new Promise<void>((resolve) => (requestArrived = resolve));
+    const upstream = await upstreamServing((_req, res) => {
+      res.on("close", upstreamClosed);
+      requestArrived();
+    });
+    const { port, next } = await proxyTo(upstream);
+
+    const req = request({ port, method: "POST", path: "/v1/messages" });
+    const hungUp = once(req, "error");
+    req.end();
+    await arrived;
+    req.destroy();
+
+    await expect(hungUp).resolves.toEqual([expect.objectContaining({ code: "ECONNRESET" })]);
+    await closedUpstream;
+    expect(await next()).toMatchObject({ outcome: "aborted" });
   });
+
+  it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a"])(
+    "refuses the upstream %s, which it could not forward to as given",
+    (href) => {
+      expect(() => createProxy(() => {}, new URL(href))).toThrow(/http or https origin/);
+    },
+  );
 });
