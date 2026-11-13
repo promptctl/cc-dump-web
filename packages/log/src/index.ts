@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import type { RequestListener, Server } from "node:http";
+import type { IncomingMessage, RequestListener, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { inspect } from "node:util";
 
@@ -23,25 +23,32 @@ export function createLog(service: string, write: (line: string) => void): Log {
   return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
 }
 
+// A handler answers through `res` and reports a failure of its work through `fail`; what the
+// client is sent when that happens is the handler's decision, made before or after `fail`.
+export type Handler = (req: IncomingMessage, res: ServerResponse, fail: (error: unknown) => void) => void;
+
 // [LAW:single-enforcer] Every request a part's handler receives is logged here and nowhere else.
 // Requests node:http rejects before any handler (a clientError: bad headers, 431) never get here.
-// It observes the response; what a handler failure should do is decided with the first handler
-// that can fail.
-export function withRequestEvent(log: Log, handler: RequestListener): RequestListener {
+// The event is written once, when the response closes: an error reported before then is its
+// outcome, the first one if there were several.
+export function withRequestEvent(log: Log, handler: Handler): RequestListener {
   return (req, res) => {
     const span = startSpan();
-    res.on("close", () =>
+    let failure: string | undefined;
+    res.on("close", () => {
+      const ending: Ending =
+        failure === undefined ? { outcome: res.writableFinished ? "ok" : "aborted" } : { outcome: "error", error: failure };
       log({
         event: "request",
         ...span.end(),
-        outcome: res.writableFinished ? "ok" : "aborted",
+        ...ending,
         method: req.method,
         url: req.url,
-        // The status the handler set; on an aborted request the client may not have received it.
+        // The status the handler set; on a cut response the client may not have received it.
         status: res.headersSent ? res.statusCode : null,
-      }),
-    );
-    handler(req, res);
+      });
+    });
+    handler(req, res, (error) => (failure ??= inspect(error)));
   };
 }
 

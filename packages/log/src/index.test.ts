@@ -1,27 +1,9 @@
-import { createServer, type RequestListener, type Server } from "node:http";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { createLog, listen, withRequestEvent, type Event } from "./index.ts";
+import { createServer } from "node:http";
+import { describe, expect, it } from "vitest";
+import { createLog, listen, withRequestEvent, type Event, type Handler } from "./index.ts";
+import { closedAfterTest, eventLog } from "./testing.ts";
 
-// A log the test can wait on: `next()` resolves with the next event written.
-function eventLog() {
-  const written: Event[] = [];
-  const waiting: ((event: Event) => void)[] = [];
-  return {
-    log: (event: Event) => {
-      const waiter = waiting.shift();
-      if (waiter) waiter(event);
-      else written.push(event);
-    },
-    next: () => new Promise<Event>((resolve) => (written.length ? resolve(written.shift()!) : waiting.push(resolve))),
-  };
-}
-
-function closedAfterTest(server: Server): Server {
-  onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  return server;
-}
-
-async function serve(handler: RequestListener) {
+async function serve(handler: Handler) {
   const { log, next } = eventLog();
   const port = await listen(() => {}, closedAfterTest(createServer(withRequestEvent(log, handler))), 0);
   return { url: `http://127.0.0.1:${port}`, next };
@@ -72,6 +54,20 @@ describe("withRequestEvent", () => {
 
     expect(await request).toBe("aborted");
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", status: null });
+  });
+
+  it("records the first failure the handler reports, beside the answer it sent", async () => {
+    const { url, next } = await serve((_req, res, fail) => {
+      fail(new Error("first"));
+      fail(new Error("second"));
+      res.writeHead(502).end();
+    });
+
+    await (await fetch(url)).text();
+
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", outcome: "error", status: 502, error: expect.stringContaining("first") });
+    expect(event.error).not.toContain("second");
   });
 });
 
