@@ -2,33 +2,25 @@ import { recordingStart, type Listing } from "@cc-dump/proxy/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "../describe.ts";
-import { isOpen, opening, type OpenRecording } from "../reading.ts";
-import { events } from "../store.ts";
+import { opening, type OpenRecording, type Reading } from "../reading.ts";
 import { useView, view } from "./state.ts";
-
-// [LAW:no-ambient-temporal-coupling] Opening a recording empties the events shown in the commit that opens it, so the
-// view of the last recording's events unmounts then, and never steps on the position the new one opens at. Its read
-// begins as that commit's effects run (useRecording).
-function openRecording(open: OpenRecording) {
-  events.reset();
-  view.open(open);
-}
 
 // The recordings control (docs/design/01-mvp.md, F7): the recording open, the list of every recording to open another
 // from, and, while a past one is open, the way back to the live one. The list is read each time it opens, so it holds
-// the runs started since it last did.
-export function Recordings({ connection }: { connection: Pick<Connection, "recordings"> }) {
+// the runs started since it last did. `reading`: the read of the recording open, which names the one on screen.
+export function Recordings({ connection, reading }: { connection: Pick<Connection, "recordings">; reading: Reading }) {
   const open = useView((state) => state.open);
+  const shown = reading.state === "reading" || reading.state === "ended" ? reading.name : undefined;
   const list = useRef<HTMLDivElement>(null);
   const [listing, setListing] = useState(false);
   const pick = (opened: OpenRecording) => {
-    openRecording(opened);
+    view.open(opened);
     list.current!.hidePopover();
   };
   return (
     <div className="flex items-center gap-2 text-xs">
       {open.recording === "past" && (
-        <button type="button" data-back-to-live className="rounded-md border px-2 py-0.5 hover:bg-muted" onClick={() => openRecording({ recording: "live" })}>
+        <button type="button" data-back-to-live className="rounded-md border px-2 py-0.5 hover:bg-muted" onClick={() => view.open({ recording: "live" })}>
           Back to live
         </button>
       )}
@@ -43,7 +35,7 @@ export function Recordings({ connection }: { connection: Pick<Connection, "recor
         onToggle={(event) => setListing(event.newState === "open")}
         className="inset-auto top-12 right-4 m-0 max-h-[calc(100dvh-4rem)] min-w-72 overflow-y-auto rounded-md border bg-background p-1 text-xs text-foreground shadow-md"
       >
-        {listing && <RecordingList connection={connection} open={open} pick={pick} />}
+        {listing && <RecordingList connection={connection} shown={shown} pick={pick} />}
       </div>
     </div>
   );
@@ -52,9 +44,11 @@ export function Recordings({ connection }: { connection: Pick<Connection, "recor
 // [LAW:types-are-the-program] Where the list stands: being read, read, or failed.
 type Listed = { state: "listing" } | { state: "listed"; listings: Listing[] } | { state: "failed"; error: Error };
 
-// Every recording, newest first, so the live one is on top. Read as it mounts, which is as the list opens. The one
-// open is not opened again: that would read it again from its start, and lose the reader's place in it.
-function RecordingList({ connection, open, pick }: { connection: Pick<Connection, "recordings">; open: OpenRecording; pick: (opened: OpenRecording) => void }) {
+// Every recording, newest first, so the live one is on top. Read as it mounts, which is as the list opens. The one on
+// screen, by its name, is not opened again: that would read it again from its start, and lose the reader's place in
+// it. The live run is the one on screen only while it is the one read: after the proxy restarts, the run read is
+// past, and the new one opens.
+function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: OpenRecording) => void }) {
   const [listed, setListed] = useState<Listed>({ state: "listing" });
   useEffect(() => {
     const abort = new AbortController();
@@ -78,8 +72,8 @@ function RecordingList({ connection, open, pick }: { connection: Pick<Connection
               <button
                 type="button"
                 data-recording={listing.name}
-                aria-current={isOpen(open, listing)}
-                disabled={isOpen(open, listing)}
+                aria-current={listing.name === shown}
+                disabled={listing.name === shown}
                 title={listing.name}
                 className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-muted aria-[current=true]:font-semibold"
                 onClick={() => pick(opening(listing))}

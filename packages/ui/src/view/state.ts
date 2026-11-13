@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
+import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import { isExpanded } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
@@ -25,9 +26,15 @@ export const useView = create<View>()(
 );
 
 export const view = {
-  // A recording opened is shown as a tab opens, at its end, with no current match: the one there was is the last
+  // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last
   // recording's. Flips are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
-  open: (open: OpenRecording) => useView.setState(({ search }) => ({ open, position: { at: "end" }, search: { ...search, current: undefined } })),
+  // [LAW:no-ambient-temporal-coupling] The events shown are emptied as it opens, so the view of the last recording's
+  // events unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
+  // as that commit's effects run (useRecording), and reads it from its start.
+  open: (open: OpenRecording) => {
+    events.reset();
+    useView.setState(({ search }) => ({ open, position: { at: "end" }, search: { ...search, current: undefined } }));
+  },
   toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
   moveTo: (position: Position) => useView.setState({ position }),
   search: (query: string) => useView.setState({ search: { query, current: undefined } }),

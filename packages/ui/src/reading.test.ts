@@ -2,7 +2,7 @@ import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { isOpen, opening, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
+import { opening, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const past: Listing = { name: "20261113T080000.000Z.jsonl", live: false };
 const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
@@ -66,7 +66,7 @@ describe("readRecording", () => {
     reader.event(event(4));
     frames.run();
     expect(calls).toEqual([["reset"], ["append", [1, 2, 3].map(event)], ["append", [event(4)]]]);
-    expect(states).toEqual([{ state: "reading" }]);
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }]);
   });
 
   it("appends what is pending before it reports its end, and no frame of it runs after", async () => {
@@ -75,7 +75,7 @@ describe("readRecording", () => {
     [1, 2].map(event).forEach(reader.event);
     reader.end({ unterminated_bytes: 3 });
     expect(calls).toEqual([["reset"], ["append", [1, 2].map(event)]]);
-    expect(states).toEqual([{ state: "reading" }, { state: "ended", end: { unterminated_bytes: 3 } }]);
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }, { state: "ended", name: live.name, end: { unterminated_bytes: 3 } }]);
     expect(frames.pending()).toBe(0);
   });
 
@@ -86,7 +86,7 @@ describe("readRecording", () => {
     reader.event(event(1));
     reader.failed(error);
     expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
-    expect(states).toEqual([{ state: "reading" }, { state: "failed", error }]);
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }, { state: "failed", error }]);
     expect(frames.pending()).toBe(0);
   });
 
@@ -96,12 +96,13 @@ describe("readRecording", () => {
     abort.abort();
     expect(frames.pending()).toBe(0);
     expect(calls).toEqual([["reset"]]);
-    expect(states).toEqual([{ state: "reading" }]);
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }]);
   });
 
   it("reads a past recording open by its name, by the same read, whatever the list says", async () => {
-    const { reads, frames, calls } = await started(new Error("GET /recordings: 500"), { recording: "past", name: past.name });
+    const { reads, frames, calls, states } = await started(new Error("GET /recordings: 500"), { recording: "past", name: past.name });
     expect(reads.map(({ name }) => name)).toEqual([past.name]);
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: past.name }]);
     reads[0]!.reader.event(event(1));
     frames.run();
     expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
@@ -109,11 +110,11 @@ describe("readRecording", () => {
 
   it("reports a list that fails, or one without exactly one live recording, as failed", async () => {
     const error = new Error("GET /recordings: 500");
-    expect((await started(error)).states).toEqual([{ state: "reading" }, { state: "failed", error }]);
+    expect((await started(error)).states).toEqual([{ state: "opening" }, { state: "failed", error }]);
     for (const listings of [[], [live, { ...live, name: "20261113T100000.000Z.jsonl" }]]) {
       const { reads, states } = await started(listings);
       expect(reads).toEqual([]);
-      expect(states).toEqual([{ state: "reading" }, { state: "failed", error: new Error(`GET /recordings listed ${listings.length} live recordings, not one`) }]);
+      expect(states).toEqual([{ state: "opening" }, { state: "failed", error: new Error(`GET /recordings listed ${listings.length} live recordings, not one`) }]);
     }
   });
 
@@ -126,16 +127,11 @@ describe("readRecording", () => {
     await setImmediate();
     await setImmediate();
     expect(reads).toEqual([]);
-    expect(states).toEqual([{ state: "reading" }]);
+    expect(states).toEqual([{ state: "opening" }]);
   });
 });
 
 describe("the recording open", () => {
-  it("is the listing marked live while live is open, and the one by its name while a past one is", () => {
-    expect([past, live].filter((listing) => isOpen({ recording: "live" }, listing))).toEqual([live]);
-    expect([past, live].filter((listing) => isOpen({ recording: "past", name: past.name }, listing))).toEqual([past]);
-  });
-
   it("is opened from a listing: live by its role, a past one by its name", () => {
     expect(opening(live)).toEqual({ recording: "live" });
     expect(opening(past)).toEqual({ recording: "past", name: past.name });

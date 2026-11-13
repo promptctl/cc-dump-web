@@ -7,20 +7,20 @@ import { events } from "./store.ts";
 // [LAW:types-are-the-program] The live one is named by its role: its name changes with every run of the proxy.
 export type OpenRecording = { recording: "live" } | { recording: "past"; name: string };
 
-// Whether `listing` is the recording open: the one listed as live, or the one listed by its name.
-export function isOpen(open: OpenRecording, listing: Listing): boolean {
-  return open.recording === "live" ? listing.live : listing.name === open.name;
-}
-
 // The recording a listing opens: the one listed as live opens live, never as a past one by the name it has now.
 export function opening(listing: Listing): OpenRecording {
   return listing.live ? { recording: "live" } : { recording: "past", name: listing.name };
 }
 
-// [LAW:types-are-the-program] Where a read stands. The live recording ends only once the proxy that wrote it has
-// stopped: the browser reconnects to it, finished now, and reads its end. A new run is a new read, begun by a mount
-// or a reload.
-export type Reading = { state: "reading" } | { state: "ended"; end: RecordingEnd } | { state: "failed"; error: Error };
+// [LAW:types-are-the-program] Where a read stands: opening the recording, which for the live one is finding its name,
+// then reading it, by its name, until it ends or fails. The live recording ends only once the proxy that wrote it has
+// stopped: the browser reconnects to it, finished now, and reads its end. A new run is a new read, begun by a mount,
+// a reload, or opening the live recording again.
+export type Reading =
+  | { state: "opening" }
+  | { state: "reading"; name: string }
+  | { state: "ended"; name: string; end: RecordingEnd }
+  | { state: "failed"; error: Error };
 
 export type Sink = { reset: () => void; append: (batch: RecordedEvent[]) => void };
 
@@ -35,7 +35,7 @@ export type Frames = (callback: () => void) => () => void;
 // runs after it has ended; its abort cancels the frame.
 export function readRecording(connection: Pick<Connection, "recordings" | "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink.reset();
-  changed({ state: "reading" });
+  changed({ state: "opening" });
   let pending: RecordedEvent[] = [];
   let cancelFrame = () => {};
   const flush = () => {
@@ -48,15 +48,18 @@ export function readRecording(connection: Pick<Connection, "recordings" | "read"
     changed(reading);
   };
   signal.addEventListener("abort", () => cancelFrame());
-  const reader = {
+  const reader = (name: string) => ({
     event: (event: RecordedEvent) => {
       if (pending.push(event) === 1) cancelFrame = frames(flush);
     },
-    end: (end: RecordingEnd) => settle({ state: "ended", end }),
+    end: (end: RecordingEnd) => settle({ state: "ended", name, end }),
     failed: (error: Error) => settle({ state: "failed", error }),
-  };
+  });
   nameOf(connection, open, signal)
-    .then((name) => connection.read(name, reader, signal))
+    .then((name) => {
+      connection.read(name, reader(name), signal);
+      changed({ state: "reading", name });
+    })
     // An abort rejects what it cut short; that is the read being stopped, not failing.
     .catch((error: Error) => signal.aborted || changed({ state: "failed", error }));
 }
@@ -84,7 +87,7 @@ const animationFrames: Frames = (callback) => {
 // The recording open, read into the store for as long as the component using it is mounted, and read again from its
 // start each time one is opened.
 export function useRecording(connection: Connection, open: OpenRecording): Reading {
-  const [reading, setReading] = useState<Reading>({ state: "reading" });
+  const [reading, setReading] = useState<Reading>({ state: "opening" });
   useEffect(() => {
     const abort = new AbortController();
     readRecording(connection, open, events, animationFrames, abort.signal, setReading);

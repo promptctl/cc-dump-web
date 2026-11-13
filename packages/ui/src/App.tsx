@@ -26,19 +26,20 @@ export function App({ connection }: { connection: Connection }) {
         <div className="flex items-center gap-4">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
-          <Recordings connection={connection} />
+          <Recordings connection={connection} reading={reading} />
         </div>
       </header>
       <FilterBar />
       {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
           way (docs/design/01-mvp.md, "One path to the screen"). */}
-      <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
+      <Conversation key={read} formatted={shown} reading={reading.state === "opening" || reading.state === "reading"} />
     </div>
   );
 }
 
 function ReadingState({ reading }: { reading: Reading }) {
   switch (reading.state) {
+    case "opening":
     case "reading":
       return null;
     case "ended":

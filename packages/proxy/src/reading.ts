@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Handler, type Log } from "@cc-dump/log";
-import type { Listing, ReadFailure, RecordingEnd } from "./format.ts";
+import { recordingStart, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
 import type { Recording } from "./recording.ts";
 
 // [LAW:decomposition] The recording's read side, and the one path traffic takes to the screen
@@ -38,9 +38,11 @@ export function createReader(log: Log, live: Recording): Handler {
   };
 }
 
-// The recordings, oldest first: the `.jsonl` files in the directory, and the live one before its file exists.
+// The recordings, oldest first: the `.jsonl` files in the directory, and the live one before its file exists. A run's
+// name sorts by its start; a file no run named has none, and comes before every run.
 async function recordings(dir: string, live: Recording) {
-  return [...new Set((await readdir(dir)).filter((name) => name.endsWith(".jsonl"))).add(live.name)].sort();
+  const names = [...new Set((await readdir(dir)).filter((name) => name.endsWith(".jsonl"))).add(live.name)].sort();
+  return [...names.filter((name) => recordingStart(name) === undefined), ...names.filter((name) => recordingStart(name) !== undefined)];
 }
 
 function list(names: string[], live: Recording, res: ServerResponse) {

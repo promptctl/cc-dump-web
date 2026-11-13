@@ -122,14 +122,16 @@ describe("createReader", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("lists past recordings and the live one, oldest first, the live one before its first event", async () => {
+  it("lists past recordings and the live one, oldest first, the live one before its first event, and files no run named before every run", async () => {
     const dir = recordingsDir();
     writeFileSync(join(dir, "20261101T000000.000Z.jsonl"), "");
+    writeFileSync(join(dir, "notes.jsonl"), "");
     const { reader } = await proxyAndReader(dir);
 
     const res = await send(reader.port, { path: "/recordings" });
 
     expect(JSON.parse((await buffer(res)).toString())).toEqual([
+      { name: "notes.jsonl", live: false },
       { name: "20261101T000000.000Z.jsonl", live: false },
       { name: liveName, live: true },
     ]);
