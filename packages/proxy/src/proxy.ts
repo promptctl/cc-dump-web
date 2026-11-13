@@ -15,7 +15,7 @@ export type Upstream = string & { readonly [parsed]: true };
 // carrying anything more (query, fragment, credentials) is refused here rather than forwarded to without it. The
 // refusal does not repeat the address: one refused for its credentials or query is one that may carry a secret.
 export function parseUpstream(value: unknown): Upstream {
-  const url = typeof value === "string" && URL.canParse(value) ? new URL(value) : undefined;
+  const url = typeof value === "string" ? URL.parse(value) : null;
   if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname)
     throw new Error("upstream must be an http or https origin with an optional path");
   return url.href as Upstream;
