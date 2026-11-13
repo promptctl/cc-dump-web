@@ -29,7 +29,8 @@ export type Recorder = (trace_id: string) => (seen: Seen) => void;
 // it saw up to then, and no traffic leaves no file.
 // [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
 // event, written with `end`, counts what was written and what failed, and names the first failure. A
-// write that fails is counted and the agent's traffic goes on: it never waits on the disk.
+// write that fails is counted and never stops or alters the agent's traffic. Writes are synchronous,
+// so a disk that stalls stalls forwarding with it: that is the price of the kill guarantee above.
 export function createRecording(log: Log, path: string): Recorder {
   mkdirSync(dirname(path), { recursive: true });
   return (trace_id) => {
@@ -49,7 +50,7 @@ export function createRecording(log: Log, path: string): Recorder {
       }
       if (seen.type !== "end") return;
       const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
-      log({ event: "record", ...span.end(), ...ending, path, ...counts });
+      log({ event: "record", ...span.end(), ...ending, path, counts });
     };
   };
 }

@@ -309,9 +309,7 @@ describe("createProxy", () => {
         duration_ms: expect.any(Number),
         outcome: "ok",
         path,
-        events_written: readFileSync(path, "utf8").split("\n").length - 1,
-        bytes_written: readFileSync(path).length,
-        events_failed: 0,
+        counts: { events_written: readFileSync(path, "utf8").split("\n").length - 1, bytes_written: readFileSync(path).length, events_failed: 0 },
       });
     });
 
@@ -455,9 +453,7 @@ describe("createProxy", () => {
         outcome: "error",
         error: expect.stringContaining("ENOENT"),
         path,
-        events_written: 0,
-        bytes_written: 0,
-        events_failed: 4,
+        counts: { events_written: 0, bytes_written: 0, events_failed: 4 },
       });
     });
 
