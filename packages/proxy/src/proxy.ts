@@ -35,12 +35,14 @@ export function createProxy(log: Log, upstream: URL): Server {
       outgoing.on("response", (incoming) => {
         incoming.on("error", upstreamFailed);
         // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
-        // stricter than node's response parser (a status below 100 passes the parser): a response it
-        // refuses is an invalid upstream response, which is what a 502 is.
+        // stricter than node's response parser (status 099, a control byte in the reason phrase). A
+        // response it refuses is cut, as the agent's own client would fail on it directly. Not a 502:
+        // the refused writeHead has already written part of its state onto `res`.
         try {
           res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(incoming.rawHeaders, hopByHop).flat());
         } catch (error) {
-          return upstreamFailed(error as NodeJS.ErrnoException);
+          fail(error);
+          return res.destroy();
         }
         incoming.pipe(res);
       });

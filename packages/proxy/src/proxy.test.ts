@@ -120,18 +120,16 @@ describe("createProxy", () => {
     expect(await next()).toMatchObject({ outcome: "error", status: 502, error: expect.stringContaining("ECONNREFUSED") });
   });
 
-  it("answers 502 when the upstream's response is one node cannot relay", async () => {
-    // node's response parser accepts any three digits; writeHead refuses a status below 100.
-    const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 099 Early\r\ncontent-length: 0\r\n\r\n"));
+  // Status lines node's response parser accepts and writeHead refuses.
+  it.each([
+    { statusLine: "HTTP/1.1 099 Early", code: "ERR_HTTP_INVALID_STATUS_CODE" },
+    { statusLine: "HTTP/1.1 200 O\x7fK", code: "ERR_INVALID_CHAR" },
+  ])("cuts the agent's response when upstream answers $statusLine, which node cannot relay", async ({ statusLine, code }) => {
+    const upstream = await upstreamServing((req) => req.socket.end(`${statusLine}\r\ncontent-length: 2\r\n\r\nok`));
     const { port, next } = await proxyTo(upstream);
 
-    const res = await send(port, { method: "POST", path: "/v1/messages" });
-
-    expect(res.statusCode).toBe(502);
-    expect(JSON.parse((await buffer(res)).toString())).toMatchObject({
-      error: { type: "api_error", message: expect.stringContaining("ERR_HTTP_INVALID_STATUS_CODE") },
-    });
-    expect(await next()).toMatchObject({ outcome: "error", status: 502 });
+    await expect(send(port, { method: "POST", path: "/v1/messages" })).rejects.toThrow(/socket hang up/);
+    expect(await next()).toMatchObject({ outcome: "error", status: null, error: expect.stringContaining(code) });
   });
 
   it("frames the response for the agent's HTTP version", async () => {
