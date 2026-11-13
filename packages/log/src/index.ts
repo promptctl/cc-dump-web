@@ -66,5 +66,5 @@ function startSpan() {
   const trace_id = randomBytes(16).toString("hex");
   const started_at = new Date().toISOString();
   const started = performance.now();
-  return { end: () => ({ trace_id, started_at, duration_ms: Math.round(performance.now() - started) }) };
+  return { end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };
 }
