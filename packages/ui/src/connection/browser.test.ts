@@ -42,7 +42,11 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
   const waiting: ((arrival: Arrival) => void)[] = [];
   const arrive = (arrival: Arrival) => (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival));
   connection.read(name, { event: (event) => arrive({ event }), end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
-  return { abort, next: () => new Promise<Arrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))) };
+  return {
+    abort,
+    next: () => new Promise<Arrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))),
+    queued: () => arrived.length,
+  };
 }
 
 describe("the browser connection", () => {
@@ -73,6 +77,25 @@ describe("the browser connection", () => {
     const written = readFileSync(join(dir, liveName), "utf8").split("\n").filter(Boolean);
     expect(arrivals).toEqual(written.map((line) => ({ event: JSON.parse(line) })));
     expect(arrivals.map((arrival) => "event" in arrival && arrival.event.type)).toEqual(["request", "request_trailers", "response", "response_body", "response_trailers", "end"]);
+  });
+
+  it("ends a read at a line that does not parse, reporting it as failed and nothing after it", async () => {
+    const { dir, proxy, connection } = await proxyAndConnection();
+    const name = "20261113T083000.000Z.jsonl";
+    const [request, end] = finishedEvents.map((event) => JSON.stringify(event));
+    writeFileSync(join(dir, name), `${request}\n{"type":"response_footer"}\n${end}\n`);
+    const read = reading(connection, name);
+    expect([await read.next(), await read.next()]).toEqual([
+      { event: finishedEvents[0] },
+      {
+        failed: expect.objectContaining({
+          message: `GET http://127.0.0.1:${proxy.readerPort}/recordings/${name}`,
+          cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type is not one of") }),
+        }),
+      },
+    ]);
+    // The lines after it arrive in the same chunk, so any event dispatched after the read closed is queued by now.
+    expect(read.queued()).toBe(0);
   });
 
   it("reports a read of a recording the proxy does not list as failed", async () => {

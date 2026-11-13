@@ -20,15 +20,20 @@ const seen: Seen[] = [
 ];
 
 describe("parseRecordedEvent", () => {
-  it("reads back every event the recorder wrote as it was written", () => {
+  it("reads back every event the recorder wrote as it was seen, body chunks as their base64", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const recording = createRecording(() => {}, join(dir, "run.jsonl"));
-    const record = recording.record("4bf92f3577b34da6a3ce929d0e0e4736");
-    seen.forEach(record);
+    const trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+    seen.forEach(recording.record(trace_id));
     const lines = readFileSync(recording.path, "utf8").split("\n").filter(Boolean);
-    expect(lines).toHaveLength(seen.length);
-    for (const line of lines) expect(parseRecordedEvent(line)).toEqual(JSON.parse(line));
+    expect(lines.map(parseRecordedEvent)).toEqual(
+      seen.map((event) => ({
+        timestamp: expect.any(String),
+        trace_id,
+        ...("chunk" in event ? { type: event.type, base64: event.chunk.toString("base64") } : event),
+      })),
+    );
   });
 
   const event = { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "4bf92f3577b34da6a3ce929d0e0e4736" };

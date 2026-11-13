@@ -39,8 +39,14 @@ function ExchangeLine({ exchange: { request, response, end } }: { exchange: Exch
       ) : (
         <span className="flex-1 text-muted-foreground">request not recorded</span>
       )}
+      {response && (
+        <span>
+          {response.status} {response.reason}
+        </span>
+      )}
+      {/* How it ended, beside its status: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-destructive" : "text-muted-foreground"} title={end?.error}>
-        {response ? `${response.status} ${response.reason}` : (end?.outcome ?? "pending")}
+        {end?.outcome ?? "pending"}
       </span>
     </li>
   );

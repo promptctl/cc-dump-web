@@ -15,11 +15,14 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
       signal.throwIfAborted();
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const source = new EventSource(url);
-      const close = () => {
-        source.close();
-        signal.removeEventListener("abort", close);
-      };
-      signal.addEventListener("abort", close);
+      // [LAW:no-ambient-temporal-coupling] The read's lifetime, which closing it ends: the EventSource closes and
+      // every listener of the read is removed, so nothing is delivered after it has ended. Closing alone would not
+      // do: node's EventSource goes on dispatching the rest of a chunk it has already received.
+      const open = new AbortController();
+      const listening = { signal: open.signal };
+      const close = () => open.abort();
+      open.signal.addEventListener("abort", () => source.close());
+      signal.addEventListener("abort", close, listening);
       // A message that does not parse ends the read: what follows it cannot be trusted to be the recording.
       const receive =
         <T>(parse: (data: string) => T, deliver: (value: T) => void) =>
@@ -33,7 +36,7 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
           }
           deliver(value);
         };
-      source.addEventListener("message", receive(parseRecordedEvent, reader.event));
+      source.addEventListener("message", receive(parseRecordedEvent, reader.event), listening);
       // A finished recording's last message. Closed here, or the EventSource reconnects and reads it again.
       source.addEventListener(
         "end",
@@ -41,6 +44,7 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
           close();
           reader.end(end);
         }),
+        listening,
       );
       // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection.
       // One that leaves it CLOSED is a refused read (a name not listed, a position that is no event's), and the
@@ -49,7 +53,7 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
         if (source.readyState !== EventSource.CLOSED) return;
         close();
         reader.failed(new Error(`GET ${url}: refused`));
-      });
+      }, listening);
     },
   };
 }

@@ -6,7 +6,8 @@ export type Connection = {
   // The recordings, oldest first.
   recordings: (signal: AbortSignal) => Promise<Listing[]>;
   // Reads a recording from its start, then, while it is live, each event as it is written. A read ends in exactly
-  // one way: its recording ends, it fails, or `signal` aborts it, which reports nothing.
+  // one way: its recording ends, it fails, or `signal` aborts it, which reports nothing. A signal already aborted
+  // throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
 };
 
