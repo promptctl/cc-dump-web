@@ -1,5 +1,5 @@
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd } from "@cc-dump/proxy/format";
+import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import type { Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader, on the host the page was served from: `fetch` for the list, and one
@@ -19,22 +19,32 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
     read: (name, reader, signal) => {
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
-      stream.on("message", parseRecordedEvent, reader.event);
+      // A message that does not parse ends the read: what follows it cannot be trusted to be the recording.
+      stream.on("message", parseRecordedEvent, reader.event, stream.fail);
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
       // reconnects and reads the recording again, or into the same failure.
-      stream.on("end", parseRecordingEnd, (end) => {
-        stream.close();
-        reader.end(end);
-      });
-      stream.on("failed", parseReadFailure, ({ message }) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) })));
+      stream.on(
+        "end",
+        parseRecordingEnd,
+        (end) => {
+          stream.close();
+          reader.end(end);
+        },
+        stream.fail,
+      );
+      const failed = ({ message }: ReadFailure) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) }));
+      stream.on("failed", parseReadFailure, failed, stream.fail);
     },
-    status: (watcher, signal) => eventStream(`${origin}/status`, signal, watcher.failed).on("message", parseProxyStatus, watcher.status),
+    // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported,
+    // and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
+    // proxy's status once it reconnects.
+    status: (watcher, signal) => eventStream(`${origin}/status`, signal, watcher.failed).on("message", parseProxyStatus, watcher.status, watcher.failed),
   };
 }
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported
-// to `failed`: a message that does not parse (what follows it cannot be trusted), the request not being served, or
-// one its user reports with `fail`. `on` delivers each message of a type, parsed.
+// to `failed`: the request not being served, or one its user reports with `fail`. `on` delivers each message of a
+// type, parsed, and reports one that does not parse to `refused`.
 function eventStream(url: string, signal: AbortSignal, failed: (error: Error) => void) {
   signal.throwIfAborted();
   const source = new EventSource(url);
@@ -51,7 +61,7 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
     close();
     failed(error);
   };
-  const on = <T>(type: string, parse: (data: string) => T, deliver: (value: T) => void) =>
+  const on = <T>(type: string, parse: (data: string) => T, deliver: (value: T) => void, refused: (error: Error) => void) =>
     source.addEventListener(
       type,
       ({ data }: MessageEvent<string>) => {
@@ -59,7 +69,7 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
         try {
           value = parse(data);
         } catch (error) {
-          return fail(new Error(`GET ${url}`, { cause: error }));
+          return refused(new Error(`GET ${url}`, { cause: error }));
         }
         deliver(value);
       },

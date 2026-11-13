@@ -49,8 +49,9 @@ const script = `
 // recording to `path` under the shell's file size limit (`ulimit -f`: a count of blocks, or "unlimited"). Node
 // ignores SIGXFSZ, so a write past the limit fails with EFBIG instead of killing the process. Its log is its
 // stdout: `next()` resolves with each event after its start: the watch of its source, which finds it unchanged, then
-// the two `listen` events the ports are read from. The watch's later checks are not the test's: the source it watches
-// is the repo's, and a save to it while the test runs is a check the test did not cause.
+// the two `listen` events the ports are read from. The watch's later checks that find what they found are not the
+// test's: the source it watches is the repo's, and a save to it while the test runs is a check the test did not cause.
+// A check that fails is the test's to see.
 export async function proxyProcess(upstream: string, path: string, fileSizeLimit: string) {
   const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, "--input-type=module", "-e", script, upstream, path];
   const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "inherit"] });
@@ -59,7 +60,8 @@ export async function proxyProcess(upstream: string, path: string, fileSizeLimit
   let checks = 0;
   createInterface(child.stdout).on("line", (line) => {
     const event = JSON.parse(line) as Event;
-    if (event.event !== "source_check" || checks++ === 0) log(event);
+    const saved = event.event === "source_check" && event.outcome === "ok" && checks++ > 0;
+    if (!saved) log(event);
   });
   const started = [await next(), await next(), await next(), await next()];
   expect(started).toMatchObject([

@@ -41,7 +41,6 @@ export default defineConfig(
             servesThroughLog,
             {
               regex: "^(?!node:|\\./source\\.ts$)",
-              allowTypeImports: true,
               message: "Loads before the proxy's source is recorded: import it dynamically after recordSource (packages/proxy/src/main.ts).",
             },
           ],

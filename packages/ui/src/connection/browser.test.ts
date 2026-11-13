@@ -198,17 +198,38 @@ describe("the browser connection", () => {
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
 
-  it("reports a status that does not parse as failed", async () => {
+  it("reports a status that does not parse as failed, and goes on to the statuses after it", async () => {
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\n`);
+      res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\ndata: {"state":"watching","changed_source":[]}\n\n`);
     });
-    expect(await statusing(createBrowserConnection(reader.url)).next()).toEqual({
-      failed: expect.objectContaining({
-        message: `GET ${reader.url}/status`,
-        cause: expect.objectContaining({ message: "proxy status: changed_source is not a list of strings" }),
-      }),
+    const status = statusing(createBrowserConnection(reader.url));
+    expect([await status.next(), await status.next()]).toEqual([
+      {
+        failed: expect.objectContaining({
+          message: `GET ${reader.url}/status`,
+          cause: expect.objectContaining({ message: "proxy status: changed_source is not a list of strings" }),
+        }),
+      },
+      { status: { state: "watching", changed_source: [] } },
+    ]);
+  });
+
+  it("follows the proxy across a restart: the dropped connection reconnects to the restarted proxy's status", async () => {
+    const statuses: ProxyStatus[] = [
+      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
+      { state: "watching", changed_source: [] },
+    ];
+    let connections = 0;
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      const status = `data: ${JSON.stringify(statuses[connections++])}\n\n`;
+      // The first proxy stops after its status; `retry` makes the browser reconnect in 10ms, not its default 3s.
+      if (connections === 1) res.write(`retry: 10\n${status}`, () => res.destroy());
+      else res.write(status);
     });
+    const status = statusing(createBrowserConnection(reader.url));
+    expect([await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
   });
 
   it("reports a status not served as failed", async () => {

@@ -11,8 +11,8 @@ export type Connection = {
   // throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
   // The proxy's status now and at each change, across restarts of the proxy (the restarted proxy's status follows),
-  // until `signal` aborts it, which reports nothing, or it fails: a status it cannot read, not the proxy's failed
-  // watch, which is a status. A signal already aborted throws its reason.
+  // until `signal` aborts it, which reports nothing, or the status is not served, which fails it. A status it cannot
+  // read is reported as failed, and the statuses after it still arrive. A signal already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
 };
 
