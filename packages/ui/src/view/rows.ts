@@ -15,10 +15,10 @@ export type Row =
 // The rows of a conversation, and their keys.
 export type Layout = { rows: Row[]; keys: Keys };
 
-// The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// row listed after it, the last when none is. [LAW:types-are-the-program] The same object
-// while no row arrives, goes or moves, however what a row shows changes, so what places rows by key (the virtualizer,
-// from the first row, at 5 ms a time over a long recording) places them again only when one did.
+// The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the row
+// listed before it, whose end is where it stands. [LAW:types-are-the-program] The same object while no row, listed or
+// not, arrives, goes or moves, however what a row shows changes, so what places rows by key (the virtualizer, from the
+// first row, at 5 ms a time over a long recording) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 
 // One exchange's rows, their keys, the keys of its groups' rows listed or not, and each key's index among them.
@@ -48,7 +48,7 @@ export function createLayout(visibility: Record<Category, Visibility>, groupRows
   const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
   const groupLayout = (trace: string, group: Group) => {
     const { title, blocks } = groupRows(trace, group);
-    const shown = blocks.filter(({ block }) => listed[visibility[block.category]]);
+    const shown = blocks.filter(({ block }) => isListed[visibility[block.category]]);
     return { listed: shown.length === 0 ? [] : [title, ...shown], every: [title, ...blocks] };
   };
   // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
@@ -84,14 +84,14 @@ function exchangeRows(
   const keys = rows.map(({ key }) => key);
   const places = laidOut.flatMap(({ every }) => every.map(({ key }) => key));
   if (before !== undefined && same(before.keys, keys) && same(before.places, places)) return { ...before, rows };
-  // A row not listed is at the place of the row listed after it, past the exchange's own when none is: a reader whose
-  // row a category hid is shown what now stands where it stood, not the group or exchange it was inside.
+  // A row not listed is at the row listed before it, the exchange's own line at the latest, whose end is where it
+  // stands: a reader whose row a category hid is shown what now stands there, not the group or exchange it was inside.
   const index = new Map(keys.map((key, at) => [key, at]));
-  let next = rows.length;
-  for (let at = places.length - 1; at >= 0; at--) {
-    const own = index.get(places[at]!);
-    if (own === undefined) index.set(places[at]!, next);
-    else next = own;
+  let listedBefore = 0;
+  for (const key of places) {
+    const own = index.get(key);
+    if (own === undefined) index.set(key, listedBefore);
+    else listedBefore = own;
   }
   return { trace, rows, keys, places, index };
 }
@@ -110,13 +110,13 @@ function keysOf(exchanges: ExchangeRows[]): Keys {
     indexOf: (key) => {
       const trace = starts.get(key.split("/", 1)[0]!);
       const local = trace?.index.get(key);
-      return local === undefined ? undefined : Math.min(trace!.start + local, keys.length - 1);
+      return local === undefined ? undefined : trace!.start + local;
     },
   };
 }
 
 // [LAW:types-are-the-program] Whether a block of each visibility is listed: the compiler asks for an entry for each.
-const listed: Record<Visibility, boolean> = { shown: true, hidden: false };
+const isListed: Record<Visibility, boolean> = { shown: true, hidden: false };
 
 // A group is one exchange's, so `trace` is the same for every call with it.
 function rowsOf(trace: string, group: Group): GroupRows {

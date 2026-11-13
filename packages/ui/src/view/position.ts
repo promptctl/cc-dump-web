@@ -8,8 +8,9 @@ export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: strin
 export type Placed = { key: string | number | bigint; start: number; size: number };
 
 // The scroll offset a position is at, given where the rows are: undefined while its row is not among them. A row
-// shorter than the offset into it, as a block just collapsed is, puts the view at its end. The end is past every
-// offset: the largest one the scroller has is where the view shows it.
+// shorter than the offset into it, as a block just collapsed is, puts the view at its end. A row standing in for the
+// position's own (rowIndex) puts the view at its end too, which is where the position's row stood. The end is past
+// every offset: the largest one the scroller has is where the view shows it.
 export function resolve(position: Position, indexOf: (key: string) => number | undefined, placed: (index: number) => Placed | undefined): number | undefined {
   switch (position.at) {
     case "end":
@@ -19,14 +20,14 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
     case "row": {
       const index = rowIndex(position.key, indexOf);
       const row = index === undefined ? undefined : placed(index);
-      return row === undefined ? undefined : row.start + Math.min(position.offset, row.size);
+      return row === undefined ? undefined : row.start + Math.min(row.key === position.key ? position.offset : Infinity, row.size);
     }
   }
 }
 
-// The index of the row at `key` (a row a category hides is at the row listed after it), or, while there is none, of
-// the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter replaced, as a body
-// so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
+// The index of the row at `key`: its own, or, for a row a category hides, the row listed before it (Keys); or, while
+// there is none, the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter
+// replaced, as a body so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
   for (let end = key.length; end !== -1; end = key.lastIndexOf("/", end - 1)) {
     const index = indexOf(key.slice(0, end));

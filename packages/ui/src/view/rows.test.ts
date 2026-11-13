@@ -91,15 +91,17 @@ describe("layout", () => {
     expect(listed({ ...dialogue, user: "hidden" })).toEqual(["a"]);
   });
 
-  it("puts a row not listed at the place of the row listed after it, the next exchange's line or the last row when its own exchange has none", () => {
-    const formatted = createFormatter()(exchanges([...request("a", { ...body, system: "Be brief." }), ...request("b", body)]));
+  it("puts a row not listed at the row listed before it in its exchange, so it stays there as exchanges arrive", () => {
+    const format = createFormatter();
     const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
-    const { keys } = layout(dialogue)(formatted);
-    expect(keys.at(keys.indexOf("a/request")!)).toBe("a/message.0");
-    expect(keys.at(keys.indexOf("a/request/system.0")!)).toBe("a/message.0");
-    const { keys: none } = layout({ ...dialogue, user: "hidden" })(formatted);
-    expect(none.at(none.indexOf("a/message.0/content.0")!)).toBe("b");
-    expect(none.at(none.indexOf("b/message.0/content.0")!)).toBe("b");
+    const layOut = layout(dialogue);
+    const a = request("a", { ...body, system: "Be brief." });
+    const { keys } = layOut(format(exchanges(a)));
+    expect(keys.at(keys.indexOf("a/request")!)).toBe("a");
+    expect(keys.at(keys.indexOf("a/request/system.0")!)).toBe("a");
+    const { keys: more } = layout({ ...dialogue, user: "hidden" })(format(exchanges([...a, ...request("b", body)])));
+    expect(more.at(more.indexOf("a/message.0/content.0")!)).toBe("a");
+    expect(more.at(more.indexOf("b/message.0/content.0")!)).toBe("b");
   });
 
   it("lists the same group and block rows whichever categories are hidden, so showing or hiding one sizes and renders no other", () => {
