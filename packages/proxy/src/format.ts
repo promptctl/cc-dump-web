@@ -28,6 +28,10 @@ export type Listing = { name: string; live: boolean };
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
 export type RecordingEnd = { unterminated_bytes: number };
 
+// The data of a read's `failed` event, sent when the reader fails after the read began: the error, as the
+// request's log event records it.
+export type ReadFailure = { error: string };
+
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
@@ -43,6 +47,10 @@ export function parseListings(json: string): Listing[] {
 
 export function parseRecordingEnd(json: string): RecordingEnd {
   return { unterminated_bytes: fields(parseJson(json, "recording end"), "recording end").integer("unterminated_bytes") };
+}
+
+export function parseReadFailure(json: string): ReadFailure {
+  return { error: fields(parseJson(json, "read failure"), "read failure").string("error") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {

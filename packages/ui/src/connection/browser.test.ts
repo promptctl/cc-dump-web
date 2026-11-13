@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import type { Event } from "@cc-dump/log";
 import { send, serving } from "@cc-dump/log/testing";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
 const finishedName = "20261113T080000.000Z.jsonl";
@@ -105,6 +105,48 @@ describe("the browser connection", () => {
     ]);
     // The lines after it arrive in the same chunk, so any event dispatched after the read closed is queued by now.
     expect(read.queued()).toBe(0);
+  });
+
+  it("reports a read the reader failed once it began as failed, with the reader's error, and closes it so it is not read again", async () => {
+    const { dir, proxy, logged, connection } = await proxyAndConnection();
+    // A recording that is a directory: listed, and read from its start, so the reader sends its headers and
+    // then fails, reading it, with EISDIR.
+    const name = "20261113T083000.000Z.jsonl";
+    mkdirSync(join(dir, name));
+    const sources: EventSource[] = [];
+    vi.stubGlobal(
+      "EventSource",
+      class extends EventSource {
+        constructor(...args: ConstructorParameters<typeof EventSource>) {
+          super(...args);
+          sources.push(this);
+        }
+      },
+    );
+    onTestFinished(() => void vi.unstubAllGlobals());
+
+    expect(await reading(connection, name).next()).toEqual({
+      failed: expect.objectContaining({
+        message: `GET http://127.0.0.1:${proxy.readerPort}/recordings/${name}`,
+        cause: expect.objectContaining({ message: expect.stringContaining("EISDIR") }),
+      }),
+    });
+    // A closed EventSource never reconnects.
+    expect(sources.map((source) => source.readyState)).toEqual([EventSource.CLOSED]);
+    expect(await logged(({ event }) => event === "request")).toMatchObject({ url: `/recordings/${name}`, outcome: "error", status: 200 });
+  });
+
+  it("resumes a read whose connection dropped from its last event, reporting nothing", async () => {
+    const [first, second] = finishedEvents.map((event) => JSON.stringify(event));
+    const reader = await serving((req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      // `retry` makes the browser reconnect in 10ms, not its default 3s.
+      if (req.headers["last-event-id"] === undefined) res.write(`retry: 10\nid: 7\ndata: ${first}\n\n`, () => res.destroy());
+      else if (req.headers["last-event-id"] === "7") res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
+      else res.destroy(new Error(`resumed from ${req.headers["last-event-id"]}, not 7`));
+    });
+    const read = reading(createBrowserConnection(reader.url), finishedName);
+    expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
   });
 
   it("reports a read of a recording the proxy does not list as failed", async () => {

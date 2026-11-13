@@ -47,9 +47,9 @@ export default defineConfig(
   },
   {
     // [LAW:single-enforcer] The UI reaches the backend only through its connection: no other UI module knows
-    // a backend address or opens a request of its own.
+    // a backend address or opens a request of its own. The browser connection's test watches the EventSource it opens.
     files: ["packages/ui/src/**/*.{ts,tsx}"],
-    ignores: ["packages/ui/src/connection/browser.ts"],
+    ignores: ["packages/ui/src/connection/browser.ts", "packages/ui/src/connection/browser.test.ts"],
     rules: {
       "no-restricted-globals": ["error", ...network.map((name) => ({ name, message: reachedThroughConnection }))],
       "no-restricted-properties": [

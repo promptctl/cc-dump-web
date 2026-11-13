@@ -297,7 +297,7 @@ describe("createReader", () => {
     expect(lines.map((line) => (JSON.parse(line) as RecordedEvent).type)).toEqual(["request_trailers", "response", "response_body", "response_trailers", "end"]);
   });
 
-  it("makes a read error after the response started the request's error, and cuts the stream", async () => {
+  it("makes a read error after the response started the request's error, and ends the stream with a failed event", async () => {
     const dir = recordingsDir();
     // The live recording is a directory: it opens, and reading it fails with EISDIR.
     mkdirSync(join(dir, liveName));
@@ -313,13 +313,16 @@ describe("createReader", () => {
     const readerLog = eventLog();
     const reader = await serving(createReader(readerLog.log, broken));
 
-    const res = await send(reader.port, { path: `/recordings/${liveName}` });
-    const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
+    const stream = await subscribe(reader.port, `/recordings/${liveName}`);
+    const ended = once(stream.res, "end");
     await readerLog.next();
     written = 1;
     for (const listener of listeners) listener();
-    await cut;
 
-    expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining("EISDIR"), status: 200 });
+    const failed = await stream.next();
+    await ended;
+    expect(failed).toEqual({ event: "failed", data: expect.any(String) });
+    expect(JSON.parse(failed.data)).toEqual({ error: expect.stringContaining("EISDIR") });
+    expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: JSON.parse(failed.data).error, status: 200 });
   });
 });

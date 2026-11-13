@@ -1,5 +1,5 @@
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { parseListings, parseRecordedEvent, parseRecordingEnd } from "@cc-dump/proxy/format";
+import { parseListings, parseReadFailure, parseRecordedEvent, parseRecordingEnd } from "@cc-dump/proxy/format";
 import type { Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader, on the host the page was served from: `fetch` for the list,
@@ -48,6 +48,15 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
         receive(parseRecordingEnd, (end) => {
           close();
           reader.end(end);
+        }),
+        listening,
+      );
+      // A read the reader failed once it began. Closed here, or the EventSource reconnects into the same failure.
+      source.addEventListener(
+        "failed",
+        receive(parseReadFailure, ({ error }) => {
+          close();
+          reader.failed(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${error}`) }));
         }),
         listening,
       );

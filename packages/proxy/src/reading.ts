@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Handler, type Log } from "@cc-dump/log";
-import type { Listing, RecordingEnd } from "./format.ts";
+import type { Listing, ReadFailure, RecordingEnd } from "./format.ts";
 import type { Recording } from "./recording.ts";
 
 // [LAW:decomposition] The recording's read side, and the one path traffic takes to the screen
@@ -11,7 +11,9 @@ import type { Recording } from "./recording.ts";
 // `GET /recordings` lists the recordings, oldest first (ISO 8601 basic names sort by time), the live one
 // before its file exists. `GET /recordings/<name>` is Server-Sent Events, one per recorded line, whose id is
 // the byte offset just past the line: a reconnecting EventSource resumes from it with `Last-Event-ID`.
-// A finished recording ends with an `end` event; the live one is followed until the reader leaves.
+// A finished recording ends with an `end` event; the live one is followed until the reader leaves. A read that
+// fails once begun ends with a `failed` event: the stream's only way to tell a reader it failed, since an
+// EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 export function createReader(log: Log, live: Recording): Handler {
   const dir = dirname(live.path);
   return (req, res, { trace_id, fail, ended }) => {
@@ -28,10 +30,10 @@ export function createReader(log: Log, live: Recording): Handler {
       const reading = { log, trace_id, ended, name, path: join(dir, name), live: name === live.name ? live : undefined };
       return read(reading, positionOf(req, url), res, fail);
     };
+    // Every await of the answer comes before its response's headers; a read fails after them in its stream.
     answer().catch((error: unknown) => {
       fail(error);
-      if (res.headersSent) res.destroy();
-      else res.writeHead(500, cors).end();
+      res.writeHead(500, cors).end();
     });
   };
 }
@@ -78,16 +80,9 @@ async function read(reading: Reading, position: number | undefined, res: ServerR
   if (res.destroyed) return;
   // Flushed now, not with the first event: a reader of an empty live recording is connected before it has one.
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...cors }).flushHeaders();
-  // A read that fails is the request's failure, and the response is cut, as the proxy cuts a stream the
-  // upstream cut: reported first, so it is on the request's event, written at the close. The cut carries no
-  // error, so the socket's own error event does not report the proxy's failure as the client's.
-  const failed = (error: unknown) => {
-    fail(error);
-    res.destroy();
-  };
   // pipeline destroys the stream when the response closes. Its callback runs after that close, when the
   // request's event is written, so it has nothing to add.
-  pipeline(recordingEvents(reading, position, failed), res, () => {});
+  pipeline(recordingEvents(reading, position, fail), res, () => {});
 }
 
 // A position is the start, or just past a newline in the file: the id of an event a reader was sent.
@@ -113,7 +108,7 @@ async function bytesAt({ path, live }: Reading, position: number, length: number
 // in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or the
 // request ends before then, with the request's ending. Following is the request itself; what it delivered is
 // every event written after.
-function recordingEvents(reading: Reading, from: number, failed: (error: unknown) => void) {
+function recordingEvents(reading: Reading, from: number, fail: (error: unknown) => void) {
   const { log, trace_id, ended, name, live } = reading;
   const span = startSpan(trace_id);
   let offset = from; // just past the last line read into the stream
@@ -178,8 +173,12 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
       });
     } catch (error) {
       if (stream.destroyed) return;
-      catchUp({ outcome: "error", error: describeError(error) });
-      failed(error);
+      const failure: ReadFailure = { error: describeError(error) };
+      catchUp({ outcome: "error", ...failure });
+      // The request's failure, on its event, written at the close the stream's end brings.
+      fail(error);
+      stream.push(`event: failed\ndata: ${JSON.stringify(failure)}\n\n`);
+      stream.push(null);
     }
   }
 
