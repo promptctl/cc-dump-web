@@ -2,13 +2,16 @@ import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection } from "node:net";
 import { setTimeout } from "node:timers/promises";
-import { describe, expect, it } from "vitest";
-import { createLog, createServer, listen, type Event, type Handler } from "./index.ts";
-import { closedAfterTest, eventLog, sendRaw } from "./testing.ts";
+import type { AddressInfo } from "node:net";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { createLog, serve, type Event, type Handler } from "./index.ts";
+import { eventLog, sendRaw, serveForTest } from "./testing.ts";
 
-async function serve(handler: Handler) {
+// The first event is binding the port; `next` then yields the events of the handler's work.
+async function serving(handler: Handler) {
   const { log, next } = eventLog();
-  const port = await listen(() => {}, closedAfterTest(createServer(log, handler)), 0);
+  const port = await serveForTest(log, handler);
+  expect(await next()).toMatchObject({ event: "listen", port });
   return { port, url: `http://127.0.0.1:${port}`, next };
 }
 
@@ -17,6 +20,10 @@ const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 
 // @ts-expect-error An event that ended well cannot carry an error.
 const contradictory: Event = { ...ended, error: "boom" };
 void contradictory;
+
+// @ts-expect-error A part hands serve its handler, never a server it made itself.
+const unlogged = () => serve(() => {}, createHttpServer(), 0);
+void unlogged;
 
 describe("createLog", () => {
   it("writes each event as one JSON line naming its service", () => {
@@ -27,9 +34,9 @@ describe("createLog", () => {
   });
 });
 
-describe("createServer", () => {
+describe("serve", () => {
   it("emits one event for an answered request", async () => {
-    const { url, next } = await serve((_req, res) => res.writeHead(418).end());
+    const { url, next } = await serving((_req, res) => res.writeHead(418).end());
 
     await (await fetch(`${url}/a?b=1`, { method: "POST" })).text();
 
@@ -50,7 +57,7 @@ describe("createServer", () => {
   it("records an aborted request with no status when the client leaves first", async () => {
     let arrived!: () => void;
     const received = new Promise<void>((resolve) => (arrived = resolve));
-    const { url, next } = await serve(() => arrived());
+    const { url, next } = await serving(() => arrived());
 
     const abort = new AbortController();
     const request = fetch(url, { signal: abort.signal }).catch(() => "aborted");
@@ -62,7 +69,7 @@ describe("createServer", () => {
   });
 
   it("records the first failure the handler reports, beside the answer it sent", async () => {
-    const { url, next } = await serve((_req, res, fail) => {
+    const { url, next } = await serving((_req, res, fail) => {
       fail(new Error("first"));
       fail(new Error("second"));
       res.writeHead(502).end();
@@ -76,13 +83,15 @@ describe("createServer", () => {
   });
 
   it("records a request node refuses before any handler, and leaves node's answer as node sent it", async () => {
-    const { port, next } = await serve(() => expect.unreachable("no handler sees a malformed request"));
+    const { port, next } = await serving(() => expect.unreachable("no handler sees a malformed request"));
 
     const { reply, clientPort } = await sendRaw(port, "NOT HTTP\r\n\r\n");
 
-    const bare = await listen(() => {}, closedAfterTest(createHttpServer()), 0);
+    const bare = createHttpServer().listen(0);
+    onTestFinished(() => new Promise<void>((resolve) => bare.close(() => resolve())));
+    await once(bare, "listening");
     expect(reply).toMatch(/^HTTP\/1\.1 400 /);
-    expect(reply).toBe((await sendRaw(bare, "NOT HTTP\r\n\r\n")).reply);
+    expect(reply).toBe((await sendRaw((bare.address() as AddressInfo).port, "NOT HTTP\r\n\r\n")).reply);
     expect(await next()).toMatchObject({
       event: "client_error",
       trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
@@ -93,7 +102,7 @@ describe("createServer", () => {
   });
 
   it("spans a connection error from the moment the connection opened", async () => {
-    const { port, next } = await serve(() => expect.unreachable("no handler sees a malformed request"));
+    const { port, next } = await serving(() => expect.unreachable("no handler sees a malformed request"));
 
     const socket = createConnection(port, "127.0.0.1");
     await once(socket, "connect");
@@ -104,7 +113,7 @@ describe("createServer", () => {
   });
 
   it("records a connection error beside the request it cut, joined by the client's port", async () => {
-    const { port, next } = await serve((req, res) => {
+    const { port, next } = await serving((req, res) => {
       req.resume();
       req.on("end", () => res.end());
     });
@@ -118,22 +127,28 @@ describe("createServer", () => {
       { event: "request", method: "POST", client_port: clientPort },
     ]);
   });
-});
 
-describe("listen", () => {
   it("records the port it bound", async () => {
     const { log, next } = eventLog();
 
-    const port = await listen(log, closedAfterTest(createHttpServer()), 0);
+    const port = await serveForTest(log, () => {});
 
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
   });
 
   it("records and rethrows a port that is already taken", async () => {
-    const port = await listen(() => {}, closedAfterTest(createHttpServer()), 0);
+    const port = await serveForTest(() => {}, () => {});
     const { log, next } = eventLog();
 
-    await expect(listen(log, createHttpServer(), port)).rejects.toThrow(/EADDRINUSE/);
+    await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
     expect(await next()).toMatchObject({ event: "listen", outcome: "error", port, error: expect.stringContaining("EADDRINUSE") });
+  });
+
+  it("stops accepting connections once closed", async () => {
+    const { port, close } = await serve(() => {}, () => {}, 0);
+
+    await close();
+
+    await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow();
   });
 });

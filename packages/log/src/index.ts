@@ -27,9 +27,31 @@ export function createLog(service: string, write: (line: string) => void): Log {
 // client is sent when that happens is the handler's decision, made before or after `fail`.
 export type Handler = (req: IncomingMessage, res: ServerResponse, fail: (error: unknown) => void) => void;
 
-// [LAW:single-enforcer] The one way a part gets an HTTP server, so every unit of work it does with a
-// client is logged here and nowhere else: each request its handler receives, and each connection error.
-export function createServer(log: Log, handler: Handler): Server {
+export type Serving = { port: number; close: () => Promise<void> };
+
+// [LAW:single-enforcer] The one way a part serves HTTP: it hands over its handler, never a server, so
+// every unit of work it does with a client is logged here and nowhere else: each request its handler
+// receives, each connection error, and binding the port. A port that cannot be bound writes its event,
+// then rethrows, so the process exits non-zero. Port 0 binds a free one; `port` is the one bound.
+export async function serve(log: Log, handler: Handler, port: number): Promise<Serving> {
+  const server = loggedServer(log, handler);
+  const span = startSpan();
+  try {
+    server.listen(port);
+    await once(server, "listening");
+  } catch (error) {
+    log({ event: "listen", ...span.end(), outcome: "error", error: describe(error), port });
+    throw error;
+  }
+  const bound = (server.address() as AddressInfo).port;
+  log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
+  return {
+    port: bound,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
+
+function loggedServer(log: Log, handler: Handler): Server {
   const server = createHttpServer(withRequestEvent(log, handler));
   server.on("connection", (socket: Socket) => {
     const span = startSpan();
@@ -73,22 +95,6 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
     });
     handler(req, res, (error) => (failure ??= describe(error)));
   };
-}
-
-// Startup is a unit of work too: a port that cannot be bound writes its event, then rethrows,
-// so the process exits non-zero. Resolves with the bound port (port 0 binds a free one).
-export async function listen(log: Log, server: Server, port: number): Promise<number> {
-  const span = startSpan();
-  try {
-    server.listen(port);
-    await once(server, "listening");
-  } catch (error) {
-    log({ event: "listen", ...span.end(), outcome: "error", error: describe(error), port });
-    throw error;
-  }
-  const bound = (server.address() as AddressInfo).port;
-  log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
-  return bound;
 }
 
 // [LAW:single-enforcer] Every error an event carries is rendered here. An llhttp parse error carries

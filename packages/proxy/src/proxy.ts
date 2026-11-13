@@ -1,12 +1,12 @@
-import { request as httpRequest, type Server } from "node:http";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { createServer, type Log } from "@cc-dump/log";
+import type { Handler } from "@cc-dump/log";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 
 // [LAW:decomposition] The proxy never parses a body: bytes pass through in both directions as
 // they arrive, which is what keeps the agent's view of the API unchanged.
-export function createProxy(log: Log, upstream: URL): Server {
+export function createProxy(upstream: URL): Handler {
   const request = requestFor[upstream.protocol as keyof typeof requestFor];
   // [LAW:no-silent-failure] Requests go to the upstream's origin and path, so a URL carrying anything
   // more (query, fragment, credentials) is refused here rather than forwarded to without it.
@@ -14,7 +14,7 @@ export function createProxy(log: Log, upstream: URL): Server {
     throw new Error(`cc-dump proxy: upstream must be an http or https origin with an optional path, got ${upstream.href}`);
   const basePath = upstream.pathname.replace(/\/$/, "");
 
-  return createServer(log, (req, res, fail) => {
+  return (req, res, fail) => {
     const outgoing = request(upstream, {
       method: req.method,
       path: basePath + req.url,
@@ -48,7 +48,7 @@ export function createProxy(log: Log, upstream: URL): Server {
     // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
     res.on("close", () => outgoing.destroy());
     req.pipe(outgoing);
-  });
+  };
 }
 
 type Header = [name: string, value: string];

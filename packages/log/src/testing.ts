@@ -1,9 +1,8 @@
 import { once } from "node:events";
-import type { Server } from "node:http";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { onTestFinished } from "vitest";
-import type { Event } from "./index.ts";
+import { serve, type Event, type Handler, type Log } from "./index.ts";
 
 // A log the test can wait on: `next()` resolves with the next event written.
 export function eventLog() {
@@ -29,7 +28,9 @@ export async function sendRaw(port: number, bytes: string) {
   return { reply: (await buffer(socket)).toString(), clientPort };
 }
 
-export function closedAfterTest(server: Server): Server {
-  onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
-  return server;
+// Serves `handler` on a free port until the test finishes; resolves with the port.
+export async function serveForTest(log: Log, handler: Handler): Promise<number> {
+  const { port, close } = await serve(log, handler, 0);
+  onTestFinished(close);
+  return port;
 }

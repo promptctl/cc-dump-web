@@ -1,16 +1,15 @@
 import { once } from "node:events";
-import { createServer, request, type IncomingMessage, type RequestListener } from "node:http";
+import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
-import { listen } from "@cc-dump/log";
-import { closedAfterTest, eventLog, sendRaw } from "@cc-dump/log/testing";
+import type { Handler } from "@cc-dump/log";
+import { eventLog, sendRaw, serveForTest } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { createProxy } from "./proxy.ts";
 
-async function upstreamServing(handler: RequestListener): Promise<URL> {
-  const port = await listen(() => {}, closedAfterTest(createServer(handler)), 0);
-  return new URL(`http://127.0.0.1:${port}`);
+async function upstreamServing(handler: Handler): Promise<URL> {
+  return new URL(`http://127.0.0.1:${await serveForTest(() => {}, handler)}`);
 }
 
 // Nothing listens on port 1. localhost, because it resolves to more than one address on most
@@ -19,7 +18,8 @@ const refusingAddress = new URL("http://localhost:1");
 
 async function proxyTo(upstream: URL) {
   const { log, next } = eventLog();
-  const port = await listen(() => {}, closedAfterTest(createProxy(log, upstream)), 0);
+  const port = await serveForTest(log, createProxy(upstream));
+  expect(await next()).toMatchObject({ event: "listen", port });
   return { port, next };
 }
 
@@ -226,7 +226,7 @@ describe("createProxy", () => {
   it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a"])(
     "refuses the upstream %s, which it could not forward to as given",
     (href) => {
-      expect(() => createProxy(() => {}, new URL(href))).toThrow(/http or https origin/);
+      expect(() => createProxy(new URL(href))).toThrow(/http or https origin/);
     },
   );
 });
