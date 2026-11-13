@@ -89,15 +89,20 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
 // [LAW:single-enforcer] The one way a part's process stops: graceful shutdown on SIGINT or SIGTERM closes
 // every server, so each request still open is cut and its event written, then writes its own event, naming
 // the first signal. Nothing is left holding the event loop, so the process exits by itself, once stdout has
-// drained, with code 1 if a server failed to close: that event carries the error.
+// drained, with code 1 and the error on stderr if the stop failed, as node reports an error nothing handled.
 // One Ctrl-C reaches the process more than once: the terminal signals its whole process group, and each
 // supervisor in it (concurrently, pnpm, node --watch) forwards the signal again. So the first signal
-// resolves the stop and every later one finds it resolved. A shutdown that hangs is killed with SIGKILL.
+// resolves the stop and every later one finds it resolved. The listeners stay after the stop: a forwarded
+// signal that got node's default kill would end the process before stdout drained the stop's events. A
+// shutdown that hangs is killed with SIGKILL.
 export function shutdownOnSignal(log: Log, servers: Serving[]) {
   const signalled = new Promise<NodeJS.Signals>((resolve) => process.on("SIGINT", resolve).on("SIGTERM", resolve));
   void signalled
     .then((signal) => loggedAll(log, "shutdown", { signal }, servers.map(({ close }) => close())))
-    .catch(() => (process.exitCode = 1));
+    .catch((error: unknown) => {
+      process.exitCode = 1;
+      process.stderr.write(`${describeError(error)}\n`);
+    });
 }
 
 // A unit of work that is several at once: its event is written once every one has settled, so one that
