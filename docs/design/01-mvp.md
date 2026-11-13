@@ -23,7 +23,7 @@ Each feature is stated as what the person using the app can do and see.
 ### F1. Launch
 - The user picks a tmux session from a list of the sessions on their tmux server and presses Launch.
 - The app creates a new window in that session running the agent command, with `ANTHROPIC_BASE_URL` set to the proxy. The agent's first request appears in the conversation.
-- The agent command is a setting. Its default is `claude`.
+- The agent command is a setting holding a full command line with its arguments, for example `claude --dangerously-skip-permissions`. Its default is `claude`.
 - When tmux has no running server or no sessions, the launch control says so. When tmux refuses the launch, the user sees tmux's error text.
 - An agent started by hand also works: the info panel (F8) gives the line to export.
 
@@ -106,7 +106,18 @@ Hot reload is designed in first, because it decides where every other piece live
 - refreshing the browser,
 - reloading after a code change.
 
-**Both servers listen on 127.0.0.1 only.** Recordings contain the user's prompts and code.
+**One connection interface.** The UI reaches the backend only through a single interface, with one implementation today (the browser talking to the local servers). An Electron shell is then a second implementation of that interface and changes no UI code.
+
+**Security is a non-goal.** Whatever is needed is built in the most direct way. Launching an agent already means running a shell command the user configured.
+
+## Scaffold for later layers
+
+The MVP is the base the intermediate and advanced features are added to, so its seams are placed where those features attach:
+
+- A new block type or a richer rendering is one new entry in the formatter, with no change to capture or the view.
+- A category's state is a value that can grow from shown/hidden to more levels without changing the blocks that read it.
+- Anything computed from traffic (cost, timelines, change tracking) is another reader of the same events.
+- A terminal pane, more agents, and other providers attach at the launch feature and the connection interface.
 
 ## Stack
 
@@ -128,4 +139,3 @@ Hot reload is designed in first, because it decides where every other piece live
 | The recording holds what was on the wire, so it is not a HAR file and the old app's recordings will not open. | question |
 | Re-deriving a very long conversation on every reload may be slow. Not measured. | risk |
 | The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial. Not checked against the current Claude Code. | risk |
-| Shell aliases for the agent command (such as `clod`) do not resolve in a tmux window command without sourcing the shell's rc file. | question |
