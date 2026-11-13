@@ -23,7 +23,8 @@ export function createLog(service: string, write: (line: string) => void): Log {
   return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
 }
 
-// [LAW:single-enforcer] Every HTTP request of every part is logged here and nowhere else.
+// [LAW:single-enforcer] Every request a part's handler receives is logged here and nowhere else.
+// Requests node:http rejects before any handler (a clientError: bad headers, 431) never get here.
 // It observes the response; what a handler failure should do is decided with the first handler
 // that can fail.
 export function withRequestEvent(log: Log, handler: RequestListener): RequestListener {
@@ -45,17 +46,19 @@ export function withRequestEvent(log: Log, handler: RequestListener): RequestLis
 }
 
 // Startup is a unit of work too: a port that cannot be bound writes its event, then rethrows,
-// so the process exits non-zero.
-export async function listen(log: Log, server: Server, port: number): Promise<void> {
+// so the process exits non-zero. Resolves with the bound port (port 0 binds a free one).
+export async function listen(log: Log, server: Server, port: number): Promise<number> {
   const span = startSpan();
   try {
     server.listen(port);
     await once(server, "listening");
-    log({ event: "listen", ...span.end(), outcome: "ok", port: (server.address() as AddressInfo).port });
   } catch (error) {
     log({ event: "listen", ...span.end(), outcome: "error", error: inspect(error), port });
     throw error;
   }
+  const bound = (server.address() as AddressInfo).port;
+  log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
+  return bound;
 }
 
 function startSpan() {

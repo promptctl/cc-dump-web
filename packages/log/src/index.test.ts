@@ -1,6 +1,5 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { createLog, listen, withRequestEvent, type Event } from "./index.ts";
 
 // A log the test can wait on: `next()` resolves with the next event written.
@@ -17,15 +16,15 @@ function eventLog() {
   };
 }
 
-const open: Server[] = [];
-afterEach(() => Promise.all(open.splice(0).map((server) => new Promise((resolve) => server.close(resolve)))));
+function closedAfterTest(server: Server): Server {
+  onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  return server;
+}
 
 async function serve(handler: RequestListener) {
   const { log, next } = eventLog();
-  const server = createServer(withRequestEvent(log, handler));
-  open.push(server);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
-  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, next };
+  const port = await listen(() => {}, closedAfterTest(createServer(withRequestEvent(log, handler))), 0);
+  return { url: `http://127.0.0.1:${port}`, next };
 }
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -79,19 +78,14 @@ describe("withRequestEvent", () => {
 describe("listen", () => {
   it("records the port it bound", async () => {
     const { log, next } = eventLog();
-    const server = createServer();
-    open.push(server);
 
-    await listen(log, server, 0);
+    const port = await listen(log, closedAfterTest(createServer()), 0);
 
-    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port: (server.address() as AddressInfo).port });
+    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
   });
 
   it("records and rethrows a port that is already taken", async () => {
-    const taken = createServer();
-    open.push(taken);
-    await new Promise<void>((resolve) => taken.listen(0, resolve));
-    const { port } = taken.address() as AddressInfo;
+    const port = await listen(() => {}, closedAfterTest(createServer()), 0);
     const { log, next } = eventLog();
 
     await expect(listen(log, createServer(), port)).rejects.toThrow(/EADDRINUSE/);
