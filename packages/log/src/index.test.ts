@@ -1,12 +1,25 @@
-import { createServer } from "node:http";
+import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
+import { createConnection } from "node:net";
+import { buffer } from "node:stream/consumers";
 import { describe, expect, it } from "vitest";
-import { createLog, listen, withRequestEvent, type Event, type Handler } from "./index.ts";
+import { createLog, createServer, listen, type Event, type Handler } from "./index.ts";
 import { closedAfterTest, eventLog } from "./testing.ts";
 
 async function serve(handler: Handler) {
   const { log, next } = eventLog();
-  const port = await listen(() => {}, closedAfterTest(createServer(withRequestEvent(log, handler))), 0);
-  return { url: `http://127.0.0.1:${port}`, next };
+  const port = await listen(() => {}, closedAfterTest(createServer(log, handler)), 0);
+  return { port, url: `http://127.0.0.1:${port}`, next };
+}
+
+// The client's side of one connection, raw, so node's own answer is read as it was sent.
+async function sendRaw(port: number, bytes: string) {
+  const socket = createConnection(port, "127.0.0.1");
+  await once(socket, "connect");
+  // Read while connected: a closed socket no longer reports its port.
+  const clientPort = socket.localPort;
+  socket.end(bytes);
+  return { reply: (await buffer(socket)).toString(), clientPort };
 }
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -24,7 +37,7 @@ describe("createLog", () => {
   });
 });
 
-describe("withRequestEvent", () => {
+describe("createServer", () => {
   it("emits one event for an answered request", async () => {
     const { url, next } = await serve((_req, res) => res.writeHead(418).end());
 
@@ -39,6 +52,8 @@ describe("withRequestEvent", () => {
       method: "POST",
       url: "/a?b=1",
       status: 418,
+      client_address: expect.stringContaining("127.0.0.1"),
+      client_port: expect.any(Number),
     });
   });
 
@@ -69,22 +84,53 @@ describe("withRequestEvent", () => {
     expect(event).toMatchObject({ event: "request", outcome: "error", status: 502, error: expect.stringContaining("first") });
     expect(event.error).not.toContain("second");
   });
+
+  it("records a request node refuses before any handler, and leaves node's answer as node sent it", async () => {
+    const { port, next } = await serve(() => expect.unreachable("no handler sees a malformed request"));
+
+    const { reply, clientPort } = await sendRaw(port, "NOT HTTP\r\n\r\n");
+
+    expect(reply).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+    expect(await next()).toMatchObject({
+      event: "client_error",
+      trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+      outcome: "error",
+      error: expect.stringContaining("HPE_INVALID_METHOD"),
+      client_port: clientPort,
+    });
+  });
+
+  it("records a connection error beside the request it cut, joined by the client's port", async () => {
+    const { port, next } = await serve((req, res) => {
+      req.resume();
+      req.on("end", () => res.end());
+    });
+
+    const { reply, clientPort } = await sendRaw(port, "POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\n\r\nzz\r\n");
+
+    expect(reply).toMatch(/^HTTP\/1\.1 400 /);
+    const events = [await next(), await next()].sort((a, b) => a.event.localeCompare(b.event));
+    expect(events).toMatchObject([
+      { event: "client_error", error: expect.stringContaining("HPE_INVALID_CHUNK_SIZE"), client_port: clientPort },
+      { event: "request", method: "POST", client_port: clientPort },
+    ]);
+  });
 });
 
 describe("listen", () => {
   it("records the port it bound", async () => {
     const { log, next } = eventLog();
 
-    const port = await listen(log, closedAfterTest(createServer()), 0);
+    const port = await listen(log, closedAfterTest(createHttpServer()), 0);
 
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
   });
 
   it("records and rethrows a port that is already taken", async () => {
-    const port = await listen(() => {}, closedAfterTest(createServer()), 0);
+    const port = await listen(() => {}, closedAfterTest(createHttpServer()), 0);
     const { log, next } = eventLog();
 
-    await expect(listen(log, createServer(), port)).rejects.toThrow(/EADDRINUSE/);
+    await expect(listen(log, createHttpServer(), port)).rejects.toThrow(/EADDRINUSE/);
     expect(await next()).toMatchObject({ event: "listen", outcome: "error", port, error: expect.stringContaining("EADDRINUSE") });
   });
 });

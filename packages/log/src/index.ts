@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import type { IncomingMessage, RequestListener, Server, ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
 import { inspect } from "node:util";
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
@@ -27,13 +27,40 @@ export function createLog(service: string, write: (line: string) => void): Log {
 // client is sent when that happens is the handler's decision, made before or after `fail`.
 export type Handler = (req: IncomingMessage, res: ServerResponse, fail: (error: unknown) => void) => void;
 
-// [LAW:single-enforcer] Every request a part's handler receives is logged here and nowhere else.
-// Requests node:http rejects before any handler (a clientError: bad headers, 431) never get here.
+// [LAW:single-enforcer] The one way a part gets an HTTP server, so every unit of work it does with a
+// client is logged here and nowhere else: each request its handler receives, and each connection error.
+export function createServer(log: Log, handler: Handler): Server {
+  const server = createHttpServer(withRequestEvent(log, handler));
+  server.on("connection", (socket: Socket) => {
+    const client = clientOf(socket);
+    // Every request node:http refuses (a malformed request line, headers over its limit, a bad chunk, a
+    // request timeout) and every client that leaves mid-exchange ends in node destroying the socket with
+    // the error, after node has answered if it could, so this observes them and the answer stays node's.
+    // A connection's lifecycle is not a request's, so the event is its own; `client` joins it to the
+    // request events of the same connection.
+    socket.on("error", (error: Error & { rawPacket?: Buffer }) => {
+      // An llhttp parse error carries the request's raw bytes (headers, x-api-key included); the event
+      // records what node saw, never the bytes.
+      const seen = Object.assign(new Error(error.message), error, { stack: error.stack });
+      delete seen.rawPacket;
+      log({ event: "client_error", ...startSpan().end(), outcome: "error", error: inspect(seen), ...client });
+    });
+  });
+  return server;
+}
+
+// OpenTelemetry's client.address and client.port: the peer of the TCP connection. Read while the socket
+// is live, when a unit of work begins: a destroyed socket reports them only if something read them earlier.
+function clientOf(socket: Socket) {
+  return { client_address: socket.remoteAddress, client_port: socket.remotePort };
+}
+
 // The event is written once, when the response closes: an error reported before then is its
 // outcome, the first one if there were several.
-export function withRequestEvent(log: Log, handler: Handler): RequestListener {
+function withRequestEvent(log: Log, handler: Handler): RequestListener {
   return (req, res) => {
     const span = startSpan();
+    const client = clientOf(req.socket);
     let failure: string | undefined;
     res.on("close", () => {
       const ending: Ending =
@@ -46,6 +73,7 @@ export function withRequestEvent(log: Log, handler: Handler): RequestListener {
         url: req.url,
         // The status the handler set; on a cut response the client may not have received it.
         status: res.headersSent ? res.statusCode : null,
+        ...client,
       });
     });
     handler(req, res, (error) => (failure ??= inspect(error)));

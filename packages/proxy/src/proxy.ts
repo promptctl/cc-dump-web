@@ -1,6 +1,6 @@
-import { request as httpRequest, createServer, type Server } from "node:http";
+import { request as httpRequest, type Server } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { withRequestEvent, type Log } from "@cc-dump/log";
+import { createServer, type Log } from "@cc-dump/log";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 
@@ -14,43 +14,41 @@ export function createProxy(log: Log, upstream: URL): Server {
     throw new Error(`cc-dump proxy: upstream must be an http or https origin with an optional path, got ${upstream.href}`);
   const basePath = upstream.pathname.replace(/\/$/, "");
 
-  return createServer(
-    withRequestEvent(log, (req, res, fail) => {
-      const outgoing = request(upstream, {
-        method: req.method,
-        path: basePath + req.url,
-        // node adds no Host when headers are an array, so the upstream's replaces the agent's.
-        headers: [["host", upstream.host], ...endToEnd(req.rawHeaders, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
-      });
+  return createServer(log, (req, res, fail) => {
+    const outgoing = request(upstream, {
+      method: req.method,
+      path: basePath + req.url,
+      // node adds no Host when headers are an array, so the upstream's replaces the agent's.
+      headers: [["host", upstream.host], ...endToEnd(req.rawHeaders, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
+    });
 
-      // An upstream failure reaches the agent as it would on a direct connection: before the
-      // response started, an error response in the API's own shape; after, the cut itself.
-      const upstreamFailed = (error: NodeJS.ErrnoException) => {
+    // An upstream failure reaches the agent as it would on a direct connection: before the
+    // response started, an error response in the API's own shape; after, the cut itself.
+    const upstreamFailed = (error: NodeJS.ErrnoException) => {
+      fail(error);
+      if (res.headersSent) res.destroy();
+      else res.writeHead(502, { "content-type": "application/json" }).end(apiError(upstream, error));
+    };
+
+    outgoing.on("error", upstreamFailed);
+    outgoing.on("response", (incoming) => {
+      incoming.on("error", upstreamFailed);
+      // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
+      // stricter than node's response parser (status 099, a control byte in the reason phrase). A
+      // response it refuses is cut, as the agent's own client would fail on it directly. Not a 502:
+      // the refused writeHead has already written part of its state onto `res`.
+      try {
+        res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(incoming.rawHeaders, hopByHop).flat());
+      } catch (error) {
         fail(error);
-        if (res.headersSent) res.destroy();
-        else res.writeHead(502, { "content-type": "application/json" }).end(apiError(upstream, error));
-      };
-
-      outgoing.on("error", upstreamFailed);
-      outgoing.on("response", (incoming) => {
-        incoming.on("error", upstreamFailed);
-        // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
-        // stricter than node's response parser (status 099, a control byte in the reason phrase). A
-        // response it refuses is cut, as the agent's own client would fail on it directly. Not a 502:
-        // the refused writeHead has already written part of its state onto `res`.
-        try {
-          res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(incoming.rawHeaders, hopByHop).flat());
-        } catch (error) {
-          fail(error);
-          return res.destroy();
-        }
-        incoming.pipe(res);
-      });
-      // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
-      res.on("close", () => outgoing.destroy());
-      req.pipe(outgoing);
-    }),
-  );
+        return res.destroy();
+      }
+      incoming.pipe(res);
+    });
+    // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
+    res.on("close", () => outgoing.destroy());
+    req.pipe(outgoing);
+  });
 }
 
 type Header = [name: string, value: string];
