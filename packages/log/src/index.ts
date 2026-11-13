@@ -32,19 +32,14 @@ export type Handler = (req: IncomingMessage, res: ServerResponse, fail: (error: 
 export function createServer(log: Log, handler: Handler): Server {
   const server = createHttpServer(withRequestEvent(log, handler));
   server.on("connection", (socket: Socket) => {
+    const span = startSpan();
     const client = clientOf(socket);
     // Every request node:http refuses (a malformed request line, headers over its limit, a bad chunk, a
-    // request timeout) and every client that leaves mid-exchange ends in node destroying the socket with
+    // request timeout) and every connection the client resets ends in node destroying the socket with
     // the error, after node has answered if it could, so this observes them and the answer stays node's.
-    // A connection's lifecycle is not a request's, so the event is its own; `client` joins it to the
-    // request events of the same connection.
-    socket.on("error", (error: Error & { rawPacket?: Buffer }) => {
-      // An llhttp parse error carries the request's raw bytes (headers, x-api-key included); the event
-      // records what node saw, never the bytes.
-      const seen = Object.assign(new Error(error.message), error, { stack: error.stack });
-      delete seen.rawPacket;
-      log({ event: "client_error", ...startSpan().end(), outcome: "error", error: inspect(seen), ...client });
-    });
+    // A connection's lifecycle is not a request's, so the event is its own, spanning the connection up to
+    // its error; `client` joins it to the request events of the same connection.
+    socket.on("error", (error) => log({ event: "client_error", ...span.end(), outcome: "error", error: describe(error), ...client }));
   });
   return server;
 }
@@ -76,7 +71,7 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
         ...client,
       });
     });
-    handler(req, res, (error) => (failure ??= inspect(error)));
+    handler(req, res, (error) => (failure ??= describe(error)));
   };
 }
 
@@ -88,12 +83,23 @@ export async function listen(log: Log, server: Server, port: number): Promise<nu
     server.listen(port);
     await once(server, "listening");
   } catch (error) {
-    log({ event: "listen", ...span.end(), outcome: "error", error: inspect(error), port });
+    log({ event: "listen", ...span.end(), outcome: "error", error: describe(error), port });
     throw error;
   }
   const bound = (server.address() as AddressInfo).port;
   log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
   return bound;
+}
+
+// [LAW:single-enforcer] Every error an event carries is rendered here. An llhttp parse error carries
+// the raw bytes of the message it was parsing as `rawPacket`: a request's (x-api-key included) on a
+// server's socket, an upstream response's (set-cookie included) on a client's. The event records what
+// node said about the bytes, never the bytes.
+function describe(error: unknown): string {
+  if (!(error instanceof Error && "rawPacket" in error)) return inspect(error);
+  const said = Object.assign(new Error(error.message), error, { stack: error.stack });
+  delete said.rawPacket;
+  return inspect(said);
 }
 
 function startSpan() {

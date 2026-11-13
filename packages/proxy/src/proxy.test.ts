@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import { listen } from "@cc-dump/log";
-import { closedAfterTest, eventLog } from "@cc-dump/log/testing";
+import { closedAfterTest, eventLog, sendRaw } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { createProxy } from "./proxy.ts";
 
@@ -199,22 +199,28 @@ describe("createProxy", () => {
     expect(await next()).toMatchObject({ outcome: "aborted" });
   });
 
+  // llhttp's parse errors carry the bytes they were parsing as rawPacket, on either side of the proxy.
   it("answers oversized request headers with node's 431 and logs it without the request's bytes", async () => {
     const { port, next } = await proxyTo(refusingAddress);
-    const key = "sk-ant-test-key";
 
-    const agent = createConnection(port, "127.0.0.1");
-    // A short request line, so the key falls within the 50 bytes inspect shows of a Buffer.
-    agent.end(`GET / HTTP/1.1\r\nx-api-key: ${key}\r\nx-big: ${"a".repeat(20_000)}\r\n\r\n`);
-    const reply = (await buffer(agent)).toString();
+    const { reply, clientPort } = await sendRaw(port, `GET / HTTP/1.1\r\nx-api-key: sk-test\r\nx-big: ${"a".repeat(20_000)}\r\n\r\n`);
 
     expect(reply).toMatch(/^HTTP\/1\.1 431 /);
     const event = await next();
-    expect(event).toMatchObject({ event: "client_error", outcome: "error", error: expect.stringContaining("HPE_HEADER_OVERFLOW") });
-    // As written and as inspect renders a Buffer: hex bytes separated by spaces.
-    const keyHex = [...Buffer.from(key)].map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
-    expect(JSON.stringify(event)).not.toContain(key);
-    expect(JSON.stringify(event)).not.toContain(keyHex);
+    expect(event).toMatchObject({ event: "client_error", outcome: "error", error: expect.stringContaining("HPE_HEADER_OVERFLOW"), client_port: clientPort });
+    expect(event.error).not.toContain("rawPacket");
+  });
+
+  it("answers 502 to an upstream response node cannot parse and logs it without the response's bytes", async () => {
+    const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 200 OK\r\nset-cookie: session=1\r\nbad header\r\n\r\n"));
+    const { port, next } = await proxyTo(upstream);
+
+    const res = await send(port, { method: "POST", path: "/v1/messages" });
+
+    expect(res.statusCode).toBe(502);
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", outcome: "error", status: 502, error: expect.stringContaining("HPE_INVALID_HEADER_TOKEN") });
+    expect(event.error).not.toContain("rawPacket");
   });
 
   it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a"])(

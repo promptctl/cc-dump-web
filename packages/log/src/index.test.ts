@@ -1,25 +1,15 @@
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection } from "node:net";
-import { buffer } from "node:stream/consumers";
+import { setTimeout } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { createLog, createServer, listen, type Event, type Handler } from "./index.ts";
-import { closedAfterTest, eventLog } from "./testing.ts";
+import { closedAfterTest, eventLog, sendRaw } from "./testing.ts";
 
 async function serve(handler: Handler) {
   const { log, next } = eventLog();
   const port = await listen(() => {}, closedAfterTest(createServer(log, handler)), 0);
   return { port, url: `http://127.0.0.1:${port}`, next };
-}
-
-// The client's side of one connection, raw, so node's own answer is read as it was sent.
-async function sendRaw(port: number, bytes: string) {
-  const socket = createConnection(port, "127.0.0.1");
-  await once(socket, "connect");
-  // Read while connected: a closed socket no longer reports its port.
-  const clientPort = socket.localPort;
-  socket.end(bytes);
-  return { reply: (await buffer(socket)).toString(), clientPort };
 }
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -98,6 +88,17 @@ describe("createServer", () => {
       error: expect.stringContaining("HPE_INVALID_METHOD"),
       client_port: clientPort,
     });
+  });
+
+  it("spans a connection error from the moment the connection opened", async () => {
+    const { port, next } = await serve(() => expect.unreachable("no handler sees a malformed request"));
+
+    const socket = createConnection(port, "127.0.0.1");
+    await once(socket, "connect");
+    await setTimeout(100);
+    socket.end("NOT HTTP\r\n\r\n").resume();
+
+    expect((await next()).duration_ms).toBeGreaterThan(50);
   });
 
   it("records a connection error beside the request it cut, joined by the client's port", async () => {
