@@ -176,13 +176,13 @@ describe("createReader", () => {
     stream.res.destroy();
   });
 
-  it("stops waiting for appends when a reader of the live recording leaves", async () => {
+  it("stops waiting for writes when a reader of the live recording leaves", async () => {
     let waiting = 0;
     const counted = (recording: Recording): Recording => ({
       ...recording,
-      onAppend: (listener) => {
+      onWritten: (listener) => {
         waiting++;
-        const stop = recording.onAppend(listener);
+        const stop = recording.onWritten(listener);
         return () => {
           waiting--;
           stop();
@@ -222,7 +222,8 @@ describe("createReader", () => {
     const path = join(dir, liveName);
     const upstream = await serving((_req, res) => res.end("answer"));
     // A file size limit of 8 blocks: 4096 or 8192 bytes, as the shell counts them. The exchange's first
-    // event, its request, is over 10 KB: writing it writes up to the limit and fails with EFBIG. Its later
+    // event, its request, is over 10 KB: POSIX has a write with less room than it asks for write what fits,
+    // so writing it writes up to the limit, and carrying on fails with EFBIG. Its later
     // events are small enough to fit below the limit.
     const { proxyPort, readerPort } = await proxyProcess(upstream.url, path, "8");
 
@@ -251,7 +252,7 @@ describe("createReader", () => {
       path: join(dir, liveName),
       record: () => () => {},
       written: () => written,
-      onAppend: (listener) => (listeners.add(listener), () => void listeners.delete(listener)),
+      onWritten: (listener) => (listeners.add(listener), () => void listeners.delete(listener)),
     };
     const readerLog = eventLog();
     const reader = await serving(createReader(readerLog.log, broken));

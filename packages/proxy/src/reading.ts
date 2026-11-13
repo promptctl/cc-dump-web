@@ -102,10 +102,10 @@ async function bytesAt({ path, live }: Reading, position: number, length: number
 
 // [LAW:no-ambient-temporal-coupling] The read is a stream piped into the response, so node owns backpressure
 // and the response's close destroys it, which ends every wait it has: a file read, or the live recording's
-// next append. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
+// next event written. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
 // [LAW:nothing-unseen] Catching up to the end of what exists is the reader's bounded work, and its own event
 // in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or is
-// destroyed before then. Following is the request itself; what it delivered is every event appended after.
+// destroyed before then. Following is the request itself; what it delivered is every event written after.
 function recordingEvents(reading: Reading, from: number, failed: (error: unknown) => void) {
   const { log, trace_id, name, live } = reading;
   const span = startSpan(trace_id);
@@ -152,7 +152,7 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
       const bytes = await bytesAt(reading, offset + pending.length, 64 * 1024);
       if (stream.destroyed) return;
       if (bytes.length > 0) return pushLines(bytes);
-      // An append during the read: what it appended is still catching up. Appends are synchronous on this
+      // An event written during the read: not caught up to yet. Writes are synchronous on this
       // thread, so none can fall between this check and the subscription below.
       if (live?.written() !== written) return fill();
       catchUp({ outcome: "ok" });
@@ -160,7 +160,7 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
         stream.push(`event: end\ndata: ${JSON.stringify({ unterminated_bytes: pending.length })}\n\n`);
         return void stream.push(null);
       }
-      stopWaiting = live.onAppend(() => {
+      stopWaiting = live.onWritten(() => {
         stopWaiting?.();
         stopWaiting = undefined;
         void fill();
