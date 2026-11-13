@@ -11,11 +11,15 @@ export type Rows = {
 // scroller is created at 0, so 0 is where it starts.
 export type Kept = { position: Position; written: number };
 
-// [LAW:no-ambient-temporal-coupling] The view's one step between the scroller's offset and the position, run on every
-// scroll event (`scroll`) and after every render or change of the stores (`change`), in whatever order they come. Given
-// the offset and the largest one, `end`, it gives what to keep and the offset to write, if the position moved.
+// What runs a step: a scroll event (`scroll`); a render, a resize or another change of what the step reads (`change`);
+// or the reader choosing a position with the control (`choose`).
+export type Cause = "scroll" | "change" | "choose";
+
+// [LAW:no-ambient-temporal-coupling] The view's one step between the scroller's offset and the position, run whatever
+// the order its causes come in. Given the offset and the largest one, `end`, it gives what to keep and the offset to
+// write, if the position moved.
 export function step(
-  cause: "scroll" | "change",
+  cause: Cause,
   offset: number,
   end: number,
   { position, written }: Kept,
@@ -31,12 +35,15 @@ export function step(
   // listener, and a clamp's event can come after a render, so a render that took an offset for the reader's could take
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   if (!own && cause === "change") return { position, written, write: undefined };
-  // The position is read from the offset when a reader moved it: following, a scroll to the end stays at the end and a
-  // scroll back to it resumes, and a gesture the browser stopped at an end that grew while it ran stays paused. It is
-  // read from the offset too when it is the end while follow is off, which is a place like any other: the view stays.
-  const next = own && (position.at !== "end" || follow) ? position : positionAt(offset, follow ? end : undefined, rows.rowAt);
-  // Resolved against where the rows now are, and written when it moved; a position whose row has not arrived, as after
-  // a reload, writes nothing until it does.
-  const target = resolve(next, end, rows.indexOf, rows.placed);
+  // A reader's offset becomes the position. Following, an offset within a pixel of the end is the end: a scroll to the
+  // end stays there and a scroll back to it resumes, and a gesture the browser stopped at an end that grew while it ran
+  // stays paused. A position chosen with the control is the reader's latest act, so it holds over a scroll still under
+  // way. The end while follow is off is a place like any other, the one under the view: the view stays.
+  const read = follow && end - offset < 1 ? ({ at: "end" } as const) : positionAt(offset, rows.rowAt);
+  const next = (own || cause === "choose") && (position.at !== "end" || follow) ? position : read;
+  // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
+  // arrived, as after a reload, writes nothing until it does.
+  const resolved = resolve(next, end, rows.indexOf, rows.placed);
+  const target = resolved === undefined ? undefined : Math.min(resolved, end);
   return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target };
 }

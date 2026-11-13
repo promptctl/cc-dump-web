@@ -6,7 +6,7 @@ import type { FormattedExchange } from "../format/format.ts";
 import { rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
 import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
-import { step } from "./scroll.ts";
+import { step, type Cause } from "./scroll.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 
@@ -48,7 +48,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const written = useRef(0);
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
   // carries it out.
-  const sync = (cause: "scroll" | "change") => {
+  const sync = (cause: Cause) => {
     const element = scroller.current!;
     const { position } = useView.getState();
     const rowsNow = {
@@ -87,7 +87,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const toggleFollow = () => {
     settings.setFollow(following !== "on");
     if (following !== "on") view.moveTo({ at: "end" });
-    latest.current("change");
+    latest.current("choose");
   };
 
   return (
@@ -117,6 +117,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         <button
           type="button"
           data-follow={following}
+          aria-pressed={followPressed[following]}
           title={followTitles[following]}
           className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
           onMouseDown={(event) => event.preventDefault()}
@@ -129,6 +130,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   );
 }
 
+const followPressed = { on: true, paused: "mixed", off: false } as const;
 const followLabels = { on: "Following", paused: "Follow paused", off: "Follow off" };
 const followTitles = {
   on: "The view stays at the newest content. Click to stop following.",

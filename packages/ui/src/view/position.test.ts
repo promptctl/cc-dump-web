@@ -37,15 +37,8 @@ describe("position", () => {
   });
 
   it("reads the position back from an offset: the row at the top and how far into it, or the start", () => {
-    expect(positionAt(170, end, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
-    expect(positionAt(0, end, rowAt)).toEqual({ at: "start" });
-    expect(resolve(positionAt(123, end, rowAt), end, indexOf, placed)).toBe(123);
-  });
-
-  it("reads an offset within a pixel of the end as the end while follow is on, and as a place while it is off", () => {
-    expect(positionAt(250, end, rowAt)).toEqual({ at: "end" });
-    expect(positionAt(249.5, end, rowAt)).toEqual({ at: "end" });
-    expect(positionAt(249, end, rowAt)).toEqual({ at: "row", key: "c", offset: 99 });
-    expect(positionAt(250, undefined, rowAt)).toEqual({ at: "row", key: "c", offset: 100 });
+    expect(positionAt(170, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
+    expect(positionAt(0, rowAt)).toEqual({ at: "start" });
+    expect(resolve(positionAt(123, rowAt), end, indexOf, placed)).toBe(123);
   });
 });

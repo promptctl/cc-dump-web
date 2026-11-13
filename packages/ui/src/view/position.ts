@@ -39,11 +39,8 @@ export function rowIndex(key: string, indexOf: (key: string) => number | undefin
   return undefined;
 }
 
-// The position a scroll offset is at. `end`: the largest offset while follow is on, which an offset within a pixel of
-// is the end; undefined while follow is off, when the end is a place like any other. Otherwise the row at the top of
-// the view and how far into it, or the start.
-export function positionAt(offset: number, end: number | undefined, rowAt: (offset: number) => Placed | undefined): Position {
-  if (end !== undefined && end - offset < 1) return { at: "end" };
+// The place a scroll offset is at: the row at the top of the view and how far into it, or the start.
+export function positionAt(offset: number, rowAt: (offset: number) => Placed | undefined): Exclude<Position, { at: "end" }> {
   const row = offset <= 0 ? undefined : rowAt(offset);
   return row === undefined ? { at: "start" } : { at: "row", key: String(row.key), offset: offset - row.start };
 }

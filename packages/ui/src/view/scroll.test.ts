@@ -26,8 +26,8 @@ describe("step", () => {
 
   it("keeps the position through a clamp: the browser moving the offset up to a nearer end", () => {
     expect(step("scroll", 150, 150, { position: end, written: 250 }, true, rows)).toEqual({ position: end, written: 150, write: undefined });
-    // A place the clamp put out of reach is still the place, written past the end for the browser to clamp.
-    expect(step("change", 150, 150, { position: inC, written: 240 }, true, rows)).toEqual({ position: inC, written: 150, write: 170 });
+    // A place the clamp put out of reach is still the place, and the view stays at the end, as near it as it can be.
+    expect(step("change", 150, 150, { position: inC, written: 240 }, true, rows)).toEqual({ position: inC, written: 150, write: undefined });
   });
 
   it("leaves a reader's offset to the scroll event, so a render never takes a clamp still to come for a scroll", () => {
@@ -37,6 +37,22 @@ describe("step", () => {
   it("takes a reader's scroll for the position: away from the end pauses, back to it resumes", () => {
     expect(step("scroll", 170, 250, { position: end, written: 250 }, true, rows)).toEqual({ position: inC, written: 170, write: undefined });
     expect(step("scroll", 250, 250, { position: inC, written: 170 }, true, rows)).toEqual({ position: end, written: 250, write: undefined });
+  });
+
+  it("takes an offset within a pixel of the end for the end while following, and a pixel short of it for a place", () => {
+    expect(step("scroll", 249.5, 250, { position: inC, written: 170 }, true, rows).position).toEqual(end);
+    expect(step("scroll", 249, 250, { position: inC, written: 170 }, true, rows).position).toEqual({ at: "row", key: "c", offset: 99 });
+  });
+
+  it("holds a position chosen with the control over a reader's scroll still under way", () => {
+    // Paused, the reader clicks to follow while their scroll's event is still to come: the view goes to the end.
+    expect(step("choose", 120, 250, { position: end, written: 170 }, true, rows)).toEqual({ position: end, written: 120, write: 250 });
+    // Following, the reader clicks to stop: the view stays where the scroll has taken it.
+    expect(step("choose", 120, 250, { position: end, written: 250 }, false, rows)).toEqual({
+      position: { at: "row", key: "b", offset: 20 },
+      written: 120,
+      write: undefined,
+    });
   });
 
   it("keeps a gesture the browser stopped short of an end that grew while it ran as a place", () => {
