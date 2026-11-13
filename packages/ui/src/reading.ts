@@ -18,7 +18,7 @@ export type Frames = (callback: () => void) => () => void;
 // appended in one call at the next, because catching up delivers thousands in quick succession and one copy and
 // render each would be quadratic. Its end and its failure append what is pending first, so no frame of the read
 // runs after it has ended; its abort cancels the frame.
-export function readLive(connection: Connection, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
+export function readLive(connection: Pick<Connection, "recordings" | "read">, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink.reset();
   changed({ state: "reading" });
   let pending: RecordedEvent[] = [];

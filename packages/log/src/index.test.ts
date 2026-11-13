@@ -164,15 +164,22 @@ describe("serve", () => {
     ]);
   });
 
-  it("records the port it bound and closing it, and refuses connections there once closed", async () => {
+  it("records the port it bound and closing it, and answers nothing there once closed", async () => {
     const { log, next } = eventLog();
+    let answered = 0;
 
-    const { port, close } = await serve(log, () => {}, 0);
+    const { port, close } = await serve(log, (_req, res) => void res.end(String(++answered)), 0);
     await close();
 
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
-    await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toMatchObject({ cause: { code: "ECONNREFUSED" } });
+    // The port is free once closed, so any process may bind it at once (parallel tests do): what is asserted is that
+    // this server no longer answers there, whether the connection is refused or another server takes it.
+    await fetch(`http://127.0.0.1:${port}`).then(
+      (res) => res.body?.cancel(),
+      () => {},
+    );
+    expect(answered).toBe(0);
   });
 
   it("cuts a request still open when closed, and resolves once its event, ended as stopped, is written", async () => {

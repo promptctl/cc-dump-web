@@ -1,4 +1,4 @@
-import type { Listing, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
+import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 
 // [LAW:locality-or-seam] The UI's one way to the backend: it names recordings and reads them, and how they are
 // reached is the implementation's alone (the browser on the proxy's reader today; an Electron shell later).
@@ -9,6 +9,14 @@ export type Connection = {
   // one way: its recording ends, it fails, or `signal` aborts it, which reports nothing. A signal already aborted
   // throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
+  // The proxy's status now and at each change, across restarts of the proxy (the restarted proxy's status follows),
+  // until it fails or `signal` aborts it, which reports nothing. A signal already aborted throws its reason.
+  status: (watcher: StatusWatcher, signal: AbortSignal) => void;
+};
+
+export type StatusWatcher = {
+  status: (status: ProxyStatus) => void;
+  failed: (error: Error) => void;
 };
 
 export type Reader = {

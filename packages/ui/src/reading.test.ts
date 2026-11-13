@@ -1,7 +1,7 @@
 import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import type { Connection, Reader } from "./connection/connection.ts";
+import type { Reader } from "./connection/connection.ts";
 import { readLive, type Frames, type Reading } from "./reading.ts";
 
 const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
@@ -11,7 +11,7 @@ const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.0
 // read's reader.
 function fakeConnection(listings: Listing[] | Error = [{ name: "20261113T080000.000Z.jsonl", live: false }, live]) {
   const reads: { name: string; reader: Reader }[] = [];
-  const connection: Connection = {
+  const connection: Parameters<typeof readLive>[0] = {
     recordings: (signal) =>
       new Promise((resolve, reject) => {
         signal.addEventListener("abort", () => reject(signal.reason));

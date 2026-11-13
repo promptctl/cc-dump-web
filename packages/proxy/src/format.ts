@@ -32,6 +32,10 @@ export type RecordingEnd = { unterminated_bytes: number };
 // The whole error, stack and all, is the request's log event's.
 export type ReadFailure = { message: string };
 
+// Each message of `GET /status`: the proxy's source files whose text on disk differs from the text it runs. While
+// there is one, a restart of the proxy is pending.
+export type ProxyStatus = { changed_source: string[] };
+
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
@@ -51,6 +55,10 @@ export function parseRecordingEnd(json: string): RecordingEnd {
 
 export function parseReadFailure(json: string): ReadFailure {
   return { message: fields(parseJson(json, "read failure"), "read failure").string("message") };
+}
+
+export function parseProxyStatus(json: string): ProxyStatus {
+  return { changed_source: fields(parseJson(json, "proxy status"), "proxy status").strings("changed_source") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {
@@ -112,6 +120,7 @@ function fields(json: unknown, what: string) {
     integer: (name: string) => read(name, Number.isSafeInteger as (value: unknown) => value is number, "an integer"),
     oneOf: <T extends string>(name: string, values: Record<T, true>) =>
       read(name, (value): value is T => typeof value === "string" && Object.hasOwn(values, value), `one of ${Object.keys(values).join(", ")}`),
+    strings: (name: string) => read(name, (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"), "a list of strings"),
     headers: (name: string) => read(name, isHeaders, "a list of [name, value] string pairs"),
   };
 }

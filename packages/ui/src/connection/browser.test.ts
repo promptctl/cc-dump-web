@@ -1,4 +1,4 @@
-import type { RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
+import type { ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,6 +47,35 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
     next: () => new Promise<Arrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))),
     queued: () => arrived.length,
   };
+}
+
+type StatusArrival = { status: ProxyStatus } | { failed: Error };
+
+// The proxy's status, whose arrivals the test waits on, as `reading` does a read's.
+function statusing(connection: ReturnType<typeof createBrowserConnection>) {
+  const abort = new AbortController();
+  onTestFinished(() => abort.abort());
+  const arrived: StatusArrival[] = [];
+  const waiting: ((arrival: StatusArrival) => void)[] = [];
+  const arrive = (arrival: StatusArrival) => (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival));
+  connection.status({ status: (status) => arrive({ status }), failed: (failed) => arrive({ failed }) }, abort.signal);
+  return { abort, next: () => new Promise<StatusArrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))) };
+}
+
+// Each EventSource opened while the test runs.
+function watchEventSources() {
+  const sources: EventSource[] = [];
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventSource {
+      constructor(...args: ConstructorParameters<typeof EventSource>) {
+        super(...args);
+        sources.push(this);
+      }
+    },
+  );
+  onTestFinished(() => void vi.unstubAllGlobals());
+  return sources;
 }
 
 describe("the browser connection", () => {
@@ -113,17 +142,7 @@ describe("the browser connection", () => {
     // then fails, reading it, with EISDIR.
     const name = "20261113T083000.000Z.jsonl";
     mkdirSync(join(dir, name));
-    const sources: EventSource[] = [];
-    vi.stubGlobal(
-      "EventSource",
-      class extends EventSource {
-        constructor(...args: ConstructorParameters<typeof EventSource>) {
-          super(...args);
-          sources.push(this);
-        }
-      },
-    );
-    onTestFinished(() => void vi.unstubAllGlobals());
+    const sources = watchEventSources();
 
     expect(await reading(connection, name).next()).toEqual({
       failed: expect.objectContaining({
@@ -164,5 +183,58 @@ describe("the browser connection", () => {
     await logged(({ event }) => event === "catch_up");
     read.abort.abort();
     expect(await logged(({ event }) => event === "request")).toMatchObject({ url: `/recordings/${liveName}`, outcome: "aborted" });
+  });
+
+  it("follows the proxy's status: the running proxy's source is unchanged", async () => {
+    const { connection } = await proxyAndConnection();
+    expect(await statusing(connection).next()).toEqual({ status: { changed_source: [] } });
+  });
+
+  it("delivers each status as it changes", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: {"changed_source":[]}\n\n`, () => res.write(`data: {"changed_source":["/proxy/src/proxy.ts"]}\n\n`));
+    });
+    const status = statusing(createBrowserConnection(reader.url));
+    expect([await status.next(), await status.next()]).toEqual([{ status: { changed_source: [] } }, { status: { changed_source: ["/proxy/src/proxy.ts"] } }]);
+  });
+
+  it("reports a status the proxy failed as failed, with its error, and closes it so it is not followed again", async () => {
+    const sources = watchEventSources();
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(`data: {"changed_source":[]}\n\nevent: failed\ndata: {"message":"EMFILE: too many open files, watch"}\n\n`);
+    });
+    const status = statusing(createBrowserConnection(reader.url));
+    expect([await status.next(), await status.next()]).toEqual([
+      { status: { changed_source: [] } },
+      {
+        failed: expect.objectContaining({
+          message: `GET ${reader.url}/status`,
+          cause: expect.objectContaining({ message: "the reader failed: EMFILE: too many open files, watch" }),
+        }),
+      },
+    ]);
+    expect(sources.map((source) => source.readyState)).toEqual([EventSource.CLOSED]);
+  });
+
+  it("reports a status that does not parse as failed", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: {"changed_source":"proxy.ts"}\n\n`);
+    });
+    expect(await statusing(createBrowserConnection(reader.url)).next()).toEqual({
+      failed: expect.objectContaining({
+        message: `GET ${reader.url}/status`,
+        cause: expect.objectContaining({ message: "proxy status: changed_source is not a list of strings" }),
+      }),
+    });
+  });
+
+  it("reports a status not served as failed", async () => {
+    const reader = await serving((_req, res) => res.writeHead(404).end());
+    expect(await statusing(createBrowserConnection(reader.url)).next()).toEqual({
+      failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
+    });
   });
 });

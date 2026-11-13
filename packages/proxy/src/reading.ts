@@ -20,26 +20,23 @@ export function createReader(log: Log, live: Recording): Handler {
     const url = new URL(req.url!, "http://reader");
     const asked = /^\/recordings\/([^/]+)$/.exec(url.pathname)?.[1];
     const answer = async () => {
-      if (req.method !== "GET") return void res.writeHead(405, { allow: "GET", ...cors }).end();
+      if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
       if (url.pathname === "/recordings") return list(await recordings(dir, live), live, res);
       // [LAW:parse-dont-validate] A name is one the listing holds, spelled as it holds it: nothing else in the
       // URL reaches the filesystem, and a case-insensitive filesystem cannot open the live recording by
       // another spelling and serve it as finished.
       const name = (await recordings(dir, live)).find((name) => name === asked);
-      if (!name) return void res.writeHead(404, cors).end();
+      if (!name) return void res.writeHead(404).end();
       const reading = { log, trace_id, ended, name, path: join(dir, name), live: name === live.name ? live : undefined };
       return read(reading, positionOf(req, url), res, fail);
     };
     // Every await of the answer comes before its response's headers; a read fails after them in its stream.
     answer().catch((error: unknown) => {
       fail(error);
-      res.writeHead(500, cors).end();
+      res.writeHead(500).end();
     });
   };
 }
-
-// The browser's origin is the UI's, not the proxy's; security is a non-goal (docs/design/01-mvp.md).
-const cors = { "access-control-allow-origin": "*" };
 
 // The recordings, oldest first: the `.jsonl` files in the directory, and the live one before its file exists.
 async function recordings(dir: string, live: Recording) {
@@ -48,7 +45,7 @@ async function recordings(dir: string, live: Recording) {
 
 function list(names: string[], live: Recording, res: ServerResponse) {
   const listed: Listing[] = names.map((name) => ({ name, live: name === live.name }));
-  res.writeHead(200, { "content-type": "application/json", ...cors }).end(JSON.stringify(listed));
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(listed));
 }
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
@@ -72,14 +69,14 @@ type Reading = {
 
 async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
   if (position === undefined || !(await atLineStart(reading, position))) {
-    return void res.writeHead(400, { "content-type": "text/plain", ...cors }).end("from must be 0 or the id of an event\n");
+    return void res.writeHead(400, { "content-type": "text/plain" }).end("from must be 0 or the id of an event\n");
   }
   // A request cut while its recording was looked up, by its client or its server's close, has ended and its
   // event is written: there is no one to read to. One still open has not ended, so the read's subscription
   // to `ended` comes in time.
   if (res.destroyed) return;
   // Flushed now, not with the first event: a reader of an empty live recording is connected before it has one.
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...cors }).flushHeaders();
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" }).flushHeaders();
   // pipeline destroys the stream when the response closes. Its callback runs after that close, when the
   // request's event is written, so it has nothing to add.
   pipeline(recordingEvents(reading, position, fail), res, () => {});

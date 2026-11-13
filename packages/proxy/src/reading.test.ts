@@ -161,7 +161,6 @@ describe("createReader", () => {
 
     const res = await send(reader.port, { path: "/recordings" });
 
-    expect(res.headers["access-control-allow-origin"]).toBe("*");
     expect(JSON.parse((await buffer(res)).toString())).toEqual([
       { name: "20261101T000000.000Z.jsonl", live: false },
       { name: liveName, live: true },

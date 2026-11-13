@@ -5,6 +5,16 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 const network = ["fetch", "EventSource", "WebSocket", "XMLHttpRequest"];
+// [LAW:single-enforcer] A part's code binds no port through node's network modules; it serves through
+// @cc-dump/log's serve, which logs every request, connection error and bind. Its static imports from
+// those modules are limited to the names listed here, so a server constructor node adds later is
+// refused too; a type binds nothing.
+const servesThroughLog = {
+  regex: "^(node:)?(http|https|http2|net|tls)$",
+  allowImportNamePattern: "^(request|get|connect|createConnection)$",
+  allowTypeImports: true,
+  message: "A part serves HTTP only through serve from @cc-dump/log. A name it needs that binds no port goes on this rule's allowlist in eslint.config.js.",
+};
 const reachedThroughConnection =
   "The UI reaches the backend only through its Connection (packages/ui/src/connection); the browser's is connection/browser.ts.";
 
@@ -13,23 +23,26 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
-    // [LAW:single-enforcer] A part's code binds no port through node's network modules; it serves through
-    // @cc-dump/log's serve, which logs every request, connection error and bind. Its static imports from
-    // those modules are limited to the names listed here, so a server constructor node adds later is
-    // refused too; a type binds nothing.
     files: ["packages/*/**"],
     ignores: ["packages/log/**"],
+    rules: { "@typescript-eslint/no-restricted-imports": ["error", { patterns: [servesThroughLog] }] },
+  },
+  {
+    // [LAW:one-source-of-truth] The proxy's source is the files node loads after its record begins (source.ts),
+    // so the modules that load before it, its entry and source.ts itself, statically import nothing but node's
+    // builtins (and the entry, source.ts): a module they imported would run in the proxy unrecorded, and an edit
+    // to it would show no restart pending. The rest of the proxy is imported dynamically, once the record has begun.
+    files: ["packages/proxy/src/main.ts", "packages/proxy/src/source.ts"],
     rules: {
       "@typescript-eslint/no-restricted-imports": [
         "error",
         {
           patterns: [
+            servesThroughLog,
             {
-              regex: "^(node:)?(http|https|http2|net|tls)$",
-              allowImportNamePattern: "^(request|get|connect|createConnection)$",
+              regex: "^(?!node:|\\./source\\.ts$)",
               allowTypeImports: true,
-              message:
-                "A part serves HTTP only through serve from @cc-dump/log. A name it needs that binds no port goes on this rule's allowlist in eslint.config.js.",
+              message: "Loads before the proxy's source is recorded: import it dynamically after recordSource (packages/proxy/src/main.ts).",
             },
           ],
         },
