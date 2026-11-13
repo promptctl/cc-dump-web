@@ -6,7 +6,7 @@ import { useView, view } from "./state.ts";
 // Shift+Enter to the previous.
 export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: number | undefined; onStep: (direction: Direction) => void }) {
   const query = useView((state) => state.search.query);
-  const tally = count === 0 ? (query === "" ? "" : "No matches") : ordinal === undefined ? `${count} matches` : `${ordinal} of ${count}`;
+  const tally = count === 0 ? (query === "" ? "" : "No matches") : ordinal === undefined ? `${count} ${count === 1 ? "match" : "matches"}` : `${ordinal} of ${count}`;
   return (
     <search className="flex items-center gap-2 border-b px-4 py-1.5 text-xs">
       <input

@@ -10,7 +10,8 @@ import { regionKey, segments, type Segment } from "./regions.ts";
 import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { SearchBar } from "./SearchBar.tsx";
-import { address, adjacent, createSearch, find, jsonText, matchId, ordinal, partKey, patternOf, pieces, type Direction, type Range } from "./search.ts";
+import { currentMatch, paint } from "./highlights.ts";
+import { address, adjacent, createSearch, find, jsonText, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -114,16 +115,17 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     const next = adjacent(found, current, useView.getState().position, direction, pattern, keys);
     if (next === undefined) return;
     flushSync(() => view.goTo(next));
-    const mark = scroller.current!.querySelector(`mark[data-match="${CSS.escape(matchId(next.match))}"]`);
-    // [LAW:no-silent-failure] A step goes only to a match found in a row listed, so it is on screen once committed.
-    if (mark === null) throw new Error(`The match stepped to is not on screen: ${matchId(next.match)}`);
-    const row = mark.closest<HTMLElement>("[data-index]")!;
+    const match = currentMatch();
+    // [LAW:no-silent-failure] A step goes only to a match found in a row listed, so it is painted once committed.
+    if (match === undefined) throw new Error(`The match stepped to is not on screen: ${JSON.stringify(next.match)}`);
+    const text = match.startContainer.parentElement!;
+    const row = text.closest<HTMLElement>("[data-index]")!;
     const rowBox = row.getBoundingClientRect();
     // The step opened the row in this commit, which the virtualizer would see only once a resize is observed, after the
     // view had resolved the offset against the height the row had: its height is committed now.
     flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
-    const lead = leadLines * parseFloat(getComputedStyle(mark).lineHeight);
-    view.moveTo({ at: "row", key: next.match.key, offset: Math.max(0, mark.getBoundingClientRect().top - rowBox.top - lead) });
+    const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
+    view.moveTo({ at: "row", key: next.match.key, offset: Math.max(0, match.getBoundingClientRect().top - rowBox.top - lead) });
     latest.current("choose");
   };
 
@@ -143,7 +145,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
           <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
         ) : (
           <Hold.Provider value={hold}>
-            <Marks.Provider value={pattern}>
+            <Pattern.Provider value={pattern}>
               <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => (
                   <div
@@ -157,7 +159,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
                   </div>
                 ))}
               </div>
-            </Marks.Provider>
+            </Pattern.Provider>
           </Hold.Provider>
         )}
         {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
@@ -192,8 +194,8 @@ const followStates = {
   off: { pressed: false, label: "Follow off", title: "Click to follow the newest content." },
 } as const;
 
-// The search's pattern, for every text shown to mark its matches with.
-const Marks = createContext<RegExp | undefined>(undefined);
+// The search's pattern, for every text shown to highlight its matches with.
+const Pattern = createContext<RegExp | undefined>(undefined);
 
 // Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
 // in this text.
@@ -202,29 +204,25 @@ type Where = { blockKey: string; at: string; ranges: Range[]; current: number | 
 // A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
 // current match leaves and enters.
 function useWhere(blockKey: string, at: string, text: string): Where {
-  const pattern = useContext(Marks);
+  const pattern = useContext(Pattern);
   if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
   const ranges = useMemo(() => find(pattern, text), [pattern, text]);
   const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
   return { blockKey, at, ranges, current };
 }
 
-// A whole text, its matches marked.
-function MarkedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
-  return <Marked slice={text} from={0} where={useWhere(blockKey, at, text)} />;
+// A whole text, its matches highlighted.
+function HighlightedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
+  return <Highlighted slice={text} from={0} where={useWhere(blockKey, at, text)} />;
 }
 
-// A slice of a text, starting at `from` in it, its matches marked and the current one marked apart.
-function Marked({ slice, from, where: { blockKey, at, ranges, current } }: { slice: string; from: number; where: Where }) {
-  return pieces(slice, from, ranges).map(({ text, match }, index) =>
-    match === undefined ? (
-      <span key={index}>{text}</span>
-    ) : (
-      <mark key={index} data-match={matchId({ key: blockKey, at, start: match })} className={match === current ? "bg-match-current text-foreground" : "bg-match text-foreground"}>
-        {text}
-      </mark>
-    ),
-  );
+// A slice of a text, starting at `from` in it: whole lines, so a match, which a query of one line cannot carry past a
+// line's end, is in one slice. Its matches are highlighted and the current one highlighted apart.
+function Highlighted({ slice, from, where: { ranges, current } }: { slice: string; from: number; where: Where }) {
+  const span = useRef<HTMLSpanElement>(null);
+  // An empty slice has no text node, and no match to paint in one.
+  useLayoutEffect(() => paint(span.current!.firstChild as Text, from, rangesIn(ranges, from, from + slice.length), current), [slice, from, ranges, current]);
+  return <span ref={span}>{slice}</span>;
 }
 
 // What a block or region calls when clicked, before it flips: the view holds where it is.
@@ -292,7 +290,7 @@ function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
         <span className="w-3 text-muted-foreground">{open ? "▾" : "▸"}</span>
         <span className="w-20 text-muted-foreground">{block.category}</span>
         <span className="flex-1 truncate">
-          <MarkedText blockKey={key} at={address.name} text={block.name} />
+          <HighlightedText blockKey={key} at={address.name} text={block.name} />
         </span>
         <span className="text-muted-foreground">{describeSize(size)}</span>
       </button>
@@ -329,10 +327,10 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
           {part.fields.map(([name, value], field) => (
             <div key={field} className="contents">
               <dt className="text-muted-foreground">
-                <MarkedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
+                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                <MarkedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />
+                <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />
               </dd>
             </div>
           ))}
@@ -362,7 +360,7 @@ function JsonView({ value, blockKey, at }: { value: unknown; blockKey: string; a
   const text = useMemo(() => jsonText(value), [value]);
   return (
     <pre className="break-all whitespace-pre-wrap">
-      <MarkedText blockKey={blockKey} at={at} text={text} />
+      <HighlightedText blockKey={blockKey} at={at} text={text} />
     </pre>
   );
 }
@@ -375,7 +373,7 @@ function TextView({ text, blockKey, at }: { text: string; blockKey: string; at: 
 
 function segmentViews(list: Segment[], where: Where): ReactNode[] {
   return list.map((segment, index) =>
-    segment.kind === "text" ? <Marked key={index} slice={segment.text} from={segment.start} where={where} /> : <RegionView key={index} region={segment} where={where} />,
+    segment.kind === "text" ? <Highlighted key={index} slice={segment.text} from={segment.start} where={where} /> : <RegionView key={index} region={segment} where={where} />,
   );
 }
 
@@ -401,9 +399,9 @@ function RegionView({ region, where }: { region: Extract<Segment, { kind: "regio
     <span>
       {line}
       {"\n"}
-      <Marked slice={region.open} from={region.start} where={where} />
+      <Highlighted slice={region.open} from={region.start} where={where} />
       {segmentViews(region.body, where)}
-      <Marked slice={region.close} from={region.end - region.close.length} where={where} />
+      <Highlighted slice={region.close} from={region.end - region.close.length} where={where} />
     </span>
   ) : (
     <span>

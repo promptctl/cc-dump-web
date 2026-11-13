@@ -6,7 +6,7 @@ import { createFormatter } from "../format/format.ts";
 import { parseSettings, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { createGroupRows, createLayout, type Layout } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, pieces, shownTexts, type Match } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, type Match } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -135,20 +135,15 @@ describe("search", () => {
     expect(name).toMatchObject({ block: undefined, regions: [] });
   });
 
-  it("cuts a slice of a text where its matches begin and end, a match running past the slice cut at its edge", () => {
+  it("gives the matches starting in a slice of a text", () => {
     const ranges = [
       { start: 2, end: 4 },
       { start: 8, end: 12 },
+      { start: 20, end: 21 },
     ];
-    expect(pieces("abcdefghij", 0, ranges)).toEqual([
-      { text: "ab", match: undefined },
-      { text: "cd", match: 2 },
-      { text: "efgh", match: undefined },
-      { text: "ij", match: 8 },
-    ]);
-    expect(pieces("klm", 10, ranges)).toEqual([
-      { text: "kl", match: 8 },
-      { text: "m", match: undefined },
-    ]);
+    expect(rangesIn(ranges, 0, 8)).toEqual([{ start: 2, end: 4 }]);
+    expect(rangesIn(ranges, 8, 20)).toEqual([{ start: 8, end: 12 }]);
+    expect(rangesIn(ranges, 4, 8)).toEqual([]);
+    expect(rangesIn(ranges, 0, 30)).toEqual(ranges);
   });
 });

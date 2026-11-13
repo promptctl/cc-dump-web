@@ -5,7 +5,7 @@ import { regionKey, segments, type Segment } from "./regions.ts";
 import type { Keys, Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts the shown categories' blocks show, counted,
-// stepped through in order, and cut out of each text for highlighting.
+// stepped through in order, and found in each text shown for highlighting.
 
 export type BlockRow = Extract<Row, { kind: "block" }>;
 
@@ -145,10 +145,10 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(own.row, past);
   }
-  // Where the step starts among the rows; `own`: where it stands against its row when the row is listed.
-  const placeOf = (key: string, own: number) => {
+  // Where the step starts among the rows; `bias`: where it stands against its row when the row is listed.
+  const placeOf = (key: string, bias: number) => {
     const index = rowIndex(key, keys.indexOf);
-    return index === undefined ? (forward ? -Infinity : Infinity) : keys.at(index) === key ? index + own : index + 0.5;
+    return index === undefined ? (forward ? -Infinity : Infinity) : keys.at(index) === key ? index + bias : index + 0.5;
   };
   const place =
     current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
@@ -177,40 +177,17 @@ function regionsAround(list: Segment[], start: number): number[] {
   return [segment.line, ...(start >= segment.start + segment.open.length ? regionsAround(segment.body, start) : [])];
 }
 
-// A piece of a text: plain, or part of the match starting at `match`.
-export type Piece = { text: string; match: number | undefined };
-
-// A slice of a text, starting at offset `from` in it, cut where `ranges` (the text's matches) begin and end.
-export function pieces(slice: string, from: number, ranges: Range[]): Piece[] {
-  const to = from + slice.length;
-  const out: Piece[] = [];
-  let at = from;
-  for (let index = firstEndingAfter(ranges, from); index < ranges.length && ranges[index]!.start < to; index++) {
-    const { start, end } = ranges[index]!;
-    const begin = Math.max(start, at);
-    if (begin > at) out.push({ text: slice.slice(at - from, begin - from), match: undefined });
-    const stop = Math.min(end, to);
-    out.push({ text: slice.slice(begin - from, stop - from), match: start });
-    at = stop;
-  }
-  if (at < to) out.push({ text: slice.slice(at - from), match: undefined });
-  return out;
-}
-
-// The index of the first of `ranges` ending after `offset`. A text's matches are in order and apart, so a binary search
-// finds it, and a text cut into many slices is not scanned whole for each.
-function firstEndingAfter(ranges: Range[], offset: number): number {
+// The ranges of a text's matches, `ranges`, that start in its characters from `from` up to `to`. They are in order and
+// apart, so a binary search finds the first, and a text cut into many slices is not scanned whole for each.
+export function rangesIn(ranges: Range[], from: number, to: number): Range[] {
   let low = 0;
   let high = ranges.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if (ranges[middle]!.end <= offset) low = middle + 1;
+    if (ranges[middle]!.start < from) low = middle + 1;
     else high = middle;
   }
-  return low;
-}
-
-// [LAW:one-source-of-truth] The id a match's mark carries in the page, by which the view finds it.
-export function matchId({ key, at, start }: Match): string {
-  return JSON.stringify([key, at, start]);
+  let end = low;
+  while (end < ranges.length && ranges[end]!.start < to) end++;
+  return ranges.slice(low, end);
 }
