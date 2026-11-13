@@ -27,9 +27,9 @@ void replacing;
 const early = () => logged(() => {}, "setup", {}, async () => 7);
 void early;
 
-// A node:http server of its own, not serve's, on a free port of LOOPBACK until the test finishes.
-async function bare() {
-  const server = createHttpServer().listen(0, LOOPBACK);
+// A node:http server of its own, not serve's, answering 418, on a free port of `host` until the test finishes.
+async function bare(host: string) {
+  const server = createHttpServer((_req, res) => res.writeHead(418).end()).listen(0, host);
   onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
   await once(server, "listening");
   return (server.address() as AddressInfo).port;
@@ -145,7 +145,7 @@ describe("serve", () => {
     const { reply, clientPort } = await sendRaw(port, "NOT HTTP\r\n\r\n");
 
     expect(reply).toMatch(/^HTTP\/1\.1 400 /);
-    expect(reply).toBe((await sendRaw(await bare(), "NOT HTTP\r\n\r\n")).reply);
+    expect(reply).toBe((await sendRaw(await bare(LOOPBACK), "NOT HTTP\r\n\r\n")).reply);
     expect(await next()).toMatchObject({
       event: "client_error",
       trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
@@ -236,13 +236,23 @@ describe("serve", () => {
     expect(await next()).toMatchObject({ event: "close", outcome: "error", requests_open: 1 });
   });
 
-  // The port is held by a server that is not serve's, bound to LOOPBACK alone: a bind to the wildcard would share it,
-  // and the connections dialed to LOOPBACK would reach the other server.
+  // The port is held by a server that is not serve's, bound to LOOPBACK alone: on macOS a bind to the wildcard would
+  // share it, and the connections dialed to LOOPBACK would reach the other server.
   it("records and rethrows a port another server holds on the loopback address", async () => {
-    const port = await bare();
+    const port = await bare(LOOPBACK);
     const { log, next } = eventLog();
 
     await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
     expect(await next()).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, port, error: expect.stringContaining("EADDRINUSE") });
+  });
+
+  // macOS lets the bind to LOOPBACK share a port held on the wildcard, where Linux refuses it; sharing, serve's is the
+  // more specific bind, so it takes every connection dialed to LOOPBACK.
+  it.runIf(process.platform === "darwin")("takes the connections dialed to LOOPBACK on a port another server holds on the wildcard", async () => {
+    const port = await bare("::");
+    const { close } = await serve(eventLog().log, (_req, res) => res.writeHead(204).end(), port);
+    onTestFinished(close);
+
+    expect((await send(port, { path: "/" })).statusCode).toBe(204);
   });
 });

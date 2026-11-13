@@ -61,7 +61,9 @@ export type Serving = { port: number; close: () => Promise<void> };
 // every unit of work it does with a client is logged here and nowhere else: each request its handler
 // receives, each connection error, binding the port, and closing it. A port that cannot be bound or closed
 // writes its event, then rethrows, so the process exits non-zero. Port 0 binds a free one; `port` is the one bound.
-// The port is bound on LOOPBACK, so one another process holds there is refused, not shared.
+// The port is bound on LOOPBACK, so a connection dialed there reaches this server or the bind fails: a port another
+// process holds on LOOPBACK is refused, and one held on the wildcard, where the kernel shares it (macOS), is shared
+// with this server, the more specific bind, which takes the connections dialed to LOOPBACK.
 export async function serve(log: Log, handler: Handler, port: number): Promise<Serving> {
   const inFlight = new Set<Promise<Ending>>();
   const server = loggedServer(log, handler, inFlight);
