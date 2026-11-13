@@ -556,24 +556,35 @@ describe("createProxy", () => {
       expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
     });
 
-    it.each(["SIGINT", "SIGTERM"] as const)("on %s, ends every exchange and reader still open as stopped, then exits", async (signal) => {
+    // A proxy process with the work a stop must cut open: an exchange streaming from an upstream that never
+    // ends, and a reader following the live recording. `untilShutdown` takes every event up to the stop's own.
+    async function proxyWithWorkOpen() {
       const upstream = await upstreamServing((_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
       const { path, events } = recordingPath();
       const { child, proxyPort, readerPort, next } = await proxyProcess(upstream.href, path, "unlimited");
-
       const exchange = await send(proxyPort, { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
       await once(exchange, "data");
       const reader = await send(readerPort, { path: "/recordings/run.jsonl" });
-      const cuts = [exchange, reader].map((res) => expect(buffer(res)).rejects.toThrow(/aborted/));
+      const cut = Promise.all([exchange, reader].map((res) => expect(buffer(res)).rejects.toThrow(/aborted/)));
+      const untilShutdown = async () => {
+        const logged = [];
+        do logged.push(await next());
+        while (logged.at(-1)!.event !== "shutdown");
+        return logged;
+      };
+      return { child, events, cut, untilShutdown };
+    }
+
+    it.each(["SIGINT", "SIGTERM"] as const)("on %s, ends every exchange and reader still open as stopped, then exits", async (signal) => {
+      const { child, events, cut, untilShutdown } = await proxyWithWorkOpen();
+
       const exited = once(child, "exit");
       child.kill(signal);
-      const logged = [];
-      do logged.push(await next());
-      while (logged.at(-1)!.event !== "shutdown");
-      await Promise.all(cuts);
+      const logged = await untilShutdown();
+      await cut;
 
       expect(await exited).toEqual([0, null]);
       const requests = logged.filter(({ event }) => event === "request");
@@ -588,6 +599,23 @@ describe("createProxy", () => {
       expect(logged.at(-1)).toMatchObject({ event: "shutdown", outcome: "ok", signal });
       const exchangeTrace = requests.find(({ method }) => method === "POST")!.trace_id;
       expect(events().at(-1)).toMatchObject({ type: "end", trace_id: exchangeTrace, outcome: "stopped" });
+    });
+
+    it("finishes a stop whose signal arrives again and again, as one Ctrl-C under `pnpm dev` does", async () => {
+      const { child, cut, untilShutdown } = await proxyWithWorkOpen();
+
+      // Once from the terminal, then again from each supervisor that forwards it. One that lands as node
+      // exits kills it there, after every event, so the exit status is not this test's to check.
+      const closed = once(child, "close");
+      const repeating = setInterval(() => child.kill("SIGINT"), 1);
+      void closed.then(() => clearInterval(repeating));
+      child.kill("SIGINT");
+      await closed;
+      await cut;
+
+      const logged = await untilShutdown();
+      expect(logged.filter(({ event }) => event === "request")).toMatchObject([{ outcome: "stopped" }, { outcome: "stopped" }]);
+      expect(logged.at(-1)).toMatchObject({ event: "shutdown", outcome: "ok", signal: "SIGINT" });
     });
   });
 });
