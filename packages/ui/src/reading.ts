@@ -2,7 +2,20 @@ import type { Listing, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format
 import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { events } from "./store.ts";
-import { isOpen, type OpenRecording } from "./view/state.ts";
+
+// The recording open (docs/design/01-mvp.md, F7): the live one, whichever run is live now, or a past one by its name.
+// [LAW:types-are-the-program] The live one is named by its role: its name changes with every run of the proxy.
+export type OpenRecording = { recording: "live" } | { recording: "past"; name: string };
+
+// Whether `listing` is the recording open: the one listed as live, or the one listed by its name.
+export function isOpen(open: OpenRecording, listing: Listing): boolean {
+  return open.recording === "live" ? listing.live : listing.name === open.name;
+}
+
+// The recording a listing opens: the one listed as live opens live, never as a past one by the name it has now.
+export function opening(listing: Listing): OpenRecording {
+  return listing.live ? { recording: "live" } : { recording: "past", name: listing.name };
+}
 
 // [LAW:types-are-the-program] Where a read stands. The live recording ends only once the proxy that wrote it has
 // stopped: the browser reconnects to it, finished now, and reads its end. A new run is a new read, begun by a mount
@@ -42,20 +55,25 @@ export function readRecording(connection: Pick<Connection, "recordings" | "read"
     end: (end: RecordingEnd) => settle({ state: "ended", end }),
     failed: (error: Error) => settle({ state: "failed", error }),
   };
-  connection
-    .recordings(signal)
-    .then((listings) => connection.read(listed(listings, open).name, reader, signal))
+  nameOf(connection, open, signal)
+    .then((name) => connection.read(name, reader, signal))
     // An abort rejects what it cut short; that is the read being stopped, not failing.
     .catch((error: Error) => signal.aborted || changed({ state: "failed", error }));
 }
 
-// The listing of the recording open.
-// [LAW:no-silent-failure] A past recording not listed fails here, by its name: read anyway, the browser would report
-// its 404 as a request not served, naming no recording.
-function listed(listings: Listing[], open: OpenRecording): Listing {
-  const matching = listings.filter((listing) => isOpen(open, listing));
-  if (matching.length !== 1) throw new Error(`GET /recordings listed ${matching.length} recordings for ${JSON.stringify(open)}, not one`);
-  return matching[0]!;
+// The name of the recording open: a past one's own, and the live one's from the listing, since it changes with every
+// run of the proxy. [LAW:single-enforcer] Whether a recording by that name exists is the reader's to answer, with a
+// read it does not serve.
+async function nameOf(connection: Pick<Connection, "recordings">, open: OpenRecording, signal: AbortSignal): Promise<string> {
+  switch (open.recording) {
+    case "past":
+      return open.name;
+    case "live": {
+      const live = (await connection.recordings(signal)).filter((listing) => listing.live);
+      if (live.length !== 1) throw new Error(`GET /recordings listed ${live.length} live recordings, not one`);
+      return live[0]!.name;
+    }
+  }
 }
 
 const animationFrames: Frames = (callback) => {
@@ -64,7 +82,7 @@ const animationFrames: Frames = (callback) => {
 };
 
 // The recording open, read into the store for as long as the component using it is mounted, and read again from its
-// start each time one is opened (view.open).
+// start each time one is opened.
 export function useRecording(connection: Connection, open: OpenRecording): Reading {
   const [reading, setReading] = useState<Reading>({ state: "reading" });
   useEffect(() => {

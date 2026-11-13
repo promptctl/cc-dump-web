@@ -1,6 +1,6 @@
-import type { Listing } from "@cc-dump/proxy/format";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import type { OpenRecording } from "../reading.ts";
 import type { Position } from "./position.ts";
 import { isExpanded } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
@@ -13,20 +13,6 @@ import type { Match, Step } from "./search.ts";
 // [LAW:types-are-the-program] A flip is a key's presence, so a block flipped back is no entry, not one that says its
 // default.
 export type View = { open: OpenRecording; flipped: Record<string, true>; position: Position; search: Search };
-
-// The recording open (docs/design/01-mvp.md, F7): the live one, whichever run is live now, or a past one by its name.
-// [LAW:types-are-the-program] The live one is named by its role: its name changes with every run of the proxy.
-export type OpenRecording = { recording: "live" } | { recording: "past"; name: string };
-
-// Whether `listing` is the recording open: the one listed as live, or the one listed by its name.
-export function isOpen(open: OpenRecording, listing: Listing): boolean {
-  return open.recording === "live" ? listing.live : listing.name === open.name;
-}
-
-// The recording a listing opens: the one listed as live opens live, never as a past one by the name it has now.
-export function opening(listing: Listing): OpenRecording {
-  return listing.live ? { recording: "live" } : { recording: "past", name: listing.name };
-}
 
 // The search: its query, and the match last stepped to, the one holder of which match is current. A new query has none.
 export type Search = { query: string; current: Match | undefined };

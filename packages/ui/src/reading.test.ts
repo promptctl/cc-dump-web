@@ -2,15 +2,14 @@ import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { readRecording, type Frames, type Reading } from "./reading.ts";
-import type { OpenRecording } from "./view/state.ts";
+import { isOpen, opening, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const past: Listing = { name: "20261113T080000.000Z.jsonl", live: false };
 const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
 const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
 
 // A connection the test drives: it lists `listings`, or fails with it when it is an error, and hands the test each
-// read's reader.
+// read's reader. A read begun aborted throws, as the browser's does.
 function fakeConnection(listings: Listing[] | Error = [past, live]) {
   const reads: { name: string; reader: Reader }[] = [];
   const connection: Parameters<typeof readRecording>[0] = {
@@ -19,7 +18,10 @@ function fakeConnection(listings: Listing[] | Error = [past, live]) {
         signal.addEventListener("abort", () => reject(signal.reason));
         void setImmediate().then(() => (listings instanceof Error ? reject(listings) : resolve(listings)));
       }),
-    read: (name, reader) => void reads.push({ name, reader }),
+    read: (name, reader, signal) => {
+      signal.throwIfAborted();
+      reads.push({ name, reader });
+    },
   };
   return { connection, reads };
 }
@@ -97,38 +99,45 @@ describe("readRecording", () => {
     expect(states).toEqual([{ state: "reading" }]);
   });
 
-  it("reads a past recording open by its name, by the same read", async () => {
-    const { reads, frames, calls } = await started(undefined, { recording: "past", name: past.name });
+  it("reads a past recording open by its name, by the same read, whatever the list says", async () => {
+    const { reads, frames, calls } = await started(new Error("GET /recordings: 500"), { recording: "past", name: past.name });
     expect(reads.map(({ name }) => name)).toEqual([past.name]);
     reads[0]!.reader.event(event(1));
     frames.run();
     expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
   });
 
-  it("reports a list that fails, or one without exactly one recording open, as failed, naming it", async () => {
+  it("reports a list that fails, or one without exactly one live recording, as failed", async () => {
     const error = new Error("GET /recordings: 500");
     expect((await started(error)).states).toEqual([{ state: "reading" }, { state: "failed", error }]);
-    const cases: [Listing[], OpenRecording, number][] = [
-      [[], { recording: "live" }, 0],
-      [[live, { ...live, name: "20261113T100000.000Z.jsonl" }], { recording: "live" }, 2],
-      [[past, live], { recording: "past", name: "20261101T000000.000Z.jsonl" }, 0],
-    ];
-    for (const [listings, open, count] of cases) {
-      const { reads, states } = await started(listings, open);
+    for (const listings of [[], [live, { ...live, name: "20261113T100000.000Z.jsonl" }]]) {
+      const { reads, states } = await started(listings);
       expect(reads).toEqual([]);
-      expect(states).toEqual([{ state: "reading" }, { state: "failed", error: new Error(`GET /recordings listed ${count} recordings for ${JSON.stringify(open)}, not one`) }]);
+      expect(states).toEqual([{ state: "reading" }, { state: "failed", error: new Error(`GET /recordings listed ${listings.length} live recordings, not one`) }]);
     }
   });
 
-  it("reports nothing when aborted while listing", async () => {
+  it.each<OpenRecording>([{ recording: "live" }, { recording: "past", name: past.name }])("reads nothing and reports nothing when aborted as it begins, open %o", async (open) => {
     const { connection, reads } = fakeConnection();
     const states: Reading[] = [];
     const abort = new AbortController();
-    readRecording(connection, { recording: "live" }, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, (reading) => states.push(reading));
+    readRecording(connection, open, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, (reading) => states.push(reading));
     abort.abort();
     await setImmediate();
     await setImmediate();
     expect(reads).toEqual([]);
     expect(states).toEqual([{ state: "reading" }]);
+  });
+});
+
+describe("the recording open", () => {
+  it("is the listing marked live while live is open, and the one by its name while a past one is", () => {
+    expect([past, live].filter((listing) => isOpen({ recording: "live" }, listing))).toEqual([live]);
+    expect([past, live].filter((listing) => isOpen({ recording: "past", name: past.name }, listing))).toEqual([past]);
+  });
+
+  it("is opened from a listing: live by its role, a past one by its name", () => {
+    expect(opening(live)).toEqual({ recording: "live" });
+    expect(opening(past)).toEqual({ recording: "past", name: past.name });
   });
 });
