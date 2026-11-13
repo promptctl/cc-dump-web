@@ -24,7 +24,7 @@ export default defineConfig(
               allowImportNamePattern: "^(request|get|connect|createConnection)$",
               allowTypeImports: true,
               message:
-                "A part serves HTTP only through serve from @cc-dump/log. A client call it needs goes on this rule's allowlist in eslint.config.js.",
+                "A part serves HTTP only through serve from @cc-dump/log. A name it needs that binds no port goes on this rule's allowlist in eslint.config.js.",
             },
           ],
         },
