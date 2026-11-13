@@ -7,17 +7,13 @@ export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: strin
 // A placed row: its key, where it starts, in pixels from the top of the conversation, and its height.
 export type Placed = { key: string | number | bigint; start: number; size: number };
 
-// The scroll offset a position is at, given the largest offset, `end`, and where the rows are: undefined while its row
-// is not among them. A row shorter than the offset into it, as a block just collapsed is, puts the view at its end.
-export function resolve(
-  position: Position,
-  end: number,
-  indexOf: (key: string) => number | undefined,
-  placed: (index: number) => Placed | undefined,
-): number | undefined {
+// The scroll offset a position is at, given where the rows are: undefined while its row is not among them. A row
+// shorter than the offset into it, as a block just collapsed is, puts the view at its end. The end is past every
+// offset: the largest one the scroller has is where the view shows it.
+export function resolve(position: Position, indexOf: (key: string) => number | undefined, placed: (index: number) => Placed | undefined): number | undefined {
   switch (position.at) {
     case "end":
-      return end;
+      return Infinity;
     case "start":
       return 0;
     case "row": {

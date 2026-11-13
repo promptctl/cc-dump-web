@@ -1,9 +1,9 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import type { Exchange } from "../exchanges.ts";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
-import { rowIndex } from "./position.ts";
+import { positionAt, rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
 import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
@@ -44,6 +44,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const follow = useSettings((state) => state.follow);
   const atEnd = useView((state) => state.position.at === "end");
   const following = !follow ? "off" : atEnd ? "on" : "paused";
+  const control = followStates[following];
 
   const written = useRef(0);
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
@@ -66,12 +67,14 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     written.current = element.scrollTop;
   };
   const latest = useRef(sync);
-  latest.current = sync;
   // A step runs whenever what it reads changes: after a render, on a scroll event, and when the scroller is resized.
   // The resize's step runs right after the layout that resized it, so a clamp is read as the view's own before any
   // commit can grow the content and make it look like a reader's scroll, and a scroller made shorter shows the new end
-  // in that frame.
-  useLayoutEffect(() => latest.current("change"));
+  // in that frame. The listeners step with the render last committed.
+  useLayoutEffect(() => {
+    latest.current = sync;
+    sync("change");
+  });
   useLayoutEffect(() => {
     const element = scroller.current!;
     const onScroll = () => latest.current("scroll");
@@ -89,6 +92,12 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     if (following !== "on") view.moveTo({ at: "end" });
     latest.current("choose");
   };
+  // A click on a block or region is reading where the view is: the position becomes the place under the view, so
+  // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
+  const hold = useCallback(() => {
+    view.moveTo(positionAt(scroller.current!.scrollTop, virtualizer.getVirtualItemForOffset));
+    latest.current("choose");
+  }, [virtualizer]);
 
   return (
     // The browser's own scroll anchoring would be a second writer of the offset.
@@ -96,19 +105,21 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       {rows.length === 0 ? (
         <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
       ) : (
-        <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((item) => (
-            <div
-              key={item.key}
-              data-index={item.index}
-              ref={virtualizer.measureElement}
-              className="absolute top-0 left-0 w-full"
-              style={{ transform: `translateY(${item.start}px)` }}
-            >
-              <RowView row={rows[item.index]!} reading={reading} />
-            </div>
-          ))}
-        </div>
+        <Hold.Provider value={hold}>
+          <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((item) => (
+              <div
+                key={item.key}
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                className="absolute top-0 left-0 w-full"
+                style={{ transform: `translateY(${item.start}px)` }}
+              >
+                <RowView row={rows[item.index]!} reading={reading} />
+              </div>
+            ))}
+          </div>
+        </Hold.Provider>
       )}
       {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
           rather than over it. A click takes no focus: once it is clicked, End and Space still scroll the conversation,
@@ -117,26 +128,34 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         <button
           type="button"
           data-follow={following}
-          aria-pressed={followPressed[following]}
-          title={followTitles[following]}
+          aria-pressed={control.pressed}
+          title={control.title}
           className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
           onMouseDown={(event) => event.preventDefault()}
           onClick={toggleFollow}
         >
-          {followLabels[following]}
+          {control.label}
         </button>
       </div>
     </main>
   );
 }
 
-const followPressed = { on: true, paused: "mixed", off: false } as const;
-const followLabels = { on: "Following", paused: "Follow paused", off: "Follow off" };
-const followTitles = {
-  on: "The view stays at the newest content. Click to stop following.",
-  paused: "Scrolled away from the newest content. Scroll back to the end, or click, to follow again.",
-  off: "Click to follow the newest content.",
-};
+// The control in each state of follow mode: whether it is pressed, its label and its title.
+const followStates = {
+  on: { pressed: true, label: "Following", title: "The view stays at the newest content. Click to stop following." },
+  paused: {
+    pressed: "mixed",
+    label: "Follow paused",
+    title: "Away from the newest content. Scroll back to the end, or click, to follow again.",
+  },
+  off: { pressed: false, label: "Follow off", title: "Click to follow the newest content." },
+} as const;
+
+// What a block or region calls when clicked, before it flips: the view holds where it is.
+const Hold = createContext<() => void>(() => {
+  throw new Error("A block is shown outside a Conversation");
+});
 
 // The largest scroll offset: the one that shows the end of the conversation.
 function largest(element: HTMLElement): number {
@@ -184,9 +203,17 @@ function ExchangeLine({ exchange: { request, response, end }, reading }: { excha
 function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
   const { key, block, size } = row;
   const open = useView((state) => isExpanded(state.flipped, row));
+  const hold = useContext(Hold);
   return (
     <div className="pl-12 pr-4">
-      <button type="button" className="flex w-full gap-3 text-left hover:bg-muted" onClick={() => view.toggle(key)}>
+      <button
+        type="button"
+        className="flex w-full gap-3 text-left hover:bg-muted"
+        onClick={() => {
+          hold();
+          view.toggle(key);
+        }}
+      >
         <span className="w-3 text-muted-foreground">{open ? "▾" : "▸"}</span>
         <span className="w-20 text-muted-foreground">{block.category}</span>
         <span className="flex-1 truncate">{block.name}</span>
@@ -272,8 +299,16 @@ function segmentViews(list: Segment[], partKey: string): ReactNode[] {
 function RegionView({ region, partKey }: { region: Extract<Segment, { kind: "region" }>; partKey: string }) {
   const regionKey = `${partKey}/${region.line}`;
   const open = useView((state) => state.flipped[regionKey] === true);
+  const hold = useContext(Hold);
   const line = (
-    <button type="button" className="text-muted-foreground hover:bg-muted" onClick={() => view.toggle(regionKey)}>
+    <button
+      type="button"
+      className="text-muted-foreground hover:bg-muted"
+      onClick={() => {
+        hold();
+        view.toggle(regionKey);
+      }}
+    >
       {open ? "▾" : "▸"} {region.label} · {region.lines} lines
     </button>
   );

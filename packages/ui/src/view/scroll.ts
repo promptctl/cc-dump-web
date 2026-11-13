@@ -30,20 +30,21 @@ export function step(
   // the browser moved it to when the content got shorter or the scroller taller (a clamp). A clamp is the layout
   // changing, not a reader, so the position survives it. A reader's scroll reaches the end from below, so it is never a
   // clamp; any other offset is a reader's.
-  const own = Math.abs(offset - Math.min(written, end)) < 1;
+  // A position chosen with the control is the reader's latest act, so the offset under it is the view's own too, even
+  // with a scroll whose event is still to come.
+  const own = cause === "choose" || Math.abs(offset - Math.min(written, end)) < 1;
   // A reader's offset is the scroll event's to take: the virtualizer re-renders within that event, ahead of the view's
   // listener, and a clamp's event can come after a render, so a render that took an offset for the reader's could take
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   if (!own && cause === "change") return { position, written, write: undefined };
   // A reader's offset becomes the position. Following, an offset within a pixel of the end is the end: a scroll to the
   // end stays there and a scroll back to it resumes, and a gesture the browser stopped at an end that grew while it ran
-  // stays paused. A position chosen with the control is the reader's latest act, so it holds over a scroll still under
-  // way. The end while follow is off is a place like any other, the one under the view: the view stays.
+  // stays paused. The end while follow is off is a place like any other, the one under the view: the view stays.
   const read = follow && end - offset < 1 ? ({ at: "end" } as const) : positionAt(offset, rows.rowAt);
-  const next = (own || cause === "choose") && (position.at !== "end" || follow) ? position : read;
+  const next = own && (position.at !== "end" || follow) ? position : read;
   // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
   // arrived, as after a reload, writes nothing until it does.
-  const resolved = resolve(next, end, rows.indexOf, rows.placed);
+  const resolved = resolve(next, rows.indexOf, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
   return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target };
 }
