@@ -7,7 +7,7 @@ import { setImmediate } from "node:timers/promises";
 import { serve, type Event } from "@cc-dump/log";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { createProxy } from "./proxy.ts";
+import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import { parseReadFailure, type RecordedEvent } from "./format.ts";
 import { createRecording, type Recording } from "./recording.ts";
@@ -27,7 +27,7 @@ const liveName = "20261113T080000.000Z.jsonl";
 async function proxyAndReader(dir = recordingsDir(), wrap = (recording: Recording) => recording) {
   const recording = wrap(createRecording(() => {}, join(dir, liveName)));
   const upstream = await serving((_req, res) => res.end("answer"));
-  const proxy = await serving(createProxy(new URL(upstream.url), recording.record));
+  const proxy = await serving(createProxy(parseUpstream(upstream.url), recording.record));
   const readerLog = eventLog();
   const reader = await serving(createReader(readerLog.log, recording));
   // One exchange through the proxy, waited on until its request event (and so its recording) is complete.

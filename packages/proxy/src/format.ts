@@ -1,4 +1,5 @@
 import type { Ending } from "@cc-dump/log/ending";
+import { jsonObject, parseJson } from "./json.ts";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -101,18 +102,9 @@ const recordedTypes: Record<Recorded["type"], true> = {
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
 const statusStates: Record<ProxyStatus["state"], true> = { watching: true, failed: true };
 
-function parseJson(text: string, what: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Error(`${what}: is not JSON`, { cause: error });
-  }
-}
-
 // The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it.
 function fields(json: unknown, what: string) {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error(`${what}: is not an object`);
-  const object = json as Record<string, unknown>;
+  const object = jsonObject(json, what);
   const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
     const value = object[name];
     if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);

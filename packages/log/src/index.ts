@@ -30,18 +30,25 @@ type FloorField = keyof { [K in keyof Event as string extends K ? never : K]: un
 export type Facts = { [fact: string]: unknown } & { [K in FloorField]?: never };
 
 // A synchronous unit of work done outside any request, such as a part's setup: its event is written when
-// `work` returns, or when it throws, and then the error is rethrown. A promise is refused: its event
-// would be written before the work had happened.
-export function logged<T>(log: Log, event: string, facts: Facts, work: () => T extends PromiseLike<unknown> ? never : T): T {
+// `work` returns, with the facts `found` reads off its result, or when it throws, and then the error is rethrown.
+// A promise is refused: its event would be written before the work had happened.
+export function logged<T>(
+  log: Log,
+  event: string,
+  facts: Facts,
+  work: () => T extends PromiseLike<unknown> ? never : T,
+  found: (result: T) => Facts = () => ({}),
+): T {
   const span = startSpan();
+  let result: T;
   try {
-    const result = work();
-    log({ event, ...facts, ...span.end(), outcome: "ok" });
-    return result;
+    result = work();
   } catch (error) {
     log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) });
     throw error;
   }
+  log({ event, ...facts, ...found(result), ...span.end(), outcome: "ok" });
+  return result;
 }
 
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;

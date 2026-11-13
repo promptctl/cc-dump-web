@@ -38,11 +38,12 @@ const script = `
   const { createLog, shutdownOnSignal } = await import(${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)});
   const { createRecording } = await import(${JSON.stringify(new URL("./recording.ts", import.meta.url).href)});
   const { startProxy } = await import(${JSON.stringify(new URL("./start.ts", import.meta.url).href)});
+  const { parseUpstream } = await import(${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)});
   const [upstream, path] = process.argv.slice(1);
   const log = createLog("proxy", (line) => process.stdout.write(line));
   const recording = createRecording(log, path);
   const source = recordingSource.loaded();
-  shutdownOnSignal(log, await startProxy(log, { upstream: new URL(upstream), recording, source, proxyPort: 0, readerPort: 0 }));
+  shutdownOnSignal(log, await startProxy(log, { upstream: parseUpstream(upstream), recording, source, proxyPort: 0, readerPort: 0 }));
 `;
 
 // The proxy and its reader as their own process, served as main.ts serves them, killed when the test finishes,

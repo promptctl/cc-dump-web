@@ -6,16 +6,27 @@ import type { Recorder } from "./recording.ts";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 
+declare const parsed: unique symbol;
+// The address the proxy forwards to, as its href: an http or https origin with an optional path. A string, so no holder
+// can change it, and branded, so `parseUpstream` alone makes one.
+export type Upstream = string & { readonly [parsed]: true };
+
+// [LAW:parse-dont-validate] [LAW:no-silent-failure] Requests go to the upstream's origin and path, so an address
+// carrying anything more (query, fragment, credentials) is refused here rather than forwarded to without it.
+export function parseUpstream(text: string): Upstream {
+  const url = URL.canParse(text) ? new URL(text) : undefined;
+  if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname)
+    throw new Error(`upstream must be an http or https origin with an optional path, got ${JSON.stringify(text)}`);
+  return url.href as Upstream;
+}
+
 // [LAW:decomposition] The proxy never parses a body: bytes pass through in both directions as
 // they arrive, which is what keeps the agent's view of the API unchanged. Every request on every
 // path is recorded as it was seen; what a recording means is for its readers to decide.
-export function createProxy(upstream: URL, record: Recorder): Handler {
-  const request = requestFor[upstream.protocol as keyof typeof requestFor];
-  // [LAW:no-silent-failure] Requests go to the upstream's origin and path, so a URL carrying anything
-  // more (query, fragment, credentials) is refused here rather than forwarded to without it.
-  if (!request || upstream.href !== upstream.origin + upstream.pathname)
-    throw new Error(`cc-dump proxy: upstream must be an http or https origin with an optional path, got ${upstream.href}`);
-  const basePath = upstream.pathname.replace(/\/$/, "");
+export function createProxy(upstream: Upstream, record: Recorder): Handler {
+  const url = new URL(upstream);
+  const request = requestFor[url.protocol as keyof typeof requestFor];
+  const basePath = url.pathname.replace(/\/$/, "");
 
   return (req, res, { trace_id, fail, ended }) => {
     const seen = record(trace_id);
@@ -38,7 +49,7 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     const upstreamFailed = (error: NodeJS.ErrnoException) => {
       fail(error);
       if (res.headersSent) res.destroy();
-      else res.writeHead(502, { "content-type": "application/json" }).end(apiError(upstream, error));
+      else res.writeHead(502, { "content-type": "application/json" }).end(apiError(url, error));
     };
 
     // [LAW:single-enforcer] node's client is its check that a request can be forwarded, and it is
@@ -46,11 +57,11 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     // fails as an unreachable upstream does: nothing has been written to `res`.
     let outgoing: ClientRequest;
     try {
-      outgoing = request(upstream, {
+      outgoing = request(url, {
         method: req.method,
         path: basePath + req.url,
         // node adds no Host when headers are an array, so the upstream's replaces the agent's.
-        headers: [["host", upstream.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
+        headers: [["host", url.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
       });
     } catch (error) {
       return upstreamFailed(error as NodeJS.ErrnoException);

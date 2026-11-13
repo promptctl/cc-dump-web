@@ -10,7 +10,7 @@ import type { Handler } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { createProxy } from "./proxy.ts";
+import { createProxy, parseUpstream } from "./proxy.ts";
 import type { RecordedEvent } from "./format.ts";
 import { createRecording } from "./recording.ts";
 import { proxyProcess } from "./testing.ts";
@@ -40,7 +40,7 @@ function recordingPath() {
 async function proxyTo(upstream: URL) {
   const { path, events } = recordingPath();
   const recordLog = eventLog();
-  return { ...(await serving(createProxy(upstream, createRecording(recordLog.log, path).record))), path, events, recordLog };
+  return { ...(await serving(createProxy(parseUpstream(upstream.href), createRecording(recordLog.log, path).record))), path, events, recordLog };
 }
 
 const bodyOf = (events: RecordedEvent[], type: "request_body" | "response_body") =>
@@ -238,12 +238,16 @@ describe("createProxy", () => {
     expect(event.error).not.toContain("rawPacket");
   });
 
-  it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a"])(
-    "refuses the upstream %s, which it could not forward to as given",
-    (href) => {
-      expect(() => createProxy(new URL(href), () => expect.unreachable("nothing is recorded"))).toThrow(/http or https origin/);
+  it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a", "gw.example", ""])(
+    "refuses the upstream %j, which it could not forward to as given",
+    (text) => {
+      expect(() => parseUpstream(text)).toThrow(`upstream must be an http or https origin with an optional path, got ${JSON.stringify(text)}`);
     },
   );
+
+  it.each(["https://api.anthropic.com", "http://127.0.0.1:8080/anthropic/"])("takes the upstream %s, as its href", (text) => {
+    expect(parseUpstream(text)).toBe(new URL(text).href);
+  });
 
   describe("recording", () => {
     it("records the request and response as they were on the wire, ending as the log event does", async () => {

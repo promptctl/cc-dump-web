@@ -1,11 +1,11 @@
 import { serve, type Handler, type Log } from "@cc-dump/log";
-import { createProxy } from "./proxy.ts";
+import { createProxy, type Upstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import type { Recording } from "./recording.ts";
 import type { Source } from "./source.ts";
 import { createStatus, watchSource } from "./status.ts";
 
-export type Proxying = { upstream: URL; recording: Recording; source: Source; proxyPort: number; readerPort: number };
+export type Proxying = { upstream: Upstream; recording: Recording; source: Source; proxyPort: number; readerPort: number };
 
 // [LAW:single-enforcer] The one way the proxy is put together, for main.ts and for the tests that run it as its own
 // process: the proxy on its port, and on the reader port the proxy's status beside the recording's read side.

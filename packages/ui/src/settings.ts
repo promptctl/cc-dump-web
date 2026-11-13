@@ -8,8 +8,9 @@ export const visibilities = ["shown", "hidden"] as const;
 export type Visibility = (typeof visibilities)[number];
 
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
-// in localStorage, so they survive a restart of the browser. `follow`: whether follow mode is on. `visibility`: each
-// category's.
+// in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
+// app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
+// is on. `visibility`: each category's.
 export type Settings = { follow: boolean; visibility: Record<Category, Visibility> };
 
 const name = "cc-dump.settings";
