@@ -20,7 +20,7 @@ export function createProxy(log: Log, upstream: URL): Server {
         method: req.method,
         path: basePath + req.url,
         // node adds no Host when headers are an array, so the upstream's replaces the agent's.
-        headers: [["host", upstream.host], ...endToEnd(req.rawHeaders).filter(([name]) => name.toLowerCase() !== "host")].flat(),
+        headers: [["host", upstream.host], ...endToEnd(req.rawHeaders, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
       });
 
       // An upstream failure reaches the agent as it would on a direct connection: before the
@@ -34,7 +34,14 @@ export function createProxy(log: Log, upstream: URL): Server {
       outgoing.on("error", upstreamFailed);
       outgoing.on("response", (incoming) => {
         incoming.on("error", upstreamFailed);
-        res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(incoming.rawHeaders).flat());
+        // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
+        // stricter than node's response parser (a status below 100 passes the parser): a response it
+        // refuses is an invalid upstream response, which is what a 502 is.
+        try {
+          res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(incoming.rawHeaders, hopByHop).flat());
+        } catch (error) {
+          return upstreamFailed(error as NodeJS.ErrnoException);
+        }
         incoming.pipe(res);
       });
       // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
@@ -48,24 +55,26 @@ type Header = [name: string, value: string];
 
 // RFC 9110 §7.6.1: hop-by-hop headers belong to one connection and are not forwarded, including
 // any the Connection header names. The rest pass in their original case, order and repetition.
-// Transfer-Encoding is hop-by-hop too, but passes: node frames each hop's body by it, so the
-// agent's framing is the one upstream gets (without it node sends a GET body unframed).
-const hopByHop = ["connection", "proxy-connection", "keep-alive", "te", "upgrade"];
+// Toward the agent, node frames the body for the agent's HTTP version.
+const hopByHop = ["connection", "proxy-connection", "keep-alive", "te", "transfer-encoding", "upgrade"];
+// Toward upstream, the agent's Transfer-Encoding passes: node's client frames a body only when told
+// (it sends a GET body unframed), and an agent that sent chunked speaks HTTP/1.1, as node does upstream.
+const towardUpstream = hopByHop.filter((name) => name !== "transfer-encoding");
 
-function endToEnd(rawHeaders: string[]): Header[] {
+function endToEnd(rawHeaders: string[], dropped: string[]): Header[] {
   const headers = rawHeaders.flatMap((name, i): Header[] => (i % 2 ? [] : [[name, rawHeaders[i + 1]!]]));
   const listed = headers
     .filter(([name]) => name.toLowerCase() === "connection")
     .flatMap(([, value]) => value.split(",").map((token) => token.trim().toLowerCase()));
-  const dropped = new Set([...hopByHop, ...listed]);
-  return headers.filter(([name]) => !dropped.has(name.toLowerCase()));
+  const names = new Set([...dropped, ...listed]);
+  return headers.filter(([name]) => !names.has(name.toLowerCase()));
 }
 
 // The Anthropic API's error body, so the agent reports the proxy's failure the way it reports the API's.
-// The errno code, not the message: refusal by every address of a host is an AggregateError with none.
+// The error's code, not its message: refusal by every address of a host is an AggregateError with none.
 function apiError(upstream: URL, error: NodeJS.ErrnoException): string {
   return JSON.stringify({
     type: "error",
-    error: { type: "api_error", message: `cc-dump proxy: no response from ${upstream.origin}: ${error.code}` },
+    error: { type: "api_error", message: `cc-dump proxy: no valid response from ${upstream.origin}: ${error.code}` },
   });
 }

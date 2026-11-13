@@ -1,5 +1,7 @@
 import { once } from "node:events";
 import { createServer, request, type IncomingMessage, type RequestListener } from "node:http";
+import { createConnection } from "node:net";
+import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import { listen } from "@cc-dump/log";
 import { closedAfterTest, eventLog } from "@cc-dump/log/testing";
@@ -11,14 +13,9 @@ async function upstreamServing(handler: RequestListener): Promise<URL> {
   return new URL(`http://127.0.0.1:${port}`);
 }
 
-// A port that was just bound and released, so a connection to it is refused. localhost, because
-// it resolves to more than one address on most hosts, and refusal by all of them is an AggregateError.
-async function refusingAddress(): Promise<URL> {
-  const server = createServer();
-  const port = await listen(() => {}, server, 0);
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return new URL(`http://localhost:${port}`);
-}
+// Nothing listens on port 1. localhost, because it resolves to more than one address on most
+// hosts, and refusal by all of them is an AggregateError.
+const refusingAddress = new URL("http://localhost:1");
 
 async function proxyTo(upstream: URL) {
   const { log, next } = eventLog();
@@ -37,12 +34,6 @@ async function send(port: number, { method = "GET", path, headers = {}, body }: 
   return res;
 }
 
-async function bytesOf(stream: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
-}
-
 function pairs(rawHeaders: string[]): [string, string][] {
   return rawHeaders.flatMap((name, i): [string, string][] => (i % 2 ? [] : [[name, rawHeaders[i + 1]!]]));
 }
@@ -57,7 +48,7 @@ describe("createProxy", () => {
   ])("forwards $method $path with its body byte-for-byte, framed by $framing", async ({ method, path, framing }) => {
     let received!: { method: string | undefined; url: string | undefined; headers: [string, string][]; body: Buffer };
     const upstream = await upstreamServing(async (req, res) => {
-      received = { method: req.method, url: req.url, headers: pairs(req.rawHeaders), body: await bytesOf(req) };
+      received = { method: req.method, url: req.url, headers: pairs(req.rawHeaders), body: await buffer(req) };
       res.end();
     });
     const { port } = await proxyTo(upstream);
@@ -68,7 +59,7 @@ describe("createProxy", () => {
       headers: { "x-api-key": "sk-test", "X-Custom": "a", connection: "x-hop", "x-hop": "1", ...framing },
       body,
     });
-    await bytesOf(res);
+    await buffer(res);
 
     expect(received.method).toBe(method);
     expect(received.url).toBe(path);
@@ -93,7 +84,7 @@ describe("createProxy", () => {
     expect(res.statusMessage).toBe("Overloaded");
     expect(res.headers["content-encoding"]).toBe("gzip");
     expect(res.headers["set-cookie"]).toEqual(["a=1", "b=2"]);
-    expect((await bytesOf(res)).equals(compressed)).toBe(true);
+    expect((await buffer(res)).equals(compressed)).toBe(true);
   });
 
   it("delivers each streamed chunk before upstream sends the next", async () => {
@@ -112,21 +103,49 @@ describe("createProxy", () => {
     firstArrived();
 
     expect(first.toString()).toBe("event: message_start\n\n");
-    expect((await bytesOf(res)).toString()).toBe("event: message_stop\n\n");
+    expect((await buffer(res)).toString()).toBe("event: message_stop\n\n");
     expect(await next()).toMatchObject({ event: "request", outcome: "ok", status: 200 });
   });
 
   it("answers 502 in the API's error shape when the upstream cannot be reached", async () => {
-    const { port, next } = await proxyTo(await refusingAddress());
+    const { port, next } = await proxyTo(refusingAddress);
 
     const res = await send(port, { method: "POST", path: "/v1/messages" });
 
     expect(res.statusCode).toBe(502);
-    expect(JSON.parse((await bytesOf(res)).toString())).toMatchObject({
+    expect(JSON.parse((await buffer(res)).toString())).toMatchObject({
       type: "error",
       error: { type: "api_error", message: expect.stringContaining("ECONNREFUSED") },
     });
     expect(await next()).toMatchObject({ outcome: "error", status: 502, error: expect.stringContaining("ECONNREFUSED") });
+  });
+
+  it("answers 502 when the upstream's response is one node cannot relay", async () => {
+    // node's response parser accepts any three digits; writeHead refuses a status below 100.
+    const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 099 Early\r\ncontent-length: 0\r\n\r\n"));
+    const { port, next } = await proxyTo(upstream);
+
+    const res = await send(port, { method: "POST", path: "/v1/messages" });
+
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse((await buffer(res)).toString())).toMatchObject({
+      error: { type: "api_error", message: expect.stringContaining("ERR_HTTP_INVALID_STATUS_CODE") },
+    });
+    expect(await next()).toMatchObject({ outcome: "error", status: 502 });
+  });
+
+  it("frames the response for the agent's HTTP version", async () => {
+    const upstream = await upstreamServing((_req, res) => {
+      res.write("hel");
+      res.end("lo");
+    });
+    const { port } = await proxyTo(upstream);
+
+    const agent = createConnection(port, "127.0.0.1");
+    agent.write("GET /v1/models HTTP/1.0\r\n\r\n");
+    const [, body] = (await buffer(agent)).toString().split("\r\n\r\n");
+
+    expect(body).toBe("hello");
   });
 
   it("cuts the agent's response when the upstream cuts mid-stream", async () => {
@@ -138,7 +157,7 @@ describe("createProxy", () => {
 
     const res = await send(port, { method: "POST", path: "/v1/messages" });
 
-    await expect(bytesOf(res)).rejects.toThrow(/aborted/);
+    await expect(buffer(res)).rejects.toThrow(/aborted/);
     expect(await next()).toMatchObject({ outcome: "error", status: 200 });
   });
 
