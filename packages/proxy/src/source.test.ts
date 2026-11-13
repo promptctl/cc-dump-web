@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { sha256 } from "./source.ts";
+import { fileHash } from "./source.ts";
 
 function tempDir() {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "cc-dump-source-")));
@@ -26,7 +26,7 @@ describe("recordSource", () => {
     const recorded = new Map(JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8" })) as [string, string][]);
     const own = fileURLToPath(new URL("./source.ts", import.meta.url));
     expect(recorded).toEqual(
-      new Map([own, join(dir, "first.ts"), join(dir, "second.ts")].map((path) => [path, sha256(readFileSync(path))])),
+      new Map([own, join(dir, "first.ts"), join(dir, "second.ts")].map((path) => [path, fileHash(path)])),
     );
   });
 });

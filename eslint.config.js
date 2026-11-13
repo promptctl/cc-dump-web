@@ -41,6 +41,7 @@ export default defineConfig(
             servesThroughLog,
             {
               regex: "^(?!node:|\\./source\\.ts$)",
+              // A type import is refused too: the rule cannot tell `import type` from an inline `type`, which node still loads.
               message: "Loads before the proxy's source is recorded: import it dynamically after recordSource (packages/proxy/src/main.ts).",
             },
           ],

@@ -5,7 +5,7 @@ import type { Event } from "@cc-dump/log";
 import { arrivals, eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type ProxyStatus } from "./format.ts";
-import { sha256 } from "./source.ts";
+import { fileHash } from "./source.ts";
 import { createStatus, watchSource, type SourceWatch } from "./status.ts";
 import { subscribe } from "./testing.ts";
 
@@ -16,7 +16,7 @@ function sourceFiles() {
   const [first, second] = [join(dir, "first.ts"), join(dir, "second.ts")];
   writeFileSync(first, "export const first = 1;\n");
   writeFileSync(second, "export const second = 2;\n");
-  return { dir, first, second, source: new Map([first, second].map((path) => [path, sha256(readFileSync(path))])) };
+  return { dir, first, second, source: new Map([first, second].map((path) => [path, fileHash(path)])) };
 }
 
 // A watch whose states the test waits on: `next()` resolves with each state it changes to. Resolves once the watch

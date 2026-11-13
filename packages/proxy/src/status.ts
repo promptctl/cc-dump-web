@@ -1,8 +1,8 @@
-import { readFileSync, watch, type FSWatcher } from "node:fs";
+import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { describeError, startSpan, type Handler, type Log } from "@cc-dump/log";
 import type { ProxyStatus } from "./format.ts";
-import { sha256, type Source } from "./source.ts";
+import { fileHash, type Source } from "./source.ts";
 
 // [LAW:one-source-of-truth] The watch's state is the status `GET /status` sends (format.ts): the state now, and a
 // listener called after each change of it, until the function it returned is called.
@@ -70,7 +70,7 @@ export function watchSource(log: Log, source: Source): SourceWatch {
 // The SHA-256 of the file's text, or undefined when it is gone.
 function onDisk(path: string) {
   try {
-    return sha256(readFileSync(path));
+    return fileHash(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
