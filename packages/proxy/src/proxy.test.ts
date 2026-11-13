@@ -1,12 +1,18 @@
+import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import type { Handler } from "@cc-dump/log";
-import { sendRaw, serving } from "@cc-dump/log/testing";
-import { describe, expect, it } from "vitest";
+import { eventLog, sendRaw, serving } from "@cc-dump/log/testing";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
+import { createRecording, type RecordedEvent } from "./recording.ts";
 
 async function upstreamServing(handler: Handler): Promise<URL> {
   return new URL((await serving(handler)).url);
@@ -16,7 +22,31 @@ async function upstreamServing(handler: Handler): Promise<URL> {
 // hosts, and refusal by all of them is an AggregateError.
 const refusingAddress = new URL("http://localhost:1");
 
-const proxyTo = (upstream: URL) => serving(createProxy(upstream));
+// A recording path in a fresh directory, removed when the test finishes; `events` reads it back.
+function recordingPath() {
+  const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "recordings", "run.jsonl");
+  const events = () =>
+    readFileSync(path, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as RecordedEvent);
+  return { path, events };
+}
+
+// The proxy, recording to a fresh path. The recording's own events go to `recordLog`.
+async function proxyTo(upstream: URL) {
+  const { path, events } = recordingPath();
+  const recordLog = eventLog();
+  return { ...(await serving(createProxy(upstream, createRecording(recordLog.log, path)))), path, events, recordLog };
+}
+
+const bodyOf = (events: RecordedEvent[], type: "request_body" | "response_body") =>
+  Buffer.concat(events.flatMap((event) => (event.type === type ? [Buffer.from(event.base64, "base64")] : [])));
+
+// The event types in order, a run of one type as one entry: how a body is chunked is the network's.
+const shape = (events: RecordedEvent[]) => events.map(({ type }) => type).filter((type, i, types) => type !== types[i - 1]);
 
 // Raw node:http on the agent's side, so bytes are compared as sent (fetch would decompress gzip).
 type Sent = { method?: string; path: string; headers?: Record<string, string>; body?: Buffer };
@@ -221,7 +251,228 @@ describe("createProxy", () => {
   it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a"])(
     "refuses the upstream %s, which it could not forward to as given",
     (href) => {
-      expect(() => createProxy(new URL(href))).toThrow(/http or https origin/);
+      expect(() => createProxy(new URL(href), () => expect.unreachable("nothing is recorded"))).toThrow(/http or https origin/);
     },
   );
+
+  describe("recording", () => {
+    it("records the request and response as they were on the wire, ending as the log event does", async () => {
+      const upstream = await upstreamServing(async (req, res) => {
+        await buffer(req);
+        res.writeHead(200, "Fine", ["Content-Type", "text/event-stream"]);
+        res.write("event: message_start\n\n");
+        res.end("event: message_stop\n\n");
+      });
+      const { port, next, events } = await proxyTo(upstream);
+
+      const res = await send(port, {
+        method: "POST",
+        path: "/v1/messages?beta=true",
+        headers: { "X-Custom": "a", "content-length": String(body.length) },
+        body,
+      });
+      await buffer(res);
+      const logged = await next();
+
+      const recorded = events();
+      expect(shape(recorded)).toEqual(["request", "request_body", "response", "response_body", "end"]);
+      expect(new Set(recorded.map(({ trace_id }) => trace_id))).toEqual(new Set([logged.trace_id]));
+      for (const { timestamp } of recorded) expect(new Date(timestamp).toISOString()).toBe(timestamp);
+      expect(recorded[0]).toMatchObject({
+        method: "POST",
+        url: "/v1/messages?beta=true",
+        http_version: "1.1",
+        headers: expect.arrayContaining([["X-Custom", "a"]]),
+      });
+      expect(recorded.find(({ type }) => type === "response")).toMatchObject({
+        status: 200,
+        reason: "Fine",
+        http_version: "1.1",
+        headers: expect.arrayContaining([["Content-Type", "text/event-stream"]]),
+      });
+      expect(bodyOf(recorded, "request_body").equals(body)).toBe(true);
+      expect(bodyOf(recorded, "response_body").toString()).toBe("event: message_start\n\nevent: message_stop\n\n");
+      expect(recorded.at(-1)).toEqual({ type: "end", outcome: "ok", timestamp: expect.any(String), trace_id: logged.trace_id });
+    });
+
+    it("forwards credentials in both directions and never writes them", async () => {
+      let received!: [string, string][];
+      const upstream = await upstreamServing((req, res) => {
+        received = pairs(req.rawHeaders);
+        res.writeHead(200, ["Set-Cookie", "session=s3"]).end();
+      });
+      const { port, next, path } = await proxyTo(upstream);
+      const credentials = { Authorization: "Bearer sk-a1", "x-api-key": "sk-b2", cookie: "c=c3" };
+
+      const res = await send(port, { path: "/v1/models", headers: credentials });
+      await buffer(res);
+      await next();
+
+      expect(received).toEqual(expect.arrayContaining(Object.entries(credentials)));
+      expect(res.headers["set-cookie"]).toEqual(["session=s3"]);
+      const file = readFileSync(path, "utf8");
+      for (const value of ["sk-a1", "sk-b2", "c=c3", "session=s3"]) expect(file).not.toContain(value);
+    });
+
+    it("keeps overlapping requests apart as separate exchanges", async () => {
+      let arrived = 0;
+      let bothArrived!: () => void;
+      const both = new Promise<void>((resolve) => (bothArrived = resolve));
+      const upstream = await upstreamServing(async (req, res) => {
+        await buffer(req);
+        if (++arrived === 2) bothArrived();
+        await both;
+        res.end(`answer to ${req.url}`);
+      });
+      const { port, next, events } = await proxyTo(upstream);
+
+      await Promise.all(
+        ["/v1/messages?n=1", "/v1/messages?n=2"].map(async (path) => {
+          const asked = Buffer.from(`asking ${path}`);
+          await buffer(await send(port, { method: "POST", path, headers: { "content-length": String(asked.length) }, body: asked }));
+        }),
+      );
+      await next();
+      await next();
+
+      const exchanges = [...Map.groupBy(events(), ({ trace_id }) => trace_id).values()];
+      const urls = exchanges.map((exchange) => (exchange[0] as { url: string }).url);
+      expect(urls.sort()).toEqual(["/v1/messages?n=1", "/v1/messages?n=2"]);
+      for (const exchange of exchanges) {
+        const { url } = exchange[0] as { url: string };
+        expect(shape(exchange)).toEqual(["request", "request_body", "response", "response_body", "end"]);
+        expect(bodyOf(exchange, "request_body").toString()).toBe(`asking ${url}`);
+        expect(bodyOf(exchange, "response_body").toString()).toBe(`answer to ${url}`);
+      }
+    });
+
+    it("records a failed connection to the upstream as the exchange's ending", async () => {
+      const { port, next, events } = await proxyTo(refusingAddress);
+
+      await buffer(await send(port, { method: "POST", path: "/v1/messages" }));
+      await next();
+
+      expect(shape(events())).toEqual(["request", "end"]);
+      expect(events().at(-1)).toMatchObject({ outcome: "error", error: expect.stringContaining("ECONNREFUSED") });
+    });
+
+    it("records a stream the upstream cuts, up to the cut", async () => {
+      const upstream = await upstreamServing((req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: message_start\n\n", () => req.socket.destroy());
+      });
+      const { port, next, events } = await proxyTo(upstream);
+
+      await expect(buffer(await send(port, { method: "POST", path: "/v1/messages" }))).rejects.toThrow(/aborted/);
+      await next();
+
+      expect(shape(events())).toEqual(["request", "response", "response_body", "end"]);
+      expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
+      expect(events().at(-1)).toMatchObject({ outcome: "error" });
+    });
+
+    it("records the agent leaving mid-stream as an aborted ending", async () => {
+      const upstream = await upstreamServing((_req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: message_start\n\n");
+      });
+      const { port, next, events } = await proxyTo(upstream);
+
+      const res = await send(port, { method: "POST", path: "/v1/messages" });
+      await once(res, "data");
+      res.destroy();
+      await next();
+
+      expect(shape(events())).toEqual(["request", "response", "response_body", "end"]);
+      expect(events().at(-1)).toMatchObject({ outcome: "aborted" });
+    });
+
+    it("records a response node cannot relay to the agent", async () => {
+      const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 099 Early\r\ncontent-length: 2\r\n\r\nok"));
+      const { port, next, events } = await proxyTo(upstream);
+
+      await expect(send(port, { method: "POST", path: "/v1/messages" })).rejects.toThrow(/socket hang up/);
+      await next();
+
+      expect(events().find(({ type }) => type === "response")).toMatchObject({ status: 99, reason: "Early" });
+      expect(events().at(-1)).toMatchObject({ type: "end", outcome: "error", error: expect.stringContaining("ERR_HTTP_INVALID_STATUS_CODE") });
+    });
+
+    it("ends an exchange with its last event when the upstream answers before the agent finishes sending", async () => {
+      const upstream = await upstreamServing((_req, res) => res.end("early"));
+      const { port, next, events } = await proxyTo(upstream);
+
+      // Raw, so the agent keeps sending after its answer, as a client that does not watch for one would.
+      const agent = createConnection(port, "127.0.0.1");
+      agent.write("POST /v1/messages HTTP/1.1\r\nhost: x\r\ncontent-length: 10\r\n\r\nfirst");
+      await once(agent, "data");
+      await next();
+      agent.end("later");
+      await once(agent, "close");
+
+      expect(shape(events())).toEqual(["request", "request_body", "response", "response_body", "end"]);
+    });
+
+    it("logs each write the recording cannot make as its own event, beside the exchange's own ending", async () => {
+      const upstream = await upstreamServing((req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: message_start\n\n", () => req.socket.destroy());
+      });
+      const { port, next, path, recordLog } = await proxyTo(upstream);
+      rmSync(dirname(path), { recursive: true });
+
+      const res = await send(port, { method: "POST", path: "/v1/messages" });
+      const [first] = (await once(res, "data")) as [Buffer];
+      await expect(buffer(res)).rejects.toThrow(/aborted/);
+      const exchange = await next();
+
+      expect(first.toString()).toBe("event: message_start\n\n");
+      expect(exchange).toMatchObject({ event: "request", outcome: "error", status: 200 });
+      expect(exchange.error).not.toContain("ENOENT");
+      const failed = [await recordLog.next(), await recordLog.next(), await recordLog.next(), await recordLog.next()];
+      expect(failed.map(({ type }) => type)).toEqual(["request", "response", "response_body", "end"]);
+      for (const event of failed)
+        expect(event).toMatchObject({ event: "record", trace_id: exchange.trace_id, outcome: "error", error: expect.stringContaining("ENOENT"), path });
+    });
+
+    it("writes no file for a run with no traffic", async () => {
+      const { path } = await proxyTo(refusingAddress);
+
+      expect(existsSync(path)).toBe(false);
+    });
+
+    // The proxy as its own process, recording to the path it is given, writing its port to stdout.
+    const proxyProcess = `
+      import { serve } from ${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)};
+      import { createProxy } from ${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)};
+      import { createRecording } from ${JSON.stringify(new URL("./recording.ts", import.meta.url).href)};
+      const [upstream, path] = process.argv.slice(1);
+      const ignore = () => {};
+      const { port } = await serve(ignore, createProxy(new URL(upstream), createRecording(ignore, path)), 0);
+      process.stdout.write(port + "\\n");
+    `;
+
+    it("leaves every event it saw up to the moment the proxy is killed", async () => {
+      const upstream = await upstreamServing((_req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: message_start\n\n");
+      });
+      const { path, events } = recordingPath();
+      const proxy = spawn(process.execPath, ["--input-type=module", "-e", proxyProcess, upstream.href, path], { stdio: ["ignore", "pipe", "inherit"] });
+      onTestFinished(() => void proxy.kill("SIGKILL"));
+      const [port] = (await once(createInterface(proxy.stdout), "line")) as [string];
+
+      const res = await send(Number(port), { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
+      await once(res, "data");
+      const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
+      proxy.kill("SIGKILL");
+      await once(proxy, "exit");
+      await cut;
+
+      expect(shape(events())).toEqual(["request", "request_body", "response", "response_body"]);
+      expect(bodyOf(events(), "request_body").equals(body)).toBe(true);
+      expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
+    });
+  });
 });
+

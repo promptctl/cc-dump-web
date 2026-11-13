@@ -23,9 +23,26 @@ export function createLog(service: string, write: (line: string) => void): Log {
   return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
 }
 
-// A handler answers through `res` and reports a failure of its work through `fail`; what the
-// client is sent when that happens is the handler's decision, made before or after `fail`.
-export type Handler = (req: IncomingMessage, res: ServerResponse, fail: (error: unknown) => void) => void;
+// A unit of work done outside any request, such as a part's setup: its event is written when `work`
+// returns, or when it throws, and then the error is rethrown. Its facts never replace the floor's fields.
+export function logged<T>(log: Log, event: string, facts: Record<string, unknown>, work: () => T): T {
+  const span = startSpan();
+  try {
+    const result = work();
+    log({ event, ...facts, ...span.end(), outcome: "ok" });
+    return result;
+  } catch (error) {
+    log({ event, ...facts, ...span.end(), outcome: "error", error: describe(error) });
+    throw error;
+  }
+}
+
+// The request's unit of work as its event records it. A handler reports a failure through `fail`;
+// what the client is sent when that happens is the handler's decision, made before or after `fail`.
+// `ended` resolves when the response closes, with the ending the event records.
+export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Promise<Ending> };
+
+export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
 
 export type Serving = { port: number; close: () => Promise<void> };
 
@@ -79,9 +96,11 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
     const span = startSpan();
     const client = clientOf(req.socket);
     let failure: string | undefined;
+    const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
     res.on("close", () => {
       const ending: Ending =
         failure === undefined ? { outcome: res.writableFinished ? "ok" : "aborted" } : { outcome: "error", error: failure };
+      end(ending);
       log({
         event: "request",
         ...span.end(),
@@ -93,7 +112,7 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
         ...client,
       });
     });
-    handler(req, res, (error) => (failure ??= describe(error)));
+    handler(req, res, { trace_id: span.trace_id, fail: (error) => (failure ??= describe(error)), ended });
   };
 }
 
@@ -101,7 +120,7 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
 // the raw bytes of the message it was parsing as `rawPacket`: a request's (x-api-key included) on a
 // server's socket, an upstream response's (set-cookie included) on a client's. The event records what
 // node said about the bytes, never the bytes.
-function describe(error: unknown): string {
+export function describe(error: unknown): string {
   if (!(error instanceof Error && "rawPacket" in error)) return inspect(error);
   const said = Object.assign(new Error(error.message), error, { stack: error.stack });
   delete said.rawPacket;
@@ -113,5 +132,5 @@ function startSpan() {
   const trace_id = randomBytes(16).toString("hex");
   const started_at = new Date().toISOString();
   const started = performance.now();
-  return { end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };
+  return { trace_id, end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };
 }

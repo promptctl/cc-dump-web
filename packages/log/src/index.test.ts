@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { createLog, serve, type Event } from "./index.ts";
+import { createLog, logged, serve, type Event, type Work } from "./index.ts";
 import { eventLog, sendRaw, serving } from "./testing.ts";
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -23,6 +23,26 @@ describe("createLog", () => {
     createLog("proxy", (line) => lines.push(line))({ ...ended, port: 1 });
 
     expect(lines).toEqual([`${JSON.stringify({ service: "proxy", ...ended, port: 1 })}\n`]);
+  });
+});
+
+describe("logged", () => {
+  it("records the work's facts beside the floor's fields, and returns its result", async () => {
+    const { log, next } = eventLog();
+
+    expect(logged(log, "setup", { path: "/a", outcome: "faked" }, () => 7)).toBe(7);
+    expect(await next()).toMatchObject({ event: "setup", path: "/a", outcome: "ok", trace_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
+  });
+
+  it("records and rethrows the work's error", async () => {
+    const { log, next } = eventLog();
+
+    expect(() =>
+      logged(log, "setup", {}, () => {
+        throw new Error("no room");
+      }),
+    ).toThrow("no room");
+    expect(await next()).toMatchObject({ event: "setup", outcome: "error", error: expect.stringContaining("no room") });
   });
 });
 
@@ -61,7 +81,7 @@ describe("serve", () => {
   });
 
   it("records the first failure the handler reports, beside the answer it sent", async () => {
-    const { url, next } = await serving((_req, res, fail) => {
+    const { url, next } = await serving((_req, res, { fail }) => {
       fail(new Error("first"));
       fail(new Error("second"));
       res.writeHead(502).end();
@@ -72,6 +92,21 @@ describe("serve", () => {
     const event = await next();
     expect(event).toMatchObject({ event: "request", outcome: "error", status: 502, error: expect.stringContaining("first") });
     expect(event.error).not.toContain("second");
+  });
+
+  it("hands the handler its request's trace_id, and the ending its event records once the response closes", async () => {
+    let work!: Work;
+    const { url, next } = await serving((_req, res, given) => {
+      work = given;
+      given.fail(new Error("boom"));
+      res.end();
+    });
+
+    await (await fetch(url)).text();
+
+    const event = await next();
+    expect(work.trace_id).toBe(event.trace_id);
+    expect(await work.ended).toEqual({ outcome: "error", error: event.error });
   });
 
   it("records a request node refuses before any handler, and leaves node's answer as node sent it", async () => {
