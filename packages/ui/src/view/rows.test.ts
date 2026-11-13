@@ -88,8 +88,18 @@ describe("layout", () => {
     const { rows, keys } = layout(dialogue)(formatted);
     expect(rows.map(({ key }) => key)).toEqual(["a", "a/message.0", "a/message.0/content.0"]);
     expect(keys.indexOf("a/message.0/content.0")).toBe(2);
-    expect(keys.indexOf("a/request")).toBeUndefined();
     expect(listed({ ...dialogue, user: "hidden" })).toEqual(["a"]);
+  });
+
+  it("puts a row not listed at the place of the row listed after it, the next exchange's line or the last row when its own exchange has none", () => {
+    const formatted = createFormatter()(exchanges([...request("a", { ...body, system: "Be brief." }), ...request("b", body)]));
+    const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
+    const { keys } = layout(dialogue)(formatted);
+    expect(keys.at(keys.indexOf("a/request")!)).toBe("a/message.0");
+    expect(keys.at(keys.indexOf("a/request/system.0")!)).toBe("a/message.0");
+    const { keys: none } = layout({ ...dialogue, user: "hidden" })(formatted);
+    expect(none.at(none.indexOf("a/message.0/content.0")!)).toBe("b");
+    expect(none.at(none.indexOf("b/message.0/content.0")!)).toBe("b");
   });
 
   it("lists the same group and block rows whichever categories are hidden, so showing or hiding one sizes and renders no other", () => {

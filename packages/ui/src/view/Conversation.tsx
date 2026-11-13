@@ -10,6 +10,7 @@ import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded
 import { step, type Cause } from "./scroll.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
+import { Toggle } from "./Toggle.tsx";
 
 // The conversation, scrolling: each exchange's request, then its response, as rows of which only those on screen are
 // mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an exchange its end.
@@ -126,20 +127,17 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         </Hold.Provider>
       )}
       {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
-          rather than over it. A click takes no focus: once it is clicked, End and Space still scroll the conversation,
-          and Space does not press it again. */}
+          rather than over it. */}
       <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
-        <button
-          type="button"
+        <Toggle
           data-follow={following}
-          aria-pressed={control.pressed}
+          pressed={control.pressed}
           title={control.title}
           className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
-          onMouseDown={(event) => event.preventDefault()}
           onClick={toggleFollow}
         >
           {control.label}
-        </button>
+        </Toggle>
       </div>
     </main>
   );

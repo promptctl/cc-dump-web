@@ -15,13 +15,14 @@ export type Row =
 // The rows of a conversation, and their keys.
 export type Layout = { rows: Row[]; keys: Keys };
 
-// The rows' keys in order: the key at an index, and the index of a key. [LAW:types-are-the-program] The same object
+// The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
+// row listed after it, the last when none is. [LAW:types-are-the-program] The same object
 // while no row arrives, goes or moves, however what a row shows changes, so what places rows by key (the virtualizer,
 // from the first row, at 5 ms a time over a long recording) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 
-// One exchange's rows, their keys, and each key's index among them.
-type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; index: Map<string, number> };
+// One exchange's rows, their keys, the keys of its groups' rows listed or not, and each key's index among them.
+type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; places: string[]; index: Map<string, number> };
 
 // A group's rows, its title and every block, each sized, whichever categories are hidden.
 type GroupRows = { title: Extract<Row, { kind: "group" }>; blocks: Extract<Row, { kind: "block" }>[] };
@@ -45,10 +46,10 @@ export function createGroupRows(): (trace: string, group: Group) => GroupRows {
 // lays out only what changed, and only those rows render. It holds for one visibility, so another is another layout.
 export function createLayout(visibility: Record<Category, Visibility>, groupRows: (trace: string, group: Group) => GroupRows): (formatted: FormattedExchange[]) => Layout {
   const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
-  const listedRows = (trace: string, group: Group): Row[] => {
+  const groupLayout = (trace: string, group: Group) => {
     const { title, blocks } = groupRows(trace, group);
     const shown = blocks.filter(({ block }) => listed[visibility[block.category]]);
-    return shown.length === 0 ? [] : [title, ...shown];
+    return { listed: shown.length === 0 ? [] : [title, ...shown], every: [title, ...blocks] };
   };
   // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
   // ones before is the layout before, as when only traffic the view does not show arrived.
@@ -56,7 +57,7 @@ export function createLayout(visibility: Record<Category, Visibility>, groupRows
   return (formatted) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
-      const own = laidOut.get(exchange) ?? exchangeRows(exchange, listedRows, before.get(exchange.exchange.trace_id));
+      const own = laidOut.get(exchange) ?? exchangeRows(exchange, groupLayout, before.get(exchange.exchange.trace_id));
       laidOut.set(exchange, own);
       return own;
     });
@@ -70,15 +71,32 @@ export function createLayout(visibility: Record<Category, Visibility>, groupRows
   };
 }
 
-// An exchange's rows. `before`: the exchange's rows laid out last, whose keys it keeps, the same array, when its rows'
-// keys are the same.
-function exchangeRows({ exchange, groups }: FormattedExchange, listedRows: (trace: string, group: Group) => Row[], before: ExchangeRows | undefined): ExchangeRows {
+// An exchange's rows: of each group, those `groupLayout` lists, and every one. `before`: the exchange's rows laid out
+// last, whose keys it keeps, the same arrays, when its rows' keys are the same.
+function exchangeRows(
+  { exchange, groups }: FormattedExchange,
+  groupLayout: (trace: string, group: Group) => { listed: Row[]; every: Row[] },
+  before: ExchangeRows | undefined,
+): ExchangeRows {
   const trace = exchange.trace_id;
-  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...groups.flatMap((group) => listedRows(trace, group))];
+  const laidOut = groups.map((group) => groupLayout(trace, group));
+  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...laidOut.flatMap(({ listed }) => listed)];
   const keys = rows.map(({ key }) => key);
-  if (before !== undefined && before.keys.length === keys.length && before.keys.every((key, index) => key === keys[index])) return { ...before, rows };
-  return { trace, rows, keys, index: new Map(keys.map((key, index) => [key, index])) };
+  const places = laidOut.flatMap(({ every }) => every.map(({ key }) => key));
+  if (before !== undefined && same(before.keys, keys) && same(before.places, places)) return { ...before, rows };
+  // A row not listed is at the place of the row listed after it, past the exchange's own when none is: a reader whose
+  // row a category hid is shown what now stands where it stood, not the group or exchange it was inside.
+  const index = new Map(keys.map((key, at) => [key, at]));
+  let next = rows.length;
+  for (let at = places.length - 1; at >= 0; at--) {
+    const own = index.get(places[at]!);
+    if (own === undefined) index.set(places[at]!, next);
+    else next = own;
+  }
+  return { trace, rows, keys, places, index };
 }
+
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((key, at) => key === b[at]);
 
 function keysOf(exchanges: ExchangeRows[]): Keys {
   const keys: string[] = [];
@@ -92,13 +110,12 @@ function keysOf(exchanges: ExchangeRows[]): Keys {
     indexOf: (key) => {
       const trace = starts.get(key.split("/", 1)[0]!);
       const local = trace?.index.get(key);
-      return local === undefined ? undefined : trace!.start + local;
+      return local === undefined ? undefined : Math.min(trace!.start + local, keys.length - 1);
     },
   };
 }
 
-// [LAW:types-are-the-program] Whether a block of each visibility is listed, so a later level is one more entry, which
-// the compiler asks for here.
+// [LAW:types-are-the-program] Whether a block of each visibility is listed: the compiler asks for an entry for each.
 const listed: Record<Visibility, boolean> = { shown: true, hidden: false };
 
 // A group is one exchange's, so `trace` is the same for every call with it.

@@ -24,9 +24,9 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
   }
 }
 
-// The index of the row with `key`, or, while it is not among the rows, of the nearest row it is inside: `a/b/c` is
-// inside `a/b`, which is inside `a`. A block the formatter replaced, as a body so far is by the content parsed from it,
-// leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
+// The index of the row at `key` (a row a category hides is at the row listed after it), or, while there is none, of
+// the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter replaced, as a body
+// so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
   for (let end = key.length; end !== -1; end = key.lastIndexOf("/", end - 1)) {
     const index = indexOf(key.slice(0, end));

@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
 
 // Whether a category's blocks are listed (docs/design/01-mvp.md, F5). [LAW:types-are-the-program] A value, not a
-// boolean, so a later level of detail is one more member, and the blocks that read it do not change ("Scaffold").
+// boolean, so a later level of detail is one more member ("Scaffold").
 export const visibilities = ["shown", "hidden"] as const;
 export type Visibility = (typeof visibilities)[number];
 
@@ -15,7 +15,7 @@ export type Settings = { follow: boolean; visibility: Record<Category, Visibilit
 const name = "cc-dump.settings";
 
 // [LAW:parse-dont-validate] What is stored, read as the settings: each setting the stored one, or its default when none
-// is stored or the one stored is not a value this build has, as one an older or a newer build wrote.
+// is stored or the one stored is not a value this build has.
 export function parseSettings(stored: unknown): Settings {
   const follow = field(stored, "follow");
   const visibility = (category: Category) => {
