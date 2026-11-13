@@ -117,6 +117,17 @@ function regionAt(scanned: Scanned, at: number, to: number): { end: number; segm
   };
 }
 
+// How many characters of its text a segment spans, collapsed or not: a region's lines are its opening line, its body
+// and its closing line.
+export function lengthOf(segment: Segment): number {
+  return segment.kind === "text" ? segment.text.length : segment.open.length + segment.body.reduce((length, inner) => length + lengthOf(inner), 0) + segment.close.length;
+}
+
+// [LAW:one-source-of-truth] The key a region is kept under: its part's key and the line it opens on.
+export function regionKey(partKey: string, line: number): string {
+  return `${partKey}/${line}`;
+}
+
 function indexFrom(lines: string[], from: number, matches: (line: string) => boolean): number | undefined {
   for (let at = from; at < lines.length; at++) if (matches(lines[at]!)) return at;
   return undefined;

@@ -1,5 +1,5 @@
 import type { Exchange } from "../exchanges.ts";
-import type { Category, Part } from "../format/blocks.ts";
+import type { Block, Category, Part } from "../format/blocks.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
 
@@ -151,10 +151,14 @@ export function describeSize(size: number): string {
   return Number(thousands) < 1000 ? `${thousands}k chars` : `${(size / 1_000_000).toFixed(1)}M chars`;
 }
 
-// Whether a row shows expanded: a block as its category starts, the user's and the assistant's expanded and the rest
-// collapsed (docs/design/01-mvp.md, F4), unless the reader flipped it. Rows of other kinds are a line.
+// Whether a row shows expanded: a block as it starts, unless the reader flipped it. Rows of other kinds are a line.
 export function isExpanded(flipped: Record<string, true>, row: Row): boolean {
-  return row.kind === "block" && (flipped[row.key] === true) !== (row.block.category === "user" || row.block.category === "assistant");
+  return row.kind === "block" && (flipped[row.key] === true) !== startsExpanded(row.block);
+}
+
+// Whether a block starts expanded: the user's and the assistant's do (docs/design/01-mvp.md, F4).
+export function startsExpanded(block: Block): boolean {
+  return block.category === "user" || block.category === "assistant";
 }
 
 // A row's height before it is measured, in pixels: one line, or a block's content at about 100 characters a line.
