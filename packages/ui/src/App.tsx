@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { exchanges, type Exchange } from "./exchanges.ts";
 import { createFormatter, type FormattedExchange } from "./format/format.ts";
@@ -36,8 +36,9 @@ export function App({ connection }: { connection: Connection }) {
   );
 }
 
-// An exchange's line, then each of its blocks as one line naming its category and itself.
-function ExchangeBlocks({ formatted: { exchange, groups }, reading }: { formatted: FormattedExchange; reading: boolean }) {
+// An exchange's line, then each of its blocks as one line naming its category and itself. Memoized: the formatter
+// keeps an unchanged exchange the same object, so only the exchanges an event changed render again.
+const ExchangeBlocks = memo(function ExchangeBlocks({ formatted: { exchange, groups }, reading }: { formatted: FormattedExchange; reading: boolean }) {
   return (
     <li className="py-1.5">
       <ExchangeLine exchange={exchange} reading={reading} />
@@ -56,7 +57,7 @@ function ExchangeBlocks({ formatted: { exchange, groups }, reading }: { formatte
       ))}
     </li>
   );
-}
+});
 
 // `reading`: whether the read can still bring this exchange its end.
 function ExchangeLine({ exchange: { request, response, end }, reading }: { exchange: Exchange; reading: boolean }) {

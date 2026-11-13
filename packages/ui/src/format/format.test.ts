@@ -251,4 +251,72 @@ describe("format", () => {
     expect(later[1]).not.toBe(first[1]);
     expect(later[1]!.groups[0]).toBe(first[1]!.groups[0]);
   });
+
+  it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
+    const constructor = { type: "constructor", value: 1 };
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [constructor] }] }));
+    expect(group(formatted, "user")).toEqual([{ category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
+  });
+
+  it("shows a tool result with no content, as a failed tool may return", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] }] }));
+    expect(group(formatted, "user")).toEqual([
+      {
+        category: "tools",
+        name: "tool_result",
+        parts: [
+          { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
+          { kind: "json", label: "fields", value: { is_error: true } },
+        ],
+      },
+    ]);
+  });
+
+  it("decodes a body whose trailers were not recorded once its exchange has ended", () => {
+    const message = { ...messageStart.message, stop_reason: "end_turn" };
+    const formatted = one([
+      ...request("a", { model: "m", messages: [] }),
+      ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "br"]], brotliCompressSync(JSON.stringify(message)), false),
+      end("a"),
+    ]);
+    expect(lines(group(formatted, "response"))).toEqual(["metadata HTTP response", "metadata stop reason: end_turn", "metadata usage", "metadata message"]);
+  });
+
+  it("shows no text for a body it cannot decode: a coding it does not know, or a chunk that is not base64", () => {
+    const formatted = format([
+      ...request("coding", { model: "m", messages: [] }),
+      ...response("coding", 200, [["Content-Type", "text/event-stream"], ["Content-Encoding", "compress"]], gzipSync(sse([messageStart]))),
+      ...request("base64", { model: "m", messages: [] }),
+      { ...at("base64"), type: "response", status: 200, reason: "", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+      { ...at("base64"), type: "response_body", base64: "not base64!" },
+      { ...at("base64"), type: "response_trailers", headers: [] },
+    ]);
+    const [coding, base64] = formatted.map((exchange) => group(exchange, "response").slice(1));
+    expect(coding).toEqual([{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "content-encoding compress is not one this view decodes" }] }]);
+    expect(base64![0]!.name).toEqual("body not decoded");
+    expect(lines(base64!.slice(1))).toEqual(["metadata response body"]);
+    expect(base64![1]!.parts).toEqual([{ kind: "text", label: "does not fit", text: expect.stringMatching(/^response body is not JSON/) }, { kind: "text", text: "" }]);
+  });
+
+  it("does not show a request whose target is no URL", () => {
+    expect(format(request("a", { model: "m", messages: [] }, { url: "http://[bad" }))).toEqual([]);
+  });
+
+  it("shows a streamed message as the same blocks as the message a non-streaming response returns", () => {
+    const content = [{ type: "text", text: "Hi." }];
+    const message = { ...messageStart.message, content, stop_reason: "end_turn", stop_sequence: null };
+    const streamedMessage = one([
+      ...request("a", { model: "m", messages: [] }),
+      ...streamed("a", [
+        { ...messageStart, message: { ...messageStart.message, usage: message.usage } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi." } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: {} },
+        { type: "message_stop" },
+      ]),
+    ]);
+    const returned = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
+    expect(group(streamedMessage, "response").slice(1)).toEqual(group(returned, "response").slice(1));
+  });
 });

@@ -97,6 +97,14 @@ const toolUse: Entry = {
     { kind: "json", label: "input", value: fields.value("input") },
   ],
 };
+// A tool result's content is optional: a result may say only that its tool failed.
+const toolResult: Entry = {
+  category: tools,
+  parts: (fields, role) => {
+    const content = fields.value("content");
+    return [{ kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }, ...(content === undefined ? [] : contentParts(content, role))];
+  },
+};
 const serverToolResult: Entry = {
   category: tools,
   parts: (fields) => [
@@ -108,51 +116,51 @@ const ofSource: Entry = { category: byRole, parts: (fields, role) => sourceParts
 
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
-const entries: Partial<Record<string, Entry>> = {
-  text: { category: byRole, parts: (fields) => [{ kind: "text", text: fields.string("text") }] },
+const entries = new Map<string, Entry>([
+  ["text", { category: byRole, parts: (fields) => [{ kind: "text", text: fields.string("text") }] }],
   // Claude Code asks for thinking with display omitted: the text is empty and the signature is the whole block.
-  thinking: {
-    category: thinking,
-    parts: (fields) => [
-      { kind: "text", text: fields.string("thinking") },
-      { kind: "fields", fields: [["signature", `${fields.string("signature").length} characters`]] },
-    ],
-  },
-  redacted_thinking: { category: thinking, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] },
-  tool_use: toolUse,
-  server_tool_use: toolUse,
-  mcp_tool_use: toolUse,
-  tool_result: {
-    category: tools,
-    parts: (fields, role) => [{ kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }, ...contentParts(fields.value("content"), role)],
-  },
-  mcp_tool_result: {
-    category: tools,
-    parts: (fields, role) => [{ kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }, ...contentParts(fields.value("content"), role)],
-  },
-  web_search_tool_result: serverToolResult,
-  web_fetch_tool_result: serverToolResult,
-  code_execution_tool_result: serverToolResult,
-  bash_code_execution_tool_result: serverToolResult,
-  text_editor_code_execution_tool_result: serverToolResult,
-  tool_search_tool_result: serverToolResult,
-  container_upload: { category: tools, parts: () => [] },
-  image: ofSource,
-  document: ofSource,
-  search_result: {
-    category: byRole,
-    parts: (fields, role) => [
-      { kind: "fields", fields: [["source", fields.string("source")], ["title", fields.string("title")]] },
-      ...contentParts(fields.value("content"), role),
-    ],
-  },
-};
+  [
+    "thinking",
+    {
+      category: thinking,
+      parts: (fields) => [
+        { kind: "text", text: fields.string("thinking") },
+        { kind: "fields", fields: [["signature", `${fields.string("signature").length} characters`]] },
+      ],
+    },
+  ],
+  ["redacted_thinking", { category: thinking, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
+  ["tool_use", toolUse],
+  ["server_tool_use", toolUse],
+  ["mcp_tool_use", toolUse],
+  ["tool_result", toolResult],
+  ["mcp_tool_result", toolResult],
+  ["web_search_tool_result", serverToolResult],
+  ["web_fetch_tool_result", serverToolResult],
+  ["code_execution_tool_result", serverToolResult],
+  ["bash_code_execution_tool_result", serverToolResult],
+  ["text_editor_code_execution_tool_result", serverToolResult],
+  ["tool_search_tool_result", serverToolResult],
+  ["container_upload", { category: tools, parts: () => [] }],
+  ["image", ofSource],
+  ["document", ofSource],
+  [
+    "search_result",
+    {
+      category: byRole,
+      parts: (fields, role) => [
+        { kind: "fields", fields: [["source", fields.string("source")], ["title", fields.string("title")]] },
+        ...contentParts(fields.value("content"), role),
+      ],
+    },
+  ],
+]);
 
 // A content block of a message in `role`, as the block the view shows. [LAW:no-silent-failure] A type with no entry
 // is shown as its raw JSON under its type name; a block its entry cannot read is shown the same way, with why.
 export function formatBlock(block: unknown, role: Role): Block {
   const type = typeof block === "object" && block !== null && "type" in block && typeof block.type === "string" ? block.type : "block";
-  const entry = entries[type];
+  const entry = entries.get(type);
   if (entry === undefined) return { category: byRole(role), name: type, parts: [{ kind: "json", value: block }] };
   return fitting(
     () => {

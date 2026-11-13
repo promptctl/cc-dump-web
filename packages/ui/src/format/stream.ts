@@ -23,9 +23,13 @@ export function reassemble(text: string): Stream {
     const event = readObject(data, "event");
     const type = event.string("type");
     switch (type) {
-      case "message_start":
-        message = { ...readObject(event.value("message"), "message").rest() };
+      case "message_start": {
+        // Its type read as a non-streaming response's is, so both leave the same fields to show.
+        const started = readObject(event.value("message"), "message");
+        if (started.value("type") !== "message") throw new Misfit("message_start's message is not a message");
+        message = started.rest();
         return;
+      }
       case "content_block_start": {
         if (message === undefined) throw new Misfit("content_block_start before message_start");
         const index = event.value("index");

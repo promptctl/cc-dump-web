@@ -22,7 +22,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       cached(formatted, exchange.latest, () => ({
         exchange,
         // An empty request side formats the same whatever the key, so any of the exchange's events will do.
-        groups: [...cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(exchange.request)), responseGroup(exchange)],
+        groups: [...cached(requests, exchange.request.latest ?? exchange.latest, () => requestGroups(exchange.request)), responseGroup(exchange)],
       })),
     );
 }
@@ -33,21 +33,20 @@ function cached<T>(cache: WeakMap<object, T>, key: object, compute: () => T): T 
   return value;
 }
 
-function latest(side: RequestSide): object | undefined {
-  return side.trailers ?? side.body.at(-1) ?? side.head;
-}
-
-// The Messages API's exchanges; requests to other paths are forwarded and not shown (F2). One whose request was not
-// recorded is shown, since its path is not known.
+// The Messages API's exchanges; requests to other paths, and to a target that is no URL, are forwarded and not shown
+// (F2). One whose request was not recorded is shown, since its path is not known.
 function isMessages({ request: { head } }: Exchange): boolean {
-  return head === undefined || (head.method === "POST" && new URL(head.url, "http://proxy").pathname === "/v1/messages");
+  return head === undefined || (head.method === "POST" && URL.parse(head.url, "http://proxy")?.pathname === "/v1/messages");
 }
 
 function requestGroups(side: RequestSide): Group[] {
   const { head, trailers } = side;
   const body = decodeSide(side);
-  const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
-  const { blocks, messages } = requestBody(body.text, trailers !== undefined);
+  const http: Block =
+    head === undefined
+      ? { category: "metadata", name: "HTTP request", parts: [{ kind: "text", text: "The request's head was not recorded." }] }
+      : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
+  const { blocks, messages } = requestBody(body.text, side.complete);
   return [{ title: "request", blocks: [http, ...undecoded(body), ...blocks] }, ...messages];
 }
 
@@ -113,7 +112,7 @@ function responseGroup({ response: side, end }: Exchange): Group {
   const { head, trailers } = side;
   const body = decodeSide(side);
   const http = head === undefined ? [] : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
-  return { title: "response", blocks: [...http, ...undecoded(body), ...responseBody(head?.headers ?? [], body.text, trailers !== undefined), ...ending(end)] };
+  return { title: "response", blocks: [...http, ...undecoded(body), ...responseBody(head?.headers ?? [], body.text, side.complete), ...ending(end)] };
 }
 
 // The response body: a stream reassembled into its message; once complete, a message or an error; anything else raw.
@@ -179,13 +178,8 @@ function httpBlock(name: string, line: string, headers: Header[], trailers: { he
   return { category: "metadata", name, parts: [{ kind: "text", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
-function notRecorded(side: "request"): Block {
-  return { category: "metadata", name: `HTTP ${side}`, parts: [{ kind: "text", text: `The ${side}'s head was not recorded.` }] };
-}
-
-// A side's body, decoded. Complete once its trailers are recorded; one without them is still arriving, or was cut off.
 function decodeSide(side: RequestSide | ResponseSide): Body {
-  return decodeBody(side.head?.headers ?? [], side.body, side.trailers !== undefined);
+  return decodeBody(side.head?.headers ?? [], side.body, side.complete);
 }
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.

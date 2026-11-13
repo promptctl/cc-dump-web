@@ -4,7 +4,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "lib": ["es2025", "dom", "dom.iterable"],
+    "lib": ["es2025", "esnext.typedarrays", "dom", "dom.iterable"],
     "types": ["vite/client"],
     "paths": { "@/*": ["./src/*"] }
   },
