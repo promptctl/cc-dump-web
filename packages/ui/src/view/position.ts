@@ -13,11 +13,22 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
     case "start":
       return 0;
     case "row": {
-      const index = indexOf(position.key);
+      const index = rowIndex(position.key, indexOf);
       const row = index === undefined ? undefined : placed(index);
       return row === undefined ? undefined : row.start + Math.min(position.offset, row.size);
     }
   }
+}
+
+// The index of the row with `key`, or, while it is not among the rows, of the nearest row it is inside: `a/b/c` is
+// inside `a/b`, which is inside `a`. A block the formatter replaced, as a body so far is by the content parsed from it,
+// leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
+export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
+  for (let end = key.length; end !== -1; end = key.lastIndexOf("/", end - 1)) {
+    const index = indexOf(key.slice(0, end));
+    if (index !== undefined) return index;
+  }
+  return undefined;
 }
 
 // The position a scroll offset is at: the row at the top of the view and how far into it, or the start.

@@ -117,11 +117,6 @@ export function createReassembly(): Reassembly {
   };
 }
 
-// Reassembles a stream's text at once.
-export function reassemble(text: string, complete: boolean): Stream {
-  return createReassembly().reassemble(text, complete);
-}
-
 // A content block being built from its events: the block, its tool input's JSON as far as it has streamed, and that
 // input parsed, once its block has stopped.
 type Building = { block: Record<string, unknown>; json: string; input: { parsed: unknown } | undefined };

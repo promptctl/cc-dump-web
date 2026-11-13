@@ -3,7 +3,7 @@ import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import type { Exchange } from "../exchanges.ts";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
-import { positionAt, resolve } from "./position.ts";
+import { positionAt, resolve, rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
 import { createLayout, describeSize, estimateHeight, expandedByDefault, type Row } from "./rows.ts";
 import { useView, view, type View } from "./state.ts";
@@ -13,7 +13,7 @@ import { useView, view, type View } from "./state.ts";
 export function Conversation({ formatted, reading }: { formatted: FormattedExchange[]; reading: boolean }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's layout is the one used.
   const layOut = useMemo(() => createLayout(), []);
-  const { rows, indexOf } = useMemo(() => layOut(formatted), [layOut, formatted]);
+  const { rows, keys } = useMemo(() => layOut(formatted), [layOut, formatted]);
   const toggled = useView((state) => state.toggled);
   const scroller = useRef<HTMLElement>(null);
   // The UI is not built with React Compiler, so nothing memoizes the virtualizer's functions.
@@ -21,14 +21,14 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
-    getItemKey: (index) => rows[index]!.key,
+    getItemKey: keys.at,
     estimateSize: (index) => estimateHeight(rows[index]!, expanded(rows[index]!, toggled)),
     overscan: 10,
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
     rangeExtractor: (range) => {
       const position = useView.getState().position;
-      const anchor = position.at === "row" ? indexOf(position.key) : undefined;
+      const anchor = position.at === "row" ? rowIndex(position.key, keys.indexOf) : undefined;
       const indexes = defaultRangeExtractor(range);
       return anchor === undefined || indexes.includes(anchor) ? indexes : [anchor, ...indexes];
     },
@@ -53,7 +53,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       view.moveTo(positionAt(offset, virtualizer.getVirtualItemForOffset));
       return;
     }
-    const target = resolve(useView.getState().position, indexOf, (index) => virtualizer.measurementsCache[index]);
+    const target = resolve(useView.getState().position, keys.indexOf, (index) => virtualizer.measurementsCache[index]);
     if (target === undefined || Math.abs(target - offset) < 1) return;
     element.scrollTop = target;
     // The browser clamps an offset past the end, so what was written is what it reads back.
@@ -148,7 +148,7 @@ function BlockView({ row: { key, block, size } }: { row: Extract<Row, { kind: "b
       {open && (
         <div className="pb-1 pl-6">
           {block.parts.map((part, index) => (
-            <PartView key={index} part={part} regionKey={`${key}/${index}`} />
+            <PartView key={index} part={part} partKey={`${key}/${index}`} />
           ))}
         </div>
       )}
@@ -156,19 +156,19 @@ function BlockView({ row: { key, block, size } }: { row: Extract<Row, { kind: "b
   );
 }
 
-function PartView({ part, regionKey }: { part: Part; regionKey: string }) {
+function PartView({ part, partKey }: { part: Part; partKey: string }) {
   return (
     <div className="py-0.5">
       {part.label !== undefined && <div className="text-muted-foreground">{part.label}</div>}
-      <PartContent part={part} regionKey={regionKey} />
+      <PartContent part={part} partKey={partKey} />
     </div>
   );
 }
 
-function PartContent({ part, regionKey }: { part: Part; regionKey: string }) {
+function PartContent({ part, partKey }: { part: Part; partKey: string }) {
   switch (part.kind) {
     case "text":
-      return <TextView text={part.text} regionKey={regionKey} />;
+      return <TextView text={part.text} partKey={partKey} />;
     case "json":
       return <JsonView value={part.value} />;
     case "fields":
@@ -208,20 +208,22 @@ function JsonView({ value }: { value: unknown }) {
 }
 
 // A text with its long regions (code blocks, tagged sections), each collapsing and expanding as a block does.
-function TextView({ text, regionKey }: { text: string; regionKey: string }) {
+function TextView({ text, partKey }: { text: string; partKey: string }) {
   const segmented = useMemo(() => segments(text), [text]);
-  return <pre className="break-words whitespace-pre-wrap">{segmentViews(segmented, regionKey)}</pre>;
+  return <pre className="break-words whitespace-pre-wrap">{segmentViews(segmented, partKey)}</pre>;
 }
 
-function segmentViews(list: Segment[], regionKey: string): ReactNode[] {
-  let regions = 0;
+// `partKey`: the key of the part whose text it is.
+function segmentViews(list: Segment[], partKey: string): ReactNode[] {
   return list.map((segment, index) =>
-    segment.kind === "text" ? <span key={index}>{segment.text}</span> : <RegionView key={index} region={segment} regionKey={`${regionKey}/${regions++}`} />,
+    segment.kind === "text" ? <span key={index}>{segment.text}</span> : <RegionView key={index} region={segment} partKey={partKey} />,
   );
 }
 
-// A long region starts collapsed: its line names it and how many lines it spans.
-function RegionView({ region, regionKey }: { region: Extract<Segment, { kind: "region" }>; regionKey: string }) {
+// A long region starts collapsed: its line names it and how many lines it spans. It is kept by its part's key and the
+// line it opens on.
+function RegionView({ region, partKey }: { region: Extract<Segment, { kind: "region" }>; partKey: string }) {
+  const regionKey = `${partKey}/${region.line}`;
   const open = useView((state) => state.toggled[regionKey] ?? false);
   const line = (
     <button type="button" className="text-muted-foreground hover:bg-muted" onClick={() => view.toggle(regionKey, open)}>
@@ -233,7 +235,7 @@ function RegionView({ region, regionKey }: { region: Extract<Segment, { kind: "r
       {line}
       {"\n"}
       {region.open}
-      {segmentViews(region.body, regionKey)}
+      {segmentViews(region.body, partKey)}
       {region.close}
     </span>
   ) : (

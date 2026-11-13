@@ -59,11 +59,6 @@ export function createDecoding(headers: Header[]): Decoding {
   };
 }
 
-// Decodes a whole recorded body at once.
-export function decodeBody(headers: Header[], chunks: readonly { base64: string }[], complete: boolean): Body {
-  return createDecoding(headers).decode(chunks, complete);
-}
-
 // One step of a body's decoding: bytes pushed in, passed on as they decode; `end`: no more bytes follow, and the end's
 // checks run (a checksum, a stream cut short), throwing when they fail. `held`: why bytes pushed have not decoded yet,
 // when they wait for the end. Throws when the bytes do not decode.
@@ -96,7 +91,7 @@ const decoders = new Map<string, Decoder>([
       return {
         push: (chunk) => void bytes.push(chunk),
         end: () => next(brotliDecompress(concat(bytes.splice(0)))),
-        held: () => (bytes.length === 0 ? undefined : `${concat(bytes).length} bytes wait for the body to complete: br is decoded whole`),
+        held: () => (bytes.length === 0 ? undefined : `${bytes.reduce((length, chunk) => length + chunk.length, 0)} bytes wait for the body to complete: br is decoded whole`),
       };
     },
   ],

@@ -1,11 +1,14 @@
 import type { Header } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { createDecoding, decodeBody } from "./body.ts";
+import { createDecoding } from "./body.ts";
 
 // A body recorded in chunks of `size` bytes, each encoded on its own as the proxy does.
 const chunked = (bytes: Uint8Array, size: number) =>
   Array.from({ length: Math.ceil(bytes.length / size) }, (_, i) => ({ base64: Buffer.from(bytes.subarray(i * size, (i + 1) * size)).toString("base64") }));
+
+// A body decoded from its chunks all at once.
+const decodeBody = (headers: Header[], chunks: { base64: string }[], complete: boolean) => createDecoding(headers).decode(chunks, complete);
 
 // A decoding fed its chunks one at a time gives, after each, what decoding that many chunks at once gives, and the
 // same once the body is complete.

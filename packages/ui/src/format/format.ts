@@ -1,7 +1,7 @@
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { fitting, formatBlock, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type Role } from "./blocks.ts";
+import { fitting, formatBlock, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
 // A run of an exchange's blocks under one heading: the request's own, each message the request sends, the response.
@@ -55,7 +55,7 @@ function cached<T>(cache: WeakMap<object, T>, key: object, compute: () => T): T 
 
 // The blocks of one source, each keyed by it: a source of at most one block, or a list, whose blocks are keyed by their
 // place in it, since a list only grows at its end.
-function one(key: string, blocks: Block[]): KeyedBlock[] {
+function one(key: string, blocks: BlockOrNone): KeyedBlock[] {
   return blocks.map((block) => ({ ...block, key }));
 }
 function each(key: string, blocks: Block[]): KeyedBlock[] {
@@ -120,7 +120,7 @@ function systemBlocks(system: unknown): Block[] {
   throw new Misfit("system is neither a string nor a list of blocks");
 }
 
-function toolBlocks(tools: unknown): Block[] {
+function toolBlocks(tools: unknown): BlockOrNone {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
   return [{ category: "tools", name: `tool definitions: ${tools.length}`, parts: tools.map((tool) => ({ kind: "json", label: toolName(tool), value: tool })) }];
@@ -136,7 +136,7 @@ function responseGroup(sides: Sides, { response: side, end }: Exchange): Group {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   // A response that has not begun has no head to miss.
-  const http =
+  const http: BlockOrNone =
     head === undefined
       ? latest(side) === undefined
         ? []
@@ -195,7 +195,7 @@ function messageBlocks(message: Record<string, unknown>): KeyedBlock[] {
 }
 
 // How an exchange ended, as the blocks it adds: none for one that completed or has not ended.
-function ending(end: Of<"end"> | undefined): Block[] {
+function ending(end: Of<"end"> | undefined): BlockOrNone {
   switch (end?.outcome) {
     case undefined:
     case "ok":
@@ -228,10 +228,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 }
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
-function undecoded(body: Body): Block[] {
+function undecoded(body: Body): BlockOrNone {
   return body.error === undefined ? [] : [{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: body.error }] }];
 }
-function leftover(name: string, text: string): Block[] {
+function leftover(name: string, text: string): BlockOrNone {
   return text === "" ? [] : [{ category: "metadata", name, parts: [{ kind: "text", text }] }];
 }
 

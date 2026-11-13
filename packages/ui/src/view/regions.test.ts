@@ -12,7 +12,7 @@ describe("segments", () => {
     const text = `Before.\n${code}After.`;
     expect(segments(text)).toEqual([
       { kind: "text", text: "Before.\n" },
-      { kind: "region", label: "```ts", lines: LONG + 2, open: "```ts\n", body: [{ kind: "text", text: lines(LONG, "<b>") }], close: "```\n" },
+      { kind: "region", line: 1, label: "```ts", lines: LONG + 2, open: "```ts\n", body: [{ kind: "text", text: lines(LONG, "<b>") }], close: "```\n" },
       { kind: "text", text: "After." },
     ]);
     expect(joined(segments(text))).toBe(text);
@@ -34,7 +34,7 @@ describe("segments", () => {
 
   it("runs a fence the text does not close to the end, as a block still streaming does", () => {
     const text = "```py\n" + lines(LONG);
-    expect(segments(text)).toEqual([{ kind: "region", label: "```py", lines: LONG + 1, open: "```py\n", body: [{ kind: "text", text: lines(LONG) }], close: "" }]);
+    expect(segments(text)).toEqual([{ kind: "region", line: 0, label: "```py", lines: LONG + 1, open: "```py\n", body: [{ kind: "text", text: lines(LONG) }], close: "" }]);
   });
 
   it("takes a tag the text does not close, or closes on its own line, as text", () => {
@@ -46,5 +46,20 @@ describe("segments", () => {
     const text = "````\n```\n~~~~\n" + lines(LONG) + "````\nafter\n";
     expect(segments(text)[0]).toMatchObject({ kind: "region", label: "````", lines: LONG + 4 });
     expect(segments(text)[1]).toEqual({ kind: "text", text: "after\n" });
+  });
+
+  it("does not close a section at its closing tag inside a code block", () => {
+    const code = "```xml\n<example>\n</example>\n" + lines(LONG) + "```\n";
+    const text = `<example>\n${code}</example>\n`;
+    const [section] = segments(text);
+    expect(section).toMatchObject({ kind: "region", label: "<example>", lines: LONG + 6, close: "</example>\n" });
+    expect((section as { body: Segment[] }).body).toMatchObject([{ kind: "region", line: 1, label: "```xml", close: "```\n" }]);
+    expect(joined(segments(text))).toBe(text);
+  });
+
+  it("names a region by its opening line, which stays its line when a section around it closes", () => {
+    const open = "<analysis>\n```py\n" + lines(LONG) + "```\n";
+    expect(segments(open)).toMatchObject([{ kind: "text", text: "<analysis>\n" }, { kind: "region", line: 1 }]);
+    expect(segments(open + "</analysis>\n")).toMatchObject([{ kind: "region", line: 0, body: [{ kind: "region", line: 1 }] }]);
   });
 });

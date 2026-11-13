@@ -14,12 +14,13 @@ const body = { model: "m", messages: [{ role: "user", content: "Hello." }] };
 
 describe("layout", () => {
   it("lays each exchange out as its line, then each group's title and blocks, keyed by what they are", () => {
-    const { rows, indexOf } = createLayout()(createFormatter()(exchanges([...request("a", body), ...request("b", body)])));
-    const keys = rows.map(({ key }) => key);
-    expect(keys.slice(0, 7)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0", "a/response"]);
-    expect(indexOf("b/message.0/content.0")).toBe(keys.indexOf("b/message.0/content.0"));
-    expect(indexOf("b/message.9/content.0")).toBeUndefined();
-    expect(indexOf("c/request")).toBeUndefined();
+    const { rows, keys } = createLayout()(createFormatter()(exchanges([...request("a", body), ...request("b", body)])));
+    const listed = rows.map(({ key }) => key);
+    expect(listed.slice(0, 7)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0", "a/response"]);
+    expect(keys.indexOf("b/message.0/content.0")).toBe(listed.indexOf("b/message.0/content.0"));
+    expect(listed.map((_, index) => keys.at(index))).toEqual(listed);
+    expect(keys.indexOf("b/message.9/content.0")).toBeUndefined();
+    expect(keys.indexOf("c/request")).toBeUndefined();
   });
 
   it("sizes a block by the characters of its content", () => {
@@ -36,5 +37,31 @@ describe("layout", () => {
     const later = layOut(format(exchanges([...a, ...request("b", body)])));
     expect(later.rows.slice(0, first.rows.length)).toEqual(first.rows);
     first.rows.forEach((row, index) => expect(later.rows[index]).toBe(row));
+  });
+
+  it("lays a changed exchange's unchanged groups out as the same rows, as a request's while its response arrives", () => {
+    const format = createFormatter();
+    const layOut = createLayout();
+    const a = request("a", body);
+    const first = layOut(format(exchanges(a)));
+    const later = layOut(format(exchanges([...a, { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] }])));
+    const requestRows = first.rows.filter(({ key }) => !key.startsWith("a/response") && key !== "a");
+    requestRows.forEach((row) => expect(later.rows[later.keys.indexOf(row.key)!]).toBe(row));
+    expect(later.rows[0]).not.toBe(first.rows[0]);
+  });
+
+  it("keeps the same keys while only what the rows show changes, as while a body arrives, and new ones when a row arrives", () => {
+    const head: RecordedEvent = { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] };
+    const chunk = (text: string): RecordedEvent => ({ timestamp, trace_id: "a", type: "response_body", base64: Buffer.from(text).toString("base64") });
+    const format = createFormatter();
+    const layOut = createLayout();
+    const a = [...request("a", body), head, chunk('{"type":')];
+    const first = layOut(format(exchanges(a)));
+    const later = layOut(format(exchanges([...a, chunk('"message"')])));
+    expect(later.rows).not.toEqual(first.rows);
+    expect(later.keys).toBe(first.keys);
+    const more = layOut(format(exchanges([...a, chunk('"message"'), ...request("b", body)])));
+    expect(more.keys).not.toBe(first.keys);
+    expect(more.keys.at(more.rows.length - 1)).toBe(more.rows.at(-1)!.key);
   });
 });

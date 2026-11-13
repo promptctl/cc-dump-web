@@ -16,6 +16,9 @@ export type Part =
 
 export type Block = { category: Category; name: string; parts: Part[] };
 
+// What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
+export type BlockOrNone = [] | [Block];
+
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
@@ -84,7 +87,7 @@ export function restParts(fields: Fields, label: string): Part[] {
 }
 
 // The fields of an object no read asked for, as a metadata block of their own, when there are any.
-export function restBlock(fields: Fields, name: string): Block[] {
+export function restBlock(fields: Fields, name: string): BlockOrNone {
   const parts = restParts(fields, "fields");
   return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
 }

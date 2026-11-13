@@ -11,44 +11,75 @@ export type Row =
   | { kind: "group"; key: string; title: Group["title"] }
   | { kind: "block"; key: string; block: KeyedBlock; size: number };
 
-// The rows of a conversation, and where the row with a given key is among them.
-export type Layout = { rows: Row[]; indexOf: (key: string) => number | undefined };
+// The rows of a conversation, and their keys.
+export type Layout = { rows: Row[]; keys: Keys };
 
-// One exchange's rows, and each one's index among them.
-type ExchangeRows = { rows: Row[]; index: Map<string, number> };
+// The rows' keys in order: the key at an index, and the index of a key. [LAW:types-are-the-program] The same object
+// while no row arrives, goes or moves, however what a row shows changes, so what places rows by key (the virtualizer,
+// from the first row, at 5 ms a time over a long recording) places them again only when one did.
+export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 
-// Lays out exchanges as rows. [LAW:no-shared-mutable-globals] Its cache is its own: the formatter returns an unchanged
-// exchange as the same object, so its rows are the ones laid out before, and a frame lays out only what changed.
+// One exchange's rows, their keys, and each key's index among them.
+type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; index: Map<string, number> };
+
+// Lays out exchanges as rows. [LAW:no-shared-mutable-globals] Its caches are its own: the formatter returns an unchanged
+// exchange, and an unchanged group of a changed one (a request's, while its response streams), as the same object, so
+// their rows are the ones laid out before: a frame lays out and sizes only what changed, and only those rows render.
 export function createLayout(): (formatted: FormattedExchange[]) => Layout {
   const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
+  const groups = new WeakMap<Group, Row[]>();
+  const groupRows = (trace: string, group: Group) => {
+    const rows = groups.get(group) ?? rowsOf(trace, group);
+    groups.set(group, rows);
+    return rows;
+  };
+  let last: { exchanges: ExchangeRows[]; keys: Keys } = { exchanges: [], keys: keysOf([]) };
   return (formatted) => {
-    const rows: Row[] = [];
-    const starts = new Map<string, { start: number; index: Map<string, number> }>();
-    for (const exchange of formatted) {
-      const own = laidOut.get(exchange) ?? exchangeRows(exchange);
+    const before = new Map(last.exchanges.map((own) => [own.trace, own]));
+    const exchanges = formatted.map((exchange) => {
+      const own = laidOut.get(exchange) ?? exchangeRows(exchange, groupRows, before.get(exchange.exchange.trace_id));
       laidOut.set(exchange, own);
-      starts.set(exchange.exchange.trace_id, { start: rows.length, index: own.index });
-      for (const row of own.rows) rows.push(row);
-    }
-    return {
-      rows,
-      indexOf: (key) => {
-        const trace = starts.get(key.split("/", 1)[0]!);
-        const local = trace?.index.get(key);
-        return local === undefined ? undefined : trace!.start + local;
-      },
-    };
+      return own;
+    });
+    const same = exchanges.length === last.exchanges.length && exchanges.every((own, index) => own.keys === last.exchanges[index]!.keys);
+    last = { exchanges, keys: same ? last.keys : keysOf(exchanges) };
+    const rows: Row[] = [];
+    for (const own of exchanges) for (const row of own.rows) rows.push(row);
+    return { rows, keys: last.keys };
   };
 }
 
-function exchangeRows({ exchange, groups }: FormattedExchange): ExchangeRows {
-  const rows: Row[] = [{ kind: "exchange", key: exchange.trace_id, exchange }];
-  for (const group of groups) {
-    const key = `${exchange.trace_id}/${group.key}`;
-    rows.push({ kind: "group", key, title: group.title });
-    for (const block of group.blocks) rows.push({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) });
+// An exchange's rows. `before`: the exchange's rows laid out last, whose keys it keeps, the same array, when its rows'
+// keys are the same.
+function exchangeRows({ exchange, groups }: FormattedExchange, groupRows: (trace: string, group: Group) => Row[], before: ExchangeRows | undefined): ExchangeRows {
+  const trace = exchange.trace_id;
+  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...groups.flatMap((group) => groupRows(trace, group))];
+  const keys = rows.map(({ key }) => key);
+  if (before !== undefined && before.keys.length === keys.length && before.keys.every((key, index) => key === keys[index])) return { ...before, rows };
+  return { trace, rows, keys, index: new Map(keys.map((key, index) => [key, index])) };
+}
+
+function keysOf(exchanges: ExchangeRows[]): Keys {
+  const keys: string[] = [];
+  const starts = new Map<string, { start: number; index: Map<string, number> }>();
+  for (const { trace, keys: own, index } of exchanges) {
+    starts.set(trace, { start: keys.length, index });
+    for (const key of own) keys.push(key);
   }
-  return { rows, index: new Map(rows.map(({ key }, index) => [key, index])) };
+  return {
+    at: (index) => keys[index]!,
+    indexOf: (key) => {
+      const trace = starts.get(key.split("/", 1)[0]!);
+      const local = trace?.index.get(key);
+      return local === undefined ? undefined : trace!.start + local;
+    },
+  };
+}
+
+// A group's rows: its title, then its blocks. A group is one exchange's, so `trace` is the same for every call with it.
+function rowsOf(trace: string, group: Group): Row[] {
+  const key = `${trace}/${group.key}`;
+  return [{ kind: "group", key, title: group.title }, ...group.blocks.map((block): Row => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) }))];
 }
 
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is

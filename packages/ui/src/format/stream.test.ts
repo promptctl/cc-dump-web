@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createReassembly, reassemble } from "./stream.ts";
+import { createReassembly } from "./stream.ts";
+
+// A stream's text reassembled all at once.
+const reassemble = (text: string, complete: boolean) => createReassembly().reassemble(text, complete);
 
 const event = (data: object, eol = "\n") => `event: ${(data as { type: string }).type}${eol}data: ${JSON.stringify(data)}${eol}${eol}`;
 const messageStart = { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", content: [], stop_reason: null, usage: { input_tokens: 2 } } };

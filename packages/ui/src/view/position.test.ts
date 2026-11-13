@@ -24,6 +24,12 @@ describe("position", () => {
     expect(resolve({ at: "row", key: "d", offset: 20 }, indexOf, placed)).toBeUndefined();
   });
 
+  it("resolves a row that is gone from among the rows to the nearest row it was inside", () => {
+    expect(resolve({ at: "row", key: "c/body", offset: 20 }, indexOf, placed)).toBe(170);
+    expect(resolve({ at: "row", key: "c/gone/body", offset: 400 }, indexOf, placed)).toBe(450);
+    expect(resolve({ at: "row", key: "d/body", offset: 20 }, indexOf, placed)).toBeUndefined();
+  });
+
   it("puts the view at the end of a row shorter than the offset into it", () => {
     expect(resolve({ at: "row", key: "b", offset: 400 }, indexOf, placed)).toBe(150);
   });
