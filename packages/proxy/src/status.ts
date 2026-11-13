@@ -34,7 +34,7 @@ export function watchSource(log: Log, source: Source): SourceWatch {
       log({ event: "source_check", ...span.end(), outcome: "ok", files_checked: source.size, changed_source: changed });
       become({ state: "watching", changed_source: changed });
     } catch (error) {
-      log({ event: "source_check", ...span.end(), outcome: "error", error: describeError(error), files_checked: source.size });
+      log({ event: "source_check", ...span.end(), outcome: "error", error: describeError(error) });
       failWith(error);
     }
   };

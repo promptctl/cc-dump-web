@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseListings, parseReadFailure, parseRecordedEvent, parseRecordingEnd } from "./format.ts";
+import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ProxyStatus } from "./format.ts";
 import { createRecording, type Seen } from "./recording.ts";
 
 // Every kind of event the recorder writes, each ending among them.
@@ -69,5 +69,19 @@ describe("the reader's messages", () => {
     expect(() => parseListings('[{"name":"a.jsonl","live":"yes"}]')).toThrow("recordings list entry: live is not a boolean");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
     expect(() => parseReadFailure('{"error":"EISDIR"}')).toThrow("read failure: message is not a string");
+  });
+
+  it("reads back each state of the proxy's status", () => {
+    const statuses: ProxyStatus[] = [
+      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
+      { state: "failed", message: "EMFILE: too many open files, watch" },
+    ];
+    expect(statuses.map((status) => parseProxyStatus(JSON.stringify(status)))).toEqual(statuses);
+  });
+
+  it("refuses a status of another shape", () => {
+    expect(() => parseProxyStatus('{"changed_source":[]}')).toThrow("proxy status: state is not one of watching, failed");
+    expect(() => parseProxyStatus('{"state":"watching","changed_source":[1]}')).toThrow("proxy status: changed_source is not a list of strings");
+    expect(() => parseProxyStatus('{"state":"failed","error":"EMFILE"}')).toThrow("proxy status: message is not a string");
   });
 });

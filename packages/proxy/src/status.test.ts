@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Event } from "@cc-dump/log";
-import { eventLog, send, serving } from "@cc-dump/log/testing";
+import { arrivals, eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type ProxyStatus } from "./format.ts";
 import { sha256 } from "./source.ts";
@@ -24,19 +24,16 @@ function sourceFiles() {
 // probe file is written beside the source until an event of it has run a check.
 async function watching(source: Map<string, string>, dir: string) {
   const { log, next: nextEvent } = eventLog();
-  const logged: Event[] = [];
-  const watch = watchSource((event) => (logged.push(event), log(event)), source);
-  const states: ProxyStatus[] = [];
-  const waiting: ((state: ProxyStatus) => void)[] = [];
-  onTestFinished(watch.onChanged(() => (waiting.length ? waiting.shift()!(watch.state()) : states.push(watch.state()))));
+  const watch = watchSource(log, source);
+  const { arrive, next } = arrivals<ProxyStatus>();
+  onTestFinished(watch.onChanged(() => arrive(watch.state())));
   expect([await nextEvent(), await nextEvent()]).toMatchObject([{ event: "watch_source" }, { event: "source_check" }]);
   const checked = nextEvent();
   for (let live = false; !live; ) {
     writeFileSync(join(dir, "probe"), "");
     live = await Promise.race([checked.then(() => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 20))]);
   }
-  logged.length = 0;
-  return { watch, logged, next: () => new Promise<ProxyStatus>((resolve) => (states.length ? resolve(states.shift()!) : waiting.push(resolve))) };
+  return { next };
 }
 
 describe("watchSource", () => {

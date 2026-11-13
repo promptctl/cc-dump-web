@@ -168,7 +168,14 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
         ...client,
       });
     });
-    handler(req, res, { trace_id: span.trace_id, fail: (error) => (failure ??= describeError(error)), ended });
+    const fail = (error: unknown) => (failure ??= describeError(error));
+    // A handler that throws fails its own request, which is cut, and not the process with every other request in it.
+    try {
+      handler(req, res, { trace_id: span.trace_id, fail, ended });
+    } catch (error) {
+      fail(error);
+      res.destroy();
+    }
   };
 }
 

@@ -5,18 +5,22 @@ import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
 import { serve, type Event, type Handler } from "./index.ts";
 
+// What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
+// `queued()` counts those arrived and not yet taken.
+export function arrivals<T>() {
+  const arrived: T[] = [];
+  const waiting: ((arrival: T) => void)[] = [];
+  return {
+    arrive: (arrival: T) => void (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival)),
+    next: () => new Promise<T>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))),
+    queued: () => arrived.length,
+  };
+}
+
 // A log the test can wait on: `next()` resolves with the next event written.
 export function eventLog() {
-  const written: Event[] = [];
-  const waiting: ((event: Event) => void)[] = [];
-  return {
-    log: (event: Event) => {
-      const waiter = waiting.shift();
-      if (waiter) waiter(event);
-      else written.push(event);
-    },
-    next: () => new Promise<Event>((resolve) => (written.length ? resolve(written.shift()!) : waiting.push(resolve))),
-  };
+  const { arrive, next } = arrivals<Event>();
+  return { log: arrive, next };
 }
 
 // The client's side of one connection, raw, so node's own answer is read as it was sent.

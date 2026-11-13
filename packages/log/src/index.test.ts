@@ -103,6 +103,18 @@ describe("serve", () => {
     expect(event.error).not.toContain("second");
   });
 
+  it("cuts and records the request of a handler that throws, and goes on serving", async () => {
+    let calls = 0;
+    const { url, next } = await serving((_req, res) => {
+      if (++calls === 1) throw new TypeError("Invalid URL");
+      res.end("served");
+    });
+
+    await expect(fetch(url)).rejects.toThrow();
+    expect(await next()).toMatchObject({ event: "request", outcome: "error", status: null, error: expect.stringContaining("Invalid URL") });
+    expect(await (await fetch(url)).text()).toBe("served");
+  });
+
   it("hands the handler its request's trace_id, and the ending its event records once the response closes", async () => {
     let work!: Work;
     const { url, next } = await serving((_req, res, given) => {

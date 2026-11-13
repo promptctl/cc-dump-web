@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import type { Event } from "@cc-dump/log";
-import { send, serving } from "@cc-dump/log/testing";
+import { arrivals, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
@@ -38,15 +38,9 @@ type Arrival = { event: RecordedEvent } | { end: RecordingEnd } | { failed: Erro
 function reading(connection: ReturnType<typeof createBrowserConnection>, name: string) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
-  const arrived: Arrival[] = [];
-  const waiting: ((arrival: Arrival) => void)[] = [];
-  const arrive = (arrival: Arrival) => (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival));
+  const { arrive, next, queued } = arrivals<Arrival>();
   connection.read(name, { event: (event) => arrive({ event }), end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
-  return {
-    abort,
-    next: () => new Promise<Arrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))),
-    queued: () => arrived.length,
-  };
+  return { abort, next, queued };
 }
 
 type StatusArrival = { status: ProxyStatus } | { failed: Error };
@@ -55,11 +49,9 @@ type StatusArrival = { status: ProxyStatus } | { failed: Error };
 function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
-  const arrived: StatusArrival[] = [];
-  const waiting: ((arrival: StatusArrival) => void)[] = [];
-  const arrive = (arrival: StatusArrival) => (waiting.length ? waiting.shift()!(arrival) : arrived.push(arrival));
+  const { arrive, next } = arrivals<StatusArrival>();
   connection.status({ status: (status) => arrive({ status }), failed: (failed) => arrive({ failed }) }, abort.signal);
-  return { abort, next: () => new Promise<StatusArrival>((resolve) => (arrived.length ? resolve(arrived.shift()!) : waiting.push(resolve))) };
+  return { abort, next };
 }
 
 // Each EventSource opened while the test runs.
