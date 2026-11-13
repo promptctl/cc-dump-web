@@ -71,15 +71,14 @@ describe("logged", () => {
     expect(await next()).toMatchObject({ event: "setup", path: "/a", port: 7, outcome: "ok" });
   });
 
-  it("never records work that returned as failed when reading its facts throws", async () => {
+  it("writes the error event, then rethrows, when reading the work's facts throws", async () => {
     const { log, next } = eventLog();
     const found = () => {
       throw new Error("no such fact");
     };
 
     expect(() => logged(log, "setup", {}, () => 7, found)).toThrow("no such fact");
-    logged(log, "after", {}, () => 0);
-    expect(await next()).toMatchObject({ event: "after" });
+    expect(await next()).toMatchObject({ event: "setup", outcome: "error", error: expect.stringContaining("no such fact") });
   });
 });
 
