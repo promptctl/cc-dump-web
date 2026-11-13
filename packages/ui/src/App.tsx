@@ -1,16 +1,18 @@
-import { memo, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
-import { exchanges, type Exchange } from "./exchanges.ts";
-import { createFormatter, type FormattedExchange } from "./format/format.ts";
+import { exchanges } from "./exchanges.ts";
+import { createFormatter } from "./format/format.ts";
 import { useLiveRecording, type Reading } from "./reading.ts";
 import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
+import { Conversation } from "./view/Conversation.tsx";
 
 export function App({ connection }: { connection: Connection }) {
   const reading = useLiveRecording(connection);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
-  const [format] = useState(createFormatter);
+  // Fast Refresh keeps state but re-runs memos, so an edit to the formatter takes effect.
+  const format = useMemo(() => createFormatter(), []);
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
   return (
     <div className="flex h-screen flex-col">
@@ -21,64 +23,7 @@ export function App({ connection }: { connection: Connection }) {
           <ReadingState reading={reading} />
         </div>
       </header>
-      {shown.length === 0 ? (
-        <main className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</main>
-      ) : (
-        <main className="flex-1 overflow-y-auto">
-          <ol className="divide-y font-mono text-xs">
-            {shown.map((formatted) => (
-              <ExchangeBlocks key={formatted.exchange.trace_id} formatted={formatted} reading={reading.state === "reading"} />
-            ))}
-          </ol>
-        </main>
-      )}
-    </div>
-  );
-}
-
-// An exchange's line, then each of its blocks as one line naming its category and itself. Memoized: the formatter
-// keeps an unchanged exchange the same object, so only the exchanges an event changed render again.
-const ExchangeBlocks = memo(function ExchangeBlocks({ formatted: { exchange, groups }, reading }: { formatted: FormattedExchange; reading: boolean }) {
-  return (
-    <li className="py-1.5">
-      <ExchangeLine exchange={exchange} reading={reading} />
-      {groups.map((group, index) => (
-        <section key={index} className="px-4">
-          <h2 className="pl-4 text-muted-foreground">{group.title}</h2>
-          <ul>
-            {group.blocks.map((block, index) => (
-              <li key={index} className="flex gap-3 pl-8">
-                <span className="w-20 text-muted-foreground">{block.category}</span>
-                <span className="truncate">{block.name}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-    </li>
-  );
-});
-
-// `reading`: whether the read can still bring this exchange its end.
-function ExchangeLine({ exchange: { request, response, end }, reading }: { exchange: Exchange; reading: boolean }) {
-  return (
-    <div className="flex gap-3 px-4">
-      {request.head ? (
-        <span className="flex-1 truncate">
-          {request.head.method} {request.head.url}
-        </span>
-      ) : (
-        <span className="flex-1 text-muted-foreground">request not recorded</span>
-      )}
-      {response.head && (
-        <span>
-          {response.head.status} {response.head.reason}
-        </span>
-      )}
-      {/* How it ended, beside its status: a response that began can still be cut, and one streaming has not ended. */}
-      <span className={end?.outcome === "error" ? "text-destructive" : "text-muted-foreground"} title={end?.error}>
-        {end?.outcome ?? (reading ? "pending" : "no end read")}
-      </span>
+      <Conversation formatted={shown} reading={reading.state === "reading"} />
     </div>
   );
 }

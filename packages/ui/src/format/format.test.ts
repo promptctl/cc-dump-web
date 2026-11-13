@@ -163,9 +163,9 @@ describe("format", () => {
         messageDelta,
       ]),
     ]);
-    expect(group(formatted, "user")).toEqual([{ category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
+    expect(group(formatted, "user")).toEqual([{ key: "content.0", category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
     const blocks = group(formatted, "response");
-    expect(blocks).toContainEqual({ category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
+    expect(blocks).toContainEqual({ key: "content.0", category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
     // The events it cannot apply are shown too, each raw under its event name with why.
     expect(lines(blocks)).toEqual(expect.arrayContaining(["metadata content_block_delta event", "metadata sparkle event"]));
     expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", label: "not applied", text: "sparkle is not an event this view applies" });
@@ -175,6 +175,7 @@ describe("format", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "text", text: 5 }] }] }));
     expect(group(formatted, "user")).toEqual([
       {
+        key: "content.0",
         category: "user",
         name: "text",
         parts: [
@@ -204,10 +205,10 @@ describe("format", () => {
     ]);
     const responses = formatted.map((exchange) => group(exchange, "response"));
     expect(responses[0]!.slice(1)).toEqual([
-      { category: "assistant", name: "error", parts: [{ kind: "json", value: overloaded.error }, { kind: "json", label: "fields", value: { request_id: "req_1" } }] },
+      { key: "error", category: "assistant", name: "error", parts: [{ kind: "json", value: overloaded.error }, { kind: "json", label: "fields", value: { request_id: "req_1" } }] },
     ]);
     expect(lines(responses[1]!)).toEqual(["metadata HTTP response", "assistant text", "metadata stop reason: null", "metadata usage", "metadata message", "assistant error"]);
-    expect(responses[2]).toEqual([{ category: "assistant", name: "error", parts: [{ kind: "text", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
+    expect(responses[2]).toEqual([{ key: "end", category: "assistant", name: "error", parts: [{ kind: "text", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
   });
 
   it("shows a stream as far as it has arrived, and the part not yet whole", () => {
@@ -220,7 +221,7 @@ describe("format", () => {
     const headers: Header[] = [["Content-Type", "text/event-stream"]];
     const blocks = group(one([...request("a", { model: "m", messages: [] }), ...response("a", 200, headers, Buffer.from(cut), false)]), "response");
     expect(blocks.find(({ name }) => name === "tool_use: Bash")!.parts).toContainEqual({ kind: "json", label: "input", value: '{"command": "l' });
-    expect(blocks.at(-1)).toEqual({ category: "metadata", name: "stream tail", parts: [{ kind: "text", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
+    expect(blocks.at(-1)).toEqual({ key: "tail", category: "metadata", name: "stream tail", parts: [{ kind: "text", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
   });
 
   it("shows why a body is not decoded yet, and what is left of a request body not complete", () => {
@@ -229,6 +230,7 @@ describe("format", () => {
     const formatted = one([head!, body[0]!, ...br]);
     expect(group(formatted, "request").map(({ name }) => name)).toEqual(["HTTP request", "request body so far"]);
     expect(group(formatted, "response")[1]).toEqual({
+      key: "undecoded",
       category: "metadata",
       name: "body not decoded",
       parts: [{ kind: "text", text: expect.stringMatching(/^\d+ bytes wait for the body to complete: br is decoded whole$/) }],
@@ -257,16 +259,49 @@ describe("format", () => {
     expect(later[1]!.groups[0]).toBe(first[1]!.groups[0]);
   });
 
+  it("keys each block by what it is, so a block keeps its key as a stream adds blocks around it", () => {
+    const events = [
+      messageStart,
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi." } },
+      { type: "content_block_stop", index: 0 },
+      { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } },
+      { type: "sparkle" },
+      messageDelta,
+    ];
+    const keys = (count: number) => {
+      const blocks = group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "response");
+      return Object.fromEntries(blocks.map(({ key, name }) => [name, key]));
+    };
+    expect(keys(3)).toEqual({ "HTTP response": "http", text: "content.0", "stop reason: null": "stop reason", usage: "usage", message: "fields" });
+    expect(keys(7)).toEqual({
+      "HTTP response": "http",
+      text: "content.0",
+      "tool_use: Bash": "content.1",
+      "stop reason: tool_use": "stop reason",
+      usage: "usage",
+      message: "fields",
+      "sparkle event": "event.0",
+    });
+    const formatted = one(request("a", { model: "m", system: "s", messages: [{ role: "user", content: "Hi." }] }));
+    expect(formatted.groups.map(({ key, blocks }) => [key, blocks.map(({ key }) => key)])).toEqual([
+      ["request", ["http", "parameters", "system.0"]],
+      ["message.0", ["content.0"]],
+      ["response", []],
+    ]);
+  });
+
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
     const constructor = { type: "constructor", value: 1 };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [constructor] }] }));
-    expect(group(formatted, "user")).toEqual([{ category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
+    expect(group(formatted, "user")).toEqual([{ key: "content.0", category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
   });
 
   it("shows a tool result with no content, as a failed tool may return", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] }] }));
     expect(group(formatted, "user")).toEqual([
       {
+        key: "content.0",
         category: "tools",
         name: "tool_result",
         parts: [
@@ -297,7 +332,7 @@ describe("format", () => {
       { ...at("base64"), type: "response_trailers", headers: [] },
     ]);
     const [coding, base64] = formatted.map((exchange) => group(exchange, "response").slice(1));
-    expect(coding).toEqual([{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "content-encoding compress is not one this view decodes" }] }]);
+    expect(coding).toEqual([{ key: "undecoded", category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "content-encoding compress is not one this view decodes" }] }]);
     // A body that did not decode is not parsed, so its one failure is shown once.
     expect(lines(base64!)).toEqual(["metadata body not decoded"]);
   });

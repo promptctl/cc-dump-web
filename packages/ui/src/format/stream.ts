@@ -5,12 +5,22 @@ import { fitting, formatError, Misfit, parseJson, readObject, restBlock, type Bl
 // and the text after the last complete event, which is the next event still arriving or what a cut-off stream left.
 export type Stream = { message: Record<string, unknown> | undefined; blocks: Block[]; tail: string };
 
+// The reassembly of one streamed Messages response as its text arrives: `reassemble` takes the text decoded so far, and
+// whether it is all the text there will be, and returns the stream as far as it has arrived. Events it has applied before are not parsed or applied again, so a
+// response read while it streams costs the text it receives, not its whole length each time.
+// [LAW:one-source-of-truth] The text is the truth and the reassembly is derived from it: a body only grows, so each
+// call's text begins with the text before, and the stream equals a reassembly of all of it at once. Each call returns
+// objects of its own, so a stream already returned is never changed by an event after it.
+export type Reassembly = { reassemble: (text: string, complete: boolean) => Stream };
+
 // Reassembles the server-sent events of a Messages stream into the message they build, as a non-streaming response
 // would have returned it, so one formatting serves both. [LAW:no-silent-failure] An event that cannot be applied is
 // shown raw under its event name, with why; the fields of an event that no case reads land on what it builds, the
 // message or the content block, so a field the API adds to an event is shown with theirs.
-export function reassemble(text: string): Stream {
-  const { events, tail } = serverSentEvents(text);
+export function createReassembly(): Reassembly {
+  let read = 0;
+  // The text after the last complete event.
+  let tail = "";
   let message: Record<string, unknown> | undefined;
   const content = new Map<number, Building>();
   const blocks: Block[] = [];
@@ -42,7 +52,7 @@ export function reassemble(text: string): Stream {
         const index = event.value("index");
         if (typeof index !== "number") throw new Misfit("content_block_start's index is not a number");
         if (content.has(index)) throw new Misfit(`content block ${index} has already started`);
-        content.set(index, { block: { ...readObject(event.value("content_block"), "content_block").rest(), ...event.rest() }, json: "" });
+        content.set(index, { block: { ...readObject(event.value("content_block"), "content_block").rest(), ...event.rest() }, json: "", input: undefined });
         return;
       }
       case "content_block_delta": {
@@ -54,7 +64,7 @@ export function reassemble(text: string): Stream {
       case "content_block_stop": {
         const target = started(event.value("index"));
         // A tool's input is whole at its block's stop, so input that is not JSON by then does not fit.
-        if (target.json !== "") parseJson(target.json, "the block's streamed input");
+        if (target.json !== "") target.input = { parsed: parseJson(target.json, "the block's streamed input") };
         Object.assign(target.block, event.rest());
         return;
       }
@@ -81,35 +91,46 @@ export function reassemble(text: string): Stream {
     }
   };
 
-  for (const { name, data } of events) {
-    fitting(
-      () => apply(parseJson(data, "its data")),
-      (reason) =>
-        void blocks.push({
-          category: "metadata",
-          name: `${name} event`,
-          parts: [
-            { kind: "text", label: "not applied", text: reason },
-            { kind: "text", label: "data", text: data },
-          ],
-        }),
-    );
-  }
-  const built = message === undefined ? undefined : { ...message, content: [...content.entries()].sort(([a], [b]) => a - b).map(([, built]) => assembled(built)) };
-  return { message: built, blocks, tail };
+  return {
+    reassemble: (text, complete) => {
+      if (text.length < read) throw new Error(`a stream reassembled to character ${read} was given ${text.length}: a body only grows`);
+      const { events, rest } = serverSentEvents(tail + text.slice(read), complete);
+      read = text.length;
+      tail = rest;
+      for (const { name, data } of events) {
+        fitting(
+          () => apply(parseJson(data, "its data")),
+          (reason) =>
+            void blocks.push({
+              category: "metadata",
+              name: `${name} event`,
+              parts: [
+                { kind: "text", label: "not applied", text: reason },
+                { kind: "text", label: "data", text: data },
+              ],
+            }),
+        );
+      }
+      const built = message === undefined ? undefined : { ...message, content: [...content.entries()].sort(([a], [b]) => a - b).map(([, built]) => assembled(built)) };
+      return { message: built, blocks: [...blocks], tail };
+    },
+  };
 }
 
-// A content block being built from its events: the block, and its tool input's JSON as far as it has streamed.
-type Building = { block: Record<string, unknown>; json: string };
+// Reassembles a stream's text at once.
+export function reassemble(text: string, complete: boolean): Stream {
+  return createReassembly().reassemble(text, complete);
+}
 
-// A content block with its tool input as far as it has streamed: the JSON once it parses, its text before that.
-function assembled({ block, json }: Building): Record<string, unknown> {
-  if (json === "") return block;
-  try {
-    return { ...block, input: JSON.parse(json) };
-  } catch {
-    return { ...block, input: json };
-  }
+// A content block being built from its events: the block, its tool input's JSON as far as it has streamed, and that
+// input parsed, once its block has stopped.
+type Building = { block: Record<string, unknown>; json: string; input: { parsed: unknown } | undefined };
+
+// A content block, a copy of its own, with its tool input as far as it has streamed: the JSON once its block has
+// stopped, its text before that, which is not yet JSON.
+function assembled({ block, json, input }: Building): Record<string, unknown> {
+  if (json === "") return { ...block };
+  return { ...block, input: input === undefined ? json : input.parsed };
 }
 
 // Applies a content block delta to the block it extends, its fields no case reads among them; a delta of a type not
@@ -150,10 +171,12 @@ function applyDelta(target: Building, data: unknown) {
 
 // The complete events of a server-sent event stream (each ended by a blank line), and the text after the last.
 // Per the WHATWG spec: lines end in CRLF, LF or CR; `data` lines join with LF; a line starting with a colon is a
-// comment; one space after a field's colon is dropped; an event with no `event` field is named "message".
-function serverSentEvents(text: string): { events: { name: string; data: string }[]; tail: string } {
-  const chunks = text.replace(/\r\n?/g, "\n").split("\n\n");
-  const tail = chunks.pop() ?? "";
+// comment; one space after a field's colon is dropped; an event with no `event` field is named "message". A CR that
+// ends text not yet `complete` waits in the rest, since the LF of its CRLF may be the next text to arrive.
+function serverSentEvents(text: string, complete: boolean): { events: { name: string; data: string }[]; rest: string } {
+  const waiting = !complete && text.endsWith("\r") ? "\r" : "";
+  const chunks = text.slice(0, text.length - waiting.length).replace(/\r\n?/g, "\n").split("\n\n");
+  const rest = (chunks.pop() ?? "") + waiting;
   const events = chunks.flatMap((chunk) => {
     let name = "message";
     const data: string[] = [];
@@ -167,5 +190,5 @@ function serverSentEvents(text: string): { events: { name: string; data: string 
     // An event with no data line is not dispatched.
     return data.length === 0 ? [] : [{ name, data: data.join("\n") }];
   });
-  return { events, tail };
+  return { events, rest };
 }

@@ -10,6 +10,7 @@
     "@cc-dump/log": "workspace:*",
     "@cc-dump/proxy": "workspace:*",
     "@fontsource-variable/geist": "^5.3.0",
+    "@tanstack/react-virtual": "^3.14.26",
     "brotli": "^2.1.0",
     "fflate": "^0.8.3",
     "fzstd": "^0.1.1",
