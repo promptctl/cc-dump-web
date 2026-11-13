@@ -6,6 +6,7 @@ import type { FormattedExchange } from "../format/format.ts";
 import { positionAt, resolve, rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
 import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
+import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 
 // The conversation, scrolling: each exchange's request, then its response, as rows of which only those on screen are
@@ -38,36 +39,67 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
 
-  // The offset the view last wrote. A scroller is created at 0, so 0 is where it starts, as if written there.
+  // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to.
+  const follow = useSettings((state) => state.follow);
+  const atEnd = useView((state) => state.position.at === "end");
+  const following = !follow ? "off" : atEnd ? "on" : "paused";
+
+  // The offset the view last wrote or took as its own. A scroller is created at 0, so 0 is where it starts.
   const written = useRef(0);
+  // [LAW:one-source-of-truth] Whether the offset is the view's own: the one it last wrote or took, or the end the
+  // browser moved it to when the content got shorter or the scroller taller (a clamp). A clamp is the layout changing,
+  // not a reader, so the position survives it. A reader's scroll reaches the end from below, so it is never a clamp;
+  // any other offset is a reader's scroll.
+  const own = (element: HTMLElement) => Math.abs(element.scrollTop - Math.min(written.current, largest(element))) < 1;
   // [LAW:no-ambient-temporal-coupling] The one step that keeps the scroll offset and the position in agreement, run
-  // after every render and on every scroll, in whatever order they come. An offset the view did not write is a scroll
-  // someone else made (the reader, or the browser clamping a list that got shorter), whether its event has fired yet or
-  // not: the position becomes where it is. Otherwise the position is resolved against where the rows now are, and
+  // after every render and on every scroll, in whatever order they come. A reader's scroll is the scroll event's to
+  // adopt: the virtualizer re-renders within that event, ahead of the view's own listener, and a clamp's event can come
+  // after a render, so a render that took an offset for the reader's could take a clamp for a scroll. Until its event
+  // runs, a reader's offset is left as it is. Otherwise the position is resolved against where the rows now are, and
   // written when it moved; a position whose row has not arrived, as after a reload, writes nothing until it does.
   const sync = () => {
     const element = scroller.current!;
+    if (!own(element)) return;
     const offset = element.scrollTop;
-    if (Math.abs(offset - written.current) >= 1) {
-      written.current = offset;
-      view.moveTo(positionAt(offset, virtualizer.getVirtualItemForOffset));
+    written.current = offset;
+    const position = useView.getState().position;
+    // Follow off, the end is a place like any other: the view stays where it is.
+    if (position.at === "end" && !useSettings.getState().follow) {
+      view.moveTo(positionAt(offset, undefined, virtualizer.getVirtualItemForOffset));
       return;
     }
-    const target = resolve(useView.getState().position, keys.indexOf, (index) => virtualizer.measurementsCache[index]);
+    const target = resolve(position, largest(element), keys.indexOf, (index) => virtualizer.measurementsCache[index]);
     if (target === undefined || Math.abs(target - offset) < 1) return;
     element.scrollTop = target;
     // The browser clamps an offset past the end, so what was written is what it reads back.
     written.current = element.scrollTop;
   };
-  const latestSync = useRef(sync);
-  latestSync.current = sync;
-  useLayoutEffect(() => latestSync.current());
+  // A reader's scroll: the position becomes where it is. Following, a scroll to the end stays at the end, and a scroll
+  // back to it resumes; a gesture the browser stopped at an end that grew while it ran stays paused.
+  const onScroll = () => {
+    const element = scroller.current!;
+    if (!own(element)) {
+      const offset = element.scrollTop;
+      written.current = offset;
+      view.moveTo(positionAt(offset, useSettings.getState().follow ? largest(element) : undefined, virtualizer.getVirtualItemForOffset));
+    }
+    sync();
+  };
+  const latest = useRef({ sync, onScroll });
+  latest.current = { sync, onScroll };
+  useLayoutEffect(() => latest.current.sync());
   useLayoutEffect(() => {
     const element = scroller.current!;
-    const onScroll = () => latestSync.current();
+    const onScroll = () => latest.current.onScroll();
     element.addEventListener("scroll", onScroll, { passive: true });
     return () => element.removeEventListener("scroll", onScroll);
   }, []);
+  // Following, a click stops; paused or off, it follows from the end.
+  const toggleFollow = () => {
+    settings.setFollow(following !== "on");
+    if (following !== "on") view.moveTo({ at: "end" });
+    latest.current.sync();
+  };
 
   return (
     // The browser's own scroll anchoring would be a second writer of the offset.
@@ -89,8 +121,32 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
           ))}
         </div>
       )}
+      {/* A sticky child of the scroller, held at its bottom: once it is clicked, End still scrolls the conversation. */}
+      <div className="sticky bottom-0 h-0">
+        <button
+          type="button"
+          data-follow={following}
+          title={followTitles[following]}
+          className="absolute right-4 bottom-3 rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
+          onClick={toggleFollow}
+        >
+          {followLabels[following]}
+        </button>
+      </div>
     </main>
   );
+}
+
+const followLabels = { on: "Following", paused: "Follow paused", off: "Follow off" };
+const followTitles = {
+  on: "The view stays at the newest content. Click to stop following.",
+  paused: "Scrolled away from the newest content. Scroll back to the end, or click, to follow again.",
+  off: "Click to follow the newest content.",
+};
+
+// The largest scroll offset: the one that shows the end of the conversation.
+function largest(element: HTMLElement): number {
+  return element.scrollHeight - element.clientHeight;
 }
 
 // Memoized: the layout keeps an unchanged exchange's rows the same objects, so only changed rows render again.

@@ -25,8 +25,7 @@ export function App({ connection }: { connection: Connection }) {
         </div>
       </header>
       {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
-          way (docs/design/01-mvp.md, "One path to the screen"). A view kept across a read begun again would see the
-          browser clamp its offset to the top as the conversation empties, and take that for the reader's scroll. */}
+          way (docs/design/01-mvp.md, "One path to the screen"). */}
       <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
     </div>
   );
