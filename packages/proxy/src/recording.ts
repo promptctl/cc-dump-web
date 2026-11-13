@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
 
 export type Header = [name: string, value: string];
@@ -28,15 +28,28 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & (
 // One exchange's recording, opened when its request arrives.
 export type Recorder = (trace_id: string) => (seen: Seen) => void;
 
+// The run's recording: where it is, how to record an exchange into it, and the writer's word on its growth,
+// which only the writer knows. `appended` counts the events appended so far (zero: no file yet), and each
+// `onAppend` listener is called after every append until the function it returned is called.
+export type Recording = {
+  name: string;
+  path: string;
+  record: Recorder;
+  appended: () => number;
+  onAppend: (listener: () => void) => () => void;
+};
+
 // Each event is appended before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
 // [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
 // event, written with `end`, counts what was written and what failed, and names the first failure. A
 // write that fails is counted and never stops or alters the agent's traffic. Writes are synchronous,
 // so a disk that stalls stalls forwarding with it: that is the price of the kill guarantee above.
-export function createRecording(log: Log, path: string): Recorder {
+export function createRecording(log: Log, path: string): Recording {
   mkdirSync(dirname(path), { recursive: true });
-  return (trace_id) => {
+  let appended = 0;
+  const listeners = new Set<() => void>();
+  const record: Recorder = (trace_id) => {
     const span = startSpan(trace_id);
     const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
     let failure: string | undefined;
@@ -47,6 +60,8 @@ export function createRecording(log: Log, path: string): Recorder {
         appendFileSync(path, line);
         counts.events_written++;
         counts.bytes_written += Buffer.byteLength(line);
+        appended++;
+        for (const listener of listeners) listener();
       } catch (error) {
         counts.events_failed++;
         failure ??= describeError(error);
@@ -55,6 +70,16 @@ export function createRecording(log: Log, path: string): Recorder {
       const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
       log({ event: "record", ...span.end(), ...ending, path, counts });
     };
+  };
+  return {
+    name: basename(path),
+    path,
+    record,
+    appended: () => appended,
+    onAppend: (listener) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
   };
 }
 

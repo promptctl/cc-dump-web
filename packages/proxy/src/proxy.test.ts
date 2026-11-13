@@ -39,7 +39,7 @@ function recordingPath() {
 async function proxyTo(upstream: URL) {
   const { path, events } = recordingPath();
   const recordLog = eventLog();
-  return { ...(await serving(createProxy(upstream, createRecording(recordLog.log, path)))), path, events, recordLog };
+  return { ...(await serving(createProxy(upstream, createRecording(recordLog.log, path).record))), path, events, recordLog };
 }
 
 const bodyOf = (events: RecordedEvent[], type: "request_body" | "response_body") =>
@@ -516,7 +516,7 @@ describe("createProxy", () => {
       import { createRecording } from ${JSON.stringify(new URL("./recording.ts", import.meta.url).href)};
       const [upstream, path] = process.argv.slice(1);
       const ignore = () => {};
-      const { port } = await serve(ignore, createProxy(new URL(upstream), createRecording(ignore, path)), 0);
+      const { port } = await serve(ignore, createProxy(new URL(upstream), createRecording(ignore, path).record), 0);
       process.stdout.write(port + "\\n");
     `;
 

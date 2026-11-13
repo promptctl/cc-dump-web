@@ -93,8 +93,8 @@ Hot reload is designed in first, because it decides where every other piece live
 
 | Part | Reloads | Does |
 |---|---|---|
-| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to the recording, and serves the recording to readers from any position, then live. |
-| App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), lists recordings, stores settings, relays logs. |
+| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to the recording, lists the recordings, and serves a recording to readers from any position, then live. |
+| App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores settings, relays logs. |
 | Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
 
 **The proxy stays small so that it rarely changes.** It knows nothing about messages, blocks or streaming events. Everything that understands the Anthropic API lives where it can be reloaded. This is also what makes "every block type is captured" true by construction: the proxy cannot drop what it never parses.
