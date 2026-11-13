@@ -9,9 +9,10 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
-    // [LAW:single-enforcer] A part serves only through @cc-dump/log's serve, which logs every request,
-    // connection error and bind. From node's network modules it imports only the client calls listed
-    // here, so a server constructor node adds later is refused too; a type binds nothing.
+    // [LAW:single-enforcer] A part's code binds no port through node's network modules; it serves through
+    // @cc-dump/log's serve, which logs every request, connection error and bind. Its static imports from
+    // those modules are limited to the names listed here, so a server constructor node adds later is
+    // refused too; a type binds nothing.
     files: ["packages/*/**"],
     ignores: ["packages/log/**"],
     rules: {

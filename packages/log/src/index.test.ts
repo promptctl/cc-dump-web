@@ -124,9 +124,9 @@ describe("serve", () => {
     const { log, next } = eventLog();
 
     const { port, close } = await serve(log, () => {}, 0);
-    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
     await close();
 
+    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
     await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toMatchObject({ cause: { code: "ECONNREFUSED" } });
   });
 
