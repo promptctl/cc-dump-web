@@ -80,7 +80,9 @@ describe("createServer", () => {
 
     const { reply, clientPort } = await sendRaw(port, "NOT HTTP\r\n\r\n");
 
-    expect(reply).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+    const bare = await listen(() => {}, closedAfterTest(createHttpServer()), 0);
+    expect(reply).toMatch(/^HTTP\/1\.1 400 /);
+    expect(reply).toBe((await sendRaw(bare, "NOT HTTP\r\n\r\n")).reply);
     expect(await next()).toMatchObject({
       event: "client_error",
       trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
