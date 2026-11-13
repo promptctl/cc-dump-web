@@ -4,24 +4,19 @@ import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import type { Handler } from "@cc-dump/log";
-import { eventLog, sendRaw, serveForTest } from "@cc-dump/log/testing";
+import { sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { createProxy } from "./proxy.ts";
 
 async function upstreamServing(handler: Handler): Promise<URL> {
-  return new URL(`http://127.0.0.1:${await serveForTest(() => {}, handler)}`);
+  return new URL((await serving(handler)).url);
 }
 
 // Nothing listens on port 1. localhost, because it resolves to more than one address on most
 // hosts, and refusal by all of them is an AggregateError.
 const refusingAddress = new URL("http://localhost:1");
 
-async function proxyTo(upstream: URL) {
-  const { log, next } = eventLog();
-  const port = await serveForTest(log, createProxy(upstream));
-  expect(await next()).toMatchObject({ event: "listen", port });
-  return { port, next };
-}
+const proxyTo = (upstream: URL) => serving(createProxy(upstream));
 
 // Raw node:http on the agent's side, so bytes are compared as sent (fetch would decompress gzip).
 type Sent = { method?: string; path: string; headers?: Record<string, string>; body?: Buffer };

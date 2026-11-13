@@ -4,16 +4,8 @@ import { createConnection } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { createLog, serve, type Event, type Handler } from "./index.ts";
-import { eventLog, sendRaw, serveForTest } from "./testing.ts";
-
-// The first event is binding the port; `next` then yields the events of the handler's work.
-async function serving(handler: Handler) {
-  const { log, next } = eventLog();
-  const port = await serveForTest(log, handler);
-  expect(await next()).toMatchObject({ event: "listen", port });
-  return { port, url: `http://127.0.0.1:${port}`, next };
-}
+import { createLog, serve, type Event } from "./index.ts";
+import { eventLog, sendRaw, serving } from "./testing.ts";
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
 
@@ -128,27 +120,21 @@ describe("serve", () => {
     ]);
   });
 
-  it("records the port it bound", async () => {
+  it("records the port it bound, and refuses connections there once closed", async () => {
     const { log, next } = eventLog();
 
-    const port = await serveForTest(log, () => {});
-
+    const { port, close } = await serve(log, () => {}, 0);
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
+    await close();
+
+    await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toMatchObject({ cause: { code: "ECONNREFUSED" } });
   });
 
   it("records and rethrows a port that is already taken", async () => {
-    const port = await serveForTest(() => {}, () => {});
+    const { port } = await serving(() => {});
     const { log, next } = eventLog();
 
     await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
     expect(await next()).toMatchObject({ event: "listen", outcome: "error", port, error: expect.stringContaining("EADDRINUSE") });
-  });
-
-  it("stops accepting connections once closed", async () => {
-    const { port, close } = await serve(() => {}, () => {}, 0);
-
-    await close();
-
-    await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow();
   });
 });

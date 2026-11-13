@@ -1,8 +1,8 @@
 import { once } from "node:events";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
-import { onTestFinished } from "vitest";
-import { serve, type Event, type Handler, type Log } from "./index.ts";
+import { expect, onTestFinished } from "vitest";
+import { serve, type Event, type Handler } from "./index.ts";
 
 // A log the test can wait on: `next()` resolves with the next event written.
 export function eventLog() {
@@ -28,9 +28,12 @@ export async function sendRaw(port: number, bytes: string) {
   return { reply: (await buffer(socket)).toString(), clientPort };
 }
 
-// Serves `handler` on a free port until the test finishes; resolves with the port.
-export async function serveForTest(log: Log, handler: Handler): Promise<number> {
+// Serves `handler` on a free port until the test finishes. Binding the port is the log's first event,
+// taken here, so `next` yields the events of the handler's work.
+export async function serving(handler: Handler) {
+  const { log, next } = eventLog();
   const { port, close } = await serve(log, handler, 0);
   onTestFinished(close);
-  return port;
+  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
+  return { port, url: `http://127.0.0.1:${port}`, next };
 }
