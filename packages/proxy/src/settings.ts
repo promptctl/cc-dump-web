@@ -14,13 +14,7 @@ const settings = {
       return value as number;
     },
   },
-  upstream: {
-    default: "https://api.anthropic.com",
-    parse: (value: unknown) => {
-      if (typeof value !== "string") throw new Error(`upstream must be a string, got ${JSON.stringify(value)}`);
-      return parseUpstream(value);
-    },
-  },
+  upstream: { default: "https://api.anthropic.com", parse: parseUpstream },
 };
 
 export type ProxySettings = { [K in keyof typeof settings]: ReturnType<(typeof settings)[K]["parse"]> };
@@ -36,7 +30,7 @@ export function parseProxySettings(text: string | undefined): ReadSettings {
   const file = text === undefined ? {} : jsonObject(parseJson(text, "proxy settings"), "proxy settings");
   const unknown = Object.keys(file).filter((key) => !Object.hasOwn(settings, key));
   if (unknown.length > 0)
-    throw new Error(`proxy settings: ${unknown.map((key) => JSON.stringify(key)).join(", ")} is not a setting; the settings are ${Object.keys(settings).join(", ")}`);
+    throw new Error(`proxy settings: no setting is named ${unknown.map((key) => JSON.stringify(key)).join(", ")}; the settings are ${Object.keys(settings).join(", ")}`);
   const taken = Object.entries(settings).map(([key, setting]) => [key, setting.parse(Object.hasOwn(file, key) ? file[key] : setting.default)]);
   return { settings: Object.fromEntries(taken) as ProxySettings, file_keys: text === undefined ? null : Object.keys(file) };
 }

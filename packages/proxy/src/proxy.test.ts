@@ -238,10 +238,10 @@ describe("createProxy", () => {
     expect(event.error).not.toContain("rawPacket");
   });
 
-  it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a", "gw.example", ""])(
-    "refuses the upstream %j, which it could not forward to as given",
-    (text) => {
-      expect(() => parseUpstream(text)).toThrow(`upstream must be an http or https origin with an optional path, got ${JSON.stringify(text)}`);
+  it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a", "gw.example", "", 1])(
+    "refuses the upstream %j, which it could not forward to as given, without repeating it",
+    (value) => {
+      expect(() => parseUpstream(value)).toThrow(/^upstream must be an http or https origin with an optional path$/);
     },
   );
 
