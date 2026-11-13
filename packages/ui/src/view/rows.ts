@@ -127,6 +127,16 @@ function rowsOf(trace: string, group: Group): GroupRows {
   };
 }
 
+// The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
+// object while its side of the exchange is unchanged, for the block's size, its view and the search; the cache is this
+// function's own.
+const jsonTexts = new WeakMap<Extract<Part, { kind: "json" }>, string>();
+export function jsonText(part: Extract<Part, { kind: "json" }>): string {
+  const text = jsonTexts.get(part) ?? JSON.stringify(part.value, null, 2) ?? "undefined";
+  jsonTexts.set(part, text);
+  return text;
+}
+
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is
 // estimated from. A JSON string is counted by its length, so a tool's input still streaming is not serialized each time.
 function sizeOf(parts: Part[]): number {
@@ -135,7 +145,7 @@ function sizeOf(parts: Part[]): number {
       case "text":
         return size + part.text.length;
       case "json":
-        return size + (typeof part.value === "string" ? part.value.length : (JSON.stringify(part.value, null, 2)?.length ?? 0));
+        return size + (typeof part.value === "string" ? part.value.length : jsonText(part).length);
       case "fields":
         return size + part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
       case "media":

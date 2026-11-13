@@ -17,8 +17,9 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
         value={query}
         onChange={(event) => view.search(event.target.value)}
         onKeyDown={(event) => {
-          // The Enter that commits an input method's composition is typing, not a step.
-          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+          // The Enter that commits an input method's composition is typing, not a step. Safari ends the composition before
+          // that Enter's keydown, which it reports with keyCode 229.
+          if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
           event.preventDefault();
           onStep(event.shiftKey ? "previous" : "next");
         }}

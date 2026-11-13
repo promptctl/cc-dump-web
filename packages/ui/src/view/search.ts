@@ -2,7 +2,7 @@ import type { Block, Part } from "../format/blocks.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import { rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import type { Keys, Row } from "./rows.ts";
+import { jsonText, type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts the shown categories' blocks show, counted,
 // stepped through in order, and found in each text shown for highlighting.
@@ -45,7 +45,7 @@ function partTexts(part: Part, index: number): Shown[] {
     case "text":
       return [{ at: address.part(index), text: part.text, in: "regions" }];
     case "json":
-      return [{ at: address.part(index), text: jsonText(part.value), in: "content" }];
+      return [{ at: address.part(index), text: jsonText(part), in: "content" }];
     case "fields":
       return part.fields.flatMap(([name, value], field) => [
         { at: address.field(index, field, "name"), text: name, in: "content" as const },
@@ -54,11 +54,6 @@ function partTexts(part: Part, index: number): Shown[] {
     case "media":
       return [];
   }
-}
-
-// The text a JSON part shows.
-export function jsonText(value: unknown): string {
-  return JSON.stringify(value, null, 2) ?? "undefined";
 }
 
 // [LAW:parse-dont-validate] A query as the pattern its matches are found with: its characters literally, in any case

@@ -7,11 +7,11 @@ import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { positionAt, rowIndex } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
+import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, jsonText, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch, paint } from "./highlights.ts";
-import { address, adjacent, createSearch, find, jsonText, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -220,8 +220,11 @@ function HighlightedText({ blockKey, at, text }: { blockKey: string; at: string;
 // line's end, is in one slice. Its matches are highlighted and the current one highlighted apart.
 function Highlighted({ slice, from, where: { ranges, current } }: { slice: string; from: number; where: Where }) {
   const span = useRef<HTMLSpanElement>(null);
+  const to = from + slice.length;
+  // The current match if it is in this slice, so a step paints again only the slices it leaves and enters.
+  const own = current !== undefined && current >= from && current < to ? current : undefined;
   // An empty slice has no text node, and no match to paint in one.
-  useLayoutEffect(() => paint(span.current!.firstChild as Text, from, rangesIn(ranges, from, from + slice.length), current), [slice, from, ranges, current]);
+  useLayoutEffect(() => paint(span.current!.firstChild as Text, from, rangesIn(ranges, from, to), own), [from, to, ranges, own]);
   return <span ref={span}>{slice}</span>;
 }
 
@@ -320,7 +323,7 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
     case "text":
       return <TextView text={part.text} blockKey={blockKey} at={address.part(index)} />;
     case "json":
-      return <JsonView value={part.value} blockKey={blockKey} at={address.part(index)} />;
+      return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
     case "fields":
       return (
         <dl className="grid grid-cols-[max-content_1fr] gap-x-3">
@@ -356,8 +359,8 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
   }
 }
 
-function JsonView({ value, blockKey, at }: { value: unknown; blockKey: string; at: string }) {
-  const text = useMemo(() => jsonText(value), [value]);
+function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: string }) {
+  const text = jsonText(part);
   return (
     <pre className="break-all whitespace-pre-wrap">
       <HighlightedText blockKey={blockKey} at={at} text={text} />
