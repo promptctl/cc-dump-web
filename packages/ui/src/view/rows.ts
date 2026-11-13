@@ -23,18 +23,32 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 // One exchange's rows, their keys, and each key's index among them.
 type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; index: Map<string, number> };
 
-// Lays out exchanges as rows, leaving out the blocks of each category `visibility` hides (docs/design/01-mvp.md, F5).
-// [LAW:no-shared-mutable-globals] Its caches are its own: the formatter returns an unchanged exchange, and an unchanged
-// group of a changed one (a request's, while its response streams), as the same object, so their rows are the ones laid
-// out before: a frame lays out and sizes only what changed, and only those rows render. They hold for one visibility,
-// so another visibility is another layout.
-export function createLayout(visibility: Record<Category, Visibility>): (formatted: FormattedExchange[]) => Layout {
-  const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
-  const groups = new WeakMap<Group, Row[]>();
-  const groupRows = (trace: string, group: Group) => {
-    const rows = groups.get(group) ?? rowsOf(trace, group, visibility);
-    groups.set(group, rows);
+// A group's rows, its title and every block, each sized, whichever categories are hidden.
+type GroupRows = { title: Extract<Row, { kind: "group" }>; blocks: Extract<Row, { kind: "block" }>[] };
+
+// Lays out groups as rows. [LAW:no-shared-mutable-globals] Its cache is its own: the formatter returns an unchanged
+// group as the same object, so its rows are the ones laid out before, and every layout lists the same group and block
+// rows whichever categories it hides: a category shown or hidden sizes no block again, and a block still listed does
+// not render again.
+export function createGroupRows(): (trace: string, group: Group) => GroupRows {
+  const laidOut = new WeakMap<Group, GroupRows>();
+  return (trace, group) => {
+    const rows = laidOut.get(group) ?? rowsOf(trace, group);
+    laidOut.set(group, rows);
     return rows;
+  };
+}
+
+// Lays out exchanges as rows, leaving out the blocks of each category `visibility` hides (docs/design/01-mvp.md, F5),
+// and a group with no block left, rather than a title over nothing. [LAW:no-shared-mutable-globals] Its cache is its
+// own: the formatter returns an unchanged exchange as the same object, so its rows are the ones laid out before: a frame
+// lays out only what changed, and only those rows render. It holds for one visibility, so another is another layout.
+export function createLayout(visibility: Record<Category, Visibility>, groupRows: (trace: string, group: Group) => GroupRows): (formatted: FormattedExchange[]) => Layout {
+  const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
+  const listedRows = (trace: string, group: Group): Row[] => {
+    const { title, blocks } = groupRows(trace, group);
+    const shown = blocks.filter(({ block }) => listed[visibility[block.category]]);
+    return shown.length === 0 ? [] : [title, ...shown];
   };
   // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
   // ones before is the layout before, as when only traffic the view does not show arrived.
@@ -42,7 +56,7 @@ export function createLayout(visibility: Record<Category, Visibility>): (formatt
   return (formatted) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
-      const own = laidOut.get(exchange) ?? exchangeRows(exchange, groupRows, before.get(exchange.exchange.trace_id));
+      const own = laidOut.get(exchange) ?? exchangeRows(exchange, listedRows, before.get(exchange.exchange.trace_id));
       laidOut.set(exchange, own);
       return own;
     });
@@ -58,9 +72,9 @@ export function createLayout(visibility: Record<Category, Visibility>): (formatt
 
 // An exchange's rows. `before`: the exchange's rows laid out last, whose keys it keeps, the same array, when its rows'
 // keys are the same.
-function exchangeRows({ exchange, groups }: FormattedExchange, groupRows: (trace: string, group: Group) => Row[], before: ExchangeRows | undefined): ExchangeRows {
+function exchangeRows({ exchange, groups }: FormattedExchange, listedRows: (trace: string, group: Group) => Row[], before: ExchangeRows | undefined): ExchangeRows {
   const trace = exchange.trace_id;
-  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...groups.flatMap((group) => groupRows(trace, group))];
+  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...groups.flatMap((group) => listedRows(trace, group))];
   const keys = rows.map(({ key }) => key);
   if (before !== undefined && before.keys.length === keys.length && before.keys.every((key, index) => key === keys[index])) return { ...before, rows };
   return { trace, rows, keys, index: new Map(keys.map((key, index) => [key, index])) };
@@ -83,13 +97,17 @@ function keysOf(exchanges: ExchangeRows[]): Keys {
   };
 }
 
-// A group's rows: its title, then its blocks not hidden; none, when no block is left, rather than a title over nothing.
+// [LAW:types-are-the-program] Whether a block of each visibility is listed, so a later level is one more entry, which
+// the compiler asks for here.
+const listed: Record<Visibility, boolean> = { shown: true, hidden: false };
+
 // A group is one exchange's, so `trace` is the same for every call with it.
-function rowsOf(trace: string, group: Group, visibility: Record<Category, Visibility>): Row[] {
+function rowsOf(trace: string, group: Group): GroupRows {
   const key = `${trace}/${group.key}`;
-  const blocks = group.blocks.filter((block) => visibility[block.category] !== "hidden");
-  const title: Row[] = blocks.length === 0 ? [] : [{ kind: "group", key, title: group.title }];
-  return [...title, ...blocks.map((block): Row => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) }))];
+  return {
+    title: { kind: "group", key, title: group.title },
+    blocks: group.blocks.map((block) => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) })),
+  };
 }
 
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is

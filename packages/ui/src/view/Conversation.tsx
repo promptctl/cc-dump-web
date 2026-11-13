@@ -6,7 +6,7 @@ import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { positionAt, rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
-import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
+import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
@@ -15,9 +15,10 @@ import { useView, view } from "./state.ts";
 // mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an exchange its end.
 export function Conversation({ formatted, reading }: { formatted: FormattedExchange[]; reading: boolean }) {
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
-  // and its caches are kept. Fast Refresh keeps state but re-runs memos, so an edited module's layout is the one used.
+  // and its cache are kept. Fast Refresh keeps state but re-runs memos, so an edited module's layout is the one used.
   const visibility = useSettings(useShallow((state) => state.visibility));
-  const layOut = useMemo(() => createLayout(visibility), [visibility]);
+  const groupRows = useMemo(() => createGroupRows(), []);
+  const layOut = useMemo(() => createLayout(visibility, groupRows), [visibility, groupRows]);
   const { rows, keys } = useMemo(() => layOut(formatted), [layOut, formatted]);
   const flipped = useView((state) => state.flipped);
   const scroller = useRef<HTMLElement>(null);

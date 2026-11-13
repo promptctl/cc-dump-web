@@ -6,7 +6,7 @@ import { settings, useSettings, type Visibility } from "../settings.ts";
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
   return (
-    <div role="toolbar" aria-label="Categories" className="flex h-9 items-center gap-2 border-b px-4 text-xs">
+    <div role="toolbar" aria-label="Categories" className="flex min-h-9 flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs">
       {categories.map((category) => (
         <CategoryToggle key={category} category={category} visibility={visibility[category]} />
       ))}
