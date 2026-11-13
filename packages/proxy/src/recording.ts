@@ -1,6 +1,8 @@
-import { ftruncateSync, mkdirSync, openSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, constants, ftruncateSync, mkdirSync, openSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
+
+const { O_APPEND, O_CREAT, O_EXCL, O_WRONLY } = constants;
 
 export type Header = [name: string, value: string];
 
@@ -44,9 +46,9 @@ export type Recording = {
 // Each event is written before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
 // [LAW:one-source-of-truth] The file is the run's own and its length is the writer's: the first write
-// creates it, refusing a file already at the path, and holds it open for the run (the process's exit
-// closes it). Each write cuts the file back to `written` before writing the event there, so the part of
-// a line a failed write left is gone at the next write, every line below `written` is a whole event, and
+// creates it, refusing a file already at the path, and every later write opens it without creating it, so
+// one deleted mid-run fails loudly. Each write cuts the file back to `written` before appending the event,
+// so what a failed write left is gone at the next write, every line below `written` is a whole event, and
 // those bytes never change once written.
 // [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
 // event, written with `end`, counts what was written and what failed, and names the first failure. A
@@ -55,7 +57,7 @@ export type Recording = {
 export function createRecording(log: Log, path: string): Recording {
   mkdirSync(dirname(path), { recursive: true });
   let written = 0;
-  let fd: number | undefined;
+  let flags = O_WRONLY | O_APPEND | O_CREAT | O_EXCL;
   const listeners = new Set<() => void>();
   const record: Recorder = (trace_id) => {
     const span = startSpan(trace_id);
@@ -65,8 +67,9 @@ export function createRecording(log: Log, path: string): Recording {
       const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
       const line = Buffer.from(`${JSON.stringify(event)}\n`);
       try {
-        fd ??= openSync(path, "wx");
-        writeAt(fd, written, line);
+        const fd = openSync(path, flags);
+        flags = O_WRONLY | O_APPEND;
+        appendAfter(fd, written, line);
         counts.events_written++;
         counts.bytes_written += line.length;
         written += line.length;
@@ -92,11 +95,14 @@ export function createRecording(log: Log, path: string): Recording {
   };
 }
 
-// Cuts the file to `position`, then writes all of `bytes` there, or throws: a write that comes back short
-// is carried on from where it stopped, as appendFileSync does.
-function writeAt(fd: number, position: number, bytes: Buffer) {
-  ftruncateSync(fd, position);
-  for (let done = 0; done < bytes.length; ) done += writeSync(fd, bytes, done, bytes.length - done, position + done);
+// Cuts the file to `length`, appends `line` after it, and closes the file, or throws.
+function appendAfter(fd: number, length: number, line: Buffer) {
+  try {
+    ftruncateSync(fd, length);
+    appendFileSync(fd, line);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function recorded(seen: Seen) {

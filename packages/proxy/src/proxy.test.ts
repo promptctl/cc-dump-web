@@ -509,6 +509,27 @@ describe("createProxy", () => {
       });
     });
 
+    it("never recreates a recording deleted mid-run, and logs each event it could not write", async () => {
+      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const { port, next, path, recordLog } = await proxyTo(upstream);
+      await buffer(await send(port, { path: "/v1/models" }));
+      await next();
+      await recordLog.next();
+      rmSync(path);
+
+      await buffer(await send(port, { path: "/v1/models" }));
+      const exchange = await next();
+
+      expect(existsSync(path)).toBe(false);
+      expect(await recordLog.next()).toMatchObject({
+        event: "record",
+        trace_id: exchange.trace_id,
+        outcome: "error",
+        error: expect.stringContaining("ENOENT"),
+        counts: { events_written: 0, bytes_written: 0, events_failed: 6 },
+      });
+    });
+
     it("writes no file for a run with no traffic", async () => {
       const { path } = await proxyTo(refusingAddress);
 
