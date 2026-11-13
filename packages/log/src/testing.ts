@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
@@ -26,6 +27,17 @@ export async function sendRaw(port: number, bytes: string) {
   const clientPort = socket.localPort;
   socket.end(bytes);
   return { reply: (await buffer(socket)).toString(), clientPort };
+}
+
+// Raw node:http on the client's side, so bytes are compared as sent (fetch would decompress gzip).
+type Sent = { method?: string; path: string; headers?: Record<string, string>; body?: Buffer };
+
+// The caller frames the body: node's default framing for a GET is none at all.
+export async function send(port: number, { method = "GET", path, headers = {}, body }: Sent): Promise<IncomingMessage> {
+  const req = request({ port, method, path, headers });
+  req.end(body);
+  const [res] = (await once(req, "response")) as [IncomingMessage];
+  return res;
 }
 
 // Serves `handler` on a free port until the test finishes. Binding the port is the log's first event,

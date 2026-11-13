@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import type { Handler } from "@cc-dump/log";
-import { eventLog, sendRaw, serving } from "@cc-dump/log/testing";
+import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createRecording, type RecordedEvent } from "./recording.ts";
@@ -47,17 +47,6 @@ const bodyOf = (events: RecordedEvent[], type: "request_body" | "response_body")
 
 // The event types in order, a run of one type as one entry: how a body is chunked is the network's.
 const shape = (events: RecordedEvent[]) => events.map(({ type }) => type).filter((type, i, types) => type !== types[i - 1]);
-
-// Raw node:http on the agent's side, so bytes are compared as sent (fetch would decompress gzip).
-type Sent = { method?: string; path: string; headers?: Record<string, string>; body?: Buffer };
-
-// The caller frames the body: node's default framing for a GET is none at all.
-async function send(port: number, { method = "GET", path, headers = {}, body }: Sent): Promise<IncomingMessage> {
-  const req = request({ port, method, path, headers });
-  req.end(body);
-  const [res] = (await once(req, "response")) as [IncomingMessage];
-  return res;
-}
 
 function pairs(rawHeaders: string[]): [string, string][] {
   return rawHeaders.flatMap((name, i): [string, string][] => (i % 2 ? [] : [[name, rawHeaders[i + 1]!]]));

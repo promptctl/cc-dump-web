@@ -1,10 +1,9 @@
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { request, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
-import { eventLog, serving } from "@cc-dump/log/testing";
+import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createReader } from "./reading.ts";
@@ -29,7 +28,7 @@ async function proxyAndReader(dir = recordingsDir(), wrap = (recording: Recordin
   const reader = await serving(createReader(readerLog.log, recording));
   // One exchange through the proxy, waited on until its request event (and so its recording) is complete.
   const exchange = async (path: string) => {
-    await buffer(await get(proxy.port, path));
+    await buffer(await send(proxy.port, { path }));
     await proxy.next();
   };
   return { dir, recording, reader, readerLog, exchange, lines: () => linesOf(join(dir, liveName)) };
@@ -37,17 +36,11 @@ async function proxyAndReader(dir = recordingsDir(), wrap = (recording: Recordin
 
 const linesOf = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean);
 
-async function get(port: number, path: string, headers: Record<string, string> = {}): Promise<IncomingMessage> {
-  const req = request({ port, path, headers });
-  req.end();
-  return ((await once(req, "response")) as [IncomingMessage])[0];
-}
-
 type ServerSentEvent = { id?: string; event?: string; data: string };
 
 // A Server-Sent Events client: `next()` resolves with each event as it arrives.
 async function subscribe(port: number, path: string, headers: Record<string, string> = {}) {
-  const res = await get(port, path, headers);
+  const res = await send(port, { path, headers });
   const arrived: ServerSentEvent[] = [];
   const waiting: ((event: ServerSentEvent) => void)[] = [];
   let text = "";
@@ -136,20 +129,22 @@ describe("createReader", () => {
     stream.res.destroy();
   });
 
-  it.each(["1", "999999", "x"])("refuses %s, which is not the id of an event, with 400", async (from) => {
+  it.each(["1", "999999", "99999999999999999999", "x"])("refuses %s, which is not the id of an event, with 400", async (from) => {
     const { reader, exchange } = await proxyAndReader();
     await exchange("/v1/models");
 
-    const res = await get(reader.port, `/recordings/${liveName}?from=${from}`);
+    const res = await send(reader.port, { path: `/recordings/${liveName}?from=${from}` });
     await buffer(res);
 
     expect(res.statusCode).toBe(400);
   });
 
-  it.each(["20200101T000000.000Z.jsonl", "..%2F..%2Fsecret.jsonl", "notes.txt"])("answers 404 for %s, which is not a recording", async (name) => {
-    const { reader } = await proxyAndReader();
+  // The live recording spelled in lower case: a case-insensitive filesystem would open it.
+  it.each(["20200101T000000.000Z.jsonl", "..%2F..%2Fsecret.jsonl", "notes.txt", liveName.toLowerCase()])("answers 404 for %s, which is not a recording", async (name) => {
+    const { reader, exchange } = await proxyAndReader();
+    await exchange("/v1/models");
 
-    const res = await get(reader.port, `/recordings/${name}`);
+    const res = await send(reader.port, { path: `/recordings/${name}` });
     await buffer(res);
 
     expect(res.statusCode).toBe(404);
@@ -160,7 +155,7 @@ describe("createReader", () => {
     writeFileSync(join(dir, "20261101T000000.000Z.jsonl"), "");
     const { reader } = await proxyAndReader(dir);
 
-    const res = await get(reader.port, "/recordings");
+    const res = await send(reader.port, { path: "/recordings" });
 
     expect(res.headers["access-control-allow-origin"]).toBe("*");
     expect(JSON.parse((await buffer(res)).toString())).toEqual([
@@ -237,7 +232,7 @@ describe("createReader", () => {
     const readerLog = eventLog();
     const reader = await serving(createReader(readerLog.log, broken));
 
-    const res = await get(reader.port, `/recordings/${liveName}`);
+    const res = await send(reader.port, { path: `/recordings/${liveName}` });
     const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
     await readerLog.next();
     appended++;
