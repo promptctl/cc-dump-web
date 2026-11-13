@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseListings, parseRecordedEvent, parseRecordingEnd } from "./format.ts";
+import { parseListings, parseReadFailure, parseRecordedEvent, parseRecordingEnd } from "./format.ts";
 import { createRecording, type Seen } from "./recording.ts";
 
 // Every kind of event the recorder writes, each ending among them.
@@ -52,18 +52,22 @@ describe("parseRecordedEvent", () => {
 });
 
 describe("the reader's messages", () => {
-  it("reads back a recordings list and a recording's end", () => {
+  it("reads back a recordings list, a recording's end, and a read's failure", () => {
     const listings = [
       { name: "20261113T080000.000Z.jsonl", live: false },
       { name: "20261113T090000.000Z.jsonl", live: true },
     ];
     expect(parseListings(JSON.stringify(listings))).toEqual(listings);
     expect(parseRecordingEnd(JSON.stringify({ unterminated_bytes: 12 }))).toEqual({ unterminated_bytes: 12 });
+    expect(parseReadFailure(JSON.stringify({ message: "EISDIR: illegal operation on a directory, read" }))).toEqual({
+      message: "EISDIR: illegal operation on a directory, read",
+    });
   });
 
-  it("refuses a list or an end of another shape", () => {
+  it("refuses a list, an end, or a failure of another shape", () => {
     expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
     expect(() => parseListings('[{"name":"a.jsonl","live":"yes"}]')).toThrow("recordings list entry: live is not a boolean");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
+    expect(() => parseReadFailure('{"error":"EISDIR"}')).toThrow("read failure: message is not a string");
   });
 });

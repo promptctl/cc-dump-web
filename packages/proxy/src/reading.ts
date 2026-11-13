@@ -173,10 +173,10 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
       });
     } catch (error) {
       if (stream.destroyed) return;
-      const failure: ReadFailure = { error: describeError(error) };
-      catchUp({ outcome: "error", ...failure });
+      catchUp({ outcome: "error", error: describeError(error) });
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
+      const failure: ReadFailure = { message: error instanceof Error ? error.message : String(error) };
       stream.push(`event: failed\ndata: ${JSON.stringify(failure)}\n\n`);
       stream.push(null);
     }

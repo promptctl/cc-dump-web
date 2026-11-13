@@ -9,7 +9,7 @@ import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import type { RecordedEvent } from "./format.ts";
+import { parseReadFailure, type RecordedEvent } from "./format.ts";
 import { createRecording, type Recording } from "./recording.ts";
 import { proxyProcess } from "./testing.ts";
 
@@ -322,7 +322,8 @@ describe("createReader", () => {
     const failed = await stream.next();
     await ended;
     expect(failed).toEqual({ event: "failed", data: expect.any(String) });
-    expect(JSON.parse(failed.data)).toEqual({ error: expect.stringContaining("EISDIR") });
-    expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: JSON.parse(failed.data).error, status: 200 });
+    const { message } = parseReadFailure(failed.data);
+    expect(message).toMatch(/^EISDIR/);
+    expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining(message), status: 200 });
   });
 });

@@ -41,23 +41,22 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
           }
           deliver(value);
         };
-      source.addEventListener("message", receive(parseRecordedEvent, reader.event), listening);
-      // A finished recording's last message. Closed here, or the EventSource reconnects and reads it again.
-      source.addEventListener(
-        "end",
-        receive(parseRecordingEnd, (end) => {
+      // A read's last message, a finished recording's end or the reader's failure: closed on it, or the
+      // EventSource reconnects and reads the recording again, or into the same failure.
+      const ends =
+        <T>(deliver: (value: T) => void) =>
+        (value: T) => {
           close();
-          reader.end(end);
-        }),
-        listening,
-      );
-      // A read the reader failed once it began. Closed here, or the EventSource reconnects into the same failure.
+          deliver(value);
+        };
+      source.addEventListener("message", receive(parseRecordedEvent, reader.event), listening);
+      source.addEventListener("end", receive(parseRecordingEnd, ends(reader.end)), listening);
       source.addEventListener(
         "failed",
-        receive(parseReadFailure, ({ error }) => {
-          close();
-          reader.failed(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${error}`) }));
-        }),
+        receive(
+          parseReadFailure,
+          ends(({ message }) => reader.failed(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) }))),
+        ),
         listening,
       );
       // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection.

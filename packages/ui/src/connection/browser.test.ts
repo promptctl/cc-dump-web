@@ -138,15 +138,17 @@ describe("the browser connection", () => {
 
   it("resumes a read whose connection dropped from its last event, reporting nothing", async () => {
     const [first, second] = finishedEvents.map((event) => JSON.stringify(event));
+    const resumedFrom: (string | string[] | undefined)[] = [];
     const reader = await serving((req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
+      resumedFrom.push(req.headers["last-event-id"]);
       // `retry` makes the browser reconnect in 10ms, not its default 3s.
-      if (req.headers["last-event-id"] === undefined) res.write(`retry: 10\nid: 7\ndata: ${first}\n\n`, () => res.destroy());
-      else if (req.headers["last-event-id"] === "7") res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
-      else res.destroy(new Error(`resumed from ${req.headers["last-event-id"]}, not 7`));
+      if (resumedFrom.length === 1) res.write(`retry: 10\nid: 7\ndata: ${first}\n\n`, () => res.destroy());
+      else res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
     });
     const read = reading(createBrowserConnection(reader.url), finishedName);
     expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
+    expect(resumedFrom).toEqual([undefined, "7"]);
   });
 
   it("reports a read of a recording the proxy does not list as failed", async () => {
