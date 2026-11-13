@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { describe, type Ending, type Log } from "@cc-dump/log";
+import { describe, startSpan, type Ending, type Log } from "@cc-dump/log";
 
 export type Header = [name: string, value: string];
 
@@ -22,24 +22,35 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & (
   | { type: Extract<Seen, { chunk: Buffer }>["type"]; base64: string }
 );
 
-export type Recorder = (trace_id: string, seen: Seen) => void;
+// One exchange's recording, opened when its request arrives.
+export type Recorder = (trace_id: string) => (seen: Seen) => void;
 
 // Each event is appended before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
-// [LAW:nothing-unseen] Writing is the recording's own unit of work: a write that fails is its own event,
-// joined to the exchange by trace_id, and the agent's traffic never waits on the disk.
+// [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
+// event, written with `end`, counts what was written and what failed, and names the first failure. A
+// write that fails is counted and the agent's traffic goes on: it never waits on the disk.
 export function createRecording(log: Log, path: string): Recorder {
   mkdirSync(dirname(path), { recursive: true });
-  return (trace_id, seen) => {
-    const started = performance.now();
-    const timestamp = new Date().toISOString();
-    const event: RecordedEvent = { timestamp, trace_id, ...recorded(seen) };
-    try {
-      appendFileSync(path, `${JSON.stringify(event)}\n`);
-    } catch (error) {
-      const failed = { event: "record", trace_id, started_at: timestamp, duration_ms: performance.now() - started };
-      log({ ...failed, outcome: "error", error: describe(error), path, type: seen.type });
-    }
+  return (trace_id) => {
+    const span = startSpan(trace_id);
+    const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
+    let failure: string | undefined;
+    return (seen) => {
+      const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
+      const line = `${JSON.stringify(event)}\n`;
+      try {
+        appendFileSync(path, line);
+        counts.events_written++;
+        counts.bytes_written += Buffer.byteLength(line);
+      } catch (error) {
+        counts.events_failed++;
+        failure ??= describe(error);
+      }
+      if (seen.type !== "end") return;
+      const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
+      log({ event: "record", ...span.end(), ...ending, path, ...counts });
+    };
   };
 }
 

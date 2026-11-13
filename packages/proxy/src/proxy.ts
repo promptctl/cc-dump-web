@@ -1,7 +1,7 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
-import type { Header, Recorder, Seen } from "./recording.ts";
+import type { Header, Recorder } from "./recording.ts";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 
@@ -17,7 +17,7 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
   const basePath = upstream.pathname.replace(/\/$/, "");
 
   return (req, res, { trace_id, fail, ended }) => {
-    const seen = (event: Seen) => record(trace_id, event);
+    const seen = record(trace_id);
     const headers = pairs(req.rawHeaders);
     seen({ type: "request", method: req.method!, url: req.url!, http_version: req.httpVersion, headers });
     // node delivers no more of a request once its response has closed, so `end` is the exchange's last event.
@@ -59,8 +59,6 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     });
     // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
     res.on("close", () => outgoing.destroy());
-    // Each body's record listener is added before its pipe's, so a chunk is in the recording before it
-    // is forwarded: whatever reached either end of a killed proxy is recorded.
     req.on("data", (chunk: Buffer) => seen({ type: "request_body", chunk }));
     req.pipe(outgoing);
   };

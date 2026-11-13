@@ -295,6 +295,26 @@ describe("createProxy", () => {
       expect(recorded.at(-1)).toEqual({ type: "end", outcome: "ok", timestamp: expect.any(String), trace_id: logged.trace_id });
     });
 
+    it("logs each exchange's recording as its own event in the exchange's trace, counting what it wrote", async () => {
+      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const { port, next, path, recordLog } = await proxyTo(upstream);
+
+      await buffer(await send(port, { path: "/v1/models" }));
+      const exchange = await next();
+
+      expect(await recordLog.next()).toEqual({
+        event: "record",
+        trace_id: exchange.trace_id,
+        started_at: expect.any(String),
+        duration_ms: expect.any(Number),
+        outcome: "ok",
+        path,
+        events_written: readFileSync(path, "utf8").split("\n").length - 1,
+        bytes_written: readFileSync(path).length,
+        events_failed: 0,
+      });
+    });
+
     it("forwards credentials in both directions and never writes them", async () => {
       let received!: [string, string][];
       const upstream = await upstreamServing((req, res) => {
@@ -413,7 +433,7 @@ describe("createProxy", () => {
       expect(shape(events())).toEqual(["request", "request_body", "response", "response_body", "end"]);
     });
 
-    it("logs each write the recording cannot make as its own event, beside the exchange's own ending", async () => {
+    it("logs a recording that cannot be written once, counted, beside the exchange's own ending", async () => {
       const upstream = await upstreamServing((req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n", () => req.socket.destroy());
@@ -429,10 +449,16 @@ describe("createProxy", () => {
       expect(first.toString()).toBe("event: message_start\n\n");
       expect(exchange).toMatchObject({ event: "request", outcome: "error", status: 200 });
       expect(exchange.error).not.toContain("ENOENT");
-      const failed = [await recordLog.next(), await recordLog.next(), await recordLog.next(), await recordLog.next()];
-      expect(failed.map(({ type }) => type)).toEqual(["request", "response", "response_body", "end"]);
-      for (const event of failed)
-        expect(event).toMatchObject({ event: "record", trace_id: exchange.trace_id, outcome: "error", error: expect.stringContaining("ENOENT"), path });
+      expect(await recordLog.next()).toMatchObject({
+        event: "record",
+        trace_id: exchange.trace_id,
+        outcome: "error",
+        error: expect.stringContaining("ENOENT"),
+        path,
+        events_written: 0,
+        bytes_written: 0,
+        events_failed: 4,
+      });
     });
 
     it("writes no file for a run with no traffic", async () => {

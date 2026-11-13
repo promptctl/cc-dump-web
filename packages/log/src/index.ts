@@ -127,9 +127,10 @@ export function describe(error: unknown): string {
   return inspect(said);
 }
 
-function startSpan() {
-  // W3C Trace Context trace-id: 16 random bytes as lowercase hex.
-  const trace_id = randomBytes(16).toString("hex");
+// The floor's span fields, for any unit of work a part times itself. A unit of work inside another's
+// trace (a request's recording) takes that trace_id; a new one is W3C Trace Context's: 16 random bytes
+// as lowercase hex.
+export function startSpan(trace_id = randomBytes(16).toString("hex")) {
   const started_at = new Date().toISOString();
   const started = performance.now();
   return { trace_id, end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };
