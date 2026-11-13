@@ -1,4 +1,4 @@
-import { closeSync, constants, mkdirSync, openSync, writeSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
 
@@ -30,7 +30,7 @@ export type Recorder = (trace_id: string) => (seen: Seen) => void;
 
 // The run's recording: where it is, how to record an exchange into it, and the writer's word on its growth,
 // which only the writer knows. `written` is the length in bytes of the whole events written so far, all a
-// reader may read: past it the file may hold part of a line a failed write left, and before the first event
+// reader may read: past it the file may hold what the last write left when it failed, and before the first event
 // there may be no file. Each `onAppend` listener is called after every append until the function it
 // returned is called.
 export type Recording = {
@@ -43,9 +43,11 @@ export type Recording = {
 
 // Each event is appended before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
-// [LAW:one-source-of-truth] An event is written at `written`, not at the file's end, so a write that fails
-// part-way leaves its fragment only past `written`, where the next event overwrites it: every line in the
-// file is a whole event. A fragment holds no newline, since a line's only newline is its last byte.
+// [LAW:one-source-of-truth] The file is the run's own and its length is the writer's: the first write
+// creates it, refusing a file already at the path, and each write cuts the file back to `written` before
+// writing the event there. So what a failed write left (part of its line, or all of it when only the
+// close failed) is gone at the next write, every line below `written` is a whole event, and those bytes
+// never change once written.
 // [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
 // event, written with `end`, counts what was written and what failed, and names the first failure. A
 // write that fails is counted and never stops or alters the agent's traffic. Writes are synchronous,
@@ -53,6 +55,8 @@ export type Recording = {
 export function createRecording(log: Log, path: string): Recording {
   mkdirSync(dirname(path), { recursive: true });
   let written = 0;
+  // "wx" until a write has created the file, then "r+": open the file that is there, which is this run's.
+  let flags = "wx";
   const listeners = new Set<() => void>();
   const record: Recorder = (trace_id) => {
     const span = startSpan(trace_id);
@@ -62,7 +66,9 @@ export function createRecording(log: Log, path: string): Recording {
       const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
       const line = Buffer.from(`${JSON.stringify(event)}\n`);
       try {
-        writeAt(path, written, line);
+        const fd = openSync(path, flags);
+        flags = "r+";
+        writeAt(fd, written, line);
         counts.events_written++;
         counts.bytes_written += line.length;
         written += line.length;
@@ -88,11 +94,11 @@ export function createRecording(log: Log, path: string): Recording {
   };
 }
 
-// Writes all of `bytes` at `position`, creating the file, or throws: a write that comes back short is
-// carried on from where it stopped, as appendFileSync does.
-function writeAt(path: string, position: number, bytes: Buffer) {
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT);
+// Cuts the file to `position`, then writes all of `bytes` there and closes it, or throws: a write that
+// comes back short is carried on from where it stopped, as appendFileSync does.
+function writeAt(fd: number, position: number, bytes: Buffer) {
   try {
+    ftruncateSync(fd, position);
     for (let done = 0; done < bytes.length; ) done += writeSync(fd, bytes, done, bytes.length - done, position + done);
   } finally {
     closeSync(fd);

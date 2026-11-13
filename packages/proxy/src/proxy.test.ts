@@ -1,11 +1,9 @@
-import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import type { Handler } from "@cc-dump/log";
@@ -13,6 +11,7 @@ import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createRecording, type RecordedEvent } from "./recording.ts";
+import { proxyProcess } from "./testing.ts";
 
 async function upstreamServing(handler: Handler): Promise<URL> {
   return new URL((await serving(handler)).url);
@@ -492,22 +491,29 @@ describe("createProxy", () => {
       });
     });
 
+    it("never writes over a file already at the run's path, and logs each event it could not write", async () => {
+      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const { port, next, path, recordLog } = await proxyTo(upstream);
+      writeFileSync(path, "an earlier run's event\n");
+
+      expect(await buffer(await send(port, { path: "/v1/models" }))).toEqual(Buffer.from("answer"));
+      const exchange = await next();
+
+      expect(readFileSync(path, "utf8")).toBe("an earlier run's event\n");
+      expect(await recordLog.next()).toMatchObject({
+        event: "record",
+        trace_id: exchange.trace_id,
+        outcome: "error",
+        error: expect.stringContaining("EEXIST"),
+        counts: { events_written: 0, bytes_written: 0, events_failed: 6 },
+      });
+    });
+
     it("writes no file for a run with no traffic", async () => {
       const { path } = await proxyTo(refusingAddress);
 
       expect(existsSync(path)).toBe(false);
     });
-
-    // The proxy as its own process, recording to the path it is given, writing its port to stdout.
-    const proxyProcess = `
-      import { serve } from ${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)};
-      import { createProxy } from ${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)};
-      import { createRecording } from ${JSON.stringify(new URL("./recording.ts", import.meta.url).href)};
-      const [upstream, path] = process.argv.slice(1);
-      const ignore = () => {};
-      const { port } = await serve(ignore, createProxy(new URL(upstream), createRecording(ignore, path).record), 0);
-      process.stdout.write(port + "\\n");
-    `;
 
     it("leaves every event it saw up to the moment the proxy is killed", async () => {
       const upstream = await upstreamServing((_req, res) => {
@@ -515,15 +521,13 @@ describe("createProxy", () => {
         res.write("event: message_start\n\n");
       });
       const { path, events } = recordingPath();
-      const proxy = spawn(process.execPath, ["--input-type=module", "-e", proxyProcess, upstream.href, path], { stdio: ["ignore", "pipe", "inherit"] });
-      onTestFinished(() => void proxy.kill("SIGKILL"));
-      const [port] = (await once(createInterface(proxy.stdout), "line")) as [string];
+      const { child, proxyPort } = await proxyProcess(upstream.href, path, "unlimited");
 
-      const res = await send(Number(port), { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
+      const res = await send(proxyPort, { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
       await once(res, "data");
       const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
-      proxy.kill("SIGKILL");
-      await once(proxy, "exit");
+      child.kill("SIGKILL");
+      await once(child, "exit");
       await cut;
 
       expect(shape(events())).toEqual(["request", "request_body", "request_trailers", "response", "response_body"]);

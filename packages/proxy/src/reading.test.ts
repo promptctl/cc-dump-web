@@ -1,15 +1,14 @@
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { buffer } from "node:stream/consumers";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import { createRecording, type RecordedEvent, type Recording } from "./recording.ts";
+import { proxyProcess } from "./testing.ts";
 
 // A recordings directory, removed when the test finishes, with the run's recording in it.
 function recordingsDir() {
@@ -222,26 +221,10 @@ describe("createReader", () => {
     const dir = recordingsDir();
     const path = join(dir, liveName);
     const upstream = await serving((_req, res) => res.end("answer"));
-    // The proxy and reader as their own process, under a file size limit of 8 blocks: 4096 or 8192 bytes, as
-    // the shell counts them. The exchange's first event, its request, is over 10 KB: writing it writes up to
-    // the limit and fails with EFBIG. Its later events are small enough to fit below the limit.
-    const script = `
-      import { serve } from ${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)};
-      import { createProxy } from ${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)};
-      import { createReader } from ${JSON.stringify(new URL("./reading.ts", import.meta.url).href)};
-      import { createRecording } from ${JSON.stringify(new URL("./recording.ts", import.meta.url).href)};
-      const [upstream, path] = process.argv.slice(1);
-      const ignore = () => {};
-      const recording = createRecording(ignore, path);
-      const proxy = await serve(ignore, createProxy(new URL(upstream), recording.record), 0);
-      const reader = await serve(ignore, createReader(ignore, recording), 0);
-      process.stdout.write(proxy.port + " " + reader.port + "\\n");
-    `;
-    const args = ["-c", 'ulimit -f 8 && exec "$@"', "sh", process.execPath, "--input-type=module", "-e", script, upstream.url, path];
-    const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "inherit"] });
-    onTestFinished(() => void child.kill("SIGKILL"));
-    const [line] = (await once(createInterface(child.stdout), "line")) as [string];
-    const [proxyPort, readerPort] = line.split(" ").map(Number) as [number, number];
+    // A file size limit of 8 blocks: 4096 or 8192 bytes, as the shell counts them. The exchange's first
+    // event, its request, is over 10 KB: writing it writes up to the limit and fails with EFBIG. Its later
+    // events are small enough to fit below the limit.
+    const { proxyPort, readerPort } = await proxyProcess(upstream.url, path, "8");
 
     const stream = await subscribe(readerPort, `/recordings/${liveName}`);
     await buffer(await send(proxyPort, { path: `/v1/models?pad=${"x".repeat(10_000)}` }));
@@ -250,13 +233,11 @@ describe("createReader", () => {
     while ((JSON.parse(sent.at(-1)!.data) as RecordedEvent).type !== "end");
     stream.res.destroy();
 
-    const file = readFileSync(path, "utf8");
-    const whole = file.slice(0, file.lastIndexOf("\n")).split("\n");
-    expect(sent).toEqual(expected(whole));
-    expect(whole.map((line) => (JSON.parse(line) as RecordedEvent).type)).toEqual(["request_trailers", "response", "response_body", "response_trailers", "end"]);
-    // Past the whole events, up to the limit, the rest of the part of the request's line the failed write
-    // wrote: its URL's padding.
-    expect(file.slice(file.lastIndexOf("\n") + 1)).toMatch(/^x+$/);
+    // The file ends at its last whole event: the next write cut away the part of the request's line.
+    const lines = readFileSync(path, "utf8").split("\n");
+    expect(lines.pop()).toBe("");
+    expect(sent).toEqual(expected(lines));
+    expect(lines.map((line) => (JSON.parse(line) as RecordedEvent).type)).toEqual(["request_trailers", "response", "response_body", "response_trailers", "end"]);
   });
 
   it("makes a read error after the response started the request's error, and cuts the stream", async () => {
