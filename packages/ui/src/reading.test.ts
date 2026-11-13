@@ -2,7 +2,7 @@ import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { opening, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
+import { onScreen, readRecording, toOpenRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const past: Listing = { name: "20261113T080000.000Z.jsonl", live: false };
 const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
@@ -118,6 +118,15 @@ describe("readRecording", () => {
     }
   });
 
+  it("ends in a failure the read reports as it begins", async () => {
+    const error = new Error("GET /recordings/x: not served");
+    const connection: Parameters<typeof readRecording>[0] = { recordings: () => Promise.reject(new Error("not listed")), read: (_name, reader) => reader.failed(error) };
+    const states: Reading[] = [];
+    readRecording(connection, { recording: "past", name: past.name }, { reset: () => {}, append: () => {} }, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    await setImmediate();
+    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: past.name }, { state: "failed", error }]);
+  });
+
   it.each<OpenRecording>([{ recording: "live" }, { recording: "past", name: past.name }])("reads nothing and reports nothing when aborted as it begins, open %o", async (open) => {
     const { connection, reads } = fakeConnection();
     const states: Reading[] = [];
@@ -133,7 +142,13 @@ describe("readRecording", () => {
 
 describe("the recording open", () => {
   it("is opened from a listing: live by its role, a past one by its name", () => {
-    expect(opening(live)).toEqual({ recording: "live" });
-    expect(opening(past)).toEqual({ recording: "past", name: past.name });
+    expect(toOpenRecording(live)).toEqual({ recording: "live" });
+    expect(toOpenRecording(past)).toEqual({ recording: "past", name: past.name });
+  });
+
+  it("is on screen by the name of the run read, so after the proxy restarts the run that ended is, not the new live one", () => {
+    expect(onScreen({ state: "reading", name: live.name })).toBe(live.name);
+    expect(onScreen({ state: "ended", name: live.name, end: { unterminated_bytes: 0 } })).toBe(live.name);
+    expect([onScreen({ state: "opening" }), onScreen({ state: "failed", error: new Error("refused") })]).toEqual([undefined, undefined]);
   });
 });

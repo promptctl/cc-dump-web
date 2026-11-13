@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { events, useEvents } from "../store.ts";
 import { useView, view } from "./state.ts";
 
 describe("opening a recording", () => {
+  beforeEach(() => {
+    useView.setState(useView.getInitialState(), true);
+    events.reset();
+  });
+
   it("opens it at its end with no current match, keeping the flips", () => {
     const match = { key: "t1/request/http", at: "text", start: 0 };
     useView.setState({ flipped: { "t1/request/http": true }, position: { at: "row", key: "t1", offset: 12 }, search: { query: "x", current: match } });

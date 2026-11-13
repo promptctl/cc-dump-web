@@ -2,7 +2,7 @@ import { recordingStart, type Listing } from "@cc-dump/proxy/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "../describe.ts";
-import { opening, type OpenRecording, type Reading } from "../reading.ts";
+import { onScreen, toOpenRecording, type OpenRecording, type Reading } from "../reading.ts";
 import { useView, view } from "./state.ts";
 
 // The recordings control (docs/design/01-mvp.md, F7): the recording open, the list of every recording to open another
@@ -10,7 +10,7 @@ import { useView, view } from "./state.ts";
 // the runs started since it last did. `reading`: the read of the recording open, which names the one on screen.
 export function Recordings({ connection, reading }: { connection: Pick<Connection, "recordings">; reading: Reading }) {
   const open = useView((state) => state.open);
-  const shown = reading.state === "reading" || reading.state === "ended" ? reading.name : undefined;
+  const shown = onScreen(reading);
   const list = useRef<HTMLDivElement>(null);
   const [listing, setListing] = useState(false);
   const pick = (opened: OpenRecording) => {
@@ -45,9 +45,7 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
 type Listed = { state: "listing" } | { state: "listed"; listings: Listing[] } | { state: "failed"; error: Error };
 
 // Every recording, newest first, so the live one is on top. Read as it mounts, which is as the list opens. The one on
-// screen, by its name, is not opened again: that would read it again from its start, and lose the reader's place in
-// it. The live run is the one on screen only while it is the one read: after the proxy restarts, the run read is
-// past, and the new one opens.
+// screen is not opened again: that would read it again from its start, and lose the reader's place in it.
 function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: OpenRecording) => void }) {
   const [listed, setListed] = useState<Listed>({ state: "listing" });
   useEffect(() => {
@@ -76,7 +74,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 disabled={listing.name === shown}
                 title={listing.name}
                 className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-muted aria-[current=true]:font-semibold"
-                onClick={() => pick(opening(listing))}
+                onClick={() => pick(toOpenRecording(listing))}
               >
                 <span>{startOf(listing.name)}</span>
                 {listing.live && <span className="text-muted-foreground">live</span>}

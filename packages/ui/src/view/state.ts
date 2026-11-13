@@ -7,10 +7,10 @@ import { isExpanded } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, each block or region they
-// flipped from how it starts, by key, where they are, and their search. Everything else on screen is derived from the events and the
-// settings. It is kept for the tab in sessionStorage, so after a hot reload or a page reload the view is the same
-// (docs/design/01-mvp.md, F12). A tab opens at the end, which follows the conversation while follow is on. While it is
-// off, the end becomes the place under the view at the first step.
+// flipped from how it starts, by key, where they are, and their search. Everything else on screen is derived from the
+// events and the settings. It is kept for the tab in sessionStorage, so after a hot reload or a page reload the view is
+// the same (docs/design/01-mvp.md, F12). A tab opens at the end, which follows the conversation while follow is on.
+// While it is off, the end becomes the place under the view at the first step.
 // [LAW:types-are-the-program] A flip is a key's presence, so a block flipped back is no entry, not one that says its
 // default.
 export type View = { open: OpenRecording; flipped: Record<string, true>; position: Position; search: Search };

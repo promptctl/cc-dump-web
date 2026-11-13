@@ -8,7 +8,7 @@ import { events } from "./store.ts";
 export type OpenRecording = { recording: "live" } | { recording: "past"; name: string };
 
 // The recording a listing opens: the one listed as live opens live, never as a past one by the name it has now.
-export function opening(listing: Listing): OpenRecording {
+export function toOpenRecording(listing: Listing): OpenRecording {
   return listing.live ? { recording: "live" } : { recording: "past", name: listing.name };
 }
 
@@ -31,8 +31,8 @@ export type Frames = (callback: () => void) => () => void;
 // aborts it. Live or past, it is the one read (docs/design/01-mvp.md, "One path to the screen").
 // [LAW:no-ambient-temporal-coupling] The read owns its batch: events arriving between frames are appended in one call
 // at the next, because catching up delivers thousands in quick succession and one copy and render each would be
-// quadratic. Its end and its failure append what is pending first, so no frame of the read
-// runs after it has ended; its abort cancels the frame.
+// quadratic. Its end and its failure append what is pending first, so no frame of the read runs after it has ended;
+// its abort cancels the frame.
 export function readRecording(connection: Pick<Connection, "recordings" | "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink.reset();
   changed({ state: "opening" });
@@ -57,8 +57,11 @@ export function readRecording(connection: Pick<Connection, "recordings" | "read"
   });
   nameOf(connection, open, signal)
     .then((name) => {
-      connection.read(name, reader(name), signal);
+      // Reported as the read begins, so an end or a failure the read reports as it begins is the last state; a read
+      // stopped while it found the name reports nothing.
+      signal.throwIfAborted();
       changed({ state: "reading", name });
+      connection.read(name, reader(name), signal);
     })
     // An abort rejects what it cut short; that is the read being stopped, not failing.
     .catch((error: Error) => signal.aborted || changed({ state: "failed", error }));
@@ -77,6 +80,12 @@ async function nameOf(connection: Pick<Connection, "recordings">, open: OpenReco
       return live[0]!.name;
     }
   }
+}
+
+// The recording on screen, by its name: the one being read or read to its end. None while the read is finding it, or
+// failed. The live one is on screen only while it is the run read: after the proxy restarts, the run read is past.
+export function onScreen(reading: Reading): string | undefined {
+  return reading.state === "reading" || reading.state === "ended" ? reading.name : undefined;
 }
 
 const animationFrames: Frames = (callback) => {
