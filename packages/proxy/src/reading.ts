@@ -151,13 +151,14 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
       const bytes = await bytesAt(reading, offset + pending.length, 64 * 1024);
       if (stream.destroyed) return;
       if (bytes.length > 0) return pushLines(bytes);
+      // An append during the read: what it appended is still catching up. Appends are synchronous on this
+      // thread, so none can fall between this check and the subscription below.
+      if (live?.appended() !== appended) return fill();
       catchUp({ outcome: "ok" });
       if (!live) {
         stream.push(`event: end\ndata: ${JSON.stringify({ unterminated_bytes: pending.length })}\n\n`);
         return void stream.push(null);
       }
-      // Appends are synchronous on this thread, so none can fall between this check and the subscription.
-      if (live.appended() !== appended) return fill();
       stopWaiting = live.onAppend(() => {
         stopWaiting?.();
         stopWaiting = undefined;
