@@ -1,11 +1,12 @@
 import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection } from "node:net";
+import { buffer } from "node:stream/consumers";
 import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createLog, logged, serve, type Event, type Work } from "./index.ts";
-import { eventLog, sendRaw, serving } from "./testing.ts";
+import { eventLog, send, sendRaw, serving } from "./testing.ts";
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
 
@@ -163,14 +164,40 @@ describe("serve", () => {
     ]);
   });
 
-  it("records the port it bound, and refuses connections there once closed", async () => {
+  it("records the port it bound and closing it, and refuses connections there once closed", async () => {
     const { log, next } = eventLog();
 
     const { port, close } = await serve(log, () => {}, 0);
     await close();
 
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
     await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toMatchObject({ cause: { code: "ECONNREFUSED" } });
+  });
+
+  it("cuts a request still open when closed, and resolves once its event, ended as stopped, is written", async () => {
+    const { log, next } = eventLog();
+    const { port, close } = await serve(log, (_req, res) => res.writeHead(200).flushHeaders(), 0);
+    await next();
+    const res = await send(port, { path: "/" });
+
+    const cut = expect(buffer(res)).rejects.toThrow(/aborted/);
+    await close();
+    await cut;
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "stopped", status: 200 });
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 1 });
+  });
+
+  it("records and rethrows a close that fails", async () => {
+    const { log, next } = eventLog();
+    const { port, close } = await serve(log, () => {}, 0);
+    await next();
+    await close();
+    await next();
+
+    await expect(close()).rejects.toThrow(/ERR_SERVER_NOT_RUNNING|not running/);
+    expect(await next()).toMatchObject({ event: "close", outcome: "error", port, error: expect.stringContaining("ERR_SERVER_NOT_RUNNING") });
   });
 
   it("records and rethrows a port that is already taken", async () => {

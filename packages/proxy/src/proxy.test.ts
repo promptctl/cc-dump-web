@@ -555,6 +555,40 @@ describe("createProxy", () => {
       expect(bodyOf(events(), "request_body").equals(body)).toBe(true);
       expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
     });
+
+    it.each(["SIGINT", "SIGTERM"] as const)("on %s, ends every exchange and reader still open as stopped, then exits", async (signal) => {
+      const upstream = await upstreamServing((_req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("event: message_start\n\n");
+      });
+      const { path, events } = recordingPath();
+      const { child, proxyPort, readerPort, next } = await proxyProcess(upstream.href, path, "unlimited");
+
+      const exchange = await send(proxyPort, { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
+      await once(exchange, "data");
+      const reader = await send(readerPort, { path: "/recordings/run.jsonl" });
+      const cuts = [exchange, reader].map((res) => expect(buffer(res)).rejects.toThrow(/aborted/));
+      const exited = once(child, "exit");
+      child.kill(signal);
+      const logged = [];
+      do logged.push(await next());
+      while (logged.at(-1)!.event !== "shutdown");
+      await Promise.all(cuts);
+
+      expect(await exited).toEqual([0, null]);
+      const requests = logged.filter(({ event }) => event === "request");
+      expect(requests).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ method: "POST", url: "/v1/messages", outcome: "stopped", status: 200 }),
+          expect.objectContaining({ method: "GET", url: "/recordings/run.jsonl", outcome: "stopped", status: 200 }),
+        ]),
+      );
+      expect(requests).toHaveLength(2);
+      expect(logged.filter(({ event }) => event === "close")).toMatchObject([{ requests_open: 1 }, { requests_open: 1 }]);
+      expect(logged.at(-1)).toMatchObject({ event: "shutdown", outcome: "ok", signal });
+      const exchangeTrace = requests.find(({ method }) => method === "POST")!.trace_id;
+      expect(events().at(-1)).toMatchObject({ type: "end", trace_id: exchangeTrace, outcome: "stopped" });
+    });
   });
 });
 

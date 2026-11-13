@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
+import { serve } from "@cc-dump/log";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
@@ -215,6 +216,29 @@ describe("createReader", () => {
     expect(caughtUp).toMatchObject({ event: "catch_up", outcome: "aborted" });
     expect(caughtUp.events_read).toBeGreaterThan(0);
     expect(caughtUp.events_read).toBeLessThan(20_000);
+  });
+
+  it("logs a reader its server stopped mid-catch-up, held by backpressure, as stopped on its catch_up and its request", async () => {
+    const dir = recordingsDir();
+    const line = JSON.stringify({ data: "x".repeat(1000) });
+    writeFileSync(join(dir, "20261101T000000.000Z.jsonl"), `${line}\n`.repeat(20_000));
+    const { log, next } = eventLog();
+    const reader = await serve(log, createReader(log, createRecording(() => {}, join(dir, liveName))), 0);
+    await next();
+
+    const stream = await subscribe(reader.port, "/recordings/20261101T000000.000Z.jsonl");
+    await stream.next();
+    stream.res.pause();
+    const closed = reader.close();
+    await expect(buffer(stream.res)).rejects.toThrow(/aborted/);
+    await closed;
+
+    const [request, caughtUp, close] = [await next(), await next(), await next()];
+    expect(request).toMatchObject({ event: "request", outcome: "stopped", status: 200 });
+    expect(caughtUp).toMatchObject({ event: "catch_up", trace_id: request.trace_id, outcome: "stopped" });
+    expect(caughtUp.events_read).toBeGreaterThan(0);
+    expect(caughtUp.events_read).toBeLessThan(20_000);
+    expect(close).toMatchObject({ event: "close", outcome: "ok", requests_open: 1 });
   });
 
   it("sends each event written whole after a write that failed part-way as its own event", async () => {

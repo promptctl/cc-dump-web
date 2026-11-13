@@ -6,8 +6,9 @@ import { inspect } from "node:util";
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
 // fields. Parts add facts beside them and never rename them; `service` is added by the sink.
-// [LAW:types-are-the-program] An error is carried exactly when the outcome is "error".
-export type Ending = { outcome: "ok" | "aborted"; error?: never } | { outcome: "error"; error: string };
+// [LAW:types-are-the-program] An error is carried exactly when the outcome is "error". "aborted" is work
+// its client left; "stopped" is work cut because its server was closed.
+export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
 export type Event = {
   event: string;
   trace_id: string;
@@ -49,14 +50,17 @@ export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Pr
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
 
+// `close` stops accepting connections, cuts every one still open, and resolves once the event of every
+// request it cut is written.
 export type Serving = { port: number; close: () => Promise<void> };
 
 // [LAW:single-enforcer] The one way a part serves HTTP: it hands over its handler, never a server, so
 // every unit of work it does with a client is logged here and nowhere else: each request its handler
-// receives, each connection error, and binding the port. A port that cannot be bound writes its event,
-// then rethrows, so the process exits non-zero. Port 0 binds a free one; `port` is the one bound.
+// receives, each connection error, binding the port, and closing it. A port that cannot be bound or closed
+// writes its event, then rethrows, so the process exits non-zero. Port 0 binds a free one; `port` is the one bound.
 export async function serve(log: Log, handler: Handler, port: number): Promise<Serving> {
-  const server = loggedServer(log, handler);
+  const inFlight = new Set<Promise<Ending>>();
+  const server = loggedServer(log, handler, inFlight);
   const span = startSpan();
   try {
     server.listen(port);
@@ -69,12 +73,47 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
   log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
   return {
     port: bound,
-    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    close: async () => {
+      const span = startSpan();
+      // [LAW:no-ambient-temporal-coupling] The server's close can come before the close of a response it
+      // cut, which is when that request's event is written, so each cut request's `ended` is awaited too.
+      const cut = [...inFlight];
+      const closed = new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      server.closeAllConnections();
+      try {
+        await Promise.all([closed, ...cut]);
+      } catch (error) {
+        log({ event: "close", ...span.end(), outcome: "error", error: describeError(error), port: bound });
+        throw error;
+      }
+      log({ event: "close", ...span.end(), outcome: "ok", port: bound, requests_open: cut.length });
+    },
   };
 }
 
-function loggedServer(log: Log, handler: Handler): Server {
-  const server = createHttpServer(withRequestEvent(log, handler));
+// [LAW:single-enforcer] The one way a part's process stops: graceful shutdown on SIGINT or SIGTERM closes
+// every server, so each request still open is cut and its event written, then writes its own event, naming
+// the signal. Nothing is left holding the event loop, so the process exits by itself, once stdout has drained.
+// Both listeners go with the first signal: a second finds none and kills the process at once, node's default,
+// the way out of a shutdown that hangs. A server that fails to close rejects, and the process dies of it.
+export function shutdownOnSignal(log: Log, servers: Serving[]) {
+  const shutdown = (signal: NodeJS.Signals) => {
+    process.off("SIGINT", shutdown).off("SIGTERM", shutdown);
+    const span = startSpan();
+    void Promise.all(servers.map(({ close }) => close())).then(
+      () => log({ event: "shutdown", ...span.end(), outcome: "ok", signal }),
+      (error: unknown) => {
+        log({ event: "shutdown", ...span.end(), outcome: "error", error: describeError(error), signal });
+        throw error;
+      },
+    );
+  };
+  process.on("SIGINT", shutdown).on("SIGTERM", shutdown);
+}
+
+function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>): Server {
+  const server = createHttpServer();
+  server.on("request", withRequestEvent(log, handler, server, inFlight));
   server.on("connection", (socket: Socket) => {
     const span = startSpan();
     const client = clientOf(socket);
@@ -95,16 +134,22 @@ function clientOf(socket: Socket) {
 }
 
 // The event is written once, when the response closes: an error reported before then is its
-// outcome, the first one if there were several.
-function withRequestEvent(log: Log, handler: Handler): RequestListener {
+// outcome, the first one if there were several. A response cut short was stopped if its server had stopped
+// listening by then, which only `close` does, and was left by its client otherwise.
+// [LAW:one-source-of-truth] This is the one place that decides why a request ended; the handler reads it
+// from `ended`. The request is in flight, for `close` to wait on, until it is decided.
+function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
   return (req, res) => {
     const span = startSpan();
     const client = clientOf(req.socket);
     let failure: string | undefined;
     const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
+    inFlight.add(ended);
     res.on("close", () => {
+      const cut = server.listening ? "aborted" : "stopped";
       const ending: Ending =
-        failure === undefined ? { outcome: res.writableFinished ? "ok" : "aborted" } : { outcome: "error", error: failure };
+        failure === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error: failure };
+      inFlight.delete(ended);
       end(ending);
       log({
         event: "request",

@@ -13,7 +13,7 @@ import type { Recording } from "./recording.ts";
 // A finished recording ends with an `end` event; the live one is followed until the reader leaves.
 export function createReader(log: Log, live: Recording): Handler {
   const dir = dirname(live.path);
-  return (req, res, { trace_id, fail }) => {
+  return (req, res, { trace_id, fail, ended }) => {
     const url = new URL(req.url!, "http://reader");
     const asked = /^\/recordings\/([^/]+)$/.exec(url.pathname)?.[1];
     const answer = async () => {
@@ -24,7 +24,7 @@ export function createReader(log: Log, live: Recording): Handler {
       // another spelling and serve it as finished.
       const name = (await recordings(dir, live)).find((name) => name === asked);
       if (!name) return void res.writeHead(404, cors).end();
-      const reading = { log, trace_id, name, path: join(dir, name), live: name === live.name ? live : undefined };
+      const reading = { log, trace_id, ended, name, path: join(dir, name), live: name === live.name ? live : undefined };
       return read(reading, positionOf(req, url), res, fail);
     };
     answer().catch((error: unknown) => {
@@ -61,6 +61,7 @@ function positionOf(req: IncomingMessage, url: URL): number | undefined {
 type Reading = {
   log: Log;
   trace_id: string;
+  ended: Promise<Ending>;
   name: string;
   path: string;
   live: Recording | undefined;
@@ -104,10 +105,11 @@ async function bytesAt({ path, live }: Reading, position: number, length: number
 // and the response's close destroys it, which ends every wait it has: a file read, or the live recording's
 // next event written. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
 // [LAW:nothing-unseen] Catching up to the end of what exists is the reader's bounded work, and its own event
-// in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or is
-// destroyed before then. Following is the request itself; what it delivered is every event written after.
+// in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or the
+// request ends before then, with the request's ending. Following is the request itself; what it delivered is
+// every event written after.
 function recordingEvents(reading: Reading, from: number, failed: (error: unknown) => void) {
-  const { log, trace_id, name, live } = reading;
+  const { log, trace_id, ended, name, live } = reading;
   const span = startSpan(trace_id);
   let offset = from; // just past the last line read into the stream
   let pending = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
@@ -120,12 +122,16 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
     // events_read: read into the response stream; delivery past node's buffers is not knowable.
     log({ event: "catch_up", ...span.end(), ...ending, recording: name, live: live !== undefined, from, to: offset, events_read: eventsRead, unterminated_bytes: pending.length });
   };
+  // [LAW:one-source-of-truth] Why a read cut short ended is the request's to say (the client left, or the
+  // server was closed). Subscribed as the read starts, as the proxy subscribes an exchange's recorded `end`:
+  // promise callbacks run in the order they were subscribed, so a stop that cuts a read under way has this
+  // written before its `close` resolves.
+  void ended.then(catchUp);
 
   const stream = new Readable({
     read: () => void fill(),
     destroy: (error, callback) => {
       stopWaiting?.();
-      catchUp({ outcome: "aborted" });
       callback(error);
     },
   });
