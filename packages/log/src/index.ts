@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { inspect } from "node:util";
+import { LOOPBACK } from "./address.ts";
 import type { Ending } from "./ending.ts";
 
 export type { Ending };
@@ -60,19 +61,20 @@ export type Serving = { port: number; close: () => Promise<void> };
 // every unit of work it does with a client is logged here and nowhere else: each request its handler
 // receives, each connection error, binding the port, and closing it. A port that cannot be bound or closed
 // writes its event, then rethrows, so the process exits non-zero. Port 0 binds a free one; `port` is the one bound.
+// The port is bound on LOOPBACK, so one another process holds there is refused, not shared.
 export async function serve(log: Log, handler: Handler, port: number): Promise<Serving> {
   const inFlight = new Set<Promise<Ending>>();
   const server = loggedServer(log, handler, inFlight);
   const span = startSpan();
   try {
-    server.listen(port);
+    server.listen(port, LOOPBACK);
     await once(server, "listening");
   } catch (error) {
-    log({ event: "listen", ...span.end(), outcome: "error", error: describeError(error), port });
+    log({ event: "listen", ...span.end(), outcome: "error", error: describeError(error), address: LOOPBACK, port });
     throw error;
   }
-  const bound = (server.address() as AddressInfo).port;
-  log({ event: "listen", ...span.end(), outcome: "ok", port: bound });
+  const { address, port: bound } = server.address() as AddressInfo;
+  log({ event: "listen", ...span.end(), outcome: "ok", address, port: bound });
   return {
     port: bound,
     close: () => {

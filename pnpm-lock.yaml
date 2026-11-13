@@ -52,6 +52,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@cc-dump/log':
+        specifier: workspace:*
+        version: link:../log
       '@cc-dump/proxy':
         specifier: workspace:*
         version: link:../proxy
@@ -74,9 +77,6 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/react@19.3.0)(react@19.3.1)
     devDependencies:
-      '@cc-dump/log':
-        specifier: workspace:*
-        version: link:../log
       '@tailwindcss/vite':
         specifier: ^4.3.5
         version: 4.3.5(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0))

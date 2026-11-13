@@ -5,6 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { LOOPBACK } from "./address.ts";
 import { createLog, logged, serve, type Event, type Work } from "./index.ts";
 import { eventLog, send, sendRaw, serving } from "./testing.ts";
 
@@ -25,6 +26,14 @@ void replacing;
 // @ts-expect-error The work is synchronous: a promise's event would be written before the work happened.
 const early = () => logged(() => {}, "setup", {}, async () => 7);
 void early;
+
+// A node:http server of its own, not serve's, on a free port of LOOPBACK until the test finishes.
+async function bare() {
+  const server = createHttpServer().listen(0, LOOPBACK);
+  onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  await once(server, "listening");
+  return (server.address() as AddressInfo).port;
+}
 
 describe("createLog", () => {
   it("writes each event as one JSON line naming its service", () => {
@@ -70,7 +79,7 @@ describe("serve", () => {
       method: "POST",
       url: "/a?b=1",
       status: 418,
-      client_address: expect.stringContaining("127.0.0.1"),
+      client_address: LOOPBACK,
       client_port: expect.any(Number),
     });
   });
@@ -135,11 +144,8 @@ describe("serve", () => {
 
     const { reply, clientPort } = await sendRaw(port, "NOT HTTP\r\n\r\n");
 
-    const bare = createHttpServer().listen(0);
-    onTestFinished(() => new Promise<void>((resolve) => bare.close(() => resolve())));
-    await once(bare, "listening");
     expect(reply).toMatch(/^HTTP\/1\.1 400 /);
-    expect(reply).toBe((await sendRaw((bare.address() as AddressInfo).port, "NOT HTTP\r\n\r\n")).reply);
+    expect(reply).toBe((await sendRaw(await bare(), "NOT HTTP\r\n\r\n")).reply);
     expect(await next()).toMatchObject({
       event: "client_error",
       trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
@@ -152,7 +158,7 @@ describe("serve", () => {
   it("spans a connection error from the moment the connection opened", async () => {
     const { port, next } = await serving(() => expect.unreachable("no handler sees a malformed request"));
 
-    const socket = createConnection(port, "127.0.0.1");
+    const socket = createConnection(port, LOOPBACK);
     await once(socket, "connect");
     await setTimeout(100);
     socket.end("NOT HTTP\r\n\r\n").resume();
@@ -230,11 +236,13 @@ describe("serve", () => {
     expect(await next()).toMatchObject({ event: "close", outcome: "error", requests_open: 1 });
   });
 
-  it("records and rethrows a port that is already taken", async () => {
-    const { port } = await serving(() => {});
+  // The port is held by a server that is not serve's, bound to LOOPBACK alone: a bind to the wildcard would share it,
+  // and the connections dialed to LOOPBACK would reach the other server.
+  it("records and rethrows a port another server holds on the loopback address", async () => {
+    const port = await bare();
     const { log, next } = eventLog();
 
     await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
-    expect(await next()).toMatchObject({ event: "listen", outcome: "error", port, error: expect.stringContaining("EADDRINUSE") });
+    expect(await next()).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, port, error: expect.stringContaining("EADDRINUSE") });
   });
 });

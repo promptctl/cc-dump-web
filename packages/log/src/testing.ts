@@ -3,6 +3,7 @@ import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
+import { LOOPBACK } from "./address.ts";
 import { serve, type Event, type Handler } from "./index.ts";
 
 // What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
@@ -25,7 +26,7 @@ export function eventLog() {
 
 // The client's side of one connection, raw, so node's own answer is read as it was sent.
 export async function sendRaw(port: number, bytes: string) {
-  const socket = createConnection(port, "127.0.0.1");
+  const socket = createConnection(port, LOOPBACK);
   await once(socket, "connect");
   // Read while connected: a closed socket no longer reports its port.
   const clientPort = socket.localPort;
@@ -38,7 +39,7 @@ type Sent = { method?: string; path: string; headers?: Record<string, string>; b
 
 // The caller frames the body: node's default framing for a GET is none at all.
 export async function send(port: number, { method = "GET", path, headers = {}, body }: Sent): Promise<IncomingMessage> {
-  const req = request({ port, method, path, headers });
+  const req = request({ host: LOOPBACK, port, method, path, headers });
   req.end(body);
   const [res] = (await once(req, "response")) as [IncomingMessage];
   return res;
@@ -50,6 +51,6 @@ export async function serving(handler: Handler) {
   const { log, next } = eventLog();
   const { port, close } = await serve(log, handler, 0);
   onTestFinished(close);
-  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
-  return { port, url: `http://127.0.0.1:${port}`, next };
+  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, port });
+  return { port, url: `http://${LOOPBACK}:${port}`, next };
 }

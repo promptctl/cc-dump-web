@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import type { Event } from "@cc-dump/log";
+import { LOOPBACK } from "@cc-dump/log/address";
 import { arrivals, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
@@ -29,7 +30,7 @@ async function proxyAndConnection() {
   const logged = async (matches: (event: Event) => boolean) => {
     for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
   };
-  return { dir, proxy, logged, connection: createBrowserConnection(`http://127.0.0.1:${proxy.readerPort}`) };
+  return { dir, proxy, logged, connection: createBrowserConnection(proxy.readerPort) };
 }
 
 type Arrival = { event: RecordedEvent } | { end: RecordingEnd } | { failed: Error };
@@ -81,9 +82,9 @@ describe("the browser connection", () => {
 
   it("fails a list it could not get, naming what it asked", async () => {
     const { proxy } = await proxyAndConnection();
-    const origin = `http://127.0.0.1:${proxy.proxyPort}`; // the proxy's own port, which forwards and has no list
-    await expect(createBrowserConnection(origin).recordings(new AbortController().signal)).rejects.toMatchObject({
-      message: `GET ${origin}/recordings`,
+    const port = proxy.proxyPort; // the proxy's own port, which forwards and has no list
+    await expect(createBrowserConnection(port).recordings(new AbortController().signal)).rejects.toMatchObject({
+      message: `GET http://${LOOPBACK}:${port}/recordings`,
       cause: expect.any(Error),
     });
   });
@@ -119,7 +120,7 @@ describe("the browser connection", () => {
       { event: finishedEvents[0] },
       {
         failed: expect.objectContaining({
-          message: `GET http://127.0.0.1:${proxy.readerPort}/recordings/${name}`,
+          message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${name}`,
           cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type is not one of") }),
         }),
       },
@@ -138,7 +139,7 @@ describe("the browser connection", () => {
 
     expect(await reading(connection, name).next()).toEqual({
       failed: expect.objectContaining({
-        message: `GET http://127.0.0.1:${proxy.readerPort}/recordings/${name}`,
+        message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${name}`,
         cause: expect.objectContaining({ message: expect.stringContaining("EISDIR") }),
       }),
     });
@@ -157,7 +158,7 @@ describe("the browser connection", () => {
       if (resumedFrom.length === 1) res.write(`retry: 10\nid: 7\ndata: ${first}\n\n`, () => res.destroy());
       else res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
     });
-    const read = reading(createBrowserConnection(reader.url), finishedName);
+    const read = reading(createBrowserConnection(reader.port), finishedName);
     expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
     expect(resumedFrom).toEqual([undefined, "7"]);
     expect(read.queued()).toBe(0);
@@ -194,7 +195,7 @@ describe("the browser connection", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(statuses.map((status) => `data: ${JSON.stringify(status)}\n\n`).join(""));
     });
-    const status = statusing(createBrowserConnection(reader.url));
+    const status = statusing(createBrowserConnection(reader.port));
     expect([await status.next(), await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
@@ -204,7 +205,7 @@ describe("the browser connection", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\ndata: {"state":"watching","changed_source":[]}\n\n`);
     });
-    const status = statusing(createBrowserConnection(reader.url));
+    const status = statusing(createBrowserConnection(reader.port));
     expect([await status.next(), await status.next()]).toEqual([
       {
         failed: expect.objectContaining({
@@ -229,13 +230,13 @@ describe("the browser connection", () => {
       if (connections === 1) res.write(`retry: 10\n${status}`, () => res.destroy());
       else res.write(status);
     });
-    const status = statusing(createBrowserConnection(reader.url));
+    const status = statusing(createBrowserConnection(reader.port));
     expect([await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
   });
 
   it("reports a status not served as failed", async () => {
     const reader = await serving((_req, res) => res.writeHead(404).end());
-    expect(await statusing(createBrowserConnection(reader.url)).next()).toEqual({
+    expect(await statusing(createBrowserConnection(reader.port)).next()).toEqual({
       failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
     });
   });

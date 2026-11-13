@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
 import type { Handler } from "@cc-dump/log";
+import { LOOPBACK } from "@cc-dump/log/address";
 import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
@@ -153,7 +154,7 @@ describe("createProxy", () => {
     });
     const { port } = await proxyTo(upstream);
 
-    const agent = createConnection(port, "127.0.0.1");
+    const agent = createConnection(port, LOOPBACK);
     agent.write("GET /v1/models HTTP/1.0\r\n\r\n");
     const [, body] = (await buffer(agent)).toString().split("\r\n\r\n");
 
@@ -202,7 +203,7 @@ describe("createProxy", () => {
     });
     const { port, next } = await proxyTo(upstream);
 
-    const req = request({ port, method: "POST", path: "/v1/messages" });
+    const req = request({ host: LOOPBACK, port, method: "POST", path: "/v1/messages" });
     const hungUp = once(req, "error");
     req.end();
     await arrived;
@@ -333,7 +334,13 @@ describe("createProxy", () => {
       });
       const { port, next, events } = await proxyTo(upstream);
 
-      const req = request({ port, method: "POST", path: "/v1/messages", headers: { "transfer-encoding": "chunked", trailer: "x-sent" } });
+      const req = request({
+        host: LOOPBACK,
+        port,
+        method: "POST",
+        path: "/v1/messages",
+        headers: { "transfer-encoding": "chunked", trailer: "x-sent" },
+      });
       req.write("asking");
       req.addTrailers([["x-sent", "s1"], ["Authorization", "Bearer sk-a1"]]);
       req.end();
@@ -395,7 +402,7 @@ describe("createProxy", () => {
       const { port, next, events } = await proxyTo(upstream);
 
       // Raw, because node's own client refuses to send it: a Trailer header on a body that is not chunked.
-      const agent = createConnection(port, "127.0.0.1");
+      const agent = createConnection(port, LOOPBACK);
       agent.end("POST /v1/messages HTTP/1.1\r\nhost: x\r\ntrailer: x-a\r\ncontent-length: 2\r\n\r\nok");
       const answer = (await buffer(agent)).toString();
       await next();
@@ -456,7 +463,7 @@ describe("createProxy", () => {
       const { port, next, events } = await proxyTo(upstream);
 
       // Raw, so the agent keeps sending after its answer, as a client that does not watch for one would.
-      const agent = createConnection(port, "127.0.0.1");
+      const agent = createConnection(port, LOOPBACK);
       agent.write("POST /v1/messages HTTP/1.1\r\nhost: x\r\ncontent-length: 10\r\n\r\nfirst");
       await once(agent, "data");
       await next();

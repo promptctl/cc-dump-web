@@ -1,10 +1,12 @@
+import { LOOPBACK } from "@cc-dump/log/address";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import type { Connection } from "./connection.ts";
 
-// The browser talking to the proxy's reader, on the host the page was served from: `fetch` for the list, and one
-// EventSource per read and per status, which resumes a dropped connection by itself.
-export function createBrowserConnection(origin = `http://${location.hostname}:${READER_PORT}`): Connection {
+// The browser talking to the proxy's reader, on the address it is bound to, whatever host the page was opened at:
+// `fetch` for the list, and one EventSource per read and per status, which resumes a dropped connection by itself.
+export function createBrowserConnection(readerPort = READER_PORT): Connection {
+  const origin = `http://${LOOPBACK}:${readerPort}`;
   return {
     recordings: async (signal) => {
       const url = `${origin}/recordings`;
