@@ -1,7 +1,7 @@
 import type { Header } from "@cc-dump/proxy/format";
-import type { Exchange, Of, RequestSide, ResponseSide } from "../exchanges.ts";
-import { decodeBody, type Body } from "./body.ts";
-import { fitting, formatBlock, formatError, Misfit, parseJson, raw, readObject, restParts, roleCategory, type Block, type Role } from "./blocks.ts";
+import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
+import { decodeBody, headerValues, type Body } from "./body.ts";
+import { fitting, formatBlock, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type Role } from "./blocks.ts";
 import { reassemble } from "./stream.ts";
 
 // A run of an exchange's blocks under one heading: the request's own, each message the request sends, the response.
@@ -22,7 +22,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       cached(formatted, exchange.latest, () => ({
         exchange,
         // An empty request side formats the same whatever the key, so any of the exchange's events will do.
-        groups: [...cached(requests, exchange.request.latest ?? exchange.latest, () => requestGroups(exchange.request)), responseGroup(exchange)],
+        groups: [...cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(exchange.request)), responseGroup(exchange)],
       })),
     );
 }
@@ -41,18 +41,15 @@ function isMessages({ request: { head } }: Exchange): boolean {
 
 function requestGroups(side: RequestSide): Group[] {
   const { head, trailers } = side;
-  const body = decodeSide(side);
-  const http: Block =
-    head === undefined
-      ? { category: "metadata", name: "HTTP request", parts: [{ kind: "text", text: "The request's head was not recorded." }] }
-      : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
-  const { blocks, messages } = requestBody(body.text, side.complete);
+  const { body, whole } = decodeSide(side);
+  const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
+  const { blocks, messages } = requestBody(body.text, whole);
   return [{ title: "request", blocks: [http, ...undecoded(body), ...blocks] }, ...messages];
 }
 
 // The request body: its parameters, tool definitions and system prompt, then each message it sends.
-function requestBody(text: string, complete: boolean): { blocks: Block[]; messages: Group[] } {
-  if (!complete) return { blocks: leftover("request body so far", text), messages: [] };
+function requestBody(text: string, whole: boolean): { blocks: Block[]; messages: Group[] } {
+  if (!whole) return { blocks: leftover("request body so far", text), messages: [] };
   return fitting(
     () => {
       const body = readObject(parseJson(text, "request body"), "request body");
@@ -75,11 +72,7 @@ function messageGroup(message: unknown): Group {
       const content = fields.value("content");
       const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
-      const rest = restParts(fields, "message fields");
-      return {
-        title: role,
-        blocks: [...blocks.map((block) => formatBlock(block, role)), ...(rest.length === 0 ? [] : [{ category: "metadata" as const, name: "message", parts: rest }])],
-      };
+      return { title: role, blocks: [...blocks.map((block) => formatBlock(block, role)), ...restBlock(fields, "message")] };
     },
     (reason) => ({ title: "message", blocks: [raw("metadata", "message", reason, { kind: "json", value: message })] }),
   );
@@ -110,18 +103,24 @@ function toolName(tool: unknown): string {
 
 function responseGroup({ response: side, end }: Exchange): Group {
   const { head, trailers } = side;
-  const body = decodeSide(side);
-  const http = head === undefined ? [] : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
-  return { title: "response", blocks: [...http, ...undecoded(body), ...responseBody(head?.headers ?? [], body.text, side.complete), ...ending(end)] };
+  const { body, whole } = decodeSide(side);
+  // A response that has not begun has no head to miss.
+  const http =
+    head === undefined
+      ? latest(side) === undefined
+        ? []
+        : [notRecorded("response")]
+      : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
+  return { title: "response", blocks: [...http, ...undecoded(body), ...responseBody(head?.headers ?? [], body.text, whole), ...ending(end)] };
 }
 
-// The response body: a stream reassembled into its message; once complete, a message or an error; anything else raw.
-function responseBody(headers: Header[], text: string, complete: boolean): Block[] {
-  if (header(headers, "content-type")?.toLowerCase().startsWith("text/event-stream")) {
+// The response body: a stream reassembled into its message; once whole, a message or an error; anything else raw.
+function responseBody(headers: Header[], text: string, whole: boolean): Block[] {
+  if (headerValues(headers, "content-type")[0]?.toLowerCase().startsWith("text/event-stream")) {
     const stream = reassemble(text);
     return [...(stream.message === undefined ? [] : messageBlocks(stream.message)), ...stream.blocks, ...leftover("stream tail", stream.tail)];
   }
-  if (!complete) return leftover("response body so far", text);
+  if (!whole) return leftover("response body so far", text);
   return fitting(
     () => {
       const body = readObject(parseJson(text, "response body"), "response body");
@@ -150,7 +149,7 @@ function messageBlocks(message: Record<string, unknown>): Block[] {
         ...content,
         { category: "metadata", name: `stop reason: ${stopReason}`, parts: [{ kind: "fields", fields: [["stop_reason", stopReason], ["stop_sequence", stopSequence]] }] },
         { category: "metadata", name: "usage", parts: [{ kind: "json", value: fields.value("usage") }] },
-        { category: "metadata", name: "message", parts: restParts(fields, "fields") },
+        ...restBlock(fields, "message"),
       ];
     },
     (reason) => [raw("metadata", "message", reason, { kind: "json", value: message })],
@@ -178,8 +177,16 @@ function httpBlock(name: string, line: string, headers: Header[], trailers: { he
   return { category: "metadata", name, parts: [{ kind: "text", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
-function decodeSide(side: RequestSide | ResponseSide): Body {
-  return decodeBody(side.head?.headers ?? [], side.body, side.complete);
+function notRecorded(side: "request" | "response"): Block {
+  return { category: "metadata", name: `HTTP ${side}`, parts: [{ kind: "text", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+}
+
+// A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
+// other is shown as far as it decoded.
+function decodeSide(side: RequestSide | ResponseSide): { body: Body; whole: boolean } {
+  const complete = side.completedBy !== undefined;
+  const body = decodeBody(side.head?.headers ?? [], side.body, complete);
+  return { body, whole: complete && body.error === undefined };
 }
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
@@ -188,10 +195,6 @@ function undecoded(body: Body): Block[] {
 }
 function leftover(name: string, text: string): Block[] {
   return text === "" ? [] : [{ category: "metadata", name, parts: [{ kind: "text", text }] }];
-}
-
-function header(headers: Header[], name: string): string | undefined {
-  return headers.find(([field]) => field.toLowerCase() === name)?.[1];
 }
 
 function show(value: unknown): string {

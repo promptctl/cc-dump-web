@@ -1,5 +1,5 @@
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
-import { brotliCompressSync, gzipSync } from "node:zlib";
+import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block } from "./blocks.ts";
@@ -298,9 +298,8 @@ describe("format", () => {
     ]);
     const [coding, base64] = formatted.map((exchange) => group(exchange, "response").slice(1));
     expect(coding).toEqual([{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "content-encoding compress is not one this view decodes" }] }]);
-    expect(base64![0]!.name).toEqual("body not decoded");
-    expect(lines(base64!.slice(1))).toEqual(["metadata response body"]);
-    expect(base64![1]!.parts).toEqual([{ kind: "text", label: "does not fit", text: expect.stringMatching(/^response body is not JSON/) }, { kind: "text", text: "" }]);
+    // A body that did not decode is not parsed, so its one failure is shown once.
+    expect(lines(base64!)).toEqual(["metadata body not decoded"]);
   });
 
   it("does not show a request whose target is no URL", () => {
@@ -357,6 +356,58 @@ describe("format", () => {
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {
     const [, ...body] = response("a", 200, [], gzipSync("{}"));
     const blocks = group(one([...body, end("a")]), "response");
-    expect(blocks[0]).toEqual({ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: "the body is not UTF-8: what is not is shown as U+FFFD" }] });
+    expect(lines(blocks)).toEqual(["metadata HTTP response", "metadata body not decoded", "metadata response body so far"]);
+    expect(blocks[1]!.parts).toEqual([{ kind: "text", text: "the body is not UTF-8: what is not is shown as U+FFFD" }]);
+  });
+
+  it("shows a thinking block while it streams, before its signature arrives", () => {
+    const blocks = group(
+      one([
+        ...request("a", { model: "m", messages: [] }),
+        ...streamed(
+          "a",
+          [
+            { type: "ping" },
+            messageStart,
+            { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+            { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Let me think" } },
+          ],
+          false,
+        ),
+      ]),
+      "response",
+    );
+    // A ping before the message begins builds nothing and is nothing wrong.
+    expect(lines(blocks)).toEqual(["metadata HTTP response", "thinking thinking", "metadata stop reason: null", "metadata usage", "metadata message"]);
+    expect(blocks[1]!.parts).toEqual([{ kind: "text", text: "Let me think" }, { kind: "fields", fields: [["signature", "none"]] }]);
+  });
+
+  it("shows a second message_start as an event not applied, keeping the message it began", () => {
+    const blocks = group(
+      one([...request("a", { model: "m", messages: [] }), ...streamed("a", [messageStart, { ...messageStart, message: { ...messageStart.message, id: "msg_2" } }])]),
+      "response",
+    );
+    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "json", label: "fields", value: expect.objectContaining({ id: "msg_1" }) });
+    expect(blocks.find(({ name }) => name === "message_start event")!.parts[0]).toEqual({ kind: "text", label: "not applied", text: "the message has already started" });
+  });
+
+  it("decodes a deflate body cut short as far as its bytes allow", () => {
+    const text = sse([messageStart, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, ...Array.from({ length: 400 }, () => ({ type: "ping" }))]);
+    const deflated = deflateSync(text);
+    const formatted = one([
+      ...request("a", { model: "m", messages: [] }),
+      ...response("a", 200, [["Content-Type", "text/event-stream"], ["Content-Encoding", "deflate"]], deflated.subarray(0, deflated.length - 6), false),
+      end("a"),
+    ]);
+    expect(lines(group(formatted, "response")).slice(0, 4)).toEqual(["metadata HTTP response", "metadata body not decoded", "assistant text", "metadata stop reason: null"]);
+  });
+
+  it("shows each field of a source of a type it does not know once", () => {
+    const image = { type: "image", source: { type: "s3", bucket: "b", key: "k" } };
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [image] }] }));
+    expect(group(formatted, "user")[0]!.parts).toEqual([
+      { kind: "fields", label: "source", fields: [["type", "s3"]] },
+      { kind: "json", label: "source fields", value: { bucket: "b", key: "k" } },
+    ]);
   });
 });

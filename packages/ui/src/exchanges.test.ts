@@ -9,7 +9,7 @@ const response = (trace_id: string, status: number): RecordedEvent => ({ timesta
 const trailers = (trace_id: string): RecordedEvent => ({ timestamp, trace_id, type: "response_trailers", headers: [] });
 const end = (trace_id: string): RecordedEvent => ({ timestamp, trace_id, type: "end", outcome: "ok" });
 
-const empty = { head: undefined, body: [], trailers: undefined, complete: false, latest: undefined };
+const empty = { head: undefined, body: [], trailers: undefined, completedBy: undefined };
 
 describe("exchanges", () => {
   it("joins overlapping exchanges' events by trace, in the order the exchanges began", () => {
@@ -17,15 +17,15 @@ describe("exchanges", () => {
     expect(exchanges(events)).toEqual([
       {
         trace_id: "a",
-        request: { ...empty, head: events[0], complete: true, latest: events[6] },
-        response: { ...empty, head: events[3], body: [events[4]], complete: true, latest: events[6] },
+        request: { ...empty, head: events[0], completedBy: events[6] },
+        response: { ...empty, head: events[3], body: [events[4]], completedBy: events[6] },
         end: events[6],
         latest: events[6],
       },
       {
         trace_id: "b",
-        request: { ...empty, head: events[1], complete: true, latest: events[5] },
-        response: { ...empty, head: events[2], complete: true, latest: events[5] },
+        request: { ...empty, head: events[1], completedBy: events[5] },
+        response: { ...empty, head: events[2], completedBy: events[5] },
         end: events[5],
         latest: events[5],
       },
@@ -34,7 +34,7 @@ describe("exchanges", () => {
 
   it("holds an exchange in flight with no response or end yet", () => {
     const events = [request("a", "/v1/messages")];
-    expect(exchanges(events)).toEqual([{ trace_id: "a", request: { ...empty, head: events[0], latest: events[0] }, response: empty, end: undefined, latest: events[0] }]);
+    expect(exchanges(events)).toEqual([{ trace_id: "a", request: { ...empty, head: events[0] }, response: empty, end: undefined, latest: events[0] }]);
   });
 
   it("holds an exchange whose request was not recorded, with what was", () => {
@@ -43,7 +43,7 @@ describe("exchanges", () => {
       {
         trace_id: "a",
         request: empty,
-        response: { ...empty, head: events[0], body: [events[1]], complete: true, latest: events[2] },
+        response: { ...empty, head: events[0], body: [events[1]], completedBy: events[2] },
         end: events[2],
         latest: events[2],
       },
@@ -53,7 +53,7 @@ describe("exchanges", () => {
   it("completes a side at its trailers, or at the end when it began and they were never recorded", () => {
     const events = [request("a", "/v1/messages"), response("a", 200), body("a"), trailers("a"), end("a")];
     const [exchange] = exchanges(events);
-    expect(exchange!.response).toEqual({ head: events[1], body: [events[2]], trailers: events[3], complete: true, latest: events[3] });
-    expect(exchange!.request).toEqual({ ...empty, head: events[0], complete: true, latest: events[4] });
+    expect(exchange!.response).toEqual({ head: events[1], body: [events[2]], trailers: events[3], completedBy: events[3] });
+    expect(exchange!.request).toEqual({ ...empty, head: events[0], completedBy: events[4] });
   });
 });

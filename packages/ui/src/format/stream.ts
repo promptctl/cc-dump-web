@@ -1,4 +1,4 @@
-import { fitting, formatError, Misfit, parseJson, readObject, type Block } from "./blocks.ts";
+import { fitting, formatError, Misfit, parseJson, readObject, restBlock, type Block } from "./blocks.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
 // message_start), the blocks of the events that are not part of it (an error event, an event this view cannot apply),
@@ -15,7 +15,7 @@ export function reassemble(text: string): Stream {
   const content = new Map<number, Building>();
   const blocks: Block[] = [];
 
-  // Every event but message_start and an error builds on the message message_start began.
+  // Every event but message_start, a ping and an error builds on the message message_start began.
   const begun = (type: string) => {
     if (message === undefined) throw new Misfit(`${type} before message_start`);
     return message;
@@ -30,6 +30,7 @@ export function reassemble(text: string): Stream {
     const type = event.string("type");
     switch (type) {
       case "message_start": {
+        if (message !== undefined) throw new Misfit("the message has already started");
         // Its type read as a non-streaming response's is, so both leave the same fields to show.
         const start = readObject(event.value("message"), "message");
         if (start.value("type") !== "message") throw new Misfit("message_start's message is not a message");
@@ -67,8 +68,11 @@ export function reassemble(text: string): Stream {
       case "error":
         blocks.push(formatError(event));
         return;
-      // A keep-alive, and the stream's end, which the trailers already mark: neither carries content.
+      // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
+        blocks.push(...restBlock(event, "ping event"));
+        return;
+      // The stream's end, which the trailers already mark: it carries no content.
       case "message_stop":
         message = { ...begun(type), ...event.rest() };
         return;

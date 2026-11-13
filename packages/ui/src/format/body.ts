@@ -33,15 +33,24 @@ export function decodeBody(headers: Header[], chunks: { base64: string }[], comp
 // arriving decodes as far as its bytes allow; `final`: no more bytes will follow. Throws when the bytes do not decode.
 type Decoder = (input: Uint8Array, final: boolean, emit: (chunk: Uint8Array) => void) => void;
 
-const gunzip: Decoder = (input, final, emit) => new Gunzip(emit).push(input, final);
+// A streaming decoder fed the bytes and their end apart, so a body cut short emits what it decodes before the end's
+// check throws: fflate's Unzlib holds back the last bytes as the checksum when told they are the last.
+const streaming =
+  (decoder: (emit: (chunk: Uint8Array) => void) => { push(chunk: Uint8Array, final?: boolean): void }): Decoder =>
+  (input, final, emit) => {
+    const decoding = decoder(emit);
+    decoding.push(input, false);
+    decoding.push(new Uint8Array(), final);
+  };
+const gunzip = streaming((emit) => new Gunzip(emit));
 
 // [LAW:one-type-per-behavior] The content codings Claude Code accepts (gzip, deflate, br, zstd) and their aliases.
 // Anthropic answers in more than one: a stream with gzip, an error with br. HTTP's deflate is the zlib format.
 const decoders = new Map<string, Decoder>([
   ["gzip", gunzip],
   ["x-gzip", gunzip],
-  ["deflate", (input, final, emit) => new Unzlib(emit).push(input, final)],
-  ["zstd", (input, final, emit) => new ZstdDecompress(emit).push(input, final)],
+  ["deflate", streaming((emit) => new Unzlib(emit))],
+  ["zstd", streaming((emit) => new ZstdDecompress(emit))],
   [
     "br",
     (input, final, emit) => {
@@ -59,10 +68,14 @@ const undecodable =
     throw new Error(`content-encoding ${coding} is not one this view decodes`);
   };
 
+// The values of the header `name`, given in lower case, in the order received: field names are case-insensitive.
+export function headerValues(headers: Header[], name: string): string[] {
+  return headers.filter(([field]) => field.toLowerCase() === name).map(([, value]) => value);
+}
+
 function contentCodings(headers: Header[]): string[] {
-  return headers
-    .filter(([name]) => name.toLowerCase() === "content-encoding")
-    .flatMap(([, value]) => value.split(","))
+  return headerValues(headers, "content-encoding")
+    .flatMap((value) => value.split(","))
     .map((coding) => coding.trim().toLowerCase())
     .filter((coding) => coding !== "" && coding !== "identity");
 }

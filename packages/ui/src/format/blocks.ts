@@ -1,3 +1,5 @@
+import type { Header } from "@cc-dump/proxy/format";
+
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
 export type Category = "user" | "assistant" | "tools" | "system" | "metadata" | "thinking";
@@ -11,7 +13,6 @@ export type Part =
   | { kind: "json"; label?: string; value: unknown }
   | { kind: "fields"; label?: string; fields: Header[] }
   | { kind: "media"; label?: string; source: Source };
-type Header = [name: string, value: string];
 
 export type Block = { category: Category; name: string; parts: Part[] };
 
@@ -69,6 +70,7 @@ export function readObject(value: unknown, what: string) {
   return {
     value: field,
     string: (name: string) => fits(name, (value) => typeof value === "string", "a string"),
+    optionalString: (name: string) => fits(name, (value) => value === undefined || typeof value === "string", "a string, if present"),
     array: (name: string) => fits(name, Array.isArray, "a list"),
     rest: (): Record<string, unknown> => Object.fromEntries(Object.entries(object).filter(([name]) => !read.has(name))),
   };
@@ -79,6 +81,12 @@ export type Fields = ReturnType<typeof readObject>;
 export function restParts(fields: Fields, label: string): Part[] {
   const rest = fields.rest();
   return Object.keys(rest).length === 0 ? [] : [{ kind: "json", label, value: rest }];
+}
+
+// The fields of an object no read asked for, as a metadata block of their own, when there are any.
+export function restBlock(fields: Fields, name: string): Block[] {
+  const parts = restParts(fields, "fields");
+  return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
 }
 
 // How one content block type is shown. `category` from the role of the message holding it; `name` and `parts` from
@@ -118,15 +126,20 @@ const ofSource: Entry = { category: byRole, parts: (fields, role) => sourceParts
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
   ["text", { category: byRole, parts: (fields) => [{ kind: "text", text: fields.string("text") }] }],
-  // Claude Code asks for thinking with display omitted: the text is empty and the signature is the whole block.
+  // Claude Code asks for thinking with display omitted: the text is empty and the signature is the whole block. A
+  // streamed thinking block has no signature until its signature delta, just before its stop.
   [
     "thinking",
     {
       category: thinking,
-      parts: (fields) => [
-        { kind: "text", text: fields.string("thinking") },
-        { kind: "fields", fields: [["signature", `${fields.string("signature").length} characters`]] },
-      ],
+      parts: (fields) => {
+        const text = fields.string("thinking");
+        const signature = fields.optionalString("signature");
+        return [
+          { kind: "text", text },
+          { kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
+        ];
+      },
     },
   ],
   ["redacted_thinking", { category: thinking, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
@@ -197,8 +210,9 @@ function sourceParts(source: unknown, role: Role): Part[] {
         return [{ kind: "text", text: fields.string("data") }];
       case "content":
         return contentParts(fields.value("content"), role);
+      // A source of a type not here: its other fields follow.
       default:
-        return [{ kind: "json", label: "source", value: source }];
+        return [{ kind: "fields", label: "source", fields: [["type", type]] }];
     }
   })();
   return [...parts, ...restParts(fields, "source fields")];
