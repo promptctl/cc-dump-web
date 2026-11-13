@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./address": "./src/address.ts"
+    "./address": "./src/address.ts",
+    "./format": "./src/format.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "start": "node src/main.ts",

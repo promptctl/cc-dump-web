@@ -10,7 +10,8 @@ import type { Handler } from "@cc-dump/log";
 import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
-import { createRecording, type RecordedEvent } from "./recording.ts";
+import type { RecordedEvent } from "./format.ts";
+import { createRecording } from "./recording.ts";
 import { proxyProcess } from "./testing.ts";
 
 async function upstreamServing(handler: Handler): Promise<URL> {

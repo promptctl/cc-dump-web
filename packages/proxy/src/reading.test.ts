@@ -9,7 +9,8 @@ import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import { createRecording, type RecordedEvent, type Recording } from "./recording.ts";
+import type { RecordedEvent } from "./format.ts";
+import { createRecording, type Recording } from "./recording.ts";
 import { proxyProcess } from "./testing.ts";
 
 // A recordings directory, removed when the test finishes, with the run's recording in it.

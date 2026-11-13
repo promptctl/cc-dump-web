@@ -1,7 +1,8 @@
 import { request as httpRequest, type ClientRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
-import type { Header, Recorder } from "./recording.ts";
+import type { Header } from "./format.ts";
+import type { Recorder } from "./recording.ts";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 

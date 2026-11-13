@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  test: { include: ["packages/*/src/**/*.test.{ts,tsx}"] },
+  // EventSource is behind a flag in node; the UI's connection is tested against the real proxy with it.
+  test: { include: ["packages/*/src/**/*.test.{ts,tsx}"], execArgv: ["--experimental-eventsource"] },
 });

@@ -4,6 +4,10 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
+const network = ["fetch", "EventSource", "WebSocket", "XMLHttpRequest"];
+const reachedThroughConnection =
+  "The UI reaches the backend only through its Connection (packages/ui/src/connection); the browser's is connection/browser.ts.";
+
 export default defineConfig(
   { ignores: ["**/node_modules/", "**/dist/", ".claude/"] },
   js.configs.recommended,
@@ -39,6 +43,23 @@ export default defineConfig(
     rules: {
       // A module that exports anything besides components forces a full page reload instead of HMR.
       "react-refresh/only-export-components": "error",
+    },
+  },
+  {
+    // [LAW:single-enforcer] The UI reaches the backend only through its connection: no other UI module knows
+    // a backend address or opens a request of its own.
+    files: ["packages/ui/src/**/*.{ts,tsx}"],
+    ignores: ["packages/ui/src/connection/browser.ts"],
+    rules: {
+      "no-restricted-globals": ["error", ...network.map((name) => ({ name, message: reachedThroughConnection }))],
+      "no-restricted-properties": [
+        "error",
+        ...["window", "globalThis", "self"].flatMap((object) => network.map((property) => ({ object, property, message: reachedThroughConnection }))),
+      ],
+      "no-restricted-imports": [
+        "error",
+        { paths: ["@cc-dump/proxy/address", "@cc-dump/server/address"].map((name) => ({ name, message: reachedThroughConnection })) },
+      ],
     },
   },
 );

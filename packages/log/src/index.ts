@@ -3,12 +3,12 @@ import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { inspect } from "node:util";
+import type { Ending } from "./ending.ts";
+
+export type { Ending };
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
 // fields. Parts add facts beside them and never rename them; `service` is added by the sink.
-// [LAW:types-are-the-program] An error is carried exactly when the outcome is "error". "aborted" is work
-// its client left; "stopped" is work cut because its server was closed.
-export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
 export type Event = {
   event: string;
   trace_id: string;

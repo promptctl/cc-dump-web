@@ -1,31 +1,13 @@
 import { appendFileSync, closeSync, constants, ftruncateSync, mkdirSync, openSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
+import type { Recorded, RecordedEvent } from "./format.ts";
 
 const { O_APPEND, O_CREAT, O_EXCL, O_WRONLY } = constants;
 
-export type Header = [name: string, value: string];
-
-// What the proxy saw of one exchange, as it saw it. A message's trailers are seen when its body is
-// complete, none if it had none, so a body cut short has no trailers event.
-export type Seen =
-  | { type: "request"; method: string; url: string; http_version: string; headers: Header[] }
-  | { type: "request_body"; chunk: Buffer }
-  | { type: "request_trailers"; headers: Header[] }
-  | { type: "response"; status: number; reason: string; http_version: string; headers: Header[] }
-  | { type: "response_body"; chunk: Buffer }
-  | { type: "response_trailers"; headers: Header[] }
-  | ({ type: "end" } & Ending);
-
-// [LAW:one-source-of-truth] The recording format: one JSON line per event, in the order the proxy saw
-// them, joined into exchanges by the trace_id of the request's log event; overlapping exchanges interleave.
-// [LAW:decomposition] It holds the wire, not an interpretation of it: headers in arrival order, case and
-// repetition, trailers too; body chunks as the bytes received (a gzip body stays gzip), so later parsing applies to old
-// recordings too. An exchange ends with the ending its log event records.
-export type RecordedEvent = { timestamp: string; trace_id: string } & (
-  | Exclude<Seen, { chunk: Buffer }>
-  | { type: Extract<Seen, { chunk: Buffer }>["type"]; base64: string }
-);
+// What the proxy saw of one exchange, as it saw it: the recorded format, with body chunks as the bytes.
+type Body = Extract<Recorded, { base64: string }>;
+export type Seen = Exclude<Recorded, Body> | { type: Body["type"]; chunk: Buffer };
 
 // One exchange's recording, opened when its request arrives.
 export type Recorder = (trace_id: string) => (seen: Seen) => void;
@@ -105,7 +87,7 @@ function appendAfter(fd: number, length: number, line: Buffer) {
   }
 }
 
-function recorded(seen: Seen) {
+function recorded(seen: Seen): Recorded {
   switch (seen.type) {
     case "request":
     case "request_trailers":

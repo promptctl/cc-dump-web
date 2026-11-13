@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Handler, type Log } from "@cc-dump/log";
+import type { Listing, RecordingEnd } from "./format.ts";
 import type { Recording } from "./recording.ts";
 
 // [LAW:decomposition] The recording's read side, and the one path traffic takes to the screen
@@ -44,7 +45,7 @@ async function recordings(dir: string, live: Recording) {
 }
 
 function list(names: string[], live: Recording, res: ServerResponse) {
-  const listed = names.map((name) => ({ name, live: name === live.name }));
+  const listed: Listing[] = names.map((name) => ({ name, live: name === live.name }));
   res.writeHead(200, { "content-type": "application/json", ...cors }).end(JSON.stringify(listed));
 }
 
@@ -166,7 +167,8 @@ function recordingEvents(reading: Reading, from: number, failed: (error: unknown
       if (live?.written() !== written) return fill();
       catchUp({ outcome: "ok" });
       if (!live) {
-        stream.push(`event: end\ndata: ${JSON.stringify({ unterminated_bytes: pending.length })}\n\n`);
+        const end: RecordingEnd = { unterminated_bytes: pending.length };
+        stream.push(`event: end\ndata: ${JSON.stringify(end)}\n\n`);
         return void stream.push(null);
       }
       stopWaiting = live.onWritten(() => {
