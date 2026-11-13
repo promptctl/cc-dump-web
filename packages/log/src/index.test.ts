@@ -17,6 +17,14 @@ void contradictory;
 const unlogged = () => serve(() => {}, createHttpServer(), 0);
 void unlogged;
 
+// @ts-expect-error A unit of work's facts never replace the floor's fields, the sink's service included.
+const replacing = () => logged(() => {}, "setup", { service: "other" }, () => 7);
+void replacing;
+
+// @ts-expect-error The work is synchronous: a promise's event would be written before the work happened.
+const early = () => logged(() => {}, "setup", {}, async () => 7);
+void early;
+
 describe("createLog", () => {
   it("writes each event as one JSON line naming its service", () => {
     const lines: string[] = [];
@@ -30,7 +38,7 @@ describe("logged", () => {
   it("records the work's facts beside the floor's fields, and returns its result", async () => {
     const { log, next } = eventLog();
 
-    expect(logged(log, "setup", { path: "/a", outcome: "faked" }, () => 7)).toBe(7);
+    expect(logged(log, "setup", { path: "/a" }, () => 7)).toBe(7);
     expect(await next()).toMatchObject({ event: "setup", path: "/a", outcome: "ok", trace_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
   });
 

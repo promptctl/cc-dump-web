@@ -320,7 +320,7 @@ describe("createProxy", () => {
         res.writeHead(200, ["Set-Cookie", "session=s3"]).end();
       });
       const { port, next, path } = await proxyTo(upstream);
-      const credentials = { Authorization: "Bearer sk-a1", "x-api-key": "sk-b2", cookie: "c=c3" };
+      const credentials = { Authorization: "Bearer sk-a1", "Proxy-Authorization": "Basic proxy-p4", "x-api-key": "sk-b2", cookie: "c=c3" };
 
       const res = await send(port, { path: "/v1/models", headers: credentials });
       await buffer(res);
@@ -329,7 +329,7 @@ describe("createProxy", () => {
       expect(received).toEqual(expect.arrayContaining(Object.entries(credentials)));
       expect(res.headers["set-cookie"]).toEqual(["session=s3"]);
       const file = readFileSync(path, "utf8");
-      for (const value of ["sk-a1", "sk-b2", "c=c3", "session=s3"]) expect(file).not.toContain(value);
+      for (const value of ["sk-a1", "proxy-p4", "sk-b2", "c=c3", "session=s3"]) expect(file).not.toContain(value);
     });
 
     it("keeps overlapping requests apart as separate exchanges", async () => {

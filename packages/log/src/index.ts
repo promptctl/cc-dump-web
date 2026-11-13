@@ -23,9 +23,14 @@ export function createLog(service: string, write: (line: string) => void): Log {
   return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
 }
 
-// A unit of work done outside any request, such as a part's setup: its event is written when `work`
-// returns, or when it throws, and then the error is rethrown. Its facts never replace the floor's fields.
-export function logged<T>(log: Log, event: string, facts: Record<string, unknown>, work: () => T): T {
+// A part's facts about a unit of work: any name but the floor's, read off `Event`.
+type FloorField = keyof { [K in keyof Event as string extends K ? never : K]: unknown };
+export type Facts = { [fact: string]: unknown } & { [K in FloorField]?: never };
+
+// A synchronous unit of work done outside any request, such as a part's setup: its event is written when
+// `work` returns, or when it throws, and then the error is rethrown. A promise is refused: its event
+// would be written before the work had happened.
+export function logged<T>(log: Log, event: string, facts: Facts, work: () => T extends PromiseLike<unknown> ? never : T): T {
   const span = startSpan();
   try {
     const result = work();

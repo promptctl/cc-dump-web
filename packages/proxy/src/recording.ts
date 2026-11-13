@@ -69,4 +69,4 @@ function recorded(seen: Seen) {
 }
 
 // [LAW:single-enforcer] Credentials are forwarded to the upstream and the agent, and never written.
-const secret = new Set(["authorization", "x-api-key", "cookie", "set-cookie"]);
+const secret = new Set(["authorization", "proxy-authorization", "x-api-key", "cookie", "set-cookie"]);

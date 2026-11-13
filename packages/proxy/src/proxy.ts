@@ -20,7 +20,9 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     const seen = record(trace_id);
     const headers = pairs(req.rawHeaders);
     seen({ type: "request", method: req.method!, url: req.url!, http_version: req.httpVersion, headers });
-    // node delivers no more of a request once its response has closed, so `end` is the exchange's last event.
+    const requestBody = (chunk: Buffer) => seen({ type: "request_body", chunk });
+    // `ended` resolves in the request event's close listener, so `end` is written after the close below
+    // has stopped recording both bodies: it is the exchange's last event.
     ended.then((ending) => seen({ type: "end", ...ending }));
 
     const outgoing = request(upstream, {
@@ -57,9 +59,15 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
       }
       incoming.pipe(res);
     });
-    // The client left, or the exchange is done (then this is a no-op): nothing stays open upstream.
-    res.on("close", () => outgoing.destroy());
-    req.on("data", (chunk: Buffer) => seen({ type: "request_body", chunk }));
+    // [LAW:no-ambient-temporal-coupling] The exchange ends when its response closes, whether the client
+    // left or the exchange is done. Nothing stays open upstream (when done, a no-op), and nothing more is
+    // recorded: the agent may still be sending, and destroying `outgoing` dumps `incoming`, removing its
+    // listeners.
+    res.on("close", () => {
+      req.off("data", requestBody);
+      outgoing.destroy();
+    });
+    req.on("data", requestBody);
     req.pipe(outgoing);
   };
 }
