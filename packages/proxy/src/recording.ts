@@ -1,21 +1,24 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { describe, startSpan, type Ending, type Log } from "@cc-dump/log";
+import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
 
 export type Header = [name: string, value: string];
 
-// What the proxy saw of one exchange, as it saw it.
+// What the proxy saw of one exchange, as it saw it. A message's trailers are seen when its body is
+// complete, none if it had none, so a body cut short has no trailers event.
 export type Seen =
   | { type: "request"; method: string; url: string; http_version: string; headers: Header[] }
   | { type: "request_body"; chunk: Buffer }
+  | { type: "request_trailers"; headers: Header[] }
   | { type: "response"; status: number; reason: string; http_version: string; headers: Header[] }
   | { type: "response_body"; chunk: Buffer }
+  | { type: "response_trailers"; headers: Header[] }
   | ({ type: "end" } & Ending);
 
 // [LAW:one-source-of-truth] The recording format: one JSON line per event, in the order the proxy saw
 // them, joined into exchanges by the trace_id of the request's log event; overlapping exchanges interleave.
 // [LAW:decomposition] It holds the wire, not an interpretation of it: headers in arrival order, case and
-// repetition; body chunks as the bytes received (a gzip body stays gzip), so later parsing applies to old
+// repetition, trailers too; body chunks as the bytes received (a gzip body stays gzip), so later parsing applies to old
 // recordings too. An exchange ends with the ending its log event records.
 export type RecordedEvent = { timestamp: string; trace_id: string } & (
   | Exclude<Seen, { chunk: Buffer }>
@@ -46,7 +49,7 @@ export function createRecording(log: Log, path: string): Recorder {
         counts.bytes_written += Buffer.byteLength(line);
       } catch (error) {
         counts.events_failed++;
-        failure ??= describe(error);
+        failure ??= describeError(error);
       }
       if (seen.type !== "end") return;
       const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
@@ -58,7 +61,9 @@ export function createRecording(log: Log, path: string): Recorder {
 function recorded(seen: Seen) {
   switch (seen.type) {
     case "request":
+    case "request_trailers":
     case "response":
+    case "response_trailers":
       return { ...seen, headers: seen.headers.filter(([name]) => !secret.has(name.toLowerCase())) };
     case "request_body":
     case "response_body":

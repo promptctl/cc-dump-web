@@ -37,7 +37,7 @@ export function logged<T>(log: Log, event: string, facts: Facts, work: () => T e
     log({ event, ...facts, ...span.end(), outcome: "ok" });
     return result;
   } catch (error) {
-    log({ event, ...facts, ...span.end(), outcome: "error", error: describe(error) });
+    log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) });
     throw error;
   }
 }
@@ -62,7 +62,7 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
     server.listen(port);
     await once(server, "listening");
   } catch (error) {
-    log({ event: "listen", ...span.end(), outcome: "error", error: describe(error), port });
+    log({ event: "listen", ...span.end(), outcome: "error", error: describeError(error), port });
     throw error;
   }
   const bound = (server.address() as AddressInfo).port;
@@ -83,7 +83,7 @@ function loggedServer(log: Log, handler: Handler): Server {
     // the error, after node has answered if it could, so this observes them and the answer stays node's.
     // A connection's lifecycle is not a request's, so the event is its own, spanning the connection up to
     // its error; `client` joins it to the request events of the same connection.
-    socket.on("error", (error) => log({ event: "client_error", ...span.end(), outcome: "error", error: describe(error), ...client }));
+    socket.on("error", (error) => log({ event: "client_error", ...span.end(), outcome: "error", error: describeError(error), ...client }));
   });
   return server;
 }
@@ -117,7 +117,7 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
         ...client,
       });
     });
-    handler(req, res, { trace_id: span.trace_id, fail: (error) => (failure ??= describe(error)), ended });
+    handler(req, res, { trace_id: span.trace_id, fail: (error) => (failure ??= describeError(error)), ended });
   };
 }
 
@@ -125,7 +125,7 @@ function withRequestEvent(log: Log, handler: Handler): RequestListener {
 // the raw bytes of the message it was parsing as `rawPacket`: a request's (x-api-key included) on a
 // server's socket, an upstream response's (set-cookie included) on a client's. The event records what
 // node said about the bytes, never the bytes.
-export function describe(error: unknown): string {
+export function describeError(error: unknown): string {
   if (!(error instanceof Error && "rawPacket" in error)) return inspect(error);
   const said = Object.assign(new Error(error.message), error, { stack: error.stack });
   delete said.rawPacket;

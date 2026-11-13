@@ -1,4 +1,4 @@
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
 import type { Header, Recorder } from "./recording.ts";
@@ -21,8 +21,15 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     const headers = pairs(req.rawHeaders);
     seen({ type: "request", method: req.method!, url: req.url!, http_version: req.httpVersion, headers });
     const requestBody = (chunk: Buffer) => seen({ type: "request_body", chunk });
-    // `ended` resolves in the request event's close listener, so `end` is written after the close below
-    // has stopped recording both bodies: it is the exchange's last event.
+    // pipe() relays no trailers, so a body's end is relayed here: its trailers are seen, then passed on.
+    const relayEnd = (from: IncomingMessage, to: OutgoingMessage, type: "request_trailers" | "response_trailers") => () => {
+      const trailers = pairs(from.rawTrailers);
+      seen({ type, headers: trailers });
+      to.addTrailers(trailers);
+      to.end();
+    };
+    // `ended` resolves as the response closes, and a promise's callback runs only once every close
+    // listener has, the one below that stops the recording included: `end` is the exchange's last event.
     ended.then((ending) => seen({ type: "end", ...ending }));
 
     const outgoing = request(upstream, {
@@ -31,6 +38,7 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
       // node adds no Host when headers are an array, so the upstream's replaces the agent's.
       headers: [["host", upstream.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
     });
+    const requestEnded = relayEnd(req, outgoing, "request_trailers");
 
     // An upstream failure reaches the agent as it would on a direct connection: before the
     // response started, an error response in the API's own shape; after, the cut itself.
@@ -42,9 +50,9 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
 
     outgoing.on("error", upstreamFailed);
     outgoing.on("response", (incoming) => {
-      const headers = pairs(incoming.rawHeaders);
+      const responseHeaders = pairs(incoming.rawHeaders);
       // Recorded before it is relayed, so a response node refuses to relay is recorded too.
-      seen({ type: "response", status: incoming.statusCode!, reason: incoming.statusMessage!, http_version: incoming.httpVersion, headers });
+      seen({ type: "response", status: incoming.statusCode!, reason: incoming.statusMessage!, http_version: incoming.httpVersion, headers: responseHeaders });
       incoming.on("data", (chunk: Buffer) => seen({ type: "response_body", chunk }));
       incoming.on("error", upstreamFailed);
       // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
@@ -52,23 +60,24 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
       // response it refuses is cut, as the agent's own client would fail on it directly. Not a 502:
       // the refused writeHead has already written part of its state onto `res`.
       try {
-        res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(headers, hopByHop).flat());
+        res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(responseHeaders, hopByHop).flat());
       } catch (error) {
         fail(error);
         return res.destroy();
       }
-      incoming.pipe(res);
+      incoming.on("end", relayEnd(incoming, res, "response_trailers"));
+      incoming.pipe(res, { end: false });
     });
     // [LAW:no-ambient-temporal-coupling] The exchange ends when its response closes, whether the client
     // left or the exchange is done. Nothing stays open upstream (when done, a no-op), and nothing more is
     // recorded: the agent may still be sending, and destroying `outgoing` dumps `incoming`, removing its
-    // listeners.
+    // data listeners; a destroyed stream never ends.
     res.on("close", () => {
-      req.off("data", requestBody);
+      req.off("data", requestBody).off("end", requestEnded);
       outgoing.destroy();
     });
-    req.on("data", requestBody);
-    req.pipe(outgoing);
+    req.on("data", requestBody).on("end", requestEnded);
+    req.pipe(outgoing, { end: false });
   };
 }
 

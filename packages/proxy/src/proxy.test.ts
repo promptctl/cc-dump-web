@@ -275,7 +275,7 @@ describe("createProxy", () => {
       const logged = await next();
 
       const recorded = events();
-      expect(shape(recorded)).toEqual(["request", "request_body", "response", "response_body", "end"]);
+      expect(shape(recorded)).toEqual(["request", "request_body", "request_trailers", "response", "response_body", "response_trailers", "end"]);
       expect(new Set(recorded.map(({ trace_id }) => trace_id))).toEqual(new Set([logged.trace_id]));
       for (const { timestamp } of recorded) expect(new Date(timestamp).toISOString()).toBe(timestamp);
       expect(recorded[0]).toMatchObject({
@@ -332,6 +332,33 @@ describe("createProxy", () => {
       for (const value of ["sk-a1", "proxy-p4", "sk-b2", "c=c3", "session=s3"]) expect(file).not.toContain(value);
     });
 
+    it("forwards trailers in both directions and records them after the body they end, without credentials", async () => {
+      let received!: [string, string][];
+      const upstream = await upstreamServing(async (req, res) => {
+        await buffer(req);
+        received = pairs(req.rawTrailers);
+        res.writeHead(200, { trailer: "x-checksum" });
+        res.write("answer");
+        res.addTrailers([["x-checksum", "c1"], ["Set-Cookie", "session=s3"]]);
+        res.end();
+      });
+      const { port, next, events } = await proxyTo(upstream);
+
+      const req = request({ port, method: "POST", path: "/v1/messages", headers: { "transfer-encoding": "chunked", trailer: "x-sent" } });
+      req.write("asking");
+      req.addTrailers([["x-sent", "s1"], ["Authorization", "Bearer sk-a1"]]);
+      req.end();
+      const [res] = (await once(req, "response")) as [IncomingMessage];
+      await buffer(res);
+      await next();
+
+      expect(received).toEqual([["x-sent", "s1"], ["Authorization", "Bearer sk-a1"]]);
+      expect(pairs(res.rawTrailers)).toEqual([["x-checksum", "c1"], ["Set-Cookie", "session=s3"]]);
+      expect(shape(events())).toEqual(["request", "request_body", "request_trailers", "response", "response_body", "response_trailers", "end"]);
+      expect(events().find(({ type }) => type === "request_trailers")).toMatchObject({ headers: [["x-sent", "s1"]] });
+      expect(events().find(({ type }) => type === "response_trailers")).toMatchObject({ headers: [["x-checksum", "c1"]] });
+    });
+
     it("keeps overlapping requests apart as separate exchanges", async () => {
       let arrived = 0;
       let bothArrived!: () => void;
@@ -358,7 +385,7 @@ describe("createProxy", () => {
       expect(urls.sort()).toEqual(["/v1/messages?n=1", "/v1/messages?n=2"]);
       for (const exchange of exchanges) {
         const { url } = exchange[0] as { url: string };
-        expect(shape(exchange)).toEqual(["request", "request_body", "response", "response_body", "end"]);
+        expect(shape(exchange)).toEqual(["request", "request_body", "request_trailers", "response", "response_body", "response_trailers", "end"]);
         expect(bodyOf(exchange, "request_body").toString()).toBe(`asking ${url}`);
         expect(bodyOf(exchange, "response_body").toString()).toBe(`answer to ${url}`);
       }
@@ -370,7 +397,7 @@ describe("createProxy", () => {
       await buffer(await send(port, { method: "POST", path: "/v1/messages" }));
       await next();
 
-      expect(shape(events())).toEqual(["request", "end"]);
+      expect(shape(events())).toEqual(["request", "request_trailers", "end"]);
       expect(events().at(-1)).toMatchObject({ outcome: "error", error: expect.stringContaining("ECONNREFUSED") });
     });
 
@@ -384,7 +411,7 @@ describe("createProxy", () => {
       await expect(buffer(await send(port, { method: "POST", path: "/v1/messages" }))).rejects.toThrow(/aborted/);
       await next();
 
-      expect(shape(events())).toEqual(["request", "response", "response_body", "end"]);
+      expect(shape(events())).toEqual(["request", "request_trailers", "response", "response_body", "end"]);
       expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
       expect(events().at(-1)).toMatchObject({ outcome: "error" });
     });
@@ -401,7 +428,7 @@ describe("createProxy", () => {
       res.destroy();
       await next();
 
-      expect(shape(events())).toEqual(["request", "response", "response_body", "end"]);
+      expect(shape(events())).toEqual(["request", "request_trailers", "response", "response_body", "end"]);
       expect(events().at(-1)).toMatchObject({ outcome: "aborted" });
     });
 
@@ -428,7 +455,7 @@ describe("createProxy", () => {
       agent.end("later");
       await once(agent, "close");
 
-      expect(shape(events())).toEqual(["request", "request_body", "response", "response_body", "end"]);
+      expect(shape(events())).toEqual(["request", "request_body", "response", "response_body", "response_trailers", "end"]);
     });
 
     it("logs a recording that cannot be written once, counted, beside the exchange's own ending", async () => {
@@ -453,7 +480,7 @@ describe("createProxy", () => {
         outcome: "error",
         error: expect.stringContaining("ENOENT"),
         path,
-        counts: { events_written: 0, bytes_written: 0, events_failed: 4 },
+        counts: { events_written: 0, bytes_written: 0, events_failed: 5 },
       });
     });
 
@@ -491,7 +518,7 @@ describe("createProxy", () => {
       await once(proxy, "exit");
       await cut;
 
-      expect(shape(events())).toEqual(["request", "request_body", "response", "response_body"]);
+      expect(shape(events())).toEqual(["request", "request_body", "request_trailers", "response", "response_body"]);
       expect(bodyOf(events(), "request_body").equals(body)).toBe(true);
       expect(bodyOf(events(), "response_body").toString()).toBe("event: message_start\n\n");
     });
