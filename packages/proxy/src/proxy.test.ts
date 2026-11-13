@@ -401,6 +401,25 @@ describe("createProxy", () => {
       expect(events().at(-1)).toMatchObject({ outcome: "error", error: expect.stringContaining("ECONNREFUSED") });
     });
 
+    it("answers 502 to a request node's client refuses to forward, and keeps serving", async () => {
+      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const { port, next, events } = await proxyTo(upstream);
+
+      // Raw, because node's own client refuses to send it: a Trailer header on a body that is not chunked.
+      const agent = createConnection(port, "127.0.0.1");
+      agent.end("POST /v1/messages HTTP/1.1\r\nhost: x\r\ntrailer: x-a\r\ncontent-length: 2\r\n\r\nok");
+      const answer = (await buffer(agent)).toString();
+      await next();
+
+      expect(answer).toMatch(/^HTTP\/1\.1 502 /);
+      expect(answer).toContain("ERR_HTTP_TRAILER_INVALID");
+      expect(shape(events())).toEqual(["request", "end"]);
+      expect(events().at(-1)).toMatchObject({ outcome: "error", error: expect.stringContaining("ERR_HTTP_TRAILER_INVALID") });
+      const after = await send(port, { path: "/v1/models" });
+      await buffer(after);
+      expect(after.statusCode).toBe(200);
+    });
+
     it("records a stream the upstream cuts, up to the cut", async () => {
       const upstream = await upstreamServing((req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });

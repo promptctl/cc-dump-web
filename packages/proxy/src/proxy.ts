@@ -1,4 +1,4 @@
-import { request as httpRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
+import { request as httpRequest, type ClientRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
 import type { Header, Recorder } from "./recording.ts";
@@ -32,14 +32,6 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
     // listener has, the one below that stops the recording included: `end` is the exchange's last event.
     ended.then((ending) => seen({ type: "end", ...ending }));
 
-    const outgoing = request(upstream, {
-      method: req.method,
-      path: basePath + req.url,
-      // node adds no Host when headers are an array, so the upstream's replaces the agent's.
-      headers: [["host", upstream.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
-    });
-    const requestEnded = relayEnd(req, outgoing, "request_trailers");
-
     // An upstream failure reaches the agent as it would on a direct connection: before the
     // response started, an error response in the API's own shape; after, the cut itself.
     const upstreamFailed = (error: NodeJS.ErrnoException) => {
@@ -47,6 +39,22 @@ export function createProxy(upstream: URL, record: Recorder): Handler {
       if (res.headersSent) res.destroy();
       else res.writeHead(502, { "content-type": "application/json" }).end(apiError(upstream, error));
     };
+
+    // [LAW:single-enforcer] node's client is its check that a request can be forwarded, and it is
+    // stricter than node's server (a Trailer header on a body that is not chunked). A request it refuses
+    // fails as an unreachable upstream does: nothing has been written to `res`.
+    let outgoing: ClientRequest;
+    try {
+      outgoing = request(upstream, {
+        method: req.method,
+        path: basePath + req.url,
+        // node adds no Host when headers are an array, so the upstream's replaces the agent's.
+        headers: [["host", upstream.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
+      });
+    } catch (error) {
+      return upstreamFailed(error as NodeJS.ErrnoException);
+    }
+    const requestEnded = relayEnd(req, outgoing, "request_trailers");
 
     outgoing.on("error", upstreamFailed);
     outgoing.on("response", (incoming) => {
