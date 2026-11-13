@@ -27,8 +27,9 @@ void replacing;
 const early = () => logged(() => {}, "setup", {}, async () => 7);
 void early;
 
-// A node:http server of its own, not serve's, answering 418, on a free port of `host` until the test finishes.
-async function bare(host: string) {
+// A node:http server of its own, not serve's, answering 418, on a free port of `host` until the test finishes; with no
+// host, node's wildcard.
+async function bare(host?: string) {
   const server = createHttpServer((_req, res) => res.writeHead(418).end()).listen(0, host);
   onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
   await once(server, "listening");
@@ -249,7 +250,7 @@ describe("serve", () => {
   // macOS lets the bind to LOOPBACK share a port held on the wildcard, where Linux refuses it; sharing, serve's is the
   // more specific bind, so it takes every connection dialed to LOOPBACK.
   it.runIf(process.platform === "darwin")("takes the connections dialed to LOOPBACK on a port another server holds on the wildcard", async () => {
-    const port = await bare("::");
+    const port = await bare();
     const { close } = await serve(eventLog().log, (_req, res) => res.writeHead(204).end(), port);
     onTestFinished(close);
 
