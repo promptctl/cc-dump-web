@@ -149,6 +149,7 @@ describe("the browser connection", () => {
     const read = reading(createBrowserConnection(reader.url), finishedName);
     expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
     expect(resumedFrom).toEqual([undefined, "7"]);
+    expect(read.queued()).toBe(0);
   });
 
   it("reports a read of a recording the proxy does not list as failed", async () => {
