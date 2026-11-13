@@ -1,7 +1,9 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
+import type { Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
+import type { Visibility } from "../settings.ts";
 import { createLayout, describeSize } from "./rows.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -11,12 +13,14 @@ const request = (trace_id: string, body: unknown): RecordedEvent[] => [
   { timestamp, trace_id, type: "request_trailers", headers: [] },
 ];
 const body = { model: "m", messages: [{ role: "user", content: "Hello." }] };
+const shown: Record<Category, Visibility> = { user: "shown", assistant: "shown", tools: "shown", system: "shown", metadata: "shown", thinking: "shown" };
 
 describe("layout", () => {
   it("lays each exchange out as its line, then each group's title and blocks, keyed by what they are", () => {
-    const { rows, keys } = createLayout()(createFormatter()(exchanges([...request("a", body), ...request("b", body)])));
+    const { rows, keys } = createLayout(shown)(createFormatter()(exchanges([...request("a", body), ...request("b", body)])));
     const listed = rows.map(({ key }) => key);
-    expect(listed.slice(0, 7)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0", "a/response"]);
+    // A response not begun has no block, so no title over nothing.
+    expect(listed.slice(0, 7)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0", "b"]);
     expect(keys.indexOf("b/message.0/content.0")).toBe(listed.indexOf("b/message.0/content.0"));
     expect(listed.map((_, index) => keys.at(index))).toEqual(listed);
     expect(keys.indexOf("b/message.9/content.0")).toBeUndefined();
@@ -24,14 +28,14 @@ describe("layout", () => {
   });
 
   it("sizes a block by the characters of its content", () => {
-    const { rows } = createLayout()(createFormatter()(exchanges(request("a", body))));
+    const { rows } = createLayout(shown)(createFormatter()(exchanges(request("a", body))));
     expect(rows.find(({ key }) => key === "a/message.0/content.0")).toMatchObject({ size: "Hello.".length });
     expect([999, 12_345, 999_949, 999_960, 2_500_000].map(describeSize)).toEqual(["999 chars", "12.3k chars", "999.9k chars", "1.0M chars", "2.5M chars"]);
   });
 
   it("lays an unchanged exchange out as the same rows", () => {
     const format = createFormatter();
-    const layOut = createLayout();
+    const layOut = createLayout(shown);
     const a = request("a", body);
     const first = layOut(format(exchanges(a)));
     const later = layOut(format(exchanges([...a, ...request("b", body)])));
@@ -41,7 +45,7 @@ describe("layout", () => {
 
   it("is the layout before when no exchange's rows changed, as when only traffic the view does not show arrived", () => {
     const format = createFormatter();
-    const layOut = createLayout();
+    const layOut = createLayout(shown);
     const a = request("a", body);
     const first = layOut(format(exchanges(a)));
     expect(layOut(format(exchanges([...a, ...request("b", body).map((event) => ({ ...event, ...(event.type === "request" ? { url: "/v1/messages/count_tokens" } : {}) }))])))).toBe(first);
@@ -49,7 +53,7 @@ describe("layout", () => {
 
   it("lays a changed exchange's unchanged groups out as the same rows, as a request's while its response arrives", () => {
     const format = createFormatter();
-    const layOut = createLayout();
+    const layOut = createLayout(shown);
     const a = request("a", body);
     const first = layOut(format(exchanges(a)));
     const later = layOut(format(exchanges([...a, { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] }])));
@@ -62,7 +66,7 @@ describe("layout", () => {
     const head: RecordedEvent = { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] };
     const chunk = (text: string): RecordedEvent => ({ timestamp, trace_id: "a", type: "response_body", base64: Buffer.from(text).toString("base64") });
     const format = createFormatter();
-    const layOut = createLayout();
+    const layOut = createLayout(shown);
     const a = [...request("a", body), head, chunk('{"type":')];
     const first = layOut(format(exchanges(a)));
     const later = layOut(format(exchanges([...a, chunk('"message"')])));
@@ -71,5 +75,19 @@ describe("layout", () => {
     const more = layOut(format(exchanges([...a, chunk('"message"'), ...request("b", body)])));
     expect(more.keys).not.toBe(first.keys);
     expect(more.keys.at(more.rows.length - 1)).toBe(more.rows.at(-1)!.key);
+  });
+
+  it("leaves out a hidden category's blocks, and a group with none left, and keeps each exchange's line", () => {
+    const withTools = { ...body, system: "Be brief.", tools: [{ name: "read" }] };
+    const formatted = createFormatter()(exchanges(request("a", withTools)));
+    const listed = (visibility: Record<Category, Visibility>) => createLayout(visibility)(formatted).rows.map(({ key }) => key);
+    expect(listed(shown)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/tools", "a/request/system.0", "a/message.0", "a/message.0/content.0"]);
+    expect(listed({ ...shown, tools: "hidden" })).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/system.0", "a/message.0", "a/message.0/content.0"]);
+    const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
+    const { rows, keys } = createLayout(dialogue)(formatted);
+    expect(rows.map(({ key }) => key)).toEqual(["a", "a/message.0", "a/message.0/content.0"]);
+    expect(keys.indexOf("a/message.0/content.0")).toBe(2);
+    expect(keys.indexOf("a/request")).toBeUndefined();
+    expect(listed({ ...dialogue, user: "hidden" })).toEqual(["a"]);
   });
 });

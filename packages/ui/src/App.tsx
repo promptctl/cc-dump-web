@@ -6,6 +6,7 @@ import { useLiveRecording, type Reading } from "./reading.ts";
 import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
 import { Conversation } from "./view/Conversation.tsx";
+import { FilterBar } from "./view/FilterBar.tsx";
 
 export function App({ connection }: { connection: Connection }) {
   const reading = useLiveRecording(connection);
@@ -24,6 +25,7 @@ export function App({ connection }: { connection: Connection }) {
           <ReadingState reading={reading} />
         </div>
       </header>
+      <FilterBar />
       {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
           way (docs/design/01-mvp.md, "One path to the screen"). */}
       <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />

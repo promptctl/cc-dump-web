@@ -1,6 +1,7 @@
 import type { Exchange } from "../exchanges.ts";
-import type { Part } from "../format/blocks.ts";
+import type { Category, Part } from "../format/blocks.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
+import type { Visibility } from "../settings.ts";
 
 // The conversation as the rows the view lists, one line or one block each, so only the rows on screen are mounted:
 // each request resends the whole history, so a long recording holds blocks by the hundred thousand.
@@ -22,14 +23,16 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 // One exchange's rows, their keys, and each key's index among them.
 type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; index: Map<string, number> };
 
-// Lays out exchanges as rows. [LAW:no-shared-mutable-globals] Its caches are its own: the formatter returns an unchanged
-// exchange, and an unchanged group of a changed one (a request's, while its response streams), as the same object, so
-// their rows are the ones laid out before: a frame lays out and sizes only what changed, and only those rows render.
-export function createLayout(): (formatted: FormattedExchange[]) => Layout {
+// Lays out exchanges as rows, leaving out the blocks of each category `visibility` hides (docs/design/01-mvp.md, F5).
+// [LAW:no-shared-mutable-globals] Its caches are its own: the formatter returns an unchanged exchange, and an unchanged
+// group of a changed one (a request's, while its response streams), as the same object, so their rows are the ones laid
+// out before: a frame lays out and sizes only what changed, and only those rows render. They hold for one visibility,
+// so another visibility is another layout.
+export function createLayout(visibility: Record<Category, Visibility>): (formatted: FormattedExchange[]) => Layout {
   const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
   const groups = new WeakMap<Group, Row[]>();
   const groupRows = (trace: string, group: Group) => {
-    const rows = groups.get(group) ?? rowsOf(trace, group);
+    const rows = groups.get(group) ?? rowsOf(trace, group, visibility);
     groups.set(group, rows);
     return rows;
   };
@@ -80,10 +83,13 @@ function keysOf(exchanges: ExchangeRows[]): Keys {
   };
 }
 
-// A group's rows: its title, then its blocks. A group is one exchange's, so `trace` is the same for every call with it.
-function rowsOf(trace: string, group: Group): Row[] {
+// A group's rows: its title, then its blocks not hidden; none, when no block is left, rather than a title over nothing.
+// A group is one exchange's, so `trace` is the same for every call with it.
+function rowsOf(trace: string, group: Group, visibility: Record<Category, Visibility>): Row[] {
   const key = `${trace}/${group.key}`;
-  return [{ kind: "group", key, title: group.title }, ...group.blocks.map((block): Row => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) }))];
+  const blocks = group.blocks.filter((block) => visibility[block.category] !== "hidden");
+  const title: Row[] = blocks.length === 0 ? [] : [{ kind: "group", key, title: group.title }];
+  return [...title, ...blocks.map((block): Row => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) }))];
 }
 
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is

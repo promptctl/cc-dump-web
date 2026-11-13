@@ -2,7 +2,10 @@ import type { Header } from "@cc-dump/proxy/format";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
-export type Category = "user" | "assistant" | "tools" | "system" | "metadata" | "thinking";
+// [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/01-mvp.md, "Vocabulary"), in the order
+// the filter bar lists them.
+export const categories = ["user", "assistant", "tools", "system", "metadata", "thinking"] as const;
+export type Category = (typeof categories)[number];
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
