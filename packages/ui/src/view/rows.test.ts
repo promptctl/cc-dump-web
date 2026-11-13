@@ -26,7 +26,7 @@ describe("layout", () => {
   it("sizes a block by the characters of its content", () => {
     const { rows } = createLayout()(createFormatter()(exchanges(request("a", body))));
     expect(rows.find(({ key }) => key === "a/message.0/content.0")).toMatchObject({ size: "Hello.".length });
-    expect([describeSize(999), describeSize(12_345), describeSize(2_500_000)]).toEqual(["999 chars", "12.3k chars", "2.5M chars"]);
+    expect([999, 12_345, 999_949, 999_960, 2_500_000].map(describeSize)).toEqual(["999 chars", "12.3k chars", "999.9k chars", "1.0M chars", "2.5M chars"]);
   });
 
   it("lays an unchanged exchange out as the same rows", () => {

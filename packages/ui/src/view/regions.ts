@@ -13,9 +13,8 @@ export const LONG = 12;
 
 // A line opening a fenced code block (CommonMark: three or more backticks or tildes, indented at most three spaces).
 const fence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-// A line opening an XML-tagged section: it starts with an opening tag, whose name its closing tag repeats.
-const tag = /^\s*<([A-Za-z][\w.:-]*)(?:\s[^>]*)?>/;
-const closingTag = /<\/([A-Za-z][\w.:-]*)>/g;
+// A tag, opening or closing (`/`); one closing itself (`/>`) opens nothing.
+const anyTag = /<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>/g;
 
 export function segments(text: string): Segment[] {
   // Each line keeps its line end, so the segments join back into the text.
@@ -23,18 +22,23 @@ export function segments(text: string): Segment[] {
   return segment(scan(lines), 0, lines.length);
 }
 
-// A text's lines, read once in order: each fenced code block, by its opening line, and the lines outside code blocks
-// each tag name closes on, ascending. A section's closing line is then looked up, not searched for, and a closing tag
-// inside a code block is code, not the end of a section.
-type Scanned = { lines: string[]; fences: Map<number, Fence>; closings: Map<string, number[]> };
+// A text's lines, read once in order: each fenced code block and each XML-tagged section, by its opening line. A
+// section is a tag opening its line and closed on a later one; a closing tag closes the last tag of its name still
+// open, so a section quoting another of its name closes at its own closing tag, and a tag inside a code block is code.
+type Scanned = { lines: string[]; fences: Map<number, Fence>; sections: Map<number, Section> };
 // A fenced code block: its label, and its closing line, undefined when the text ends before one.
 type Fence = { label: string; close: number | undefined };
+// An XML-tagged section: its tag's name, and its closing line.
+type Section = { name: string; close: number };
 
 function scan(lines: string[]): Scanned {
   const fences = new Map<number, Fence>();
-  const closings = new Map<string, number[]>();
+  const sections = new Map<number, Section>();
+  // The tags still open, by name, the innermost last: the line each is on, and whether it opens that line.
+  const open = new Map<string, { line: number; opensLine: boolean }[]>();
   for (let at = 0; at < lines.length; ) {
-    const code = fence.exec(lines[at]!.trimEnd());
+    const line = lines[at]!;
+    const code = fence.exec(line.trimEnd());
     if (code) {
       const [, marker, info] = code;
       const closing = new RegExp(`^ {0,3}${marker![0] === "`" ? "`" : "~"}{${marker!.length},}\\s*$`);
@@ -43,14 +47,21 @@ function scan(lines: string[]): Scanned {
       at = close === undefined ? lines.length : close + 1;
       continue;
     }
-    for (const [, name] of lines[at]!.matchAll(closingTag)) {
-      const list = closings.get(name!) ?? [];
-      list.push(at);
-      closings.set(name!, list);
+    const indent = line.length - line.trimStart().length;
+    for (const { 0: whole, 1: closing, 2: name, index } of line.matchAll(anyTag)) {
+      if (whole.endsWith("/>")) continue;
+      const stack = open.get(name!) ?? [];
+      open.set(name!, stack);
+      if (closing === undefined) {
+        stack.push({ line: at, opensLine: index === indent });
+        continue;
+      }
+      const opened = stack.pop();
+      if (opened?.opensLine && opened.line < at) sections.set(opened.line, { name: name!, close: at });
     }
     at++;
   }
-  return { lines, fences, closings };
+  return { lines, fences, sections };
 }
 
 function segment(scanned: Scanned, from: number, to: number): Segment[] {
@@ -77,7 +88,7 @@ function segment(scanned: Scanned, from: number, to: number): Segment[] {
 // The region opening at line `at`, ending before `to`, and its segment; a line that opens none is a region of its own
 // line, which no threshold makes long.
 function regionAt(scanned: Scanned, at: number, to: number): { end: number; segment: () => Segment } {
-  const { lines, fences, closings } = scanned;
+  const { lines, fences, sections } = scanned;
   const line = lines[at]!;
   const single = { end: at + 1, segment: () => ({ kind: "text" as const, text: line }) };
   const code = fences.get(at);
@@ -98,33 +109,17 @@ function regionAt(scanned: Scanned, at: number, to: number): { end: number; segm
       }),
     };
   }
-  const section = tag.exec(line);
-  if (section) {
-    const name = section[1]!;
-    // A tag closed on its own line is not a section, nor one that does not close inside the region around it.
-    const close = line.includes(`</${name}>`) ? undefined : firstAfter(closings.get(name) ?? [], at);
-    if (close === undefined || close >= to) return single;
-    return {
-      end: close + 1,
-      segment: () => ({ kind: "region", line: at, label: `<${name}>`, lines: close + 1 - at, open: line, body: segment(scanned, at + 1, close), close: lines[close]! }),
-    };
-  }
-  return single;
+  const section = sections.get(at);
+  // A section that does not close inside the region around it is text.
+  if (section === undefined || section.close >= to) return single;
+  const { name, close } = section;
+  return {
+    end: close + 1,
+    segment: () => ({ kind: "region", line: at, label: `<${name}>`, lines: close + 1 - at, open: line, body: segment(scanned, at + 1, close), close: lines[close]! }),
+  };
 }
 
 function indexFrom(lines: string[], from: number, matches: (line: string) => boolean): number | undefined {
   for (let at = from; at < lines.length; at++) if (matches(lines[at]!)) return at;
   return undefined;
-}
-
-// The first of `ascending` after `at`, by binary search.
-function firstAfter(ascending: number[], at: number): number | undefined {
-  let low = 0;
-  let high = ascending.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (ascending[middle]! <= at) low = middle + 1;
-    else high = middle;
-  }
-  return ascending[low];
 }

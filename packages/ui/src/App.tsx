@@ -11,6 +11,7 @@ export function App({ connection }: { connection: Connection }) {
   const reading = useLiveRecording(connection);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
+  const read = useEvents((store) => store.read);
   // Fast Refresh keeps state but re-runs memos, so an edit to the formatter takes effect.
   const format = useMemo(() => createFormatter(), []);
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
@@ -23,7 +24,10 @@ export function App({ connection }: { connection: Connection }) {
           <ReadingState reading={reading} />
         </div>
       </header>
-      <Conversation formatted={shown} reading={reading.state === "reading"} />
+      {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
+          way (docs/design/01-mvp.md, "One path to the screen"). A view kept across a read begun again would see the
+          browser clamp its offset to the top as the conversation empties, and take that for the reader's scroll. */}
+      <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
     </div>
   );
 }

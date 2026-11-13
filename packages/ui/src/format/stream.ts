@@ -35,6 +35,12 @@ export function createReassembly(): Reassembly {
     if (target === undefined) throw new Misfit(`no content block ${JSON.stringify(index)} has started`);
     return target;
   };
+  // A block's deltas and its stop come between its start and its stop.
+  const open = (index: unknown) => {
+    const target = started(index);
+    if (target.stopped !== undefined) throw new Misfit(`content block ${JSON.stringify(index)} has stopped`);
+    return target;
+  };
   const apply = (data: unknown) => {
     const event = readObject(data, "event");
     const type = event.string("type");
@@ -52,19 +58,19 @@ export function createReassembly(): Reassembly {
         const index = event.value("index");
         if (typeof index !== "number") throw new Misfit("content_block_start's index is not a number");
         if (content.has(index)) throw new Misfit(`content block ${index} has already started`);
-        content.set(index, { block: { ...readObject(event.value("content_block"), "content_block").rest(), ...event.rest() }, json: "", input: undefined });
+        content.set(index, { block: { ...readObject(event.value("content_block"), "content_block").rest(), ...event.rest() }, json: "", stopped: undefined });
         return;
       }
       case "content_block_delta": {
-        const target = started(event.value("index"));
+        const target = open(event.value("index"));
         applyDelta(target, event.value("delta"));
         Object.assign(target.block, event.rest());
         return;
       }
       case "content_block_stop": {
-        const target = started(event.value("index"));
+        const target = open(event.value("index"));
         // A tool's input is whole at its block's stop, so input that is not JSON by then does not fit.
-        if (target.json !== "") target.input = { parsed: parseJson(target.json, "the block's streamed input") };
+        target.stopped = { input: target.json === "" ? undefined : parseJson(target.json, "the block's streamed input") };
         Object.assign(target.block, event.rest());
         return;
       }
@@ -117,15 +123,15 @@ export function createReassembly(): Reassembly {
   };
 }
 
-// A content block being built from its events: the block, its tool input's JSON as far as it has streamed, and that
-// input parsed, once its block has stopped.
-type Building = { block: Record<string, unknown>; json: string; input: { parsed: unknown } | undefined };
+// A content block being built from its events: the block, its tool input's JSON as far as it has streamed, and, once
+// the block has stopped, that input parsed.
+type Building = { block: Record<string, unknown>; json: string; stopped: { input: unknown } | undefined };
 
 // A content block, a copy of its own, with its tool input as far as it has streamed: the JSON once its block has
 // stopped, its text before that, which is not yet JSON.
-function assembled({ block, json, input }: Building): Record<string, unknown> {
+function assembled({ block, json, stopped }: Building): Record<string, unknown> {
   if (json === "") return { ...block };
-  return { ...block, input: input === undefined ? json : input.parsed };
+  return { ...block, input: stopped === undefined ? json : stopped.input };
 }
 
 // Applies a content block delta to the block it extends, its fields no case reads among them; a delta of a type not

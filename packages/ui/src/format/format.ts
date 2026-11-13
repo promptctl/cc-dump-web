@@ -16,26 +16,32 @@ export type FormattedExchange = { exchange: Exchange; groups: Group[] };
 // A formatter of exchanges into the conversation: the Messages API exchanges, each as its blocks.
 // [LAW:no-shared-mutable-globals] Its caches are its own. Formatting is a pure function of an exchange's events, which
 // only ever grow, so an exchange whose latest event is unchanged is the one formatted before, the same object, and a
-// response still streaming re-derives its response alone: its request, the largest body, decodes once. Each side's
-// body is decoded, and a stream reassembled, as its events arrive, so a response read while it streams costs what
-// arrives, not its whole length each time.
+// side whose latest event is unchanged formats as before: a response still streaming re-derives its response alone,
+// and its request, the largest body, decodes once. Each side's body is decoded, and a stream reassembled, as its
+// events arrive, so a response read while it streams costs what arrives, not its whole length each time.
 export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[] {
   const requests = new WeakMap<object, Group[]>();
+  const responses = new WeakMap<object, KeyedBlock[]>();
   const formatted = new WeakMap<object, FormattedExchange>();
   const decodings = new WeakMap<object, Decoding>();
   const reassemblies = new WeakMap<object, Reassembly>();
-  // A side's decoding and reassembly are kept under its first event, which every later derivation of the side shares;
-  // a side with no event yet has nothing to keep, so a key of its own is as good.
   const sides: Sides = {
-    decode: (side) => decodeSide(cached(decodings, first(side) ?? {}, () => createDecoding(side.head?.headers ?? [])), side),
-    reassemble: (side, body) => cached(reassemblies, first(side) ?? {}, createReassembly).reassemble(body.text, side.completedBy !== undefined),
+    decode: (side) => decodeSide(growing(decodings, side, () => createDecoding(side.head?.headers ?? [])), side),
+    reassemble: (side, body) => growing(reassemblies, side, createReassembly).reassemble(body.text, side.completedBy !== undefined),
   };
   return (exchanges) =>
     exchanges.filter(isMessages).map((exchange) =>
       cached(formatted, exchange.latest, () => ({
         exchange,
-        // An empty request side formats the same whatever the key, so any of the exchange's events will do.
-        groups: [...cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request)), responseGroup(sides, exchange)],
+        // An empty side formats the same whatever the key, so any of the exchange's events will do.
+        groups: [
+          ...cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request)),
+          {
+            key: "response",
+            title: "response",
+            blocks: [...cached(responses, latest(exchange.response) ?? exchange.latest, () => responseBlocks(sides, exchange.response)), ...one("end", ending(exchange.end))],
+          },
+        ],
       })),
     );
 }
@@ -50,6 +56,18 @@ function first(side: RequestSide | ResponseSide): object | undefined {
 function cached<T>(cache: WeakMap<object, T>, key: object, compute: () => T): T {
   const value = cache.get(key) ?? compute();
   cache.set(key, value);
+  return value;
+}
+
+// A side's decoding or reassembly, kept under its first event, which every later derivation of the side shares, while
+// the side grows. A complete side is not derived again, since its blocks are kept under its latest event, so its
+// decoding is dropped, and with it the decoded text and the decoders' windows, which would otherwise live as long as
+// the recording. A side with no event yet has nothing to keep, so a key of its own is as good.
+function growing<T>(cache: WeakMap<object, T>, side: RequestSide | ResponseSide, create: () => T): T {
+  const key = first(side) ?? {};
+  const value = cache.get(key) ?? create();
+  if (side.completedBy === undefined) cache.set(key, value);
+  else cache.delete(key);
   return value;
 }
 
@@ -132,7 +150,8 @@ function toolName(tool: unknown): string {
   return [named.name, named.type].find((name) => typeof name === "string") ?? "tool";
 }
 
-function responseGroup(sides: Sides, { response: side, end }: Exchange): Group {
+// The response's blocks, up to how its exchange ended.
+function responseBlocks(sides: Sides, side: ResponseSide): KeyedBlock[] {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   // A response that has not begun has no head to miss.
@@ -142,11 +161,7 @@ function responseGroup(sides: Sides, { response: side, end }: Exchange): Group {
         ? []
         : [notRecorded("response")]
       : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
-  return {
-    key: "response",
-    title: "response",
-    blocks: [...one("http", http), ...one("undecoded", undecoded(body)), ...responseBody(sides, side, body, whole), ...one("end", ending(end))],
-  };
+  return [...one("http", http), ...one("undecoded", undecoded(body)), ...responseBody(sides, side, body, whole)];
 }
 
 // The response body: a stream reassembled into its message; once whole, a message or an error; anything else raw.

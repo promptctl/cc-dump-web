@@ -1,5 +1,5 @@
 import type { Exchange } from "../exchanges.ts";
-import type { Category, Part } from "../format/blocks.ts";
+import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 
 // The conversation as the rows the view lists, one line or one block each, so only the rows on screen are mounted:
@@ -99,15 +99,17 @@ function sizeOf(parts: Part[]): number {
   }, 0);
 }
 
+// A size in characters, to one decimal of the largest unit it reaches once rounded, so 999,960 reads 1.0M, not 1000.0k.
 export function describeSize(size: number): string {
   if (size < 1000) return `${size} chars`;
-  if (size < 1_000_000) return `${(size / 1000).toFixed(1)}k chars`;
-  return `${(size / 1_000_000).toFixed(1)}M chars`;
+  const thousands = (size / 1000).toFixed(1);
+  return Number(thousands) < 1000 ? `${thousands}k chars` : `${(size / 1_000_000).toFixed(1)}M chars`;
 }
 
-// Blocks in the user and assistant categories start expanded, the rest collapsed (docs/design/01-mvp.md, F4).
-export function expandedByDefault(category: Category): boolean {
-  return category === "user" || category === "assistant";
+// Whether a row shows expanded: a block the reader toggled as they left it, and otherwise as its category starts, the
+// user's and the assistant's expanded, the rest collapsed (docs/design/01-mvp.md, F4). Rows of other kinds are a line.
+export function isExpanded(toggled: Record<string, boolean>, row: Row): boolean {
+  return row.kind === "block" && (toggled[row.key] ?? (row.block.category === "user" || row.block.category === "assistant"));
 }
 
 // A row's height before it is measured, in pixels: one line, or a block's content at about 100 characters a line.

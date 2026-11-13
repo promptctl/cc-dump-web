@@ -57,6 +57,15 @@ describe("segments", () => {
     expect(joined(segments(text))).toBe(text);
   });
 
+  it("closes a section quoting another of its name at its own closing tag", () => {
+    const quoted = `<system-reminder>\n${lines(LONG)}</system-reminder>\n`;
+    const text = `<system-reminder>\n${quoted}after\n</system-reminder>\n`;
+    const [section, ...rest] = segments(text);
+    expect(rest).toEqual([]);
+    expect(section).toMatchObject({ kind: "region", line: 0, lines: LONG + 5, body: [{ kind: "region", line: 1 }, { kind: "text", text: "after\n" }] });
+    expect(joined(segments(text))).toBe(text);
+  });
+
   it("names a region by its opening line, which stays its line when a section around it closes", () => {
     const open = "<analysis>\n```py\n" + lines(LONG) + "```\n";
     expect(segments(open)).toMatchObject([{ kind: "text", text: "<analysis>\n" }, { kind: "region", line: 1 }]);

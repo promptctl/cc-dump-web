@@ -426,6 +426,26 @@ describe("format", () => {
     expect(blocks.find(({ name }) => name === "message_start event")!.parts[0]).toEqual({ kind: "text", label: "not applied", text: "the message has already started" });
   });
 
+  it("shows a delta or a stop for a block that has stopped as an event not applied, keeping the input it stopped with", () => {
+    const blocks = group(
+      one([
+        ...request("a", { model: "m", messages: [] }),
+        ...streamed("a", [
+          messageStart,
+          { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } },
+          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"command": "ls"}' } },
+          { type: "content_block_stop", index: 0 },
+          { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: ', "more": 1' } },
+          { type: "content_block_stop", index: 0 },
+        ]),
+      ]),
+      "response",
+    );
+    expect(blocks.find(({ category }) => category === "tools")!.parts).toContainEqual(expect.objectContaining({ kind: "json", value: { command: "ls" } }));
+    const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
+    expect(notApplied).toEqual(["content_block_delta event: content block 0 has stopped", "content_block_stop event: content block 0 has stopped"]);
+  });
+
   it("decodes a deflate body cut short as far as its bytes allow", () => {
     const text = sse([messageStart, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, ...Array.from({ length: 400 }, () => ({ type: "ping" }))]);
     const deflated = deflateSync(text);

@@ -5,8 +5,8 @@ import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { positionAt, resolve, rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
-import { createLayout, describeSize, estimateHeight, expandedByDefault, type Row } from "./rows.ts";
-import { useView, view, type View } from "./state.ts";
+import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
+import { useView, view } from "./state.ts";
 
 // The conversation, scrolling: each exchange's request, then its response, as rows of which only those on screen are
 // mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an exchange its end.
@@ -22,7 +22,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     count: rows.length,
     getScrollElement: () => scroller.current,
     getItemKey: keys.at,
-    estimateSize: (index) => estimateHeight(rows[index]!, expanded(rows[index]!, toggled)),
+    estimateSize: (index) => estimateHeight(rows[index]!, isExpanded(toggled, rows[index]!)),
     overscan: 10,
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
@@ -93,10 +93,6 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   );
 }
 
-function expanded(row: Row, toggled: View["toggled"]): boolean {
-  return row.kind === "block" && (toggled[row.key] ?? expandedByDefault(row.block.category));
-}
-
 // Memoized: the layout keeps an unchanged exchange's rows the same objects, so only changed rows render again.
 const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boolean }) {
   switch (row.kind) {
@@ -135,8 +131,9 @@ function ExchangeLine({ exchange: { request, response, end }, reading }: { excha
 
 // A block: collapsed, one line naming it and its size; expanded, that line and all its parts. Clicking the line
 // switches between them.
-function BlockView({ row: { key, block, size } }: { row: Extract<Row, { kind: "block" }> }) {
-  const open = useView((state) => state.toggled[key] ?? expandedByDefault(block.category));
+function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
+  const { key, block, size } = row;
+  const open = useView((state) => isExpanded(state.toggled, row));
   return (
     <div className="pl-12 pr-4">
       <button type="button" className="flex w-full gap-3 text-left hover:bg-muted" onClick={() => view.toggle(key, open)}>
