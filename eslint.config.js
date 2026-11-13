@@ -58,7 +58,8 @@ export default defineConfig(
       ],
       "no-restricted-imports": [
         "error",
-        { paths: ["@cc-dump/proxy/address", "@cc-dump/server/address"].map((name) => ({ name, message: reachedThroughConnection })) },
+        // Every part's address module, by package or by path.
+        { patterns: [{ group: ["@cc-dump/*/address", "**/address", "**/address.ts"], message: reachedThroughConnection }] },
       ],
     },
   },

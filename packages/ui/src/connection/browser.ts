@@ -47,13 +47,18 @@ export function createBrowserConnection(origin = `http://${location.hostname}:${
         listening,
       );
       // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection.
-      // One that leaves it CLOSED is a refused read (a name not listed, a position that is no event's), and the
-      // EventSource does not say why: the reader's request event in the proxy's log does.
-      source.addEventListener("error", () => {
-        if (source.readyState !== EventSource.CLOSED) return;
-        close();
-        reader.failed(new Error(`GET ${url}: refused`));
-      }, listening);
+      // One that leaves it CLOSED is a read the reader did not serve (a name not listed, a position that is no
+      // event's, a server error), and the EventSource does not say which: the reader's request event in the proxy's
+      // log does.
+      source.addEventListener(
+        "error",
+        () => {
+          if (source.readyState !== EventSource.CLOSED) return;
+          close();
+          reader.failed(new Error(`GET ${url}: not served; its status is on the reader's request event in the proxy's log`));
+        },
+        listening,
+      );
     },
   };
 }

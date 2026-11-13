@@ -101,7 +101,7 @@ describe("the browser connection", () => {
   it("reports a read of a recording the proxy does not list as failed", async () => {
     const { connection } = await proxyAndConnection();
     const arrival = await reading(connection, "20261113T070000.000Z.jsonl").next();
-    expect(arrival).toEqual({ failed: expect.objectContaining({ message: expect.stringMatching(/\/recordings\/20261113T070000\.000Z\.jsonl: refused$/) }) });
+    expect(arrival).toEqual({ failed: expect.objectContaining({ message: expect.stringMatching(/\/recordings\/20261113T070000\.000Z\.jsonl: not served; /) }) });
   });
 
   it("ends the read at the proxy when it is aborted", async () => {
