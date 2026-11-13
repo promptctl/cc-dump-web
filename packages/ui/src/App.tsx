@@ -1,15 +1,18 @@
 import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
+import { describe } from "./describe.ts";
 import { exchanges } from "./exchanges.ts";
 import { createFormatter } from "./format/format.ts";
-import { useLiveRecording, type Reading } from "./reading.ts";
+import { useRecording, type Reading } from "./reading.ts";
 import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { FilterBar } from "./view/FilterBar.tsx";
+import { Recordings } from "./view/Recordings.tsx";
+import { useView } from "./view/state.ts";
 
 export function App({ connection }: { connection: Connection }) {
-  const reading = useLiveRecording(connection);
+  const reading = useRecording(connection, useView((state) => state.open));
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
   const read = useEvents((store) => store.read);
@@ -23,6 +26,7 @@ export function App({ connection }: { connection: Connection }) {
         <div className="flex items-center gap-4">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
+          <Recordings connection={connection} />
         </div>
       </header>
       <FilterBar />
@@ -67,9 +71,4 @@ function ProxyState({ status }: { status: StatusReading }) {
     case "failed":
       return <p className="text-xs text-destructive">{describe(status.error)}</p>;
   }
-}
-
-// An error and its causes, outermost first: a parse failure says which read it ended.
-function describe(error: unknown): string {
-  return error instanceof Error ? [error.message, ...(error.cause === undefined ? [] : [describe(error.cause)])].join(": ") : String(error);
 }

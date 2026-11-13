@@ -26,6 +26,22 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
 // One recording in `GET /recordings`: the live one is the run's, still being written.
 export type Listing = { name: string; live: boolean };
 
+// [LAW:one-source-of-truth] A recording's name, the moment its run started in ISO 8601 basic format (no colons, which
+// Finder and Windows refuse), and the start read back from it: the writer's format and its reader, side by side.
+export function recordingName(start: Date): string {
+  return `${start.toISOString().replace(/[-:]/g, "")}.jsonl`;
+}
+
+// The start a name was made from, or undefined for a name `recordingName` did not make: the recordings directory is
+// the user's too, and every `.jsonl` file in it is listed.
+export function recordingStart(name: string): Date | undefined {
+  const basic = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2}\.\d{3})Z\.jsonl$/.exec(name);
+  if (!basic) return undefined;
+  const [, year, month, day, hours, minutes, seconds] = basic;
+  const start = new Date(`${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`);
+  return !Number.isNaN(start.getTime()) && recordingName(start) === name ? start : undefined;
+}
+
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
 export type RecordingEnd = { unterminated_bytes: number };
 

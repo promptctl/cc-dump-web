@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ProxyStatus } from "./format.ts";
+import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, recordingName, recordingStart, type ProxyStatus } from "./format.ts";
 import { createRecording, type Seen } from "./recording.ts";
 
 // Every kind of event the recorder writes, each ending among them.
@@ -83,5 +83,17 @@ describe("the reader's messages", () => {
     expect(() => parseProxyStatus('{"changed_source":[]}')).toThrow("proxy status: state is not one of watching, failed");
     expect(() => parseProxyStatus('{"state":"watching","changed_source":[1]}')).toThrow("proxy status: changed_source is not a list of strings");
     expect(() => parseProxyStatus('{"state":"failed","error":"EMFILE"}')).toThrow("proxy status: message is not a string");
+  });
+});
+
+describe("a recording's name", () => {
+  it("is the run's start in ISO 8601 basic format, and gives that start back", () => {
+    const start = new Date("2026-11-13T18:18:44.123Z");
+    expect(recordingName(start)).toBe("20261113T181844.123Z.jsonl");
+    expect(recordingStart(recordingName(start))).toEqual(start);
+  });
+
+  it.each(["notes.jsonl", "20261113T181844Z.jsonl", "20261313T181844.123Z.jsonl", "20261113T181844.123Z.jsonl.jsonl"])("gives no start for %s, which no run was named", (name) => {
+    expect(recordingStart(name)).toBeUndefined();
   });
 });

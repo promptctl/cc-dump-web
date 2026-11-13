@@ -2,16 +2,18 @@ import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { readLive, type Frames, type Reading } from "./reading.ts";
+import { readRecording, type Frames, type Reading } from "./reading.ts";
+import type { OpenRecording } from "./view/state.ts";
 
+const past: Listing = { name: "20261113T080000.000Z.jsonl", live: false };
 const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
 const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
 
 // A connection the test drives: it lists `listings`, or fails with it when it is an error, and hands the test each
 // read's reader.
-function fakeConnection(listings: Listing[] | Error = [{ name: "20261113T080000.000Z.jsonl", live: false }, live]) {
+function fakeConnection(listings: Listing[] | Error = [past, live]) {
   const reads: { name: string; reader: Reader }[] = [];
-  const connection: Parameters<typeof readLive>[0] = {
+  const connection: Parameters<typeof readRecording>[0] = {
     recordings: (signal) =>
       new Promise((resolve, reject) => {
         signal.addEventListener("abort", () => reject(signal.reason));
@@ -37,21 +39,21 @@ function handFrames() {
   return { frames, run, pending: () => scheduled.size };
 }
 
-// readLive into a sink that records its calls, with every state it reported.
-async function started(listings?: Listing[] | Error) {
+// readRecording of `open` into a sink that records its calls, with every state it reported.
+async function started(listings?: Listing[] | Error, open: OpenRecording = { recording: "live" }) {
   const { connection, reads } = fakeConnection(listings);
   const frames = handFrames();
   const calls: (["reset"] | ["append", RecordedEvent[]])[] = [];
   const sink = { reset: () => void calls.push(["reset"]), append: (batch: RecordedEvent[]) => void calls.push(["append", batch]) };
   const states: Reading[] = [];
   const abort = new AbortController();
-  readLive(connection, sink, frames.frames, abort.signal, (reading) => states.push(reading));
+  readRecording(connection, open, sink, frames.frames, abort.signal, (reading) => states.push(reading));
   await setImmediate();
   await setImmediate();
   return { reads, frames, calls, states, abort };
 }
 
-describe("readLive", () => {
+describe("readRecording", () => {
   it("reads the listing marked live, appending the events that arrive between frames in one call", async () => {
     const { reads, frames, calls, states } = await started();
     expect(reads.map(({ name }) => name)).toEqual([live.name]);
@@ -95,13 +97,26 @@ describe("readLive", () => {
     expect(states).toEqual([{ state: "reading" }]);
   });
 
-  it("reports a list that fails, or one without exactly one live recording, as failed", async () => {
+  it("reads a past recording open by its name, by the same read", async () => {
+    const { reads, frames, calls } = await started(undefined, { recording: "past", name: past.name });
+    expect(reads.map(({ name }) => name)).toEqual([past.name]);
+    reads[0]!.reader.event(event(1));
+    frames.run();
+    expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
+  });
+
+  it("reports a list that fails, or one without exactly one recording open, as failed, naming it", async () => {
     const error = new Error("GET /recordings: 500");
     expect((await started(error)).states).toEqual([{ state: "reading" }, { state: "failed", error }]);
-    for (const listings of [[], [live, { ...live, name: "20261113T100000.000Z.jsonl" }]]) {
-      const { reads, states } = await started(listings);
+    const cases: [Listing[], OpenRecording, number][] = [
+      [[], { recording: "live" }, 0],
+      [[live, { ...live, name: "20261113T100000.000Z.jsonl" }], { recording: "live" }, 2],
+      [[past, live], { recording: "past", name: "20261101T000000.000Z.jsonl" }, 0],
+    ];
+    for (const [listings, open, count] of cases) {
+      const { reads, states } = await started(listings, open);
       expect(reads).toEqual([]);
-      expect(states).toEqual([{ state: "reading" }, { state: "failed", error: new Error(`GET /recordings listed ${listings.length} live recordings, not one`) }]);
+      expect(states).toEqual([{ state: "reading" }, { state: "failed", error: new Error(`GET /recordings listed ${count} recordings for ${JSON.stringify(open)}, not one`) }]);
     }
   });
 
@@ -109,7 +124,7 @@ describe("readLive", () => {
     const { connection, reads } = fakeConnection();
     const states: Reading[] = [];
     const abort = new AbortController();
-    readLive(connection, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, (reading) => states.push(reading));
+    readRecording(connection, { recording: "live" }, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, (reading) => states.push(reading));
     abort.abort();
     await setImmediate();
     await setImmediate();
