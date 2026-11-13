@@ -5,7 +5,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 // in localStorage, so they survive a restart of the browser. `follow`: whether follow mode is on.
 export type Settings = { follow: boolean };
 
-export const useSettings = create<Settings>()(persist((): Settings => ({ follow: true }), { name: "cc-dump.settings", storage: createJSONStorage(() => localStorage) }));
+const name = "cc-dump.settings";
+
+export const useSettings = create<Settings>()(persist((): Settings => ({ follow: true }), { name, storage: createJSONStorage(() => localStorage) }));
+
+// Another tab's change arrives as a storage event, so every tab holds the setting the reader chose last.
+window.addEventListener("storage", (event) => {
+  if (event.key === name) void useSettings.persist.rehydrate();
+});
 
 export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),

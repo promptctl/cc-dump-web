@@ -5,7 +5,8 @@ import type { Position } from "./position.ts";
 // [LAW:one-source-of-truth] What the reader has chosen about the view: each block or region they flipped from how it
 // starts, by key, and where they are. Everything else on screen is derived from the events and the settings. It is kept
 // for the tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md,
-// F12). A tab opens at the end, which follows the conversation while follow is on.
+// F12). A tab opens at the end, which follows the conversation while follow is on. While it is off, the end is a place
+// read at the first step, before any row has arrived, so the tab opens at the start.
 // [LAW:types-are-the-program] A flip is a key's presence, so a block flipped back is no entry, not one that says its
 // default.
 export type View = { flipped: Record<string, true>; position: Position };

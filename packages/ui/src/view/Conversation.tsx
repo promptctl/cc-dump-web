@@ -3,9 +3,10 @@ import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import type { Exchange } from "../exchanges.ts";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
-import { positionAt, resolve, rowIndex } from "./position.ts";
+import { rowIndex } from "./position.ts";
 import { segments, type Segment } from "./regions.ts";
 import { createLayout, describeSize, estimateHeight, isExpanded, type Row } from "./rows.ts";
+import { step } from "./scroll.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view } from "./state.ts";
 
@@ -44,70 +45,58 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const atEnd = useView((state) => state.position.at === "end");
   const following = !follow ? "off" : atEnd ? "on" : "paused";
 
-  // The offset the view last wrote or took as its own. A scroller is created at 0, so 0 is where it starts.
   const written = useRef(0);
-  // [LAW:one-source-of-truth] Whether the offset is the view's own: the one it last wrote or took, or the end the
-  // browser moved it to when the content got shorter or the scroller taller (a clamp). A clamp is the layout changing,
-  // not a reader, so the position survives it. A reader's scroll reaches the end from below, so it is never a clamp;
-  // any other offset is a reader's scroll.
-  const own = (element: HTMLElement) => Math.abs(element.scrollTop - Math.min(written.current, largest(element))) < 1;
-  // [LAW:no-ambient-temporal-coupling] The one step that keeps the scroll offset and the position in agreement, run
-  // after every render and on every scroll, in whatever order they come. A reader's scroll is the scroll event's to
-  // adopt: the virtualizer re-renders within that event, ahead of the view's own listener, and a clamp's event can come
-  // after a render, so a render that took an offset for the reader's could take a clamp for a scroll. Until its event
-  // runs, a reader's offset is left as it is. Otherwise the position is resolved against where the rows now are, and
-  // written when it moved; a position whose row has not arrived, as after a reload, writes nothing until it does.
-  const sync = () => {
+  // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
+  // carries it out.
+  const sync = (cause: "scroll" | "change") => {
     const element = scroller.current!;
-    if (!own(element)) return;
-    const offset = element.scrollTop;
-    written.current = offset;
-    const position = useView.getState().position;
-    // Follow off, the end is a place like any other: the view stays where it is.
-    if (position.at === "end" && !useSettings.getState().follow) {
-      view.moveTo(positionAt(offset, undefined, virtualizer.getVirtualItemForOffset));
-      return;
-    }
-    const target = resolve(position, largest(element), keys.indexOf, (index) => virtualizer.measurementsCache[index]);
-    if (target === undefined || Math.abs(target - offset) < 1) return;
-    element.scrollTop = target;
+    const { position } = useView.getState();
+    const rowsNow = {
+      indexOf: keys.indexOf,
+      placed: (index: number) => virtualizer.measurementsCache[index],
+      rowAt: virtualizer.getVirtualItemForOffset,
+    };
+    const kept = { position, written: written.current };
+    const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, rowsNow);
+    written.current = next.written;
+    if (next.position !== position) view.moveTo(next.position);
+    if (next.write === undefined) return;
+    element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
     written.current = element.scrollTop;
   };
-  // A reader's scroll: the position becomes where it is. Following, a scroll to the end stays at the end, and a scroll
-  // back to it resumes; a gesture the browser stopped at an end that grew while it ran stays paused.
-  const onScroll = () => {
-    const element = scroller.current!;
-    if (!own(element)) {
-      const offset = element.scrollTop;
-      written.current = offset;
-      view.moveTo(positionAt(offset, useSettings.getState().follow ? largest(element) : undefined, virtualizer.getVirtualItemForOffset));
-    }
-    sync();
-  };
-  const latest = useRef({ sync, onScroll });
-  latest.current = { sync, onScroll };
-  useLayoutEffect(() => latest.current.sync());
+  const latest = useRef(sync);
+  latest.current = sync;
+  // A step runs whenever what it reads changes: after a render, on a scroll event, and when the scroller is resized.
+  // The resize's step runs right after the layout that resized it, so a clamp is read as the view's own before any
+  // commit can grow the content and make it look like a reader's scroll, and a scroller made shorter shows the new end
+  // in that frame.
+  useLayoutEffect(() => latest.current("change"));
   useLayoutEffect(() => {
     const element = scroller.current!;
-    const onScroll = () => latest.current.onScroll();
+    const onScroll = () => latest.current("scroll");
+    const resized = new ResizeObserver(() => latest.current("change"));
     element.addEventListener("scroll", onScroll, { passive: true });
-    return () => element.removeEventListener("scroll", onScroll);
+    resized.observe(element);
+    return () => {
+      element.removeEventListener("scroll", onScroll);
+      resized.disconnect();
+    };
   }, []);
   // Following, a click stops; paused or off, it follows from the end.
   const toggleFollow = () => {
     settings.setFollow(following !== "on");
     if (following !== "on") view.moveTo({ at: "end" });
-    latest.current.sync();
+    latest.current("change");
   };
 
   return (
     // The browser's own scroll anchoring would be a second writer of the offset.
-    <main ref={scroller} className="flex-1 overflow-y-auto [overflow-anchor:none]">
+    <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
       {rows.length === 0 ? (
-        <p className="flex h-full items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
+        <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
       ) : (
-        <div className="relative font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
+        <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((item) => (
             <div
               key={item.key}
@@ -121,13 +110,16 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
           ))}
         </div>
       )}
-      {/* A sticky child of the scroller, held at its bottom: once it is clicked, End still scrolls the conversation. */}
-      <div className="sticky bottom-0 h-0">
+      {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
+          rather than over it. A click takes no focus: once it is clicked, End and Space still scroll the conversation,
+          and Space does not press it again. */}
+      <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
         <button
           type="button"
           data-follow={following}
           title={followTitles[following]}
-          className="absolute right-4 bottom-3 rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
+          className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
+          onMouseDown={(event) => event.preventDefault()}
           onClick={toggleFollow}
         >
           {followLabels[following]}
