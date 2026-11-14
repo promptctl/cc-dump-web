@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { jsonObject, parseJson } from "@cc-dump/log/json";
-import { parseSettings, type SettingsOf, type Table } from "./settings.ts";
+import { parseSettings, withDefaults, type SettingsOf, type Table } from "./settings.ts";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the settings the file
 // set; every other setting is its default.
@@ -10,14 +10,15 @@ export type ReadSettings<S> = { settings: S; file_keys: string[] | null };
 // A JSON settings file (docs/design/01-mvp.md, F11), `what` in what it says, holding the settings of `table`. Each
 // part's file is an instance.
 export function settingsFile<T extends Table>(what: string, table: T) {
-  // `text` is the file's, or undefined when there is no file.
-  const parse = (text: string | undefined): ReadSettings<SettingsOf<T>> => {
-    const file = text === undefined ? {} : jsonObject(parseJson(text, what), what);
-    return { settings: parseSettings(what, table, file), file_keys: text === undefined ? null : Object.keys(file) };
+  // `text` is the file's, or undefined when there is no file; `said`, the file as its failures name it.
+  const parseAs = (said: string) => (text: string | undefined): ReadSettings<SettingsOf<T>> => {
+    const file = text === undefined ? {} : jsonObject(parseJson(text, said), said);
+    return { settings: parseSettings(said, table, withDefaults(table, file)), file_keys: text === undefined ? null : Object.keys(file) };
   };
   return {
-    parse,
-    read: (path: string) => parse(fileText(path)),
+    parse: parseAs(what),
+    // A file it cannot take is refused naming it, so the user knows which file to change.
+    read: (path: string) => parseAs(`${what} in ${path}`)(fileText(path)),
     // The whole file, replaced at once: written beside it, then renamed over it, so a reader never sees half of it.
     write: (path: string, settings: SettingsOf<T>) => {
       mkdirSync(dirname(path), { recursive: true });

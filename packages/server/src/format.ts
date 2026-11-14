@@ -30,7 +30,8 @@ export type Launched = { session: string; window_id: string; pane_id: string };
 export type Failure = { error: string };
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
-// from the settings file alike. tmux runs a window's command as one line, and a session target names a session by name.
+// from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
+// session target names a session by name.
 export function sessionName(value: unknown): string {
   return oneLine(value, "session");
 }
@@ -40,7 +41,7 @@ export function commandLine(value: unknown): string {
 }
 
 function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || value.includes("\n")) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 

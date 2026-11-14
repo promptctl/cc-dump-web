@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buffer } from "node:stream/consumers";
 import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
+import { LOOPBACK } from "@cc-dump/log/address";
 import { describe } from "@cc-dump/log/describe";
 import type { ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
@@ -83,7 +84,7 @@ export function createApp({ log, settingsPath, tmux, proxyInfo }: Parts): Handle
 // served from this machine, as the UI is, by any of loopback's names. A request with none is no page's; "null", an
 // opaque origin's, names no machine.
 function fromThisMachine(origin: string | undefined): boolean {
-  return origin === undefined || (URL.canParse(origin) && ["127.0.0.1", "localhost", "[::1]"].includes(new URL(origin).hostname));
+  return origin === undefined || (URL.canParse(origin) && [LOOPBACK, "localhost", "[::1]"].includes(new URL(origin).hostname));
 }
 
 // [LAW:nothing-unseen] Every answer that is not the request's is its failure, on its event as on its answer.

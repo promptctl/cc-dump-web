@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { settingsFile } from "./settings-file.ts";
+import { parseSettings } from "./settings.ts";
 
-const file = settingsFile("test settings", {
+const table = {
   name: { default: "none", parse: (value: unknown) => String(value) },
   count: { default: 1, parse: (value: unknown) => Number(value) },
-});
+};
+const file = settingsFile("test settings", table);
 
 it("writes the settings where none were, so they read back as written, leaving no other file", () => {
   const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
@@ -18,4 +20,9 @@ it("writes the settings where none were, so they read back as written, leaving n
   expect(file.read(path)).toEqual({ settings: { name: "second", count: 2 }, file_keys: ["name", "count"] });
   expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ name: "second", count: 2 });
   expect(readdirSync(join(dir, "cc-dump"))).toEqual(["test.json"]);
+});
+
+it("refuses a message's settings missing one, where a file's is its default", () => {
+  expect(file.parse('{"name":"only"}').settings).toEqual({ name: "only", count: 1 });
+  expect(() => parseSettings("test message", table, { name: "only" })).toThrow("test message: count missing");
 });

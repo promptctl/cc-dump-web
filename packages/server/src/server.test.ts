@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseFailure, parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
@@ -12,6 +13,16 @@ describe("GET /launch", () => {
     expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
     expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
     expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
+  });
+
+  it("fails naming the settings file it cannot take", async () => {
+    const { url, settingsPath, next } = await app();
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, '{"command":""}');
+    const res = await fetch(`${url}/launch`);
+    expect(res.status).toBe(500);
+    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command must be a line of text that is not blank, got ""` });
+    expect(await next()).toMatchObject({ event: "request", status: 500, outcome: "error" });
   });
 
   it("answers tmux's refusal in tmux's words", async () => {
@@ -52,6 +63,7 @@ describe("POST /launch", () => {
     [{ session: "work", command: "" }, 'command must be a line of text that is not blank, got ""'],
     [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
     [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
+    [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
     [{ command: "claude" }, "session must be a line of text that is not blank, got undefined"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
