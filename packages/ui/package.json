@@ -12,7 +12,7 @@
     "@cc-dump/server": "workspace:*",
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@promptctl/rich-js": "link:/Users/bmf/code/rich-js",
+    "@promptctl/rich-js": "^0.30.0",
     "@tanstack/react-virtual": "^3.14.26",
     "brotli": "^2.1.0",
     "fflate": "^0.8.3",

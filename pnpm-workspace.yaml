@@ -1,2 +1,4 @@
 packages:
   - packages/*
+minimumReleaseAgeExclude:
+  - '@promptctl/rich-js@0.30.0'
