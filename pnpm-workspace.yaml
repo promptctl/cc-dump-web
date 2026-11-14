@@ -1,5 +1,5 @@
 packages:
   - packages/*
+# Our own packages, published from their repos with provenance, are taken as soon as they are released.
 minimumReleaseAgeExclude:
-  - '@promptctl/rich-js@0.30.0'
-  - '@promptctl/tmux-control-mode-js@0.2.0'
+  - '@promptctl/*'

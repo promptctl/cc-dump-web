@@ -37,7 +37,7 @@ function Option({ choice, label, swatch, current, pick }: { choice: ThemeChoice;
         type="button"
         data-theme-choice={choice}
         aria-current={current}
-        className="flex w-full items-center gap-3 rounded px-2 py-1 text-left hover:bg-(--panel-lighten-1) aria-[current=true]:font-semibold"
+        className="menu-item items-center gap-3"
         onClick={() => pick(choice)}
       >
         <Swatch theme={swatch} />

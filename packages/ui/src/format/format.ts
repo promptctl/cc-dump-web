@@ -38,8 +38,8 @@ const noMessage: MessageFacts = { input: undefined, cacheRead: undefined, output
 // and its request, the largest body, decodes once. Each side's body is decoded, and a stream reassembled, as its
 // events arrive, so a response read while it streams costs what arrives, not its whole length each time.
 export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[] {
-  const requests = new WeakMap<object, Request>();
-  const responses = new WeakMap<object, Response>();
+  const requests = new WeakMap<object, RequestShown>();
+  const responses = new WeakMap<object, ResponseShown>();
   const formatted = new WeakMap<object, FormattedExchange>();
   const decodings = new WeakMap<object, Decoding>();
   const reassemblies = new WeakMap<object, Reassembly>();
@@ -54,13 +54,13 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
         // An empty side formats the same whatever the key, so any of the exchange's events will do.
         const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request));
         const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseBlocks(sides, exchange.response));
-        const { first, end } = exchange;
+        const { first: opened, end } = exchange;
         return {
           exchange,
           facts: {
             ordinal: index + 1,
-            began: first.timestamp,
-            duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(first.timestamp),
+            began: opened.timestamp,
+            duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(opened.timestamp),
             status: exchange.response.head?.status,
             model: request.model,
             ...response.message,
@@ -75,8 +75,8 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
 type Sides = { decode: (side: RequestSide | ResponseSide) => { body: Body; whole: boolean }; reassemble: (side: ResponseSide, body: Body) => Stream };
 
 // A request formatted: its groups and the model it asks for. A response formatted: its blocks and its message's facts.
-type Request = { groups: Group[]; model: string | undefined };
-type Response = { blocks: KeyedBlock[]; message: MessageFacts };
+type RequestShown = { groups: Group[]; model: string | undefined };
+type ResponseShown = { blocks: KeyedBlock[]; message: MessageFacts };
 
 function first(side: RequestSide | ResponseSide): object | undefined {
   return side.head ?? side.body[0];
@@ -115,7 +115,7 @@ function isMessages({ request: { head } }: Exchange): boolean {
   return head === undefined || (head.method === "POST" && URL.parse(head.url, "http://proxy")?.pathname === "/v1/messages");
 }
 
-function requestGroups(sides: Sides, side: RequestSide): Request {
+function requestGroups(sides: Sides, side: RequestSide): RequestShown {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
@@ -182,7 +182,7 @@ function toolName(tool: unknown): string {
 }
 
 // The response's blocks, up to how its exchange ended, and its message's facts.
-function responseBlocks(sides: Sides, side: ResponseSide): Response {
+function responseBlocks(sides: Sides, side: ResponseSide): ResponseShown {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   // A response that has not begun has no head to miss.
@@ -197,7 +197,7 @@ function responseBlocks(sides: Sides, side: ResponseSide): Response {
 }
 
 // The response body: a stream reassembled into its message; once whole, a message or an error; anything else raw.
-function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boolean): Response {
+function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boolean): ResponseShown {
   const { text } = body;
   if (headerValues(side.head?.headers ?? [], "content-type")[0]?.toLowerCase().startsWith("text/event-stream")) {
     const stream = sides.reassemble(side, body);
@@ -209,7 +209,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
   }
   if (!whole) return none(one("body", leftover("response body so far", text)));
   return fitting(
-    (): Response => {
+    (): ResponseShown => {
       const body = readObject(parseJson(text, "response body"), "response body");
       switch (body.value("type")) {
         case "message":
@@ -225,12 +225,12 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
 }
 
 // Blocks with no message among them.
-const none = (blocks: KeyedBlock[]): Response => ({ blocks, message: noMessage });
+const none = (blocks: KeyedBlock[]): ResponseShown => ({ blocks, message: noMessage });
 
 // A response message: its content, then what the API reported about it; and, of what it reported, the facts.
-function messageBlocks(message: Record<string, unknown>): Response {
+function messageBlocks(message: Record<string, unknown>): ResponseShown {
   return fitting(
-    (): Response => {
+    (): ResponseShown => {
       const fields = readObject(message, "message");
       const content = fields.array("content").map((block) => formatBlock(block, "assistant"));
       const stopReason = fields.value("stop_reason");

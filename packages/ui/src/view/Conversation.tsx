@@ -174,10 +174,10 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
             data-follow={following}
             pressed={control.pressed}
             title={control.title}
-            className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-(--panel-lighten-1)"
+            className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-raised-hover"
             onClick={toggleFollow}
           >
-            {control.label}
+            <span aria-hidden>{control.glyph}</span> {control.label}
           </Toggle>
         </div>
       </main>
@@ -188,15 +188,16 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
 // How many of a match's lines the view starts above it once stepped to it, so the lines before it are in view.
 const leadLines = 3;
 
-// The control in each state of follow mode: whether it is pressed, its label and its title.
+// The control in each state of follow mode: whether it is pressed, its glyph, which is not read aloud, its label and its
+// title.
 const followStates = {
-  on: { pressed: true, label: "● Following", title: "The view stays at the newest content. Click to stop following." },
+  on: { pressed: true, glyph: "●", label: "Following", title: "The view stays at the newest content. Click to stop following." },
   paused: {
     pressed: "mixed",
-    label: "○ Follow paused",
+    glyph: "○", label: "Follow paused",
     title: "Away from the newest content. Scroll back to the end, or click, to follow again.",
   },
-  off: { pressed: false, label: "○ Follow off", title: "Click to follow the newest content." },
+  off: { pressed: false, glyph: "○", label: "Follow off", title: "Click to follow the newest content." },
 } as const;
 
 // The search's pattern, for every text shown to highlight its matches with.
@@ -255,23 +256,30 @@ const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boo
   }
 });
 
-// The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns aligned down the conversation,
-// each column as wide as its widest value, and how it ended. It is a band on the chrome's ground, so an exchange's start
-// is seen without a line drawn. `reading`: whether the read can still bring this exchange its end.
-function ExchangeLine({ exchange: { exchange: { end }, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+// The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns of fixed widths, aligned down
+// the conversation, each cut with an ellipsis where a rare value outgrows its column, and how it ended. It is a band on
+// the chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring
+// this exchange its end.
+function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+  const { end } = exchange;
+  const reason = exchange.response.head?.reason;
   return (
-    <div className="mt-3 grid grid-cols-[3ch_8ch_minmax(8ch,1fr)_6ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums">
+    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
       <span className="text-right text-foreground-muted">{facts.ordinal}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
       </time>
-      <span className="truncate">{facts.model}</span>
+      {/* A request whose head was not recorded has no model to name; the line says why. */}
+      {exchange.request.head === undefined ? <span className="text-foreground-muted">request not recorded</span> : <span title={facts.model}>{facts.model}</span>}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
-      <span>{facts.status}</span>
+      {/* An HTTP error reads as one, its reason phrase on hover. */}
+      <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
+        {facts.status}
+      </span>
       <Fact label="in" count={facts.input} />
       <Fact label="cache" count={facts.cacheRead} />
       <Fact label="out" count={facts.output} />
-      <span>{facts.stopReason}</span>
+      <span title={facts.stopReason}>{facts.stopReason}</span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
         {endings[end?.outcome ?? (reading ? "pending" : "unread")]}

@@ -63,7 +63,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 aria-current={listing.name === shown}
                 disabled={listing.name === shown}
                 title={listing.name}
-                className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-(--panel-lighten-1) aria-[current=true]:font-semibold"
+                className="menu-item justify-between gap-4"
                 onClick={() => pick(toOpenRecording(listing))}
               >
                 <span>{startOf(listing.name)}</span>

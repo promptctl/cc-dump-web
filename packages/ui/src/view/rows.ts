@@ -164,12 +164,17 @@ export const describeSize = (size: number): string => `${compact(size)} chars`;
 // result with only its id, shows nothing.
 export function preview(block: Block): string {
   const part = block.parts.find((part) => part.kind === "text" || part.kind === "json");
-  const text = part === undefined ? "" : part.kind === "text" ? part.text : jsonText(part);
-  // Cut before the whitespace is collapsed, so a long text is read only as far as the line.
-  const line = text.slice(0, previewLength).replace(/\s+/g, " ").trim();
-  return text.length > previewLength ? `${line}…` : line;
+  // A JSON string, as a tool's input is while it streams, is its own text, so it is never serialized for a line; any
+  // other value's serialization is jsonText's, which the block's size has already made.
+  const text = part === undefined ? "" : part.kind === "text" ? part.text : typeof part.value === "string" ? part.value : jsonText(part);
+  // Cut before the whitespace is collapsed, so a long text is read only as far as the line, and at a whole character,
+  // not between a surrogate pair's halves; the ellipsis says something visible was cut.
+  const end = isHighSurrogate(text.charCodeAt(previewLength - 1)) ? previewLength - 1 : previewLength;
+  const line = text.slice(0, end).replace(/\s+/g, " ").trim();
+  return /\S/.test(text.slice(end)) ? `${line}…` : line;
 }
 const previewLength = 200;
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
 // A recorded timestamp as the clock read, to the second.
 export function clockTime(timestamp: string): string {
@@ -188,9 +193,11 @@ export function isExpanded(flipped: Record<string, true>, row: Row): boolean {
   return row.kind === "block" && (flipped[row.key] === true) !== (row.block.category === "user" || row.block.category === "assistant");
 }
 
-// A row's height before it is measured, in pixels: one line, or a block's content at about 100 characters a line.
-// Only rows not yet on screen use it, so it decides how the scrollbar reads, not where anything lands.
+// A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or a block's
+// content at about 100 characters a line. Only rows not yet on screen use it, so it decides how the scrollbar reads, not
+// where anything lands.
 export function estimateHeight(row: Row, expanded: boolean): number {
   const line = 20;
+  if (row.kind === "exchange") return 36;
   return row.kind === "block" && expanded ? line + Math.ceil(row.size / 100) * 16 : line;
 }

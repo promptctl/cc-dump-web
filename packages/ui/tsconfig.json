@@ -5,8 +5,7 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "lib": ["es2025", "esnext.typedarrays", "dom", "dom.iterable"],
-    "types": ["vite/client"],
-    "paths": { "@/*": ["./src/*"] }
+    "types": ["vite/client"]
   },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]

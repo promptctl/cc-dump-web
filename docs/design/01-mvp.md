@@ -130,7 +130,7 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 
 - TypeScript throughout. Node for the proxy and the app server.
 - React with Vite for the UI. Zustand for state.
-- Tailwind with theme values as CSS variables, and shadcn/ui for components.
+- Tailwind, reading the theme's variables (docs/design/02-design.md, "Themes"); no component library.
 - tmux-control-mode-js for all tmux operations, and its terminal export, on xterm.js, for the terminal (F13).
 
 ## Not in the MVP

@@ -27,7 +27,7 @@ export function App({ connection }: { connection: Connection }) {
       <header className="flex h-12 items-center gap-6 border-b bg-surface px-4 text-xs">
         <h1 className="text-sm font-semibold">cc-dump</h1>
         {/* What stands now, beside the name: the proxy and the read, where the connection's status (F8) goes too. */}
-        <div role="status" className="flex min-w-0 flex-1 items-center gap-4 truncate">
+        <div role="status" className="flex min-w-0 flex-1 items-center gap-4 *:min-w-0 *:truncate">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
         </div>
@@ -56,7 +56,7 @@ function ReadingState({ reading }: { reading: Reading }) {
         </p>
       );
     case "failed":
-      return <p className="text-error">{describe(reading.error)}</p>;
+      return <p className="text-error" title={describe(reading.error)}>{describe(reading.error)}</p>;
   }
 }
 
@@ -67,7 +67,7 @@ function ProxyState({ status }: { status: StatusReading }) {
       return null;
     case "status": {
       if (status.status.state === "failed") {
-        return <p className="text-error">Proxy source not watched, a restart watches it again: {status.status.message}</p>;
+        return <p className="text-error" title={status.status.message}>Proxy source not watched, a restart watches it again: {status.status.message}</p>;
       }
       const changed = status.status.changed_source;
       return changed.length === 0 ? null : (
@@ -77,6 +77,6 @@ function ProxyState({ status }: { status: StatusReading }) {
       );
     }
     case "failed":
-      return <p className="text-error">{describe(status.error)}</p>;
+      return <p className="text-error" title={describe(status.error)}>{describe(status.error)}</p>;
   }
 }

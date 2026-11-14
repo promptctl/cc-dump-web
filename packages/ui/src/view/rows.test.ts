@@ -41,6 +41,9 @@ describe("layout", () => {
     expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "x".repeat(500) }] })).toBe(`${"x".repeat(200)}…`);
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "x".repeat(200) }] })).toBe("x".repeat(200));
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
+    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
   });
