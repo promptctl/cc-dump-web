@@ -2,3 +2,4 @@ packages:
   - packages/*
 minimumReleaseAgeExclude:
   - '@promptctl/rich-js@0.30.0'
+  - '@promptctl/tmux-control-mode-js@0.2.0'
