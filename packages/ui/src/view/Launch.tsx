@@ -2,35 +2,26 @@ import { describe } from "@cc-dump/log/describe";
 import type { Launched, Launcher } from "@cc-dump/server/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
+import { HeaderPopover } from "./HeaderPopover.tsx";
 
 type Launching = Pick<Connection, "launcher" | "launch">;
 
 // The launch control (docs/design/01-mvp.md, F1): the user picks a session on their tmux server and launches the agent
-// command in a new window there. What it starts from, the sessions and the settings last launched with, is read each
-// time it opens, so it holds the sessions opened since it last did.
+// command in a new window there. What it starts from, the sessions and the settings the last launch asked for, is read
+// each time it opens, so it holds the sessions opened since it last did.
 export function Launch({ connection }: { connection: Launching }) {
-  const [open, setOpen] = useState(false);
   return (
     <div className="text-xs">
-      <button type="button" data-open-launch popoverTarget="launch" className="rounded-md border px-2 py-0.5 hover:bg-muted">
-        Launch ▾
-      </button>
-      {/* The browser's popover: it closes on Escape and on a click outside it. */}
-      <div
-        id="launch"
-        popover="auto"
-        onToggle={(event) => setOpen(event.newState === "open")}
-        className="inset-auto top-12 right-4 m-0 w-96 rounded-md border bg-background p-3 text-xs text-foreground shadow-md"
-      >
-        {open && <LaunchForm connection={connection} />}
-      </div>
+      <HeaderPopover id="launch" label="Launch" className="w-96 p-3">
+        <LaunchForm connection={connection} />
+      </HeaderPopover>
     </div>
   );
 }
 
 // [LAW:types-are-the-program] Where reading what a launch starts from stands, and where the launch stands.
 type Read = { state: "reading" } | { state: "read"; launcher: Launcher } | { state: "failed"; error: Error };
-type Launch = { state: "idle" } | { state: "launching" } | { state: "launched"; launched: Launched } | { state: "failed"; error: Error };
+type LaunchState = { state: "idle" } | { state: "launching" } | { state: "launched"; launched: Launched } | { state: "failed"; error: Error };
 
 // Read as it mounts, which is as the control opens; a read still under way when it closes is aborted.
 function LaunchForm({ connection }: { connection: Launching }) {
@@ -55,7 +46,7 @@ function LaunchForm({ connection }: { connection: Launching }) {
   }
 }
 
-// The session and the command, starting from the settings last launched with: their session while tmux still has it.
+// The session and the command, starting from the settings the last launch asked for: its session while tmux still has it.
 // A launch still under way when the control closes is aborted.
 function Choice({ connection, launcher: { settings, sessions } }: { connection: Launching; launcher: Launcher }) {
   const mounted = useRef<AbortController>(null);
@@ -66,7 +57,7 @@ function Choice({ connection, launcher: { settings, sessions } }: { connection: 
   }, []);
   const [session, setSession] = useState(settings.session !== null && sessions.includes(settings.session) ? settings.session : sessions[0]);
   const [command, setCommand] = useState(settings.command);
-  const [launch, setLaunch] = useState<Launch>({ state: "idle" });
+  const [launch, setLaunch] = useState<LaunchState>({ state: "idle" });
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const { signal } = mounted.current!;
@@ -94,7 +85,7 @@ function Choice({ connection, launcher: { settings, sessions } }: { connection: 
       </label>
       <div className="flex items-center justify-between gap-2">
         <Outcome launch={launch} />
-        <button type="submit" data-launch disabled={launch.state === "launching" || command.trim() === ""} className="rounded-md border px-2 py-0.5 enabled:hover:bg-muted disabled:opacity-50">
+        <button type="submit" data-launch disabled={launch.state === "launching"} className="rounded-md border px-2 py-0.5 enabled:hover:bg-muted disabled:opacity-50">
           Launch
         </button>
       </div>
@@ -102,7 +93,7 @@ function Choice({ connection, launcher: { settings, sessions } }: { connection: 
   );
 }
 
-function Outcome({ launch }: { launch: Launch }) {
+function Outcome({ launch }: { launch: LaunchState }) {
   switch (launch.state) {
     case "idle":
       return <span />;

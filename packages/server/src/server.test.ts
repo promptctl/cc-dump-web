@@ -25,7 +25,7 @@ describe("GET /launch", () => {
 });
 
 describe("POST /launch", () => {
-  it("opens the agent's window pointed at the proxy, and stores the settings it launched with", async () => {
+  it("opens the agent's window pointed at the proxy, and stores the settings asked for", async () => {
     const { url, opened, settingsPath, launch, work } = await app();
     const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions" });
     expect(res.status).toBe(200);
@@ -49,9 +49,10 @@ describe("POST /launch", () => {
   });
 
   it.each([
-    [{ session: "work", command: "" }, 'command must be a non-empty line of text, got ""'],
-    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a non-empty line of text"],
-    [{ command: "claude" }, "session must be a non-empty line of text, got undefined"],
+    [{ session: "work", command: "" }, 'command must be a line of text that is not blank, got ""'],
+    [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
+    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
+    [{ command: "claude" }, "session must be a line of text that is not blank, got undefined"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
     const { opened, settingsPath, launch, next } = await app();
@@ -70,14 +71,15 @@ describe("POST /launch", () => {
     expect(parseFailure(await res.text())).toEqual({ error: "can't find session: gone" });
   });
 
-  it("does not launch an agent the proxy cannot be found for", async () => {
-    const { opened, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
+  it("does not launch an agent the proxy cannot be found for, and keeps what was asked for the next try", async () => {
+    const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
     const res = await launch({ session: "work", command: "claude" });
     expect(res.status).toBe(502);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
     expect(await next()).toMatchObject({ event: "request", status: 502, outcome: "error", error: expect.stringContaining("did not say where agents reach it") });
     expect(parseFailure(await res.text())).toEqual({ error: "The proxy did not say where agents reach it: GET http://127.0.0.1:3347/info: fetch failed" });
     expect(opened).toEqual([]);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude" });
   });
 
   it("fails the request, on its event, when the app server fails", async () => {
@@ -90,6 +92,24 @@ describe("POST /launch", () => {
 });
 
 describe("routes", () => {
+  it("refuses a page from another site, launching nothing, on the request's event", async () => {
+    const { url, opened, next } = await app();
+    for (const origin of ["https://example.com", "http://127.0.0.1.example.com:3346", "null"]) {
+      const res = await fetch(`${url}/launch`, { method: "POST", headers: { origin, "content-type": "text/plain" }, body: JSON.stringify({ session: "work", command: "claude" }) });
+      expect(res.status).toBe(403);
+      expect(parseFailure(await res.text())).toEqual({ error: `A page at ${origin} cannot launch agents` });
+      expect(await next()).toMatchObject({ event: "request", status: 403, outcome: "error" });
+    }
+    expect(opened).toEqual([]);
+  });
+
+  it.each(["http://127.0.0.1:3346", "http://localhost:3346", "http://[::1]:3346"])("answers a page served from this machine, at %s", async (origin) => {
+    const { opened, launch } = await app();
+    const res = await launch({ session: "work", command: "claude" }, { origin });
+    expect(res.status).toBe(200);
+    expect(opened).toHaveLength(1);
+  });
+
   it("answers the browser's preflight of a JSON POST", async () => {
     const { url } = await app();
     const res = await fetch(`${url}/launch`, { method: "OPTIONS" });

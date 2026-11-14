@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { onScreen, toOpenRecording, type OpenRecording, type Reading } from "../reading.ts";
+import { HeaderPopover } from "./HeaderPopover.tsx";
 import { useView, view } from "./state.ts";
 
 // The recordings control (docs/design/01-mvp.md, F7): the recording open, the list of every recording to open another
@@ -12,7 +13,6 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
   const open = useView((state) => state.open);
   const shown = onScreen(reading);
   const list = useRef<HTMLDivElement>(null);
-  const [listing, setListing] = useState(false);
   const pick = (opened: OpenRecording) => {
     view.open(opened);
     list.current!.hidePopover();
@@ -24,19 +24,9 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
           Back to live
         </button>
       )}
-      <button type="button" data-open-recording popoverTarget="recordings" className="rounded-md border px-2 py-0.5 hover:bg-muted">
-        {open.recording === "live" ? "Live recording" : `Recording of ${startOf(open.name)}`} ▾
-      </button>
-      {/* The browser's popover: it closes on Escape and on a click outside it. */}
-      <div
-        id="recordings"
-        ref={list}
-        popover="auto"
-        onToggle={(event) => setListing(event.newState === "open")}
-        className="inset-auto top-12 right-4 m-0 max-h-[calc(100dvh-4rem)] min-w-72 overflow-y-auto rounded-md border bg-background p-1 text-xs text-foreground shadow-md"
-      >
-        {listing && <RecordingList connection={connection} shown={shown} pick={pick} />}
-      </div>
+      <HeaderPopover id="recordings" popover={list} label={open.recording === "live" ? "Live recording" : `Recording of ${startOf(open.name)}`} className="min-w-72 p-1">
+        <RecordingList connection={connection} shown={shown} pick={pick} />
+      </HeaderPopover>
     </div>
   );
 }

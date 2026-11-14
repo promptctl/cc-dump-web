@@ -1,5 +1,5 @@
 import type { Ending } from "@cc-dump/log/ending";
-import { jsonObject, parseJson } from "@cc-dump/log/json";
+import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -126,23 +126,10 @@ const recordedTypes: Record<Recorded["type"], true> = {
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
 const statusStates: Record<ProxyStatus["state"], true> = { watching: true, failed: true };
 
-// The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it.
+// The fields of `what`, with the recording format's headers beside the JSON types.
 function fields(json: unknown, what: string) {
-  const object = jsonObject(json, what);
-  const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
-    const value = object[name];
-    if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);
-    return value;
-  };
-  return {
-    string: (name: string) => read(name, (value) => typeof value === "string", "a string"),
-    boolean: (name: string) => read(name, (value) => typeof value === "boolean", "a boolean"),
-    integer: (name: string) => read(name, Number.isSafeInteger as (value: unknown) => value is number, "an integer"),
-    oneOf: <T extends string>(name: string, values: Record<T, true>) =>
-      read(name, (value): value is T => typeof value === "string" && Object.hasOwn(values, value), `one of ${Object.keys(values).join(", ")}`),
-    strings: (name: string) => read(name, (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"), "a list of strings"),
-    headers: (name: string) => read(name, isHeaders, "a list of [name, value] string pairs"),
-  };
+  const f = jsonFields(json, what);
+  return { ...f, headers: (name: string) => f.read(name, isHeaders, "a list of [name, value] string pairs") };
 }
 
 const isHeaders = (value: unknown): value is Header[] =>

@@ -18,7 +18,7 @@ export type Connection = {
   // The launch settings and the sessions on the user's tmux server, read now (docs/design/01-mvp.md, F1). A refusal
   // fails it in the app server's words, tmux's own when tmux refused, as when it has no server or no sessions.
   launcher: (signal: AbortSignal) => Promise<Launcher>;
-  // Opens the agent's window, and stores the settings it launched with as the next launch's. Fails as `launcher` does.
+  // Stores the settings asked for as the next launch's, then opens the agent's window. Fails as `launcher` does.
   launch: (launch: Launch, signal: AbortSignal) => Promise<Launched>;
 };
 

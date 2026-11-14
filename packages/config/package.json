@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./settings": "./src/settings.ts",
     "./settings-file": "./src/settings-file.ts",
     "./xdg": "./src/xdg.ts"
   },

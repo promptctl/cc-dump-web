@@ -7,6 +7,8 @@ import {
   TmuxClient,
   TmuxCommandError,
   TransportClosedError,
+  UnrecognizedTmuxVersionError,
+  UnsupportedTmuxVersionError,
   watchServerArgs,
   type SpawnOptions,
   type TmuxConnection,
@@ -29,9 +31,9 @@ export type Tmux = {
   newWindow: (window: NewWindow) => Promise<Window>;
 };
 
-// tmux refused what it was asked, has no session by the name asked for, or ended the connection before answering; the
-// message is tmux's own text where tmux gave one (a failed attach's: "no sessions", "error connecting to …" when no
-// server runs).
+// tmux refused what it was asked, has no session by the name asked for, is older than a command needs, or ended the
+// connection before answering; the message is tmux's own text where tmux gave one (a failed attach's: "no sessions",
+// "error connecting to …" when no server runs).
 export class TmuxRefused extends Error {}
 
 // `options` picks the tmux server, as `tmux -L`/`-S` would: the user's default one when empty.
@@ -65,21 +67,28 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
           await client.execute(`set-option -p -t %${paneId} remain-on-exit-format ''`);
           await respawnPane(client, paneId, { command, environment: env });
         } catch (error) {
-          // A window whose command never started is the launch's to remove.
+          // A window whose command never started is the launch's to remove. One that stays is named in the failure,
+          // which keeps its kind: tmux's refusal, in tmux's words, or the app server's failure.
+          const failure = refused(error);
           await client.execute(`kill-window -t @${windowId}`).catch((removal: unknown) => {
-            throw new AggregateError([error, removal], `${describe(error)}; its empty window @${windowId} stays: ${describe(removal)}`);
+            const stays = `its empty window @${windowId} stays: ${describe(removal)}`;
+            throw failure instanceof TmuxRefused
+              ? new TmuxRefused(`${failure.message}; ${stays}`, { cause: failure })
+              : new AggregateError([failure, removal], `${describe(failure)}; ${stays}`);
           });
-          throw error;
+          throw failure;
         }
         return { window_id: `@${windowId}`, pane_id: `%${paneId}` };
       }),
   };
 }
 
-// [LAW:single-enforcer] The one place the library's errors become the seam's: a command tmux answered with an error, and
-// a connection that ended first, whose reason is tmux's words when it gave some, in the bytes spawnTmux delivers them in.
+// [LAW:single-enforcer] The one place the library's errors become the seam's: a command tmux answered with an error, a
+// tmux whose version a command does not run on, and a connection that ended first, whose reason is tmux's words when it
+// gave some, in the bytes spawnTmux delivers them in.
 function refused(error: unknown): unknown {
-  if (error instanceof TmuxCommandError) return new TmuxRefused(error.message, { cause: error });
+  if (error instanceof TmuxCommandError || error instanceof UnsupportedTmuxVersionError || error instanceof UnrecognizedTmuxVersionError)
+    return new TmuxRefused(error.message, { cause: error });
   if (error instanceof TransportClosedError) return new TmuxRefused(error.reason === undefined ? error.message : Buffer.from(error.reason, "latin1").toString("utf8"), { cause: error });
   return error;
 }

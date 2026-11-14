@@ -6,21 +6,30 @@ import { tmuxSocketDir } from "@promptctl/tmux-control-mode-js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createTmux, TmuxRefused } from "./tmux.ts";
 
-const saved = process.env.SSH_AUTH_SOCK;
-
 // A tmux server of the test's own, on a socket no other server uses, with `sessions`, reading no configuration, whose
-// hooks and options would be the user's (a pane-died hook that respawns a dead pane). When the test finishes each session
-// is killed, the server exiting with the last, and the socket's file, which tmux leaves, is removed.
+// hooks and options would be the user's (a pane-died hook that respawns a dead pane). When the test finishes the server,
+// started by its first session, is killed, and the socket's file, which tmux leaves, is removed whether or not it was.
 let servers = 0;
 function tmuxServer(...sessions: string[]) {
   const socketPath = `cc-dump-test-${process.pid}-${++servers}`;
   const tmux = (...args: string[]) => execFileSync("tmux", ["-f", "/dev/null", "-L", socketPath, ...args], { encoding: "utf8" });
-  for (const session of sessions) tmux("new-session", "-d", "-s", session);
   onTestFinished(() => {
-    for (const session of sessions) tmux("kill-session", "-t", `=${session}`);
-    rmSync(join(tmuxSocketDir(), socketPath), { force: true });
+    try {
+      if (sessions.length > 0) tmux("kill-server");
+    } finally {
+      rmSync(join(tmuxSocketDir(), socketPath), { force: true });
+    }
   });
+  for (const session of sessions) tmux("new-session", "-d", "-s", session);
   return { socketPath, tmux };
+}
+
+// The app server's environment variable `name` set to `value` until the test finishes, then as it was: unset again
+// when it was unset, since node keeps any value assigned to process.env as a string, undefined as "undefined".
+function setEnv(name: string, value: string) {
+  const was = process.env[name];
+  process.env[name] = value;
+  onTestFinished(() => void (was === undefined ? delete process.env[name] : (process.env[name] = was)));
 }
 
 describe("createTmux", () => {
@@ -39,8 +48,7 @@ describe("createTmux", () => {
   it("leaves the attached session's environment as it was", async () => {
     const { socketPath, tmux } = tmuxServer("work");
     tmux("set-environment", "-t", "=work", "SSH_AUTH_SOCK", "/the-session's");
-    process.env.SSH_AUTH_SOCK = "/the-app-server's";
-    onTestFinished(() => void (process.env.SSH_AUTH_SOCK = saved));
+    setEnv("SSH_AUTH_SOCK", "/the-app-server's");
     await createTmux({ socketPath }).sessions();
     await createTmux({ socketPath }).newWindow({ session: "work", command: "true", env: {} });
     expect(tmux("show-environment", "-t", "=work", "SSH_AUTH_SOCK").trim()).toBe("SSH_AUTH_SOCK=/the-session's");
@@ -51,8 +59,9 @@ describe("createTmux", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const out = join(dir, "out");
-    // Quotes, `$` and `#` reach the shell as written: tmux expands no format in the command or the environment.
-    const command = `printf '%s #{session_name}' "$ANTHROPIC_BASE_URL" > '${out}'`;
+    // Quotes, `$` and `#` reach the shell as written: tmux expands no format in the command or the environment. The
+    // command stays, as an agent does, since a pane whose command succeeds closes its window, which is then not current.
+    const command = `printf '%s #{session_name}' "$ANTHROPIC_BASE_URL" > '${out}'; exec sleep 60`;
 
     const window = await createTmux({ socketPath }).newWindow({ session: "work", command, env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/#x" } });
 
@@ -86,9 +95,7 @@ describe("createTmux", () => {
   it("attaches from inside tmux while a window has no process yet", async () => {
     const { socketPath, tmux } = tmuxServer("work");
     tmux("new-window", "-d", "-E", "-t", "=work:");
-    const inherited = process.env.TMUX;
-    process.env.TMUX = "/tmp/some-other-server,1,0";
-    onTestFinished(() => void (inherited === undefined ? delete process.env.TMUX : (process.env.TMUX = inherited)));
+    setEnv("TMUX", "/tmp/some-other-server,1,0");
     expect(await createTmux({ socketPath }).sessions()).toEqual(["work"]);
   });
 });

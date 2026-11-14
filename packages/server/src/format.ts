@@ -1,10 +1,18 @@
-import { jsonObject, parseJson } from "@cc-dump/log/json";
+import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
+import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-mvp.md,
 // F1). Imports nothing that needs node, so the UI takes these types, and their parsers, from here.
 
-// The settings the last launch was made with, which the next one starts from. `session`: null until a launch names one.
-export type LaunchSettings = { session: string | null; command: string };
+// [LAW:one-source-of-truth] The launch settings (docs/design/01-mvp.md, F1, F11), in launch.json and in `GET /launch`'s
+// answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
+// launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
+// command, a whole command line, `claude` until the user launches another.
+export const launchSettingsTable = {
+  session: { default: null, parse: (value: unknown) => (value === null ? null : sessionName(value)) },
+  command: { default: "claude", parse: commandLine },
+};
+export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 
 // The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
 export type Sessions = [string, ...string[]];
@@ -32,7 +40,7 @@ export function commandLine(value: unknown): string {
 }
 
 function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value === "" || value.includes("\n")) throw new Error(`${name} must be a non-empty line of text, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string" || value.trim() === "" || value.includes("\n")) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -42,13 +50,8 @@ export function parseLaunch(json: string): Launch {
 }
 
 export function parseLauncher(json: string): Launcher {
-  const launcher = jsonObject(parseJson(json, "launcher"), "launcher");
-  const settings = jsonObject(launcher.settings, "launcher settings");
-  if (!Array.isArray(launcher.sessions)) throw new Error("launcher: sessions is not a list");
-  return {
-    settings: { session: settings.session === null ? null : sessionName(settings.session), command: commandLine(settings.command) },
-    sessions: sessions(launcher.sessions.map(sessionName)),
-  };
+  const f = fields(parseJson(json, "launcher"), "launcher");
+  return { settings: parseSettings("launcher settings", launchSettingsTable, f.object("settings")), sessions: sessions(f.strings("sessions").map(sessionName)) };
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
@@ -58,15 +61,10 @@ export function sessions(names: string[]): Sessions {
 }
 
 export function parseLaunched(json: string): Launched {
-  const launched = jsonObject(parseJson(json, "launched"), "launched");
-  return { session: sessionName(launched.session), window_id: text(launched.window_id, "window_id"), pane_id: text(launched.pane_id, "pane_id") };
+  const f = fields(parseJson(json, "launched"), "launched");
+  return { session: sessionName(f.string("session")), window_id: f.string("window_id"), pane_id: f.string("pane_id") };
 }
 
 export function parseFailure(json: string): Failure {
-  return { error: text(jsonObject(parseJson(json, "failure"), "failure").error, "error") };
-}
-
-function text(value: unknown, name: string): string {
-  if (typeof value !== "string") throw new Error(`${name} is not a string`);
-  return value;
+  return { error: fields(parseJson(json, "failure"), "failure").string("error") };
 }

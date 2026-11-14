@@ -24,6 +24,7 @@ export async function app({ tmux = {}, proxyInfo = async () => ({ base_url: "htt
   };
   const events = eventLog();
   const { url, port, next } = await serving(createApp({ log: events.log, settingsPath, tmux: fake, proxyInfo }));
-  const launch = (body: unknown) => fetch(`${url}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const launch = (body: unknown, headers: Record<string, string> = {}) =>
+    fetch(`${url}/launch`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return { url, port, next, work: events.next, settingsPath, opened, launch };
 }

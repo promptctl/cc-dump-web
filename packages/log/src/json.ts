@@ -14,3 +14,24 @@ export function jsonObject(json: unknown, what: string): Record<string, unknown>
   if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error(`${what}: is not an object`);
   return json as Record<string, unknown>;
 }
+
+// The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it. `read` takes
+// any type a part's format has a test for.
+export function fields(json: unknown, what: string) {
+  const object = jsonObject(json, what);
+  const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
+    const value = object[name];
+    if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);
+    return value;
+  };
+  return {
+    read,
+    object: (name: string) => jsonObject(object[name], `${what}: ${name}`),
+    string: (name: string) => read(name, (value) => typeof value === "string", "a string"),
+    boolean: (name: string) => read(name, (value) => typeof value === "boolean", "a boolean"),
+    integer: (name: string) => read(name, Number.isSafeInteger as (value: unknown) => value is number, "an integer"),
+    oneOf: <T extends string>(name: string, values: Record<T, true>) =>
+      read(name, (value): value is T => typeof value === "string" && Object.hasOwn(values, value), `one of ${Object.keys(values).join(", ")}`),
+    strings: (name: string) => read(name, (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"), "a list of strings"),
+  };
+}
