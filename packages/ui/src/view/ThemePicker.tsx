@@ -1,14 +1,18 @@
 import { useRef } from "react";
 import { categories } from "../format/blocks.ts";
 import { settings, useSettings } from "../settings.ts";
-import { systemThemes, themeNames, themeOf, type Theme, type ThemeChoice } from "../theme/theme.ts";
+import { resolve, systemThemes, themeNames, themeOf, type Theme, type ThemeChoice } from "../theme/theme.ts";
+import { usePrefersDark } from "../theme/useTheme.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 
 // The theme control (docs/design/01-mvp.md, F10): the choice in effect, and every theme to choose from, each shown
-// with its ground and its six category colors, so the derived colors are seen before they are chosen. `theme`: the one
-// in effect, which the system choice resolves to.
-export function ThemePicker({ theme }: { theme: Theme }) {
+// with its ground and its six category colors, so the derived colors are seen before they are chosen. The system
+// choice is shown as the theme it resolves to now.
+export function ThemePicker() {
   const choice = useSettings((state) => state.theme);
+  const prefersDark = usePrefersDark();
+  const system = themeOf(resolve("system", prefersDark));
+  const theme = themeOf(resolve(choice, prefersDark));
   const list = useRef<HTMLDivElement>(null);
   const pick = (chosen: ThemeChoice) => {
     settings.setTheme(chosen);
@@ -17,7 +21,7 @@ export function ThemePicker({ theme }: { theme: Theme }) {
   return (
     <HeaderPopover id="theme" popover={list} label={choice === "system" ? `System (${theme.name})` : theme.name} className="min-w-64 p-1">
       <ul>
-        <Option choice="system" label={`System: ${systemThemes.dark} or ${systemThemes.light}`} swatch={theme} current={choice === "system"} pick={pick} />
+        <Option choice="system" label={`System: ${systemThemes.dark} or ${systemThemes.light}`} swatch={system} current={choice === "system"} pick={pick} />
         {themeNames.map((name) => (
           <Option key={name} choice={name} label={name} swatch={themeOf(name)} current={choice === name} pick={pick} />
         ))}

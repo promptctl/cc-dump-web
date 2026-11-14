@@ -28,39 +28,6 @@
   --hover: color-mix(in oklab, var(--foreground) 8%, transparent);
 }
 
-/* A category's colors (docs/design/02-design.md, "One bold element"): the bar in the gutter beside its blocks, and its
-   chip in the filter bar, read through `data-category` so one rule serves every category. */
-[data-category="user"] {
-  --category: var(--category-user);
-  --category-chip: var(--category-user-chip);
-  --category-chip-text: var(--category-user-chip-text);
-}
-[data-category="assistant"] {
-  --category: var(--category-assistant);
-  --category-chip: var(--category-assistant-chip);
-  --category-chip-text: var(--category-assistant-chip-text);
-}
-[data-category="tools"] {
-  --category: var(--category-tools);
-  --category-chip: var(--category-tools-chip);
-  --category-chip-text: var(--category-tools-chip-text);
-}
-[data-category="system"] {
-  --category: var(--category-system);
-  --category-chip: var(--category-system-chip);
-  --category-chip-text: var(--category-system-chip-text);
-}
-[data-category="metadata"] {
-  --category: var(--category-metadata);
-  --category-chip: var(--category-metadata-chip);
-  --category-chip-text: var(--category-metadata-chip-text);
-}
-[data-category="thinking"] {
-  --category: var(--category-thinking);
-  --category-chip: var(--category-thinking-chip);
-  --category-chip-text: var(--category-thinking-chip-text);
-}
-
 @layer base {
   * {
     @apply border-border outline-primary/50;
@@ -73,6 +40,7 @@
 /* The search's matches, painted by view/highlights.ts with the CSS Custom Highlight API. */
 ::highlight(match) {
   background-color: var(--match);
+  color: var(--match-foreground);
 }
 ::highlight(match-current) {
   background-color: var(--match-current);

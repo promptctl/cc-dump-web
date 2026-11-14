@@ -15,7 +15,7 @@ import { useView } from "./view/state.ts";
 import { ThemePicker } from "./view/ThemePicker.tsx";
 
 export function App({ connection }: { connection: Connection }) {
-  const theme = useTheme();
+  useTheme();
   const reading = useRecording(connection, useView((state) => state.open));
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
@@ -32,7 +32,7 @@ export function App({ connection }: { connection: Connection }) {
           <ReadingState reading={reading} />
           <Recordings connection={connection} reading={reading} />
           <Launch connection={connection} />
-          <ThemePicker theme={theme} />
+          <ThemePicker />
         </div>
       </header>
       <FilterBar />

@@ -1,4 +1,4 @@
-import { ensureContrast, hslToRgb, rgbToHsl, type ColorRgba, type Palette, type PaletteRole } from "@promptctl/rich-js";
+import { ColorRgba, ensureContrast, ensureContrastToward, hslToRgb, rgbToHsl, type Palette, type PaletteRole } from "@promptctl/rich-js";
 import { categories, type Category } from "../format/blocks.ts";
 
 // The six category colors of a theme (docs/design/02-design.md, "Themes"): the bar in the gutter beside a block, the
@@ -13,22 +13,24 @@ const hueIndex: Record<Category, number> = { tools: 0, system: 1, metadata: 2, u
 const goldenAngle = 137.508;
 // A theme color less saturated than this is a gray, and holds no hue to keep the categories away from.
 const chromaticFloor = 0.05;
+// The pole a theme's text is toward: white on a dark theme, black on a light one.
+const poles = { dark: new ColorRgba(255, 255, 255), light: new ColorRgba(0, 0, 0) };
 
 // Derived as the original cc-dump derived its gutter and chip colors (~/code/cc-dump/docs/THEME_COLOR_SYSTEM.md): the
 // hues are seeded in the widest gap the theme's own hues leave, so they are where the theme is not, and placed in HSL
 // as the original placed them, so textual-dark shows the original's colors. The chip sits a step from the surface
 // toward the foreground, with saturation taken from the primary's. The contrast floors are then held by ensureContrast,
 // which slides lightness in OKLCH and keeps the hue, in place of the original's four per-hue correction loops: the chip
-// text reads on the chip at 4.5, and the bar is the chip lifted until it reads on the background and the surface at 3,
-// which on a dark theme is how the original's gutters looked.
+// text reads on the chip at 4.5, and the bar is the chip lifted toward the theme's text pole until it reads on the
+// background and then on the surface at 3, which on a dark theme is how the original's gutters looked. One pole for both
+// slides, the theme's own side, so the second slide only lifts further and never undoes the first.
 export function categoryColors(palette: Palette): Record<Category, CategoryColors> {
   const hsl = (role: PaletteRole) => rgbToHsl(palette.get(role));
-  const background = hsl("background");
-  const foreground = hsl("foreground");
   const surface = hsl("surface");
   const primary = hsl("primary");
   const seed = seedHue([primary, hsl("secondary"), hsl("accent")].filter(({ s }) => s > chromaticFloor).map(({ h }) => h));
-  const dark = background.l < foreground.l;
+  const { dark } = palette;
+  const pole = dark ? poles.dark : poles.light;
   const toward = dark ? 1 : -1;
   const chipL = unit(surface.l + toward * 0.2);
   const chipTextL = unit(dark ? Math.max(chipL + 0.45, 0.8) : Math.min(chipL - 0.45, 0.2));
@@ -41,7 +43,7 @@ export function categoryColors(palette: Palette): Record<Category, CategoryColor
     const h = (seed + hueIndex[category] * goldenAngle) % 360;
     const chip = hslToRgb({ h, s: chipS, l: chipL });
     const chipText = ensureContrast(hslToRgb({ h, s: chipTextS, l: chipTextL }), chip, 4.5);
-    const bar = ensureContrast(ensureContrast(chip, onBackground, 3), onSurface, 3);
+    const bar = ensureContrastToward(ensureContrastToward(chip, onBackground, 3, pole), onSurface, 3, pole);
     return [category, { bar, chip, chipText }];
   });
   return Object.fromEntries(colors) as Record<Category, CategoryColors>;

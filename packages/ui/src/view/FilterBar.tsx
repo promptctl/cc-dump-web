@@ -1,5 +1,6 @@
 import { categories, type Category } from "../format/blocks.ts";
 import { settings, useSettings, type Visibility } from "../settings.ts";
+import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
 // The filter bar (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that
@@ -20,7 +21,7 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
   const { next, pressed, look, does } = visibilityStates[visibility];
   return (
     <Toggle
-      data-category={category}
+      style={categoryVars(category)}
       data-visibility={visibility}
       pressed={pressed}
       title={`${category}: ${visibility}. Click to ${does}.`}

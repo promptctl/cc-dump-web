@@ -1,5 +1,6 @@
 import { contrastFor, type Palette, type PaletteRole } from "@promptctl/rich-js";
 import { getThemePalette, listThemePalettes, type ThemeName } from "@promptctl/rich-js/themes/registry";
+import type { CSSProperties } from "react";
 import { categories, type Category } from "../format/blocks.ts";
 import { categoryColors, type CategoryColors } from "./categories.ts";
 
@@ -28,9 +29,20 @@ export type Theme = { name: ThemeName; palette: Palette; categories: Record<Cate
 // Derived once per name: the palette is rich-js's cached one, and the categories are a pure function of it.
 const themes = new Map<ThemeName, Theme>();
 export function themeOf(name: ThemeName): Theme {
-  const theme = themes.get(name) ?? { name, palette: getThemePalette(name), categories: categoryColors(getThemePalette(name)) };
-  themes.set(name, theme);
+  let theme = themes.get(name);
+  if (theme === undefined) {
+    const palette = getThemePalette(name);
+    theme = { name, palette, categories: categoryColors(palette) };
+    themes.set(name, theme);
+  }
   return theme;
+}
+
+// The custom properties an element of `category` is styled through, `--category`, `--category-chip` and
+// `--category-chip-text`, each the theme's variable for that category, so one class paints every category's gutter bar
+// or chip (docs/design/02-design.md, "One bold element").
+export function categoryVars(category: Category): CSSProperties {
+  return { "--category": `var(--category-${category})`, "--category-chip": `var(--category-${category}-chip)`, "--category-chip-text": `var(--category-${category}-chip-text)` } as CSSProperties;
 }
 
 // [LAW:one-source-of-truth] The one table from a theme's roles and category colors to the custom properties the
@@ -38,6 +50,7 @@ export function themeOf(name: ThemeName): Theme {
 export function cssVariables({ palette, categories: colors }: Theme): Record<`--${string}`, string> {
   const role = (name: PaletteRole) => palette.get(name).hex;
   const warning = palette.get("warning");
+  const warningMuted = palette.get("warning-muted");
   return {
     "--background": role("background"),
     "--foreground": role("foreground"),
@@ -46,9 +59,10 @@ export function cssVariables({ palette, categories: colors }: Theme): Record<`--
     "--panel": role("panel"),
     "--primary": role("primary"),
     "--text-error": role("text-error"),
-    // The search's matches: the theme's warning, muted for every match and whole for the current one, whose text is
-    // whichever of black and white reads on it.
-    "--match": role("warning-muted"),
+    // The search's matches: the theme's warning, muted for every match and whole for the current one, each with the text
+    // on it whichever of black and white reads on it, so a match in muted text still reads.
+    "--match": warningMuted.hex,
+    "--match-foreground": contrastFor(warningMuted).hex,
     "--match-current": warning.hex,
     "--match-current-foreground": contrastFor(warning).hex,
     ...Object.fromEntries(
