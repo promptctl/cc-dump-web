@@ -44,6 +44,9 @@ describe("layout", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
+    // Deep JSON's indentation does not use up the line.
+    const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };
+    expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
   });

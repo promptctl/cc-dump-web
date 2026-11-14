@@ -1,3 +1,4 @@
+import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
@@ -47,28 +48,33 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
     decode: (side) => decodeSide(growing(decodings, side, () => createDecoding(side.head?.headers ?? [])), side),
     reassemble: (side, body) => growing(reassemblies, side, createReassembly).reassemble(body.text, side.completedBy !== undefined),
   };
-  // The ordinal is the exchange's place among those shown, which a recording, only ever growing, never moves.
+  // The ordinal is the exchange's place among those shown, which can move under an unchanged exchange: one recorded
+  // before its request head is shown until the head says it is not a Messages request. So an exchange formatted before is
+  // the same object only at the same place; at another, its sides are still the ones formatted before.
   return (exchanges) =>
-    exchanges.filter(isMessages).map((exchange, index) =>
-      cached(formatted, exchange.latest, () => {
-        // An empty side formats the same whatever the key, so any of the exchange's events will do.
-        const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request));
-        const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseBlocks(sides, exchange.response));
-        const { first: opened, end } = exchange;
-        return {
-          exchange,
-          facts: {
-            ordinal: index + 1,
-            began: opened.timestamp,
-            duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(opened.timestamp),
-            status: exchange.response.head?.status,
-            model: request.model,
-            ...response.message,
-          },
-          groups: [...request.groups, { key: "response", title: "response", blocks: [...response.blocks, ...one("end", ending(end))] }],
-        };
-      }),
-    );
+    exchanges.filter(isMessages).map((exchange, index) => {
+      const ordinal = index + 1;
+      const before = formatted.get(exchange.latest);
+      if (before?.facts.ordinal === ordinal) return before;
+      // An empty side formats the same whatever the key, so any of the exchange's events will do.
+      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request));
+      const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseBlocks(sides, exchange.response));
+      const { first: opened, end } = exchange;
+      const shown: FormattedExchange = {
+        exchange,
+        facts: {
+          ordinal,
+          began: opened.timestamp,
+          duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(opened.timestamp),
+          status: exchange.response.head?.status,
+          model: request.model,
+          ...response.message,
+        },
+        groups: [...request.groups, { key: "response", title: "response", blocks: [...response.blocks, ...one("end", ending(end))] }],
+      };
+      formatted.set(exchange.latest, shown);
+      return shown;
+    });
 }
 
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.
@@ -259,7 +265,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
 
 // A count in a message's usage, where the API gave one: a count it gave as null, or not at all, is none.
 function tokens(usage: unknown, name: string): number | undefined {
-  const count = typeof usage === "object" && usage !== null ? (usage as Record<string, unknown>)[name] : undefined;
+  const count = fieldOf(usage, name);
   return typeof count === "number" ? count : undefined;
 }
 

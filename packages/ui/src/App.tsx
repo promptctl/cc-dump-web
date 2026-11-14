@@ -51,8 +51,8 @@ function ReadingState({ reading }: { reading: Reading }) {
       return null;
     case "ended":
       return (
-        <p className="text-foreground-muted">
-          Recording ended{reading.end.unterminated_bytes > 0 && `, its last ${reading.end.unterminated_bytes} bytes cut off`}
+        <p className="text-foreground-muted" title={recordingEnded(reading.end.unterminated_bytes)}>
+          {recordingEnded(reading.end.unterminated_bytes)}
         </p>
       );
     case "failed":
@@ -80,3 +80,6 @@ function ProxyState({ status }: { status: StatusReading }) {
       return <p className="text-error" title={describe(status.error)}>{describe(status.error)}</p>;
   }
 }
+
+// The end of a recording read to its end, and what of its last event was cut off.
+const recordingEnded = (unterminated: number) => `Recording ended${unterminated > 0 ? `, its last ${unterminated} bytes cut off` : ""}`;

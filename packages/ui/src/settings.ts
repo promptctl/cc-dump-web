@@ -1,3 +1,4 @@
+import { fieldOf } from "@cc-dump/log/json";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
@@ -19,10 +20,10 @@ const name = "cc-dump.settings";
 // [LAW:parse-dont-validate] What is stored, read as the settings: each setting the stored one, or its default when none
 // is stored or the one stored is not a value this build has.
 export function parseSettings(stored: unknown): Settings {
-  const follow = field(stored, "follow");
-  const theme = field(stored, "theme");
+  const follow = fieldOf(stored, "follow");
+  const theme = fieldOf(stored, "theme");
   const visibility = (category: Category) => {
-    const value = field(field(stored, "visibility"), category);
+    const value = fieldOf(fieldOf(stored, "visibility"), category);
     return isVisibility(value) ? value : "shown";
   };
   return {
@@ -32,7 +33,6 @@ export function parseSettings(stored: unknown): Settings {
   };
 }
 
-const field = (value: unknown, key: string): unknown => (typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined);
 const isVisibility = (value: unknown): value is Visibility => (visibilities as readonly unknown[]).includes(value);
 
 export const useSettings = create<Settings>()(

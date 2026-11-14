@@ -15,6 +15,12 @@ export function jsonObject(json: unknown, what: string): Record<string, unknown>
   return json as Record<string, unknown>;
 }
 
+// A field of a JSON value read leniently: the value at `name` when `json` is an object, and none otherwise, for a read
+// in which a value of any other shape simply holds no such field. `fields` is the strict read.
+export function fieldOf(json: unknown, name: string): unknown {
+  return typeof json === "object" && json !== null && !Array.isArray(json) ? (json as Record<string, unknown>)[name] : undefined;
+}
+
 // The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it. `read` takes
 // any type a part's format has a test for.
 export function fields(json: unknown, what: string) {

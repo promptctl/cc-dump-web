@@ -167,14 +167,21 @@ export function preview(block: Block): string {
   // A JSON string, as a tool's input is while it streams, is its own text, so it is never serialized for a line; any
   // other value's serialization is jsonText's, which the block's size has already made.
   const text = part === undefined ? "" : part.kind === "text" ? part.text : typeof part.value === "string" ? part.value : jsonText(part);
-  // Cut before the whitespace is collapsed, so a long text is read only as far as the line, and at a whole character,
-  // not between a surrogate pair's halves; the ellipsis says something visible was cut.
-  const end = isHighSurrogate(text.charCodeAt(previewLength - 1)) ? previewLength - 1 : previewLength;
-  const line = text.slice(0, end).replace(/\s+/g, " ").trim();
-  return /\S/.test(text.slice(end)) ? `${line}…` : line;
+  // A long text is read only a few lines' worth ahead, enough to fill the line once its whitespace, JSON's indentation
+  // included, is collapsed; each cut is at a whole character, not between a surrogate pair's halves, and the ellipsis
+  // says something visible was cut.
+  const scanned = wholeCut(text, previewLength * 4);
+  const collapsed = scanned.replace(/\s+/g, " ").trim();
+  const line = wholeCut(collapsed, previewLength);
+  return line.length < collapsed.length || /\S/.test(text.slice(scanned.length)) ? `${line.trimEnd()}…` : line;
 }
 const previewLength = 200;
-const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+
+// The first `length` code units of `text`, one fewer where the last would be the first half of a surrogate pair.
+function wholeCut(text: string, length: number): string {
+  const code = text.charCodeAt(length - 1);
+  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? length - 1 : length);
+}
 
 // A recorded timestamp as the clock read, to the second.
 export function clockTime(timestamp: string): string {

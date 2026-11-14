@@ -270,7 +270,7 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
         {clockTime(facts.began)}
       </time>
       {/* A request whose head was not recorded has no model to name; the line says why. */}
-      {exchange.request.head === undefined ? <span className="text-foreground-muted">request not recorded</span> : <span title={facts.model}>{facts.model}</span>}
+      {exchange.request.head === undefined ? <span className="text-foreground-muted">request not recorded</span> : <span className="font-mono" title={facts.model}>{facts.model}</span>}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
       {/* An HTTP error reads as one, its reason phrase on hover. */}
       <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
@@ -279,7 +279,7 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
       <Fact label="in" count={facts.input} />
       <Fact label="cache" count={facts.cacheRead} />
       <Fact label="out" count={facts.output} />
-      <span title={facts.stopReason}>{facts.stopReason}</span>
+      <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
         {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
@@ -319,7 +319,7 @@ function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
         }}
       >
         <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
-        <span className="shrink-0">
+        <span className="min-w-0 truncate" title={block.name}>
           <HighlightedText blockKey={key} at={address.name} text={block.name} />
         </span>
         {/* Expanded, the content itself is below, so the line does not say it twice. */}

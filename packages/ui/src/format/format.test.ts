@@ -272,6 +272,17 @@ describe("format", () => {
     expect(lines(group(formatted[1]!, "request"))).toEqual(["metadata HTTP request"]);
   });
 
+  it("numbers an exchange by its place among those shown, as one shown before its request head leaves them", () => {
+    const formatter = createFormatter();
+    const headless = response("other", 200, [], Buffer.from("{}"));
+    const messages = request("messages", { model: "m", messages: [] });
+    const first = formatter(exchanges([...headless, ...messages]));
+    expect(first.map(({ facts }) => facts.ordinal)).toEqual([1, 2]);
+    const later = formatter(exchanges([...headless, ...messages, ...request("other", {}, { method: "GET", url: "/v1/models" })]));
+    expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([["messages", 1]]);
+    expect(later[0]!.groups[0]).toBe(first[1]!.groups[0]);
+  });
+
   it("keeps an exchange that got no new event, and a streaming exchange's request, as the objects formatted before", () => {
     const formatter = createFormatter();
     const done = [...request("done", { model: "m", messages: [] }), ...streamed("done", [messageStart]), end("done")];
