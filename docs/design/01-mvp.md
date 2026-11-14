@@ -85,6 +85,13 @@ Each feature is stated as what the person using the app can do and see.
 - After a reload the user sees the same conversation at the same scroll position, with the same filters, expanded blocks, search and follow state.
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
+### F13. Terminal
+Added 2026-11-14, from using the app: the agent is watched and used in the same window.
+- The agent's tmux pane is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the agent, as in their own terminal.
+- A launch (F1) shows the pane it opened.
+- After a reload the pane is shown again as it is now.
+- The terminal is in the theme (F10).
+
 ## How hot reload shapes the design
 
 Hot reload is designed in first, because it decides where every other piece lives.
@@ -124,11 +131,10 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 - TypeScript throughout. Node for the proxy and the app server.
 - React with Vite for the UI. Zustand for state.
 - Tailwind with theme values as CSS variables, and shadcn/ui for components.
-- tmux-control-mode-js for all tmux operations.
+- tmux-control-mode-js for all tmux operations, and its terminal export, on xterm.js, for the terminal (F13).
 
 ## Not in the MVP
 
-- **A terminal in the browser.** Showing the agent's tmux pane in the page with xterm.js is wanted later and is not required now. The agent is used in the user's own terminal.
 - Detail levels beyond shown and hidden, search options (regex, case, whole word), search inside hidden categories, per-tool renderers, markdown rendering, splitting injected content out of user messages, and token-cost figures. These were proposed as the next layer and are not part of this scope.
 - Everything in the intermediate and advanced layers.
 
