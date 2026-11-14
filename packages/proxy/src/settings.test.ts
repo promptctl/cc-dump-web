@@ -1,8 +1,19 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe as described } from "@cc-dump/log/describe";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxySettings, readProxySettings } from "./settings.ts";
+
+// What `act` refused, as the user is shown it: each error of its chain, outermost first.
+function refusal(act: () => unknown): string {
+  try {
+    act();
+  } catch (error) {
+    return described(error);
+  }
+  throw new Error("it was not refused");
+}
 
 describe("parseProxySettings", () => {
   it("reads no file as every setting's default, and says there was none", () => {
@@ -31,7 +42,7 @@ describe("parseProxySettings", () => {
     ["[3400]", "proxy settings: is not an object"],
     ["null", "proxy settings: is not an object"],
   ])("refuses %s, naming why, rather than taking a default the user did not set", (text, reason) => {
-    expect(() => parseProxySettings(text)).toThrow(reason);
+    expect(refusal(() => parseProxySettings(text))).toContain(reason);
   });
 });
 

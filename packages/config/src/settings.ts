@@ -1,5 +1,3 @@
-import { describe } from "@cc-dump/log/describe";
-
 // One setting: its default, written as a settings file would hold it, and its parse.
 export type Setting<T> = { default: unknown; parse: (value: unknown) => T };
 export type Table = Record<string, Setting<unknown>>;
@@ -25,7 +23,7 @@ function parsed(what: string, setting: Setting<unknown>, value: unknown): unknow
   try {
     return setting.parse(value);
   } catch (error) {
-    throw new Error(`${what}: ${describe(error)}`);
+    throw new Error(what, { cause: error });
   }
 }
 
