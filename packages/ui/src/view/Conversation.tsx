@@ -140,7 +140,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   return (
     <>
       {/* The filter, the gutter's legend, and the search share one bar (docs/design/02-design.md, "Layout"). */}
-      <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-1.5 border-b px-4 py-1.5 text-xs">
+      <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-1.5 bg-surface px-4 py-1.5 text-xs">
         <FilterBar />
         <SearchBar count={found.count} ordinal={currentOrdinal} onStep={stepTo} />
       </div>
@@ -174,7 +174,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
             data-follow={following}
             pressed={control.pressed}
             title={control.title}
-            className="pointer-events-auto rounded-full border bg-panel px-3 py-1 text-xs hover:bg-hover"
+            className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-(--panel-lighten-1)"
             onClick={toggleFollow}
           >
             {control.label}
@@ -256,11 +256,11 @@ const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boo
 });
 
 // The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns aligned down the conversation,
-// each column as wide as its widest value, and how it ended. `reading`: whether the read can still bring this exchange
-// its end.
+// each column as wide as its widest value, and how it ended. It is a band on the chrome's ground, so an exchange's start
+// is seen without a line drawn. `reading`: whether the read can still bring this exchange its end.
 function ExchangeLine({ exchange: { exchange: { end }, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   return (
-    <div className="grid grid-cols-[3ch_8ch_minmax(8ch,1fr)_6ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 border-t px-4 pt-2 pb-1 font-sans tabular-nums">
+    <div className="mt-3 grid grid-cols-[3ch_8ch_minmax(8ch,1fr)_6ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums">
       <span className="text-right text-foreground-muted">{facts.ordinal}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}

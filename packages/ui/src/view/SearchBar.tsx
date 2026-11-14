@@ -13,7 +13,7 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
         type="search"
         aria-label="Search the conversation"
         placeholder="Search"
-        className="w-64 rounded-md border bg-background px-2 py-0.5"
+        className="field w-64"
         value={query}
         onChange={(event) => view.search(event.target.value)}
         onKeyDown={(event) => {
@@ -34,7 +34,7 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
           data-step={direction}
           title={title}
           disabled={count === 0}
-          className="rounded-md border px-2 py-0.5 hover:bg-hover disabled:opacity-50"
+          className="control"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onStep(direction)}
         >

@@ -9,7 +9,7 @@ export function HeaderPopover({ id, label, className, popover, children }: { id:
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" data-open={id} popoverTarget={id} className="rounded-md border px-2 py-0.5 hover:bg-hover">
+      <button type="button" data-open={id} popoverTarget={id} className="control">
         {label} ▾
       </button>
       <div

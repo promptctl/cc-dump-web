@@ -19,7 +19,7 @@ export function ThemePicker() {
     list.current!.hidePopover();
   };
   return (
-    <HeaderPopover id="theme" popover={list} label={choice === "system" ? `System (${theme.name})` : theme.name} className="min-w-64 p-1">
+    <HeaderPopover id="theme" popover={list} label={`Theme: ${theme.name}${choice === "system" ? " (system)" : ""}`} className="min-w-64 p-1">
       <ul>
         <Option choice="system" label={`System: ${systemThemes.dark} or ${systemThemes.light}`} swatch={system} current={choice === "system"} pick={pick} />
         {themeNames.map((name) => (
@@ -37,7 +37,7 @@ function Option({ choice, label, swatch, current, pick }: { choice: ThemeChoice;
         type="button"
         data-theme-choice={choice}
         aria-current={current}
-        className="flex w-full items-center gap-3 rounded px-2 py-1 text-left hover:bg-hover aria-[current=true]:font-semibold"
+        className="flex w-full items-center gap-3 rounded px-2 py-1 text-left hover:bg-(--panel-lighten-1) aria-[current=true]:font-semibold"
         onClick={() => pick(choice)}
       >
         <Swatch theme={swatch} />

@@ -5,35 +5,45 @@
 @import "@fontsource/ibm-plex-mono/500.css";
 @import "@fontsource/ibm-plex-mono/600.css";
 
-/* The theme's variables are set on the root by theme/useTheme.ts from the one table in theme/theme.ts (docs/design/
-   02-design.md, "Themes"); this stylesheet declares only what it derives from them. Two voices ("Type"): the app
-   speaks in the sans, and everything that was on the wire is set in the mono. */
+/* The theme's variables are Textual's, set on the root under Textual's names by theme/useTheme.ts from the one table in
+   theme/theme.ts (docs/design/02-design.md, "Themes"); each part of the app uses the one Textual made for its purpose.
+   Two voices ("Type"): the app speaks in the sans, and everything that was on the wire is set in the mono. */
 @theme inline {
   --font-sans: "IBM Plex Sans Variable", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-disabled: var(--foreground-disabled);
   --color-surface: var(--surface);
   --color-panel: var(--panel);
-  --color-primary: var(--primary);
   --color-error: var(--text-error);
-  --color-border: var(--border);
-  --color-hover: var(--hover);
+  /* A hairline is Textual's unfocused border, a focus ring its focused one. */
+  --color-border: var(--border-blurred);
+  --color-focus: var(--border);
+  --color-hover: var(--block-hover-background);
 }
 
-:root {
-  /* A hairline and a hover: the foreground at a fraction of its strength, on whatever ground. */
-  --border: color-mix(in oklab, var(--foreground) 14%, var(--background));
-  --hover: color-mix(in oklab, var(--foreground) 8%, transparent);
+/* Depth is told by Textual's grounds, not lines: the app's chrome is on `surface`, the conversation on `background`, and
+   what is raised, a button, a popover, on `panel`. [LAW:single-enforcer] A button, and a field to type or choose in,
+   set into its ground. */
+@utility control {
+  @apply rounded-md bg-panel px-2 py-0.5 enabled:hover:bg-(--panel-lighten-1) disabled:text-foreground-disabled;
+}
+@utility field {
+  @apply rounded-md bg-background px-2 py-0.5 focus:outline-1;
 }
 
 @layer base {
   * {
-    @apply border-border outline-primary/50;
+    @apply border-border outline-focus;
+    scrollbar-color: var(--scrollbar) var(--scrollbar-background);
   }
   body {
     @apply bg-background font-sans text-foreground;
+  }
+  input::selection {
+    background-color: var(--input-selection-background);
   }
 }
 

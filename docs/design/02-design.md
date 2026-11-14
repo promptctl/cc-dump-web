@@ -23,7 +23,7 @@ The request the model receives each turn is a whole document and the run is a se
 - **Color means category and nothing else.** The six category colors are the only hues the app adds to its theme; the chrome is the theme's own grays. A hue on screen is always a category.
 - **Two voices.** What the app says is set in a sans. What was on the wire, every byte of content, is set in a monospace face, verbatim. The reader never wonders which is which.
 - **Print what varies.** An exchange line prints the facts that differ between exchanges and nothing that repeats. A block line names the block usefully, with a preview of its content, not its category's name.
-- **Hierarchy by weight and indent, never boxes.** No cards, no borders around blocks, no shadows. An exchange boundary is its line and a hairline.
+- **Hierarchy by weight, indent and ground, never boxes.** No cards, no borders around blocks, no shadows. Depth is Textual's three grounds: the app's chrome on `surface`, the conversation on `background`, what is raised (a button, a popover) on `panel`. An exchange boundary is its line, a band on `surface`.
 - **One bold element.** The category gutter: a bar in the category's color at the left edge of every block row. Scrolling fast, the gutter alone shows the rhythm of a run. The filter bar is its legend. This is the original cc-dump's gutter, carried to the web.
 
 ## Themes

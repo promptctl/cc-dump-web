@@ -78,7 +78,7 @@ function Choice({ launcher: { settings, sessions }, launch, start }: { launcher:
     <form className="flex flex-col gap-2" onSubmit={submit}>
       <label className="flex items-center justify-between gap-2">
         <span>tmux session</span>
-        <select data-launch-session className="w-56 rounded-md border bg-background px-1 py-0.5" value={session} onChange={(event) => setSession(event.target.value)}>
+        <select data-launch-session className="field w-56" value={session} onChange={(event) => setSession(event.target.value)}>
           {sessions.map((name) => (
             <option key={name} value={name}>
               {name}
@@ -88,11 +88,11 @@ function Choice({ launcher: { settings, sessions }, launch, start }: { launcher:
       </label>
       <label className="flex items-center justify-between gap-2">
         <span>Agent command</span>
-        <input data-launch-command className="w-56 rounded-md border bg-background px-1 py-0.5 font-mono" value={command} onChange={(event) => setCommand(event.target.value)} />
+        <input data-launch-command className="field w-56 font-mono" value={command} onChange={(event) => setCommand(event.target.value)} />
       </label>
       <div className="flex items-center justify-between gap-2">
         <Outcome launch={launch} />
-        <button type="submit" data-launch disabled={launch.state === "launching"} className="rounded-md border px-2 py-0.5 enabled:hover:bg-hover disabled:opacity-50">
+        <button type="submit" data-launch disabled={launch.state === "launching"} className="control">
           Launch
         </button>
       </div>

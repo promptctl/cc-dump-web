@@ -24,7 +24,7 @@ export function App({ connection }: { connection: Connection }) {
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex h-12 items-center gap-6 border-b px-4 text-xs">
+      <header className="flex h-12 items-center gap-6 border-b bg-surface px-4 text-xs">
         <h1 className="text-sm font-semibold">cc-dump</h1>
         {/* What stands now, beside the name: the proxy and the read, where the connection's status (F8) goes too. */}
         <div role="status" className="flex min-w-0 flex-1 items-center gap-4 truncate">

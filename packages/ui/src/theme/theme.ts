@@ -1,4 +1,4 @@
-import { contrastFor, type Palette, type PaletteRole } from "@promptctl/rich-js";
+import { contrastFor, type Palette } from "@promptctl/rich-js";
 import { getThemePalette, listThemePalettes, type ThemeName } from "@promptctl/rich-js/themes/registry";
 import type { CSSProperties } from "react";
 import { categories, type Category } from "../format/blocks.ts";
@@ -45,20 +45,15 @@ export function categoryVars(category: Category): CSSProperties {
   return { "--category": `var(--category-${category})`, "--category-chip": `var(--category-${category}-chip)`, "--category-chip-text": `var(--category-${category}-chip-text)` } as CSSProperties;
 }
 
-// [LAW:one-source-of-truth] The one table from a theme's roles and category colors to the custom properties the
-// stylesheet reads (index.css); theme.test.ts holds that every variable the stylesheet reads is here or declared there.
+// [LAW:one-source-of-truth] The one table from a theme to the custom properties the stylesheet reads (index.css): every
+// variable Textual generates from the theme, under Textual's name, as rich-js's palette holds them
+// (docs/design/02-design.md, "Themes"), and the app's own, derived from them. theme.test.ts holds that every variable the
+// stylesheet reads is here or declared there.
 export function cssVariables({ palette, categories: colors }: Theme): Record<`--${string}`, string> {
-  const role = (name: PaletteRole) => palette.get(name).hex;
   const warning = palette.get("warning");
   const warningMuted = palette.get("warning-muted");
   return {
-    "--background": role("background"),
-    "--foreground": role("foreground"),
-    "--foreground-muted": role("foreground-muted"),
-    "--surface": role("surface"),
-    "--panel": role("panel"),
-    "--primary": role("primary"),
-    "--text-error": role("text-error"),
+    ...Object.fromEntries([...palette.vars].map(([role, color]) => [`--${role}`, color.hex])),
     // The search's matches: the theme's warning, muted for every match and whole for the current one, each with the text
     // on it whichever of black and white reads on it, so a match in muted text still reads.
     "--match": warningMuted.hex,

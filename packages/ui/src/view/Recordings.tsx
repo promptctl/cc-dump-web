@@ -20,7 +20,7 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
   return (
     <div className="flex items-center gap-2 text-xs">
       {open.recording === "past" && (
-        <button type="button" data-back-to-live className="rounded-md border px-2 py-0.5 hover:bg-hover" onClick={() => view.open({ recording: "live" })}>
+        <button type="button" data-back-to-live className="control" onClick={() => view.open({ recording: "live" })}>
           Back to live
         </button>
       )}
@@ -63,7 +63,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 aria-current={listing.name === shown}
                 disabled={listing.name === shown}
                 title={listing.name}
-                className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-hover aria-[current=true]:font-semibold"
+                className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-(--panel-lighten-1) aria-[current=true]:font-semibold"
                 onClick={() => pick(toOpenRecording(listing))}
               >
                 <span>{startOf(listing.name)}</span>
