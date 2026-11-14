@@ -65,8 +65,8 @@ importers:
         specifier: workspace:*
         version: link:../proxy
       '@promptctl/tmux-control-mode-js':
-        specifier: link:/tmp/tcm
-        version: link:../../../../../../../../../tmp/tcm
+        specifier: link:/Users/bmf/code/tmux-control-mode-js
+        version: link:../../../../../../tmux-control-mode-js
 
   packages/ui:
     dependencies:

@@ -15,6 +15,6 @@
     "@cc-dump/config": "workspace:*",
     "@cc-dump/log": "workspace:*",
     "@cc-dump/proxy": "workspace:*",
-    "@promptctl/tmux-control-mode-js": "link:/tmp/tcm"
+    "@promptctl/tmux-control-mode-js": "link:/Users/bmf/code/tmux-control-mode-js"
   }
 }
