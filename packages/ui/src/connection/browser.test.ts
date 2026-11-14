@@ -4,9 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
-import type { Event } from "@cc-dump/log";
+import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { arrivals, send, serving } from "@cc-dump/log/testing";
+import { app, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
@@ -30,7 +31,7 @@ async function proxyAndConnection() {
   const logged = async (matches: (event: Event) => boolean) => {
     for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
   };
-  return { dir, proxy, logged, connection: createBrowserConnection(proxy.readerPort) };
+  return { dir, proxy, logged, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
 }
 
 type Arrival = { event: RecordedEvent } | { end: RecordingEnd } | { failed: Error };
@@ -83,7 +84,7 @@ describe("the browser connection", () => {
   it("fails a list it could not get, naming what it asked", async () => {
     const { proxy } = await proxyAndConnection();
     const port = proxy.proxyPort; // the proxy's own port, which forwards and has no list
-    await expect(createBrowserConnection(port).recordings(new AbortController().signal)).rejects.toMatchObject({
+    await expect(createBrowserConnection({ readerPort: port }).recordings(new AbortController().signal)).rejects.toMatchObject({
       message: `GET http://${LOOPBACK}:${port}/recordings`,
       cause: expect.any(Error),
     });
@@ -158,7 +159,7 @@ describe("the browser connection", () => {
       if (resumedFrom.length === 1) res.write(`retry: 10\nid: 7\ndata: ${first}\n\n`, () => res.destroy());
       else res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
     });
-    const read = reading(createBrowserConnection(reader.port), finishedName);
+    const read = reading(createBrowserConnection({ readerPort: reader.port }), finishedName);
     expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
     expect(resumedFrom).toEqual([undefined, "7"]);
     expect(read.queued()).toBe(0);
@@ -195,7 +196,7 @@ describe("the browser connection", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(statuses.map((status) => `data: ${JSON.stringify(status)}\n\n`).join(""));
     });
-    const status = statusing(createBrowserConnection(reader.port));
+    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
     expect([await status.next(), await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
@@ -205,7 +206,7 @@ describe("the browser connection", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\ndata: {"state":"watching","changed_source":[]}\n\n`);
     });
-    const status = statusing(createBrowserConnection(reader.port));
+    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
     expect([await status.next(), await status.next()]).toEqual([
       {
         failed: expect.objectContaining({
@@ -230,14 +231,43 @@ describe("the browser connection", () => {
       if (connections === 1) res.write(`retry: 10\n${status}`, () => res.destroy());
       else res.write(status);
     });
-    const status = statusing(createBrowserConnection(reader.port));
+    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
     expect([await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
   });
 
   it("reports a status not served as failed", async () => {
     const reader = await serving((_req, res) => res.writeHead(404).end());
-    expect(await statusing(createBrowserConnection(reader.port)).next()).toEqual({
+    expect(await statusing(createBrowserConnection({ readerPort: reader.port })).next()).toEqual({
       failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
+    });
+  });
+});
+
+describe("launching", () => {
+  const signal = () => new AbortController().signal;
+
+  it("reads the launcher and launches through the app server", async () => {
+    const { port, opened } = await app();
+    const connection = createBrowserConnection({ serverPort: port });
+    expect(await connection.launcher(signal())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
+    expect(await connection.launch({ session: "play", command: "claude -c" }, signal())).toEqual({ session: "play", window_id: "@7", pane_id: "%9" });
+    expect(opened).toMatchObject([{ session: "play", command: "claude -c" }]);
+  });
+
+  it("fails a refusal in the app server's words, tmux's own when tmux refused", async () => {
+    const { port } = await app({ tmux: { sessions: () => Promise.reject(new TmuxRefused("no sessions")), newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
+    const connection = createBrowserConnection({ serverPort: port });
+    await expect(connection.launcher(signal())).rejects.toThrow(new Error("no sessions"));
+    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toThrow(new Error("can't find session: gone"));
+  });
+
+  it("fails naming the request when the app server cannot be reached", async () => {
+    // A port a server bound and closed, so nothing answers on it.
+    const { port, close } = await serve(() => {}, (_req, res) => res.end(), 0);
+    await close();
+    await expect(createBrowserConnection({ serverPort: port }).launcher(signal())).rejects.toMatchObject({
+      message: `GET http://${LOOPBACK}:${port}/launch`,
+      cause: expect.any(Error),
     });
   });
 });

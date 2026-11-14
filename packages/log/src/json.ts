@@ -1,5 +1,6 @@
-// [LAW:single-enforcer] The one parse of JSON text into a JSON object, for the readers' messages (format.ts) and the
-// proxy's settings file alike, each failure naming `what` was read. Imports nothing that needs node, as format.ts.
+// [LAW:single-enforcer] The one parse of JSON text into a JSON object, for every part's messages (each part's format.ts)
+// and settings files (@cc-dump/config) alike, each failure naming `what` was read. Imports nothing that needs node, so
+// the UI's parsers use it too.
 
 export function parseJson(text: string, what: string): unknown {
   try {

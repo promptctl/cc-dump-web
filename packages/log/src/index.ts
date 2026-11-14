@@ -39,15 +39,38 @@ export function logged<T>(
   work: () => T extends PromiseLike<unknown> ? never : T,
   found: (result: T) => Facts = () => ({}),
 ): T {
-  const span = startSpan();
+  const end = endEvent(log, event, facts, startSpan());
   try {
     const result = work();
-    log({ event, ...facts, ...span.end(), ...found(result), outcome: "ok" });
+    end.ok(found(result));
     return result;
   } catch (error) {
-    log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) });
+    end.failed(error);
     throw error;
   }
+}
+
+// An asynchronous unit of work done inside another, in its trace (a request's): its event is written once `work`
+// settles, with the facts `found` reads off its result, or when it rejects, and then the error is rethrown.
+export async function loggedIn<T>(log: Log, trace_id: string, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
+  const end = endEvent(log, event, facts, startSpan(trace_id));
+  try {
+    const result = await work();
+    end.ok(found(result));
+    return result;
+  } catch (error) {
+    end.failed(error);
+    throw error;
+  }
+}
+
+// [LAW:single-enforcer] The one writer of a unit of work's event, once the work has ended: `ok` with the facts found
+// off its result, or `failed` with its error.
+function endEvent(log: Log, event: string, facts: Facts, span: ReturnType<typeof startSpan>) {
+  return {
+    ok: (found: Facts) => log({ event, ...facts, ...span.end(), ...found, outcome: "ok" }),
+    failed: (error: unknown) => log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) }),
+  };
 }
 
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
@@ -118,13 +141,13 @@ export function shutdownOnSignal(log: Log, servers: Serving[]) {
 // A unit of work that is several at once: its event is written once every one has settled, so one that
 // fails cuts none of the others short, and then the first failure is rethrown.
 async function loggedAll(log: Log, event: string, facts: Facts, work: Promise<unknown>[]) {
-  const span = startSpan();
+  const end = endEvent(log, event, facts, startSpan());
   const failure = (await Promise.allSettled(work)).find((result) => result.status === "rejected");
   if (failure) {
-    log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(failure.reason) });
+    end.failed(failure.reason);
     throw failure.reason;
   }
-  log({ event, ...facts, ...span.end(), outcome: "ok" });
+  end.ok({});
 }
 
 function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>): Server {

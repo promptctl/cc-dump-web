@@ -1,5 +1,5 @@
 import type { Ending } from "@cc-dump/log/ending";
-import { jsonObject, parseJson } from "./json.ts";
+import { jsonObject, parseJson } from "@cc-dump/log/json";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -54,6 +54,10 @@ export type ReadFailure = { message: string };
 // A watch that failed says so, and is never an empty `changed_source`: a dead watch must not read as nothing pending.
 export type ProxyStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
+// `GET /info`: what the running proxy is, for as long as it runs. `base_url`: the address agents are pointed at, the
+// `ANTHROPIC_BASE_URL` they are given, on the port the proxy bound.
+export type ProxyInfo = { base_url: string };
+
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
@@ -79,6 +83,10 @@ export function parseProxyStatus(json: string): ProxyStatus {
   const f = fields(parseJson(json, "proxy status"), "proxy status");
   const state = f.oneOf("state", statusStates);
   return state === "watching" ? { state, changed_source: f.strings("changed_source") } : { state, message: f.string("message") };
+}
+
+export function parseProxyInfo(json: string): ProxyInfo {
+  return { base_url: fields(parseJson(json, "proxy info"), "proxy info").string("base_url") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {

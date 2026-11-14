@@ -36,19 +36,37 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(jiti@2.7.0))
 
+  packages/config:
+    dependencies:
+      '@cc-dump/log':
+        specifier: workspace:*
+        version: link:../log
+
   packages/log: {}
 
   packages/proxy:
     dependencies:
+      '@cc-dump/config':
+        specifier: workspace:*
+        version: link:../config
       '@cc-dump/log':
         specifier: workspace:*
         version: link:../log
 
   packages/server:
     dependencies:
+      '@cc-dump/config':
+        specifier: workspace:*
+        version: link:../config
       '@cc-dump/log':
         specifier: workspace:*
         version: link:../log
+      '@cc-dump/proxy':
+        specifier: workspace:*
+        version: link:../proxy
+      '@promptctl/tmux-control-mode-js':
+        specifier: link:/tmp/tcm
+        version: link:../../../../../../../../../tmp/tcm
 
   packages/ui:
     dependencies:
@@ -58,6 +76,9 @@ importers:
       '@cc-dump/proxy':
         specifier: workspace:*
         version: link:../proxy
+      '@cc-dump/server':
+        specifier: workspace:*
+        version: link:../server
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0

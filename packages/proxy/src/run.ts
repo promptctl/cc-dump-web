@@ -7,7 +7,7 @@ import { createRecording } from "./recording.ts";
 import { readProxySettings } from "./settings.ts";
 import type { Source } from "./source.ts";
 import { startProxy } from "./start.ts";
-import { baseDirectory } from "./xdg.ts";
+import { baseDirectory } from "@cc-dump/config/xdg";
 
 // The proxy as `pnpm dev` runs it, running `source`. Run with plain `node`, never a watcher: the proxy must not
 // restart while requests are in flight.

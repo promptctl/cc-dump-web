@@ -1,7 +1,7 @@
 import { recordingStart, type Listing } from "@cc-dump/proxy/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
-import { describe } from "../describe.ts";
+import { describe } from "@cc-dump/log/describe";
 import { onScreen, toOpenRecording, type OpenRecording, type Reading } from "../reading.ts";
 import { useView, view } from "./state.ts";
 

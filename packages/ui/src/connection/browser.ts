@@ -1,12 +1,16 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { SERVER_PORT } from "@cc-dump/server/address";
+import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import type { Connection } from "./connection.ts";
 
-// The browser talking to the proxy's reader, on the address it is bound to, whatever host the page was opened at:
-// `fetch` for the list, and one EventSource per read and per status, which resumes a dropped connection by itself.
-export function createBrowserConnection(readerPort = READER_PORT): Connection {
+// The browser talking to the proxy's reader and the app server, on the address they are bound to, whatever host the
+// page was opened at: `fetch` for the list and for launching, and one EventSource per read and per status, which
+// resumes a dropped connection by itself.
+export function createBrowserConnection({ readerPort = READER_PORT, serverPort = SERVER_PORT } = {}): Connection {
   const origin = `http://${LOOPBACK}:${readerPort}`;
+  const server = `http://${LOOPBACK}:${serverPort}`;
   return {
     recordings: async (signal) => {
       const url = `${origin}/recordings`;
@@ -41,7 +45,25 @@ export function createBrowserConnection(readerPort = READER_PORT): Connection {
     // and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
     // proxy's status once it reconnects.
     status: (watcher, signal) => eventStream(`${origin}/status`, signal, watcher.failed).on("message", parseProxyStatus, watcher.status, watcher.failed),
+    launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
+    launch: (launch, signal) =>
+      answer(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
   };
+}
+
+// The app server's answer to one request, parsed. A refusal it answers fails in its own words, which are the user's to
+// read as they are; anything else fails naming the request.
+async function answer<T>(url: string, init: RequestInit, parse: (json: string) => T): Promise<T> {
+  let refusal: string;
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    if (res.ok) return parse(text);
+    refusal = parseFailure(text).error;
+  } catch (error) {
+    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
+  }
+  throw new Error(refusal);
 }
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported

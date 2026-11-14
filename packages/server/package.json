@@ -3,13 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./address": "./src/address.ts"
+    "./address": "./src/address.ts",
+    "./format": "./src/format.ts",
+    "./testing": "./src/testing.ts"
   },
   "scripts": {
     "dev": "node --watch src/main.ts",
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@cc-dump/log": "workspace:*"
+    "@cc-dump/config": "workspace:*",
+    "@cc-dump/log": "workspace:*",
+    "@cc-dump/proxy": "workspace:*",
+    "@promptctl/tmux-control-mode-js": "link:/tmp/tcm"
   }
 }

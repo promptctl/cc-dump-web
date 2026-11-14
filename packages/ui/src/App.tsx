@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
-import { describe } from "./describe.ts";
+import { describe } from "@cc-dump/log/describe";
 import { exchanges } from "./exchanges.ts";
 import { createFormatter } from "./format/format.ts";
 import { useRecording, type Reading } from "./reading.ts";
@@ -8,6 +8,7 @@ import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { FilterBar } from "./view/FilterBar.tsx";
+import { Launch } from "./view/Launch.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { useView } from "./view/state.ts";
 
@@ -27,6 +28,7 @@ export function App({ connection }: { connection: Connection }) {
           <ProxyState status={status} />
           <ReadingState reading={reading} />
           <Recordings connection={connection} reading={reading} />
+          <Launch connection={connection} />
         </div>
       </header>
       <FilterBar />

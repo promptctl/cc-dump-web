@@ -6,6 +6,8 @@
     ".": "./src/index.ts",
     "./address": "./src/address.ts",
     "./ending": "./src/ending.ts",
+    "./describe": "./src/describe.ts",
+    "./json": "./src/json.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {

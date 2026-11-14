@@ -1,12 +1,105 @@
-import { serving } from "@cc-dump/log/testing";
-import { expect, it } from "vitest";
-import { app } from "./server.ts";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { parseFailure, parseLauncher, parseLaunched } from "./format.ts";
+import { app } from "./testing.ts";
+import { TmuxRefused } from "./tmux.ts";
 
-it("answers an unknown route with 404", async () => {
-  const { url } = await serving(app);
+describe("GET /launch", () => {
+  it("starts from the default settings and lists the sessions, to any origin", async () => {
+    const { url, work } = await app();
+    const res = await fetch(`${url}/launch`);
+    expect([res.status, res.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
+    expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
+    expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
+    expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
+  });
 
-  const res = await fetch(`${url}/api/nothing`);
-  await res.text();
+  it("answers tmux's refusal in tmux's words", async () => {
+    const { url, work } = await app({ tmux: { sessions: () => Promise.reject(new TmuxRefused("no server running on /tmp/tmux-501/default")) } });
+    const res = await fetch(`${url}/launch`);
+    expect(res.status).toBe(502);
+    await work();
+    expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "error", error: expect.stringContaining("no server running") });
+    expect(parseFailure(await res.text())).toEqual({ error: "no server running on /tmp/tmux-501/default" });
+  });
+});
 
-  expect(res.status).toBe(404);
+describe("POST /launch", () => {
+  it("opens the agent's window pointed at the proxy, and stores the settings it launched with", async () => {
+    const { url, opened, settingsPath, launch, work } = await app();
+    const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions" });
+    expect(res.status).toBe(200);
+    expect(await work()).toMatchObject({ event: "proxy_info", outcome: "ok", base_url: "http://127.0.0.1:3344" });
+    expect(await work()).toMatchObject({
+      event: "launch",
+      outcome: "ok",
+      session: "work",
+      command: "claude --dangerously-skip-permissions",
+      base_url: "http://127.0.0.1:3344",
+      settings_path: settingsPath,
+      window_id: "@7",
+      pane_id: "%9",
+    });
+    expect(parseLaunched(await res.text())).toEqual({ session: "work", window_id: "@7", pane_id: "%9" });
+    expect(opened).toEqual([{ session: "work", command: "claude --dangerously-skip-permissions", env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344" } }]);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });
+    const launcher = parseLauncher(await (await fetch(`${url}/launch`)).text());
+    expect(launcher.settings).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });
+    expect(await work()).toMatchObject({ event: "launch_settings", file_keys: ["session", "command"] });
+  });
+
+  it.each([
+    [{ session: "work", command: "" }, 'command must be a non-empty line of text, got ""'],
+    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a non-empty line of text"],
+    [{ command: "claude" }, "session must be a non-empty line of text, got undefined"],
+    ["claude", "launch: is not an object"],
+  ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
+    const { opened, settingsPath, launch, next } = await app();
+    const res = await launch(body);
+    expect(res.status).toBe(400);
+    expect(parseFailure(await res.text()).error).toContain(reason);
+    expect(await next()).toMatchObject({ event: "request", status: 400, outcome: "error", error: expect.stringContaining(reason) });
+    expect(opened).toEqual([]);
+    expect(() => readFileSync(settingsPath)).toThrow("ENOENT");
+  });
+
+  it("answers tmux's refusal in tmux's words", async () => {
+    const { launch } = await app({ tmux: { newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
+    const res = await launch({ session: "gone", command: "claude" });
+    expect(res.status).toBe(502);
+    expect(parseFailure(await res.text())).toEqual({ error: "can't find session: gone" });
+  });
+
+  it("does not launch an agent the proxy cannot be found for", async () => {
+    const { opened, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
+    const res = await launch({ session: "work", command: "claude" });
+    expect(res.status).toBe(502);
+    expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
+    expect(await next()).toMatchObject({ event: "request", status: 502, outcome: "error", error: expect.stringContaining("did not say where agents reach it") });
+    expect(parseFailure(await res.text())).toEqual({ error: "The proxy did not say where agents reach it: GET http://127.0.0.1:3347/info: fetch failed" });
+    expect(opened).toEqual([]);
+  });
+
+  it("fails the request, on its event, when the app server fails", async () => {
+    const { next, launch } = await app({ tmux: { newWindow: () => Promise.reject(new Error("tmux exploded")) } });
+    const res = await launch({ session: "work", command: "claude" });
+    expect(res.status).toBe(500);
+    expect(parseFailure(await res.text())).toEqual({ error: "tmux exploded" });
+    expect(await next()).toMatchObject({ event: "request", method: "POST", url: "/launch", outcome: "error", error: expect.stringContaining("tmux exploded") });
+  });
+});
+
+describe("routes", () => {
+  it("answers the browser's preflight of a JSON POST", async () => {
+    const { url } = await app();
+    const res = await fetch(`${url}/launch`, { method: "OPTIONS" });
+    expect([res.status, res.headers.get("access-control-allow-methods"), res.headers.get("access-control-allow-headers")]).toEqual([204, "GET, POST", "content-type"]);
+  });
+
+  it("answers a method a route does not take with 405, and an unknown route with 404", async () => {
+    const { url } = await app();
+    const res = await fetch(`${url}/launch`, { method: "DELETE" });
+    expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
+    expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
+  });
 });

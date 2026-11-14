@@ -1,6 +1,14 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { baseDirectory } from "@cc-dump/config/xdg";
 import { createLog, serve, shutdownOnSignal } from "@cc-dump/log";
 import { SERVER_PORT } from "./address.ts";
-import { app } from "./server.ts";
+import { fetchProxyInfo } from "./proxy.ts";
+import { createApp } from "./server.ts";
+import { createTmux } from "./tmux.ts";
 
+// The composition root: the app server as `pnpm dev` runs it, on the user's tmux server, beside the proxy's reader.
 const log = createLog("server", (line) => process.stdout.write(line));
-shutdownOnSignal(log, [await serve(log, app, SERVER_PORT)]);
+// The launch settings, in cc-dump/launch.json under the XDG config home, beside the proxy's settings.
+const settingsPath = join(baseDirectory("XDG_CONFIG_HOME", process.env, homedir()).dir, "cc-dump/launch.json");
+shutdownOnSignal(log, [await serve(log, createApp({ log, settingsPath, tmux: createTmux(), proxyInfo: () => fetchProxyInfo() }), SERVER_PORT)]);

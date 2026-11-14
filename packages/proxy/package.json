@@ -12,6 +12,7 @@
     "typecheck": "tsc"
   },
   "dependencies": {
-    "@cc-dump/log": "workspace:*"
+    "@cc-dump/log": "workspace:*",
+    "@cc-dump/config": "workspace:*"
   }
 }
