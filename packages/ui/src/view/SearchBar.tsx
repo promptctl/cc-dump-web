@@ -24,9 +24,6 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
           onStep(event.shiftKey ? "previous" : "next");
         }}
       />
-      <span data-tally className="min-w-24 text-foreground-muted">
-        {tally}
-      </span>
       {steps.map(({ direction, label, title }) => (
         <button
           key={direction}
@@ -41,6 +38,10 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
           {label}
         </button>
       ))}
+      {/* After the steps, so they stay where they are as the tally's width changes. */}
+      <span data-tally className="min-w-20 text-foreground-muted">
+        {tally}
+      </span>
     </search>
   );
 }
