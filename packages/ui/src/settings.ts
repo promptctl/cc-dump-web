@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
+import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
 // Whether a category's blocks are listed (docs/design/01-mvp.md, F5). [LAW:types-are-the-program] A value, not a
 // boolean, so a later level of detail is one more member ("Scaffold").
@@ -10,8 +11,8 @@ export type Visibility = (typeof visibilities)[number];
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
-// is on. `visibility`: each category's.
-export type Settings = { follow: boolean; visibility: Record<Category, Visibility> };
+// is on. `visibility`: each category's. `theme`: the theme chosen (F10).
+export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice };
 
 const name = "cc-dump.settings";
 
@@ -19,6 +20,7 @@ const name = "cc-dump.settings";
 // is stored or the one stored is not a value this build has.
 export function parseSettings(stored: unknown): Settings {
   const follow = field(stored, "follow");
+  const theme = field(stored, "theme");
   const visibility = (category: Category) => {
     const value = field(field(stored, "visibility"), category);
     return isVisibility(value) ? value : "shown";
@@ -26,6 +28,7 @@ export function parseSettings(stored: unknown): Settings {
   return {
     follow: typeof follow === "boolean" ? follow : true,
     visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
+    theme: isThemeChoice(theme) ? theme : "system",
   };
 }
 
@@ -38,6 +41,7 @@ export const useSettings = create<Settings>()(
 
 export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
+  setTheme: (theme: ThemeChoice) => useSettings.setState({ theme }),
   setVisibility: (category: Category, visibility: Visibility) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: visibility } })),
   // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
   // so every tab holds the settings the reader chose last.

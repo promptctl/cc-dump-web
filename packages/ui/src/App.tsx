@@ -6,13 +6,16 @@ import { createFormatter } from "./format/format.ts";
 import { useRecording, type Reading } from "./reading.ts";
 import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
+import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { FilterBar } from "./view/FilterBar.tsx";
 import { Launch } from "./view/Launch.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { useView } from "./view/state.ts";
+import { ThemePicker } from "./view/ThemePicker.tsx";
 
 export function App({ connection }: { connection: Connection }) {
+  const theme = useTheme();
   const reading = useRecording(connection, useView((state) => state.open));
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
@@ -23,12 +26,13 @@ export function App({ connection }: { connection: Connection }) {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex h-12 items-center justify-between border-b px-4">
-        <h1 className="font-heading text-sm font-semibold">cc-dump</h1>
-        <div className="flex items-center gap-4">
+        <h1 className="text-sm font-semibold">cc-dump</h1>
+        <div className="flex items-center gap-4 text-xs">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
           <Recordings connection={connection} reading={reading} />
           <Launch connection={connection} />
+          <ThemePicker theme={theme} />
         </div>
       </header>
       <FilterBar />
@@ -46,12 +50,12 @@ function ReadingState({ reading }: { reading: Reading }) {
       return null;
     case "ended":
       return (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-foreground-muted">
           Recording ended{reading.end.unterminated_bytes > 0 && `, its last ${reading.end.unterminated_bytes} bytes cut off`}
         </p>
       );
     case "failed":
-      return <p className="text-xs text-destructive">{describe(reading.error)}</p>;
+      return <p className="text-error">{describe(reading.error)}</p>;
   }
 }
 
@@ -62,16 +66,16 @@ function ProxyState({ status }: { status: StatusReading }) {
       return null;
     case "status": {
       if (status.status.state === "failed") {
-        return <p className="text-xs text-destructive">Proxy source not watched, a restart watches it again: {status.status.message}</p>;
+        return <p className="text-error">Proxy source not watched, a restart watches it again: {status.status.message}</p>;
       }
       const changed = status.status.changed_source;
       return changed.length === 0 ? null : (
-        <p className="text-xs font-medium" title={changed.join("\n")}>
+        <p className="font-medium" title={changed.join("\n")}>
           Proxy restart pending: {changed.length === 1 ? "1 source file" : `${changed.length} source files`} changed
         </p>
       );
     }
     case "failed":
-      return <p className="text-xs text-destructive">{describe(status.error)}</p>;
+      return <p className="text-error">{describe(status.error)}</p>;
   }
 }

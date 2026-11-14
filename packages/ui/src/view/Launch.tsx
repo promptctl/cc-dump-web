@@ -56,10 +56,10 @@ function LaunchForm({ connection, ...started }: { connection: Launching } & Star
   }, [connection]);
   switch (read.state) {
     case "reading":
-      return <p className="text-muted-foreground">Reading the tmux sessions…</p>;
+      return <p className="text-foreground-muted">Reading the tmux sessions…</p>;
     case "failed":
       // tmux's own words when it has no server or no sessions.
-      return <p data-launch-unavailable className="text-destructive">{describe(read.error)}</p>;
+      return <p data-launch-unavailable className="text-error">{describe(read.error)}</p>;
     case "read":
       return <Choice launcher={read.launcher} {...started} />;
   }
@@ -92,7 +92,7 @@ function Choice({ launcher: { settings, sessions }, launch, start }: { launcher:
       </label>
       <div className="flex items-center justify-between gap-2">
         <Outcome launch={launch} />
-        <button type="submit" data-launch disabled={launch.state === "launching"} className="rounded-md border px-2 py-0.5 enabled:hover:bg-muted disabled:opacity-50">
+        <button type="submit" data-launch disabled={launch.state === "launching"} className="rounded-md border px-2 py-0.5 enabled:hover:bg-hover disabled:opacity-50">
           Launch
         </button>
       </div>
@@ -105,7 +105,7 @@ function Outcome({ launch }: { launch: LaunchState }) {
     case "idle":
       return <span />;
     case "launching":
-      return <span className="text-muted-foreground">Launching…</span>;
+      return <span className="text-foreground-muted">Launching…</span>;
     case "launched":
       return (
         <span data-launched>
@@ -113,6 +113,6 @@ function Outcome({ launch }: { launch: LaunchState }) {
         </span>
       );
     case "failed":
-      return <span data-launch-failed className="text-destructive">{describe(launch.error)}</span>;
+      return <span data-launch-failed className="text-error">{describe(launch.error)}</span>;
   }
 }

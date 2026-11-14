@@ -24,7 +24,7 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
       data-visibility={visibility}
       pressed={pressed}
       title={`${category}: ${visibility}. Click to ${does}.`}
-      className={`rounded-md border px-2 py-0.5 ${look}`}
+      className={`rounded px-2 py-0.5 font-medium ${look}`}
       onClick={() => settings.setVisibility(category, next)}
     >
       {category}
@@ -33,8 +33,9 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
 }
 
 // [LAW:dataflow-not-control-flow] Each visibility: the one a click moves to, whether the toggle is pressed, how it looks
-// and what a click does. A hidden category reads as struck out, so the bar alone says which are hidden.
+// and what a click does. A shown category's chip is in its color, the same the gutter paints its blocks with, so the bar
+// is the gutter's legend (docs/design/02-design.md); a hidden one reads as struck out and uncolored.
 const visibilityStates: Record<Visibility, { next: Visibility; pressed: boolean; look: string; does: string }> = {
-  shown: { next: "hidden", pressed: true, look: "border-primary bg-primary text-primary-foreground", does: "hide it" },
-  hidden: { next: "shown", pressed: false, look: "text-muted-foreground line-through hover:bg-muted", does: "show it" },
+  shown: { next: "hidden", pressed: true, look: "bg-(--category-chip) text-(--category-chip-text)", does: "hide it" },
+  hidden: { next: "shown", pressed: false, look: "text-foreground-muted line-through hover:bg-hover", does: "show it" },
 };

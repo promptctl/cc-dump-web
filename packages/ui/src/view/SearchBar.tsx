@@ -24,7 +24,7 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
           onStep(event.shiftKey ? "previous" : "next");
         }}
       />
-      <span data-tally className="min-w-24 text-muted-foreground">
+      <span data-tally className="min-w-24 text-foreground-muted">
         {tally}
       </span>
       {steps.map(({ direction, label, title }) => (
@@ -34,7 +34,7 @@ export function SearchBar({ count, ordinal, onStep }: { count: number; ordinal: 
           data-step={direction}
           title={title}
           disabled={count === 0}
-          className="rounded-md border px-2 py-0.5 hover:bg-muted disabled:opacity-50"
+          className="rounded-md border px-2 py-0.5 hover:bg-hover disabled:opacity-50"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onStep(direction)}
         >

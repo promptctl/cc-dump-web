@@ -20,7 +20,7 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
   return (
     <div className="flex items-center gap-2 text-xs">
       {open.recording === "past" && (
-        <button type="button" data-back-to-live className="rounded-md border px-2 py-0.5 hover:bg-muted" onClick={() => view.open({ recording: "live" })}>
+        <button type="button" data-back-to-live className="rounded-md border px-2 py-0.5 hover:bg-hover" onClick={() => view.open({ recording: "live" })}>
           Back to live
         </button>
       )}
@@ -49,9 +49,9 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
   }, [connection]);
   switch (listed.state) {
     case "listing":
-      return <p className="px-2 py-1 text-muted-foreground">Reading the recordings…</p>;
+      return <p className="px-2 py-1 text-foreground-muted">Reading the recordings…</p>;
     case "failed":
-      return <p className="px-2 py-1 text-destructive">{describe(listed.error)}</p>;
+      return <p className="px-2 py-1 text-error">{describe(listed.error)}</p>;
     case "listed":
       return (
         <ul>
@@ -63,11 +63,11 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 aria-current={listing.name === shown}
                 disabled={listing.name === shown}
                 title={listing.name}
-                className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-muted aria-[current=true]:font-semibold"
+                className="flex w-full justify-between gap-4 rounded px-2 py-1 text-left enabled:hover:bg-hover aria-[current=true]:font-semibold"
                 onClick={() => pick(toOpenRecording(listing))}
               >
                 <span>{startOf(listing.name)}</span>
-                {listing.live && <span className="text-muted-foreground">live</span>}
+                {listing.live && <span className="text-foreground-muted">live</span>}
               </button>
             </li>
           ))}

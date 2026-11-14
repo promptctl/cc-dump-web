@@ -142,7 +142,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       {/* The browser's own scroll anchoring would be a second writer of the offset. */}
       <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
         {rows.length === 0 ? (
-          <p className="flex flex-1 items-center justify-center text-sm text-muted-foreground">No Messages API exchanges yet.</p>
+          <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet.</p>
         ) : (
           <Hold.Provider value={hold}>
             <Pattern.Provider value={pattern}>
@@ -169,7 +169,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
             data-follow={following}
             pressed={control.pressed}
             title={control.title}
-            className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-muted"
+            className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-hover"
             onClick={toggleFollow}
           >
             {control.label}
@@ -244,7 +244,7 @@ const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boo
     case "exchange":
       return <ExchangeLine exchange={row.exchange} reading={reading} />;
     case "group":
-      return <h2 className="px-4 pt-1 pl-8 text-muted-foreground">{row.title}</h2>;
+      return <h2 className="px-4 pt-1 pl-8 text-foreground-muted">{row.title}</h2>;
     case "block":
       return <BlockView row={row} />;
   }
@@ -259,7 +259,7 @@ function ExchangeLine({ exchange: { request, response, end }, reading }: { excha
           {request.head.method} {request.head.url}
         </span>
       ) : (
-        <span className="flex-1 text-muted-foreground">request not recorded</span>
+        <span className="flex-1 text-foreground-muted">request not recorded</span>
       )}
       {response.head && (
         <span>
@@ -267,7 +267,7 @@ function ExchangeLine({ exchange: { request, response, end }, reading }: { excha
         </span>
       )}
       {/* How it ended, beside its status: a response that began can still be cut, and one streaming has not ended. */}
-      <span className={end?.outcome === "error" ? "text-destructive" : "text-muted-foreground"} title={end?.error}>
+      <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
         {end?.outcome ?? (reading ? "pending" : "no end read")}
       </span>
     </div>
@@ -284,18 +284,18 @@ function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
     <div className="pl-12 pr-4">
       <button
         type="button"
-        className="flex w-full gap-3 text-left hover:bg-muted"
+        className="flex w-full gap-3 text-left hover:bg-hover"
         onClick={() => {
           hold();
           view.toggle(key);
         }}
       >
-        <span className="w-3 text-muted-foreground">{open ? "▾" : "▸"}</span>
-        <span className="w-20 text-muted-foreground">{block.category}</span>
+        <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
+        <span className="w-20 text-foreground-muted">{block.category}</span>
         <span className="flex-1 truncate">
           <HighlightedText blockKey={key} at={address.name} text={block.name} />
         </span>
-        <span className="text-muted-foreground">{describeSize(size)}</span>
+        <span className="text-foreground-muted">{describeSize(size)}</span>
       </button>
       {open && (
         <div className="pb-1 pl-6">
@@ -312,7 +312,7 @@ function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
 function PartView({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
   return (
     <div className="py-0.5">
-      {part.label !== undefined && <div className="text-muted-foreground">{part.label}</div>}
+      {part.label !== undefined && <div className="text-foreground-muted">{part.label}</div>}
       <PartContent part={part} blockKey={blockKey} index={index} />
     </div>
   );
@@ -329,7 +329,7 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
         <dl className="grid grid-cols-[max-content_1fr] gap-x-3">
           {part.fields.map(([name, value], field) => (
             <div key={field} className="contents">
-              <dt className="text-muted-foreground">
+              <dt className="text-foreground-muted">
                 <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
@@ -389,7 +389,7 @@ function RegionView({ region, where }: { region: Extract<Segment, { kind: "regio
   const line = (
     <button
       type="button"
-      className="text-muted-foreground hover:bg-muted"
+      className="text-foreground-muted hover:bg-hover"
       onClick={() => {
         hold();
         view.toggle(key);
