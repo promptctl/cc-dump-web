@@ -160,12 +160,14 @@ export function compact(count: number): string {
 export const describeSize = (size: number): string => `${compact(size)} chars`;
 
 // What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of its first text
-// or JSON part on one line, as much as a line could hold. A block with neither, a tool result with only its id, shows
-// nothing.
+// or JSON part on one line, as much as a line could hold, and an ellipsis where it was cut. A block with neither, a tool
+// result with only its id, shows nothing.
 export function preview(block: Block): string {
   const part = block.parts.find((part) => part.kind === "text" || part.kind === "json");
   const text = part === undefined ? "" : part.kind === "text" ? part.text : jsonText(part);
-  return text.slice(0, previewLength).replace(/\s+/g, " ").trim();
+  // Cut before the whitespace is collapsed, so a long text is read only as far as the line.
+  const line = text.slice(0, previewLength).replace(/\s+/g, " ").trim();
+  return text.length > previewLength ? `${line}…` : line;
 }
 const previewLength = 200;
 

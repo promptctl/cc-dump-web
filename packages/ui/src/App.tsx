@@ -8,7 +8,6 @@ import { useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
 import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
-import { FilterBar } from "./view/FilterBar.tsx";
 import { Launch } from "./view/Launch.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { useView } from "./view/state.ts";
@@ -25,17 +24,19 @@ export function App({ connection }: { connection: Connection }) {
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex h-12 items-center justify-between border-b px-4">
+      <header className="flex h-12 items-center gap-6 border-b px-4 text-xs">
         <h1 className="text-sm font-semibold">cc-dump</h1>
-        <div className="flex items-center gap-4 text-xs">
+        {/* What stands now, beside the name: the proxy and the read, where the connection's status (F8) goes too. */}
+        <div role="status" className="flex min-w-0 flex-1 items-center gap-4 truncate">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
+        </div>
+        <div className="flex items-center gap-2">
           <Recordings connection={connection} reading={reading} />
           <Launch connection={connection} />
           <ThemePicker />
         </div>
       </header>
-      <FilterBar />
       {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
           way (docs/design/01-mvp.md, "One path to the screen"). */}
       <Conversation key={read} formatted={shown} reading={reading.state === "opening" || reading.state === "reading"} />

@@ -3,12 +3,11 @@ import { settings, useSettings, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter bar (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that
-// changes it.
+// The filter (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that changes it.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
   return (
-    <div role="group" aria-label="Categories" className="flex min-h-9 flex-wrap items-center gap-2 border-b px-4 py-1.5 text-xs">
+    <div role="group" aria-label="Categories" className="flex flex-wrap items-center gap-2">
       {categories.map((category) => (
         <CategoryToggle key={category} category={category} visibility={visibility[category]} />
       ))}

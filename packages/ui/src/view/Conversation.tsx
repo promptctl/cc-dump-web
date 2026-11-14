@@ -9,6 +9,7 @@ import { positionAt, rowIndex } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
 import { clockTime, compact, createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, jsonText, preview, seconds, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
+import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch, paint } from "./highlights.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
@@ -138,7 +139,11 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
 
   return (
     <>
-      <SearchBar count={found.count} ordinal={currentOrdinal} onStep={stepTo} />
+      {/* The filter, the gutter's legend, and the search share one bar (docs/design/02-design.md, "Layout"). */}
+      <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-1.5 border-b px-4 py-1.5 text-xs">
+        <FilterBar />
+        <SearchBar count={found.count} ordinal={currentOrdinal} onStep={stepTo} />
+      </div>
       {/* The browser's own scroll anchoring would be a second writer of the offset. */}
       <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
         {rows.length === 0 ? (
@@ -309,7 +314,8 @@ function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
         <span className="shrink-0">
           <HighlightedText blockKey={key} at={address.name} text={block.name} />
         </span>
-        <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{preview(block)}</span>
+        {/* Expanded, the content itself is below, so the line does not say it twice. */}
+        <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
         <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
           {compact(size)}
         </span>
