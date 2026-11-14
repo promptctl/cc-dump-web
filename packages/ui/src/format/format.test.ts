@@ -150,6 +150,27 @@ describe("format", () => {
     expect(group(formatted, "request")[3]!.parts).toContainEqual({ kind: "json", label: "fields", value: { cache_control: { type: "ephemeral" } } });
   });
 
+  it("returns beside the blocks the facts the exchange line prints: the model from the request, the usage and stop reason from the message, the timing from the events", () => {
+    const ended = "2026-11-13T08:00:02.100Z";
+    const message = { ...messageStart.message, stop_reason: "end_turn", usage: { input_tokens: 46100, cache_read_input_tokens: 44000, output_tokens: 390 } };
+    const formatted = format([
+      ...request("a", { model: "claude-fable-5-2", messages: [] }),
+      ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message))),
+      { ...at("a"), timestamp: ended, type: "end", outcome: "ok" },
+      ...request("b", { model: "m", messages: [] }),
+      ...request("c", { model: "m", messages: [] }),
+      ...streamed("c", [messageStart, messageDelta], false),
+    ]);
+    const [a, b, c] = formatted.map(({ facts }) => facts);
+    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", input: 46100, cacheRead: 44000, output: 390, stopReason: "end_turn" });
+    // The model stays among the parameters the request sent.
+    expect(group(formatted[0]!, "request")[1]!.parts).toEqual([{ kind: "json", value: { model: "claude-fable-5-2" } }]);
+    // One in flight: what is not known yet is undefined.
+    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", input: undefined, cacheRead: undefined, output: undefined, stopReason: undefined });
+    // A stream's message as far as it has arrived: a count the API did not give is undefined.
+    expect(c).toMatchObject({ ordinal: 3, status: 200, input: 2, cacheRead: undefined, output: 90, stopReason: "tool_use" });
+  });
+
   it("shows a block of a type it does not know as raw JSON under its type name, in a request and in a stream", () => {
     const hologram = { type: "hologram", beam: { color: "teal" } };
     const formatted = one([

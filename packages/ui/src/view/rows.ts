@@ -1,5 +1,4 @@
-import type { Exchange } from "../exchanges.ts";
-import type { Category, Part } from "../format/blocks.ts";
+import type { Block, Category, Part } from "../format/blocks.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
 
@@ -8,7 +7,7 @@ import type { Visibility } from "../settings.ts";
 // [LAW:types-are-the-program] A row's key names what it shows, `<trace_id>`, then `/<group key>`, then
 // `/<block key>`, so it is the same row however many rows arrive around it.
 export type Row =
-  | { kind: "exchange"; key: string; exchange: Exchange }
+  | { kind: "exchange"; key: string; exchange: FormattedExchange }
   | { kind: "group"; key: string; title: Group["title"] }
   | { kind: "block"; key: string; block: KeyedBlock; size: number };
 
@@ -73,14 +72,10 @@ export function createLayout(visibility: Record<Category, Visibility>, groupRows
 
 // An exchange's rows: of each group, those `groupLayout` lists, and every one. `before`: the exchange's rows laid out
 // last, whose keys it keeps, the same arrays, when its rows' keys are the same.
-function exchangeRows(
-  { exchange, groups }: FormattedExchange,
-  groupLayout: (trace: string, group: Group) => { listed: Row[]; every: Row[] },
-  before: ExchangeRows | undefined,
-): ExchangeRows {
-  const trace = exchange.trace_id;
-  const laidOut = groups.map((group) => groupLayout(trace, group));
-  const rows: Row[] = [{ kind: "exchange", key: trace, exchange }, ...laidOut.flatMap(({ listed }) => listed)];
+function exchangeRows(formatted: FormattedExchange, groupLayout: (trace: string, group: Group) => { listed: Row[]; every: Row[] }, before: ExchangeRows | undefined): ExchangeRows {
+  const trace = formatted.exchange.trace_id;
+  const laidOut = formatted.groups.map((group) => groupLayout(trace, group));
+  const rows: Row[] = [{ kind: "exchange", key: trace, exchange: formatted }, ...laidOut.flatMap(({ listed }) => listed)];
   const keys = rows.map(({ key }) => key);
   const places = laidOut.flatMap(({ every }) => every.map(({ key }) => key));
   if (before !== undefined && same(before.keys, keys) && same(before.places, places)) return { ...before, rows };
@@ -154,11 +149,35 @@ function sizeOf(parts: Part[]): number {
   }, 0);
 }
 
-// A size in characters, to one decimal of the largest unit it reaches once rounded, so 999,960 reads 1.0M, not 1000.0k.
-export function describeSize(size: number): string {
-  if (size < 1000) return `${size} chars`;
-  const thousands = (size / 1000).toFixed(1);
-  return Number(thousands) < 1000 ? `${thousands}k chars` : `${(size / 1_000_000).toFixed(1)}M chars`;
+// A count to one decimal of the largest unit it reaches once rounded, so 999,960 reads 1.0M, not 1000.0k.
+export function compact(count: number): string {
+  if (count < 1000) return `${count}`;
+  const thousands = (count / 1000).toFixed(1);
+  return Number(thousands) < 1000 ? `${thousands}k` : `${(count / 1_000_000).toFixed(1)}M`;
+}
+
+// A size in characters.
+export const describeSize = (size: number): string => `${compact(size)} chars`;
+
+// What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of its first text
+// or JSON part on one line, as much as a line could hold. A block with neither, a tool result with only its id, shows
+// nothing.
+export function preview(block: Block): string {
+  const part = block.parts.find((part) => part.kind === "text" || part.kind === "json");
+  const text = part === undefined ? "" : part.kind === "text" ? part.text : jsonText(part);
+  return text.slice(0, previewLength).replace(/\s+/g, " ").trim();
+}
+const previewLength = 200;
+
+// A recorded timestamp as the clock read, to the second.
+export function clockTime(timestamp: string): string {
+  return clock.format(Date.parse(timestamp));
+}
+const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+// A duration in milliseconds as seconds to one decimal.
+export function seconds(milliseconds: number): string {
+  return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
 // Whether a row shows expanded: a block as its category starts, the user's and the assistant's expanded and the rest

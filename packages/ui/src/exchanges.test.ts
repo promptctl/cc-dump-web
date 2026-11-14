@@ -20,6 +20,7 @@ describe("exchanges", () => {
         request: { ...empty, head: events[0], completedBy: events[6] },
         response: { ...empty, head: events[3], body: [events[4]], completedBy: events[6] },
         end: events[6],
+        first: events[0],
         latest: events[6],
       },
       {
@@ -27,6 +28,7 @@ describe("exchanges", () => {
         request: { ...empty, head: events[1], completedBy: events[5] },
         response: { ...empty, head: events[2], completedBy: events[5] },
         end: events[5],
+        first: events[1],
         latest: events[5],
       },
     ]);
@@ -34,7 +36,7 @@ describe("exchanges", () => {
 
   it("holds an exchange in flight with no response or end yet", () => {
     const events = [request("a", "/v1/messages")];
-    expect(exchanges(events)).toEqual([{ trace_id: "a", request: { ...empty, head: events[0] }, response: empty, end: undefined, latest: events[0] }]);
+    expect(exchanges(events)).toEqual([{ trace_id: "a", request: { ...empty, head: events[0] }, response: empty, end: undefined, first: events[0], latest: events[0] }]);
   });
 
   it("holds an exchange whose request was not recorded, with what was", () => {
@@ -45,6 +47,7 @@ describe("exchanges", () => {
         request: empty,
         response: { ...empty, head: events[0], body: [events[1]], completedBy: events[2] },
         end: events[2],
+        first: events[0],
         latest: events[2],
       },
     ]);

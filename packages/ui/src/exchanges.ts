@@ -12,9 +12,10 @@ export type Side<Head, Body, Trailers> = { head: Head | undefined; body: Body[];
 export type RequestSide = Side<Of<"request">, Of<"request_body">, Of<"request_trailers">>;
 export type ResponseSide = Side<Of<"response">, Of<"response_body">, Of<"response_trailers">>;
 
-// One exchange of a recording: its two sides, its end, which is undefined until the exchange ends, and its latest
-// event. A recording only grows, so two derivations of an exchange with the same latest event hold the same events.
-export type Exchange = { trace_id: string; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; latest: RecordedEvent };
+// One exchange of a recording: its two sides, its end, which is undefined until the exchange ends, and its first and
+// latest events. A recording only grows, so two derivations of an exchange with the same latest event hold the same
+// events.
+export type Exchange = { trace_id: string; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
 
 // The last event that changed a side, so two derivations of a side with the same latest event are the same side.
 export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefined {
@@ -30,6 +31,7 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
       request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
       response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
       end: undefined,
+      first: event,
       latest: event,
     };
     exchange.latest = event;

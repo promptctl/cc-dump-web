@@ -4,7 +4,7 @@ import { exchanges } from "../exchanges.ts";
 import type { Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type Visibility } from "../settings.ts";
-import { createGroupRows, createLayout, describeSize } from "./rows.ts";
+import { clockTime, compact, createGroupRows, createLayout, describeSize, preview, seconds } from "./rows.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -32,6 +32,16 @@ describe("layout", () => {
     const { rows } = layout(shown)(createFormatter()(exchanges(request("a", body))));
     expect(rows.find(({ key }) => key === "a/message.0/content.0")).toMatchObject({ size: "Hello.".length });
     expect([999, 12_345, 999_949, 999_960, 2_500_000].map(describeSize)).toEqual(["999 chars", "12.3k chars", "999.9k chars", "1.0M chars", "2.5M chars"]);
+    expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
+  });
+
+  it("previews a block by the start of its first text or JSON, on one line, and prints a line's time and duration", () => {
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
+    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "fields", fields: [["id", "t1"]] }, { kind: "json", label: "input", value: { command: "ls -la" } }] })).toBe('{ "command": "ls -la" }');
+    expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "x".repeat(500) }] })).toHaveLength(200);
+    expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
+    expect(seconds(2100)).toBe("2.1s");
   });
 
   it("lays an unchanged exchange out as the same rows", () => {

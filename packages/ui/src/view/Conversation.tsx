@@ -2,12 +2,12 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import type { Exchange } from "../exchanges.ts";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange } from "../format/format.ts";
+import { categoryVars } from "../theme/theme.ts";
 import { positionAt, rowIndex } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import { createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, jsonText, type Row } from "./rows.ts";
+import { clockTime, compact, createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, jsonText, preview, seconds, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch, paint } from "./highlights.ts";
@@ -142,7 +142,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       {/* The browser's own scroll anchoring would be a second writer of the offset. */}
       <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
         {rows.length === 0 ? (
-          <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet.</p>
+          <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
         ) : (
           <Hold.Provider value={hold}>
             <Pattern.Provider value={pattern}>
@@ -169,7 +169,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
             data-follow={following}
             pressed={control.pressed}
             title={control.title}
-            className="pointer-events-auto rounded-md border bg-background px-2 py-1 text-xs shadow-sm hover:bg-hover"
+            className="pointer-events-auto rounded-full border bg-panel px-3 py-1 text-xs hover:bg-hover"
             onClick={toggleFollow}
           >
             {control.label}
@@ -185,13 +185,13 @@ const leadLines = 3;
 
 // The control in each state of follow mode: whether it is pressed, its label and its title.
 const followStates = {
-  on: { pressed: true, label: "Following", title: "The view stays at the newest content. Click to stop following." },
+  on: { pressed: true, label: "● Following", title: "The view stays at the newest content. Click to stop following." },
   paused: {
     pressed: "mixed",
-    label: "Follow paused",
+    label: "○ Follow paused",
     title: "Away from the newest content. Scroll back to the end, or click, to follow again.",
   },
-  off: { pressed: false, label: "Follow off", title: "Click to follow the newest content." },
+  off: { pressed: false, label: "○ Follow off", title: "Click to follow the newest content." },
 } as const;
 
 // The search's pattern, for every text shown to highlight its matches with.
@@ -244,61 +244,78 @@ const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boo
     case "exchange":
       return <ExchangeLine exchange={row.exchange} reading={reading} />;
     case "group":
-      return <h2 className="px-4 pt-1 pl-8 text-foreground-muted">{row.title}</h2>;
+      return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
     case "block":
       return <BlockView row={row} />;
   }
 });
 
-// `reading`: whether the read can still bring this exchange its end.
-function ExchangeLine({ exchange: { request, response, end }, reading }: { exchange: Exchange; reading: boolean }) {
+// The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns aligned down the conversation,
+// each column as wide as its widest value, and how it ended. `reading`: whether the read can still bring this exchange
+// its end.
+function ExchangeLine({ exchange: { exchange: { end }, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   return (
-    <div className="flex gap-3 border-t px-4 pt-1.5">
-      {request.head ? (
-        <span className="flex-1 truncate">
-          {request.head.method} {request.head.url}
-        </span>
-      ) : (
-        <span className="flex-1 text-foreground-muted">request not recorded</span>
-      )}
-      {response.head && (
-        <span>
-          {response.head.status} {response.head.reason}
-        </span>
-      )}
-      {/* How it ended, beside its status: a response that began can still be cut, and one streaming has not ended. */}
+    <div className="grid grid-cols-[3ch_8ch_minmax(8ch,1fr)_6ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 border-t px-4 pt-2 pb-1 font-sans tabular-nums">
+      <span className="text-right text-foreground-muted">{facts.ordinal}</span>
+      <time dateTime={facts.began} title={facts.began}>
+        {clockTime(facts.began)}
+      </time>
+      <span className="truncate">{facts.model}</span>
+      <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
+      <span>{facts.status}</span>
+      <Fact label="in" count={facts.input} />
+      <Fact label="cache" count={facts.cacheRead} />
+      <Fact label="out" count={facts.output} />
+      <span>{facts.stopReason}</span>
+      {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
-        {end?.outcome ?? (reading ? "pending" : "no end read")}
+        {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
       </span>
     </div>
   );
 }
 
-// A block: collapsed, one line naming it and its size; expanded, that line and all its parts. Clicking the line
-// switches between them.
+// A token count under its label; the label alone until the count is known.
+function Fact({ label, count }: { label: string; count: number | undefined }) {
+  return (
+    <span>
+      <span className="text-foreground-muted">{label}</span> {count === undefined ? "" : compact(count)}
+    </span>
+  );
+}
+
+// [LAW:dataflow-not-control-flow] What the line says of each way an exchange stands: nothing of one that completed,
+// since its status says so, and of one still in flight; a word for the rest.
+const endings = { ok: "", pending: "", unread: "no end read", error: "error", aborted: "aborted", stopped: "stopped" } as const;
+
+// A block: collapsed, one line naming it, a preview of its content and its size; expanded, that line and all its parts.
+// Clicking the line switches between them. The gutter bar in its category's color runs its whole height
+// (docs/design/02-design.md, "One bold element").
 function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
   const { key, block, size } = row;
   const open = useView((state) => isExpanded(state.flipped, row));
   const hold = useContext(Hold);
   return (
-    <div className="pl-12 pr-4">
+    <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
       <button
         type="button"
-        className="flex w-full gap-3 text-left hover:bg-hover"
+        className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
         onClick={() => {
           hold();
           view.toggle(key);
         }}
       >
         <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
-        <span className="w-20 text-foreground-muted">{block.category}</span>
-        <span className="flex-1 truncate">
+        <span className="shrink-0">
           <HighlightedText blockKey={key} at={address.name} text={block.name} />
         </span>
-        <span className="text-foreground-muted">{describeSize(size)}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{preview(block)}</span>
+        <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
+          {compact(size)}
+        </span>
       </button>
       {open && (
-        <div className="pb-1 pl-6">
+        <div className="max-w-[110ch] pb-1 pl-6">
           {block.parts.map((part, index) => (
             <PartView key={index} part={part} blockKey={key} index={index} />
           ))}
