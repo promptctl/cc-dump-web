@@ -20,19 +20,9 @@
 //   errors               print console errors and page errors seen so far
 // A command's argument is the rest of its line, as written. Lines starting with # are ignored. A failing command prints ERR and the run continues; the exit code is 1 if any did.
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { createRequire } from "node:module";
 import { createInterface } from "node:readline";
-
-const deps = process.env.CC_DUMP_DRIVER_DEPS ?? join(homedir(), ".cache/run-cc-dump");
-let chromium;
-try {
-  ({ chromium } = createRequire(join(deps, "package.json"))("playwright-core"));
-} catch {
-  console.error(`playwright-core not found under ${deps}. Install it:\n  mkdir -p ${deps} && cd ${deps} && npm init -y && npm install playwright-core`);
-  process.exit(2);
-}
+import { chromium } from "playwright-core";
 
 const base = process.env.CC_DUMP_UI ?? "http://127.0.0.1:3346";
 const shots = process.env.CC_DUMP_SHOTS ?? "/tmp/cc-dump-shots";
@@ -67,19 +57,22 @@ const commands = {
   text: async (sel) => (await page.locator(sel || "body").first().innerText({ timeout: 10_000 })).slice(0, 4000),
   count: async (sel) => String(await page.locator(sel).count()),
   eval: async (js) => JSON.stringify(await page.evaluate(js)),
-  sleep: async (ms) => (await page.waitForTimeout(Number(ms)), "ok"),
+  sleep: async (ms) => {
+    if (!/^\d+$/.test(ms)) throw new Error(`sleep takes a whole number of milliseconds, got ${JSON.stringify(ms)}`);
+    return (await page.waitForTimeout(Number(ms)), "ok");
+  },
   errors: async () => (errors.length ? errors.join("\n") : "(none)"),
 };
 
 let failed = false;
 for await (const raw of createInterface({ input: process.stdin })) {
-  const line = raw.trim();
-  if (!line || line.startsWith("#")) continue;
+  const line = raw.trimStart();
+  if (!line.trim() || line.startsWith("#")) continue;
   const [name] = line.split(/\s/, 1);
-  const command = commands[name];
   try {
-    if (!command) throw new Error(`unknown command: ${name}`);
-    console.log(`> ${line}\n${await command(line.slice(name.length).trimStart())}`);
+    if (!Object.hasOwn(commands, name)) throw new Error(`unknown command: ${name}`);
+    // The argument keeps its trailing whitespace: `fill <selector> | ` fills nothing, which clears the field.
+    console.log(`> ${line}\n${await commands[name](line.slice(name.length).replace(/^\s/, ""))}`);
   } catch (error) {
     failed = true;
     console.log(`> ${line}\nERR ${String(error instanceof Error ? error.message : error).split("\n")[0]}`);

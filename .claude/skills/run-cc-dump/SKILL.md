@@ -10,12 +10,8 @@ All paths are relative to the repo (or worktree) root.
 
 ## Prerequisites (macOS, verified)
 
-Node ≥ 26, pnpm 11, tmux, Google Chrome in /Applications. The driver's one dependency lives outside the repo:
-
-```bash
-(mkdir -p ~/.cache/run-cc-dump && cd ~/.cache/run-cc-dump && npm init -y && npm install playwright-core)
-pnpm install
-```
+Node ≥ 26, pnpm 11, tmux, Google Chrome in /Applications, and `pnpm install` (the driver's playwright-core is a dev
+dependency of the repo).
 
 ## First: is a cc-dump already running?
 
@@ -28,7 +24,7 @@ up, sometimes observing a live Claude Code. Check before anything else:
 ```
 
 - Ports held by another worktree's stack → **do not stop it**; drive it as-is with the driver (read-only flows are
-  safe), or use the isolated proxy below for traffic. It runs *that worktree's* code, not yours. `traffic.mjs` refuses
+  safe), or `stack.sh proxy` (below) for traffic. It runs *that worktree's* code, not yours. `traffic.mjs` refuses
   it unless its upstream is the fake.
 - Ports free → `stack.sh up` (next section).
 
@@ -43,8 +39,8 @@ up, sometimes observing a live Claude Code. Check before anything else:
 ```
 
 `up` sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME` under `/tmp/cc-dump-run` (override with `CC_DUMP_HOME`) and writes a
-`proxy.json` there pointing upstream at the fake on 3399; the logs are `fake.log` and `dev.log` there. A start that is
-not up in 60s kills its session and prints both logs.
+`proxy.json` there pointing upstream at the fake on 3399; each window's log is `<window>.log` there. A start that is
+not up in 60s prints the logs and kills its session.
 Its refusal when ports are held is verified; the start itself has **not** been run yet (ports were held throughout
 the sessions that wrote this) — if it fails, fix the script and this line.
 
@@ -55,8 +51,8 @@ node .claude/skills/run-cc-dump/traffic.mjs 3
 ```
 
 Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless `fake-anthropic.mjs`
-answers at its upstream; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming turns through
-the proxy under `/agent/<recording-stem>/v1/messages`, failing on any non-2xx. Each reply has a thinking block and a
+answers at its upstream; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming
+turns through the proxy under `/agent/<recording-stem>/v1/messages`, failing on any non-2xx. Each reply has a thinking block and a
 text block echoing the user turn.
 
 ### Drive the UI
@@ -97,19 +93,15 @@ Stable selectors (from `packages/ui/src/view/`):
 ### Proxy only, beside a stack that holds the ports
 
 ```bash
-mkdir -p /tmp/ccd-iso/rec
-tmux new-session -d -s ccd-iso -n fake "node .claude/skills/run-cc-dump/fake-anthropic.mjs 3398 > /tmp/ccd-iso/fake.log 2>&1"
-tmux new-window -t ccd-iso -n proxy "node packages/proxy/src/isolated.ts http://127.0.0.1:3398 /tmp/ccd-iso/rec "$(date -u +%FT%TZ)" 3390 3391 > /tmp/ccd-iso/proxy.log 2>&1"
-until curl -sf -o /dev/null http://127.0.0.1:3391/info; do sleep 0.2; done
+.claude/skills/run-cc-dump/stack.sh proxy   # same session, logs and down as `up`
 CC_DUMP_READER_PORT=3391 node .claude/skills/run-cc-dump/traffic.mjs 2
-ls /tmp/ccd-iso/rec
-tmux kill-session -t ccd-iso
+ls /tmp/cc-dump-run/proxy-recordings
+.claude/skills/run-cc-dump/stack.sh down
 ```
 
-Runs this worktree's proxy source on spare ports, with its fake on 3398 so a `stack.sh` fake on 3399 is left alone;
-each line is its own command, so the steps may be separate calls. The third argument is the run's start, which names
-its recording.
-`isolated.ts` is also what the proxy's tests run. A real Claude Code works against it too, for free:
+Runs this worktree's proxy source (`packages/proxy/src/isolated.ts`, what the proxy's tests run) on 3390, its reader
+on 3391, and its fake on 3398, so a stack on the fixed ports and its fake are left alone. A real Claude Code works
+against it too, for free (verified):
 
 ```bash
 curl -s -X POST http://127.0.0.1:3391/recordings          # -> {"name":"<stem>.jsonl"}
@@ -143,4 +135,4 @@ pnpm test        # vitest, ~2s; binds port 0, so it runs fine beside a live stac
 
 - `stack.sh up` prints holders and exits 1 → another stack (its cwd is printed) or a leftover fake on 3399 is running.
   A cwd in this worktree is yours: `stack.sh down`.
-- `playwright-core not found under ~/.cache/run-cc-dump` → run the Prerequisites install.
+- `Cannot find package 'playwright-core'` → `pnpm install`.

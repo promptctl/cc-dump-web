@@ -18,7 +18,7 @@ async function ok(res, what) {
 const { base_url, upstream } = await (await ok(await fetch(`${reader}/info`), `GET ${reader}/info`)).json();
 // A proxy older than `upstream` in its info says nothing of where it forwards, and is refused the same way.
 const probe = URL.parse("fake-anthropic", upstream);
-const fake = probe !== null && (await fetch(probe).then((res) => res.ok, () => false));
+const fake = probe !== null && (await fetch(probe, { signal: AbortSignal.timeout(2000) }).then(async (res) => res.ok && (await res.text()) === "fake-anthropic", () => false));
 if (!fake) throw new Error(`the proxy at ${base_url} forwards to ${upstream}, where no fake-anthropic.mjs answers; refusing to send it traffic`);
 
 const { name } = await (await ok(await fetch(`${reader}/recordings`, { method: "POST" }), `POST ${reader}/recordings`)).json();
@@ -37,6 +37,7 @@ for (let turn = 1; turn <= turns; turn++) {
   const text = await (await ok(res, `turn ${turn}`)).text();
   // The assistant's reply goes back into the history, as an agent's would: the text deltas joined.
   const said = [...text.matchAll(/"text_delta","text":("(?:[^"\\]|\\.)*")/g)].map(([, s]) => JSON.parse(s)).join("");
+  if (!said) throw new Error(`turn ${turn}: ${res.status}, but no text_delta in the reply:\n${text.slice(0, 2000)}`);
   messages.push({ role: "assistant", content: [{ type: "text", text: said }] });
   console.log(`turn ${turn}: ${res.status} ${said}`);
 }

@@ -2,8 +2,8 @@
 // A stand-in for api.anthropic.com, so traffic through the proxy costs nothing and needs no key.
 //   node .claude/skills/run-cc-dump/fake-anthropic.mjs [port]     (default 3399)
 // POST /v1/messages answers like the real API: an SSE stream when the body says "stream": true, else one JSON message.
-// The reply is a thinking block and a text block that echoes the last user message. A body that is not JSON answers
-// 400, as the API does. GET /fake-anthropic answers 200, so a client can tell this fake is what it reaches. Every other
+// The reply is a thinking block and a text block that echoes the last user message. A body it cannot read a request
+// from answers 400, as the API does. GET /fake-anthropic answers 200, so a client can tell this fake is what it reaches. Every other
 // path answers 404.
 import { createServer } from "node:http";
 
@@ -56,14 +56,14 @@ createServer((req, res) => {
   req.on("end", async () => {
     if (req.method === "GET" && new URL(req.url, "http://x").pathname.endsWith("/fake-anthropic")) return void res.writeHead(200).end("fake-anthropic");
     if (req.method !== "POST" || !new URL(req.url, "http://x").pathname.endsWith("/v1/messages")) return void res.writeHead(404).end('{"type":"error"}');
-    let body;
+    let body, message;
     try {
       body = JSON.parse(Buffer.concat(chunks).toString());
+      message = reply(body, ++count);
     } catch (error) {
       console.log(`fake-anthropic: ${req.method} ${req.url} -> 400 ${error.message}`);
       return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: error.message } }));
     }
-    const message = reply(body, ++count);
     console.log(`fake-anthropic: ${req.method} ${req.url} -> ${message.id}`);
     if (!body.stream) return void res.writeHead(200, { "content-type": "application/json", "request-id": `req_fake_${count}` }).end(JSON.stringify(message));
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "request-id": `req_fake_${count}` });

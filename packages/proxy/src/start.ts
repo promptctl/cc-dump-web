@@ -9,8 +9,8 @@ import { createStatus, watchSource } from "./status.ts";
 
 export type Proxying = { upstream: Upstream; recordings: Recordings; source: Source; proxyPort: number; readerPort: number };
 
-// [LAW:single-enforcer] The one way the proxy is put together, for main.ts and for the tests that run it as its own
-// process: the proxy on its port, and on the reader port the proxy's status and info beside the recording's read side
+// [LAW:single-enforcer] The one way the proxy is put together, for main.ts and for isolated.ts, which the tests and the
+// run-cc-dump skill run as its own process: the proxy on its port, and on the reader port the proxy's status and info beside the recording's read side
 // and the way to make a recording.
 export async function startProxy(log: Log, { upstream, recordings, source, proxyPort, readerPort }: Proxying) {
   const status = createStatus(watchSource(log, source));
