@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Event, Log } from "@cc-dump/log";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { recordingName } from "./format.ts";
 import { createRecordings } from "./recordings.ts";
@@ -8,11 +9,25 @@ import { createRecordings } from "./recordings.ts";
 const moment = new Date("2026-11-14T10:00:00.000Z");
 const run = "run-20261114T090000.000Z.jsonl";
 
-function recordings(now = moment) {
+function recordings(now = moment, log: Log = () => {}) {
   const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-  return createRecordings(() => {}, dir, run, () => now);
+  return createRecordings(log, dir, run, () => now);
 }
+
+describe("record", () => {
+  it("fails loudly, and does not make the file again, when a recording `create` made is gone before its first event", () => {
+    const logged: Event[] = [];
+    const { dir, create, record } = recordings(moment, (event) => void logged.push(event));
+    const name = create();
+    rmSync(join(dir, name));
+
+    record(name, "4bf92f3577b34da6a3ce929d0e0e4736")({ type: "end", outcome: "ok" });
+
+    expect(readdirSync(dir)).toEqual([]);
+    expect(logged).toMatchObject([{ event: "record", outcome: "error", error: expect.stringContaining("ENOENT") }]);
+  });
+});
 
 describe("create", () => {
   it("names a recording for the moment, makes its file empty, and holds its writer, so it is followed", () => {
@@ -34,6 +49,17 @@ describe("create", () => {
     expect(names).toEqual([1, 2, 3].map((ms) => recordingName(new Date(moment.getTime() + ms))));
     expect(readdirSync(dir).sort()).toEqual([recordingName(moment), ...names].sort());
     expect(readFileSync(join(dir, recordingName(moment)), "utf8")).toBe('{"a":1}\n');
+  });
+});
+
+describe("readable", () => {
+  it("is the bytes of a recording this run writes, and fails for one it does not", () => {
+    const { create, record, readable } = recordings();
+    const name = create();
+    record(name, "4bf92f3577b34da6a3ce929d0e0e4736")({ type: "request_trailers", headers: [] });
+
+    expect(readable(name)).toBeGreaterThan(0);
+    expect(() => readable("20261101T000000.000Z.jsonl")).toThrow("this run holds no writer for it");
   });
 });
 

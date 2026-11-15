@@ -8,9 +8,10 @@ import { events } from "./store.ts";
 export type OpenRecording = string | null;
 
 // [LAW:types-are-the-program] Where a read stands: none, with no recording open; reading the recording open, by its name,
-// until it ends or fails. An agent's recording, and the run's own, end only for a reader that leaves: the read follows
-// the process that writes them, across restarts of the proxy. A new read is begun by a mount, a reload, or opening a
-// recording.
+// until it ends or fails. A recording the proxy run is writing ends only for a reader that leaves, and one it is not
+// writing ends at its last event: so a read of an agent's recording ends when the proxy restarts, and a read begun after
+// the agent's next request reaches the new proxy follows it again. A new read is begun by a mount, a reload, or opening
+// a recording.
 export type Reading =
   | { state: "none" }
   | { state: "reading"; name: string }

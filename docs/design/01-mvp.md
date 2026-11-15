@@ -150,3 +150,4 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 | Whether launching again resumes the session the recording holds, as the original's `auto_resume` does. Open until the basics of how the app works are settled. | question |
 | Re-deriving a very long conversation on every reload may be slow. Not measured. | risk |
 | The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial. Not checked against the current Claude Code. | risk |
+| A restart of the proxy ends the live view of an agent launched before it, since the proxy cannot know whether the agent's process is still running. The recording is followed again once the agent's next request reaches the new proxy and it is reopened. | risk |

@@ -2,14 +2,14 @@ import { closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
 import { recordingName } from "./format.ts";
-import { createWriter, eventLine, recordedLength, type Recorder, type Writer } from "./recording.ts";
+import { createWriter, eventLine, type Recorder, type Writer } from "./recording.ts";
 
 // The recordings of the proxy's run: where they are, `run`, the name of the one that takes the traffic no agent
 // claims, how to record an exchange into one, how to make one for an agent about to launch, and what a reader may ask
 // of them. A reader never creates a writer, a file or a listing entry: only `record` and `create` do.
 // - `create()`: a new agent's recording, named for this moment, its file made empty and its writer this run's; the name.
-// - `readable(name)`: the bytes of the recording a reader may read, the writer's `written` while the run has one,
-//   else `recordedLength` of what is on disk.
+// - `readable(name)`: the bytes of a recording this run writes that a reader may read, its writer's `written`. A
+//   recording no writer of this run holds is finished, and its reader measures it once itself (`recordedLength`).
 // - `follows(name)`: whether a read that reaches the end of the recording waits for more: exactly when this run holds
 //   a writer for it, which is the run's own recording from its first event, a recording `create` made, and an agent's
 //   that a request continued after a restart of the proxy. Any other is finished, as far as this run knows.
@@ -83,7 +83,11 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     run,
     record,
     create,
-    readable: (name) => writers.get(name)?.written() ?? recordedLength(join(dir, name)).terminated,
+    readable: (name) => {
+      const writer = writers.get(name);
+      if (writer === undefined) throw new Error(`${name}: this run holds no writer for it`);
+      return writer.written();
+    },
     follows: (name) => writers.has(name),
     onWritten: (listener) => {
       listeners.add(listener);

@@ -28,7 +28,7 @@ describe("the reader port", () => {
     for (const res of answers) res.destroy();
   });
 
-  it("makes a recording for an agent about to launch, answering its name, and lists it", async () => {
+  it("makes a recording for an agent about to launch, answering its name, and lists none until it holds something", async () => {
     const { dir, readerPort } = await proxy();
 
     const res = await send(readerPort, { method: "POST", path: "/recordings" });
@@ -38,7 +38,7 @@ describe("the reader port", () => {
     expect(recordingStart(name)).toBeInstanceOf(Date);
     expect(readFileSync(join(dir, name), "utf8")).toBe("");
     const listed = await send(readerPort, { path: "/recordings" });
-    expect(parseListings((await buffer(listed)).toString())).toEqual([{ name }]);
+    expect(parseListings((await buffer(listed)).toString())).toEqual([]);
   });
 
   it("makes each recording its own, though asked within one millisecond", async () => {

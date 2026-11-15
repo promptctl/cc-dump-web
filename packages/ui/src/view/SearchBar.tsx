@@ -1,4 +1,4 @@
-import { settings, useSettings, type SearchOptions } from "../settings.ts";
+import { useSettings, type SearchOptions } from "../settings.ts";
 import type { Direction } from "./search.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -39,7 +39,7 @@ export function SearchBar({ count, ordinal, error, onStep }: { count: number; or
             pressed={chosen[option]}
             title={`${name}: ${chosen[option] ? "on" : "off"}. Click to turn it ${chosen[option] ? "off" : "on"}.`}
             className="rounded px-1.5 py-0.5 font-mono aria-pressed:bg-panel aria-[pressed=false]:text-foreground-muted aria-[pressed=false]:hover:bg-hover"
-            onClick={() => settings.setSearchOption(option, !chosen[option])}
+            onClick={() => view.searchOption(option, !chosen[option])}
           >
             {label}
           </Toggle>

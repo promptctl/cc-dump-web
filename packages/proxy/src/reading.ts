@@ -1,4 +1,4 @@
-import { readdir, open } from "node:fs/promises";
+import { readdir, open, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
@@ -9,7 +9,8 @@ import type { Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
 // (docs/design/01-mvp.md): live viewing, reopening, refresh and reload are all one read from a position.
-// `GET /recordings` lists the `.jsonl` files of the recordings directory, sorted by name. `GET /recordings/<name>` is
+// `GET /recordings` lists the `.jsonl` files of the recordings directory that hold something, in no order of its own: a
+// recording with no bytes has no conversation, and one a launch made is opened by its name. `GET /recordings/<name>` is
 // Server-Sent Events, one per recorded line, whose id is the byte offset just past the line: a reconnecting EventSource
 // resumes from it with `Last-Event-ID`. A recording the proxy run is writing (`Recordings.follows`) is read to its end
 // and then on, as it is written, until the reader leaves; any other is finished, and ends with an `end` event. A read
@@ -20,10 +21,10 @@ export function createReader(log: Log, recordings: Recordings): Handler {
   const { dir } = recordings;
   return (req, res, { trace_id, fail, ended }) => {
     const url = new URL(req.url!, "http://reader");
-    const asked = /^\/recordings\/([^/]+)$/.exec(url.pathname)?.[1];
+    const asked = nameIn(url.pathname);
     const answer = async () => {
       if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-      if (url.pathname === "/recordings") return list(await files(dir), res);
+      if (url.pathname === "/recordings") return list(await nonEmpty(dir, await files(dir)), res);
       const name = await readableName(recordings, asked);
       if (!name) return void res.writeHead(404).end();
       return read(readingOf(log, recordings, trace_id, ended, name), positionOf(req, url), res, fail);
@@ -36,9 +37,26 @@ export function createReader(log: Log, recordings: Recordings): Handler {
   };
 }
 
-// The recordings: the `.jsonl` files in the directory, sorted by name.
+// [LAW:parse-dont-validate] The name a URL's path asks for, as the file system spells it: the path's segment is
+// percent-encoded, and one with a malformed escape names nothing.
+function nameIn(pathname: string): string | undefined {
+  const segment = /^\/recordings\/([^/]+)$/.exec(pathname)?.[1];
+  try {
+    return segment === undefined ? undefined : decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+// The recordings: the `.jsonl` files in the directory.
 async function files(dir: string) {
-  return (await readdir(dir)).filter((name) => name.endsWith(".jsonl")).sort();
+  return (await readdir(dir)).filter((name) => name.endsWith(".jsonl"));
+}
+
+// Those of `names` whose file holds bytes. One that went between the listing and the look is not listed.
+async function nonEmpty(dir: string, names: string[]) {
+  const sizes = await Promise.all(names.map((name) => stat(join(dir, name)).then(({ size }) => size, (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? 0 : Promise.reject(error)))));
+  return names.filter((_, index) => sizes[index]! > 0);
 }
 
 function list(names: string[], res: ServerResponse) {

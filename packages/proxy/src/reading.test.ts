@@ -9,7 +9,7 @@ import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import { agentBaseUrl, parseListing, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
+import { agentBaseUrl, parseListing, parseListings, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
 import { createRecordings, type Recordings } from "./recordings.ts";
 import { proxyProcess, runName, subscribe, type ServerSentEvent } from "./testing.ts";
 
@@ -183,14 +183,40 @@ describe("createReader", () => {
     },
   );
 
-  it("lists the files of the directory, sorted by name, whatever they are named", async () => {
+  it("lists the `.jsonl` files of the directory that hold something, whatever they are named, in no order of its own", async () => {
     const dir = recordingsDir();
-    for (const name of [agentName, pastRun, "notes.jsonl", "notes.txt"]) writeFileSync(join(dir, name), "");
+    for (const name of [agentName, pastRun, "notes.jsonl", "notes.txt"]) writeFileSync(join(dir, name), '{"a":1}\n');
+    writeFileSync(join(dir, "empty.jsonl"), "");
     const { reader } = await proxyAndReader(dir);
 
     const res = await send(reader.port, { path: "/recordings" });
 
-    expect(JSON.parse((await buffer(res)).toString())).toEqual([{ name: agentName }, { name: "notes.jsonl" }, { name: pastRun }]);
+    expect(parseListings((await buffer(res)).toString()).map(({ name }) => name).sort()).toEqual([agentName, "notes.jsonl", pastRun]);
+  });
+
+  it("opens an empty recording by its name, though the list leaves it out", async () => {
+    const dir = recordingsDir();
+    writeFileSync(join(dir, pastRun), "");
+    const { reader } = await proxyAndReader(dir);
+
+    const stream = await subscribe(reader.port, `/recordings/${pastRun}`);
+
+    expect(await stream.next()).toEqual({ event: "end", data: '{"unterminated_bytes":0}' });
+  });
+
+  it("opens a recording whose name the URL spells with escapes, and answers 404 for an escape that is malformed", async () => {
+    const dir = recordingsDir();
+    writeFileSync(join(dir, "my session.jsonl"), '{"a":1}\n');
+    const { reader } = await proxyAndReader(dir);
+
+    const stream = await subscribe(reader.port, `/recordings/${encodeURIComponent("my session.jsonl")}`);
+    expect(await stream.take(2)).toEqual([...expected(['{"a":1}']), { event: "end", data: '{"unterminated_bytes":0}' }]);
+
+    for (const path of ["/recordings/my%20session.jsonl", "/recordings/my%zzsession.jsonl", "/recordings/%E0%A4%A.jsonl"]) {
+      const res = await send(reader.port, { path });
+      await buffer(res);
+      expect(res.statusCode).toBe(path === "/recordings/my%20session.jsonl" ? 200 : 404);
+    }
   });
 
   it("follows a recording the run made for an agent about to launch, empty until its process writes, and sends its events once it does", async () => {
@@ -200,7 +226,8 @@ describe("createReader", () => {
     const stream = await subscribe(reader.port, `/recordings/${agentName}`);
     expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "ok", followed: true, from: 0, to: 0, events_read: 0 });
     expect(readdirSync(dir)).toEqual([agentName]);
-    expect(JSON.parse((await buffer(await send(reader.port, { path: "/recordings" }))).toString())).toEqual([{ name: agentName }]);
+    // Nothing is in it yet, so it has no conversation to list.
+    expect(JSON.parse((await buffer(await send(reader.port, { path: "/recordings" }))).toString())).toEqual([]);
 
     await exchange("/v1/models");
 

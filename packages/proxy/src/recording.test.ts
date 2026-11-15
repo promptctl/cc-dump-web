@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -44,6 +44,19 @@ describe("createWriter", () => {
 
     expect(recordedLength(path)).toEqual({ terminated: 16, unterminated: 0 });
     expect(writer.written()).toBe(16);
+  });
+
+  it("creates a file that is not there at its first write, and never one that was there when it was made", () => {
+    const missing = pathOf("a.jsonl");
+    createWriter(missing).append(Buffer.from('{"a":1}\n'));
+    expect(readFileSync(missing, "utf8")).toBe('{"a":1}\n');
+
+    const made = pathOf("b.jsonl");
+    writeFileSync(made, "");
+    const writer = createWriter(made);
+    rmSync(made);
+    expect(() => writer.append(Buffer.from('{"a":1}\n'))).toThrow(/ENOENT/);
+    expect(existsSync(made)).toBe(false);
   });
 
   it("cuts a fragment a failed write left after its last whole event, at its next write", () => {

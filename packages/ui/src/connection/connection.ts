@@ -7,7 +7,7 @@ import type { Launch, Launched, Launcher } from "@cc-dump/server/format";
 export type Connection = {
   // The recordings, by name.
   recordings: (signal: AbortSignal) => Promise<Listing[]>;
-  // Reads a recording from its start, then, while it is followed (an agent's, or this run's), each event as it is
+  // Reads a recording from its start, then, while it is followed (the proxy run holds its writer), each event as it is
   // written. A read ends in exactly one way: its recording ends, it fails, or `signal` aborts it, which reports
   // nothing. A signal already aborted throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;

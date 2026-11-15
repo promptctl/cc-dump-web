@@ -68,7 +68,8 @@ export function createLayout(
   let last: { exchanges: ExchangeRows[]; layout: Layout } = {
     exchanges: [],
     layout: { rows: [], keys: keysOf([], (own) => own.listed), every: { rows: [], keys: keysOf([], (own) => own.all) } },
-  };  return (formatted, revealed) => {
+  };
+  return (formatted, revealed) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
       const trace = exchange.exchange.trace_id;

@@ -49,10 +49,12 @@ const heading: Marker = { pattern: /^# (.+)$/gm, fenced: false, piece: ([, title
 
 // What the harness wraps its content in: a tag, with the whitespace around it, which is the tag's and not the text's, so
 // no text is left that is only a line break. A tag with no closing tag wraps nothing, so it stays text.
+// The harness puts each tag on a line of its own, opening and closing, so a tag is one that starts a line: a mention of
+// one inside a file's text, in backticks or in a sentence, neither opens nor closes anything.
 // A tag whose content opens with a hook's line is that hook's output, whole: the tag's edges are known from the wire, so
 // a hook's line later in the content starts nothing. Without one, a user-prompt-submit-hook tag is that hook's, and a
 // system reminder is a reminder, in which only a file opens a piece.
-const wrapped = /\s*<(system-reminder|user-prompt-submit-hook)>[\s\S]*?<\/\1>\s*/g;
+const wrapped = /\s*^<(system-reminder|user-prompt-submit-hook)>[\s\S]*?^<\/\1>\s*/gm;
 const opensWithHook = new RegExp(`^\\s*<[^>]+>\\s*${hookLine}`);
 
 // What differs by whose text it is: the piece for text before any opening, and the markers that open a piece in its top

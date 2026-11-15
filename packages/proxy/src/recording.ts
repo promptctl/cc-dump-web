@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, constants, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
 import type { Recorded, RecordedEvent } from "./format.ts";
 
 const { O_APPEND, O_CREAT, O_WRONLY } = constants;
@@ -49,23 +49,28 @@ export type Writer = { written: () => number; append: (line: Buffer) => void };
 // it saw up to then, and no traffic leaves no file.
 // [LAW:one-source-of-truth] The file, not this writer's count of it, is the truth of what it holds. The writer starts at
 // the recording's `recordedLength`, so one already at the path is continued after its last whole event: an agent
-// outlives a proxy restart and goes on sending to its path. The first write creates the file if it is not there, and
-// every later write opens it without creating it, so one deleted mid-run fails loudly. Each write cuts the file back to
-// `written` before appending the event, so what a failed write left, or a crash, is gone at the next write, and every
-// line below `written` is a whole event. Another process may be writing the same file, an old proxy draining a stream
-// while a restarted one takes the agent's next request: a file whose size is not `written` has grown, so `written`
-// becomes the file's own last newline first, and the other's whole events are never cut, only a fragment.
+// outlives a proxy restart and goes on sending to its path. A file that is not there when the writer is made is created
+// by its first write; one that is there is never created, so a recording deleted before its first write, or mid-run,
+// fails loudly. A write whose file is `written` bytes long appends to it as it is. A file of another length was written
+// by someone else (an old proxy draining a stream while a restarted one takes the agent's next request) or ends in what
+// a failed write or a crash left: `written` becomes the file's own last newline, and the file is cut there only if
+// bytes follow it, so another writer's whole events are never cut, only a fragment. The length is read and the event
+// appended in two steps: an event another process appends between them is kept, and this writer learns of it at its
+// next write.
 export function createWriter(path: string): Writer {
   let written = recordedLength(path).terminated;
-  let flags = O_WRONLY | O_APPEND | O_CREAT;
+  let flags = O_WRONLY | O_APPEND | (existsSync(path) ? 0 : O_CREAT);
   return {
     written: () => written,
     append: (line) => {
       const fd = openSync(path, flags);
       flags = O_WRONLY | O_APPEND;
       try {
-        if (fstatSync(fd).size !== written) written = recordedLength(path).terminated;
-        ftruncateSync(fd, written);
+        if (fstatSync(fd).size !== written) {
+          const { terminated, unterminated } = recordedLength(path);
+          written = terminated;
+          if (unterminated > 0) ftruncateSync(fd, terminated);
+        }
         appendFileSync(fd, line);
       } finally {
         closeSync(fd);

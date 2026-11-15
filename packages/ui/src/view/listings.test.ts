@@ -18,9 +18,9 @@ describe("entriesOf", () => {
     ]);
   });
 
-  it("puts a file no part of the app named after every recording that has a start, in the order it was listed", () => {
+  it("puts a file no part of the app named after every recording that has a start, by name, whatever order it was listed in", () => {
     const entries = entriesOf(listed("b.jsonl", "20200101T000000.000Z.jsonl", "a.jsonl", "run-20201231T000000.000Z.jsonl"));
-    expect(entries.map(({ listing }) => listing.name)).toEqual(["run-20201231T000000.000Z.jsonl", "20200101T000000.000Z.jsonl", "b.jsonl", "a.jsonl"]);
+    expect(entries.map(({ listing }) => listing.name)).toEqual(["run-20201231T000000.000Z.jsonl", "20200101T000000.000Z.jsonl", "a.jsonl", "b.jsonl"]);
   });
 
   it("holds what each name parsed to, once, beside the listing", () => {

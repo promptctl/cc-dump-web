@@ -1,5 +1,6 @@
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
+import { parseSettings, useSettings } from "../settings.ts";
 import { events, useEvents } from "../store.ts";
 import { useView, view } from "./state.ts";
 
@@ -34,6 +35,26 @@ describe("opening a recording", () => {
     view.open(agent);
     unsubscribe();
     expect(seen).toEqual([0]);
+  });
+});
+
+describe("the search", () => {
+  const match = { key: "t1/request/http", at: "text", start: 0 };
+  beforeEach(() => {
+    useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
+    useView.setState(useView.getInitialState(), true);
+    useSettings.setState(parseSettings(undefined));
+  });
+
+  it("has no current match after a change of query, or of how the query is read", () => {
+    useView.setState({ search: { query: "x", current: match } });
+    view.search("xy");
+    expect(useView.getState().search).toEqual({ query: "xy", current: undefined });
+
+    useView.setState({ search: { query: "x", current: match } });
+    view.searchOption("wholeWord", true);
+    expect(useView.getState().search).toEqual({ query: "x", current: undefined });
+    expect(useSettings.getState().search.wholeWord).toBe(true);
   });
 });
 

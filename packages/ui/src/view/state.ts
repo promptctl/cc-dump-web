@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
+import { settings, type SearchOptions } from "../settings.ts";
 import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import { isExpanded } from "./rows.ts";
@@ -45,6 +46,12 @@ export const view = {
   toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
   moveTo: (position: Position) => useView.setState({ position }),
   search: (query: string) => useView.setState({ search: { query, current: undefined } }),
+  // A change of how the query is read finds other matches, as a change of the query does, so none is current.
+  // [LAW:one-source-of-truth] The option itself is the settings', which every tab shares.
+  searchOption: (option: keyof SearchOptions, on: boolean) => {
+    settings.setSearchOption(option, on);
+    useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
+  },
   // A step to a match: it becomes current, its block and the regions holding it show expanded, and the view moves to
   // its row, which the step then refines to the match's line.
   goTo: ({ match, block, regions }: Step) =>

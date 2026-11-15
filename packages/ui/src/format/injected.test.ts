@@ -65,6 +65,17 @@ describe("split", () => {
     }
   });
 
+  it("ends a tag only at a closing tag that starts a line, so a mention of one inside a file's text does not end the reminder", () => {
+    const mentions = instructions("/work/app/CLAUDE.md", "project instructions", "Wrap it in `</system-reminder>` and `<system-reminder>`, or say </system-reminder> inline.");
+    const inside = reminder(`${preamble}\n\n${mentions}`);
+    for (const split of [typed, sent]) {
+      expect(split(`${inside}\n\nSay hello.`).map(({ kind }) => kind)).toEqual(["reminder", "claude_md", split === typed ? "said" : "reminder"]);
+      expect(split(inside)[1]).toEqual({ kind: "claude_md", path: "/work/app/CLAUDE.md", text: `${mentions}\n</system-reminder>` });
+    }
+    // A tag that does not start its line opens nothing.
+    expect(typed("Wrote <system-reminder>\nx\n</system-reminder> here.")).toEqual([{ kind: "said", text: "Wrote <system-reminder>\nx\n</system-reminder> here." }]);
+  });
+
   it("leaves a hook's line in the middle of a reminder in the one reminder", () => {
     const middle = reminder("Context for this turn.\n\nPreToolUse hook additional context: later");
     for (const split of [typed, sent]) expect(split(middle)).toEqual([{ kind: "reminder", text: middle }]);
