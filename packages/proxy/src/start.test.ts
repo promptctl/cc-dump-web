@@ -13,7 +13,7 @@ describe("the reader port", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const upstream = await serving((_req, res) => res.end());
-    return proxyProcess(upstream.url, join(dir, "20261113T090000.000Z.jsonl"), "unlimited");
+    return proxyProcess(upstream.url, dir, "unlimited");
   };
 
   it("serves the recordings and the proxy's status and info, every answer to any origin", async () => {

@@ -3,7 +3,7 @@ import { buffer } from "node:stream/consumers";
 import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { describe } from "@cc-dump/log/describe";
-import type { ProxyInfo } from "@cc-dump/proxy/format";
+import { agentBaseUrl, recordingName, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
 import { launchSettings } from "./settings.ts";
 import { TmuxRefused, type Tmux } from "./tmux.ts";
@@ -39,22 +39,25 @@ export function createApp({ log, settingsPath, tmux, proxyInfo, directory }: Par
     sessions: await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length })),
   });
 
-  // `POST /launch`: stores the settings asked for, then opens the agent's window, pointed at the running proxy.
+  // `POST /launch`: stores the settings asked for, then opens the agent's window, pointed at the running proxy by a path
+  // of its own, which is how the proxy tells its process's requests from every other's (`agentBaseUrl`). The command is
+  // run as the user wrote it. The launch's moment names the recording that process will be.
   const launch: Answer = async (req, { trace_id }): Promise<Launched> => {
     const { session, command } = parsed(parseLaunch, (await buffer(req)).toString());
     launchSettings.write(settingsPath, { session, command });
     const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info).catch((error: unknown) => {
       throw new Refused(502, `The proxy did not say where agents reach it: ${describe(error)}`, { cause: error });
     });
+    const recording = recordingName(new Date());
     const window = await loggedIn(
       log,
       trace_id,
       "launch",
-      { session, command, directory, base_url, settings_path: settingsPath },
-      () => tmux.newWindow({ session, command, cwd: directory, env: { ANTHROPIC_BASE_URL: base_url } }),
+      { session, command, directory, base_url, recording, settings_path: settingsPath },
+      () => tmux.newWindow({ session, command, cwd: directory, env: { ANTHROPIC_BASE_URL: agentBaseUrl(base_url, recording) } }),
       (window) => window,
     );
-    return { session, ...window };
+    return { session, ...window, recording };
   };
 
   const routes: Record<string, Partial<Record<string, Answer>>> = { "/launch": { GET: launcher, POST: launch } };

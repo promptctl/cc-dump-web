@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
+import { agentBaseUrl, recordingStart } from "@cc-dump/proxy/format";
 import { parseFailure, parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
 import { TmuxRefused } from "./tmux.ts";
@@ -36,7 +37,7 @@ describe("GET /launch", () => {
 });
 
 describe("POST /launch", () => {
-  it("opens the agent's window pointed at the proxy, and stores the settings asked for", async () => {
+  it("opens the agent's window pointed at the proxy by a path of its own, runs the command as written, stores the settings asked for, and answers the recording the agent will be", async () => {
     const { url, opened, settingsPath, launch, work } = await app();
     const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions" });
     expect(res.status).toBe(200);
@@ -47,12 +48,17 @@ describe("POST /launch", () => {
       session: "work",
       command: "claude --dangerously-skip-permissions",
       base_url: "http://127.0.0.1:3344",
+      recording: expect.any(String),
       settings_path: settingsPath,
       window_id: "@7",
       pane_id: "%9",
     });
-    expect(parseLaunched(await res.text())).toEqual({ session: "work", window_id: "@7", pane_id: "%9" });
-    expect(opened).toEqual([{ session: "work", command: "claude --dangerously-skip-permissions", cwd: "/work/project", env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344" } }]);
+    const launched = parseLaunched(await res.text());
+    expect(launched).toEqual({ session: "work", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
+    expect(recordingStart(launched.recording)).toBeInstanceOf(Date);
+    expect(opened).toEqual([
+      { session: "work", command: "claude --dangerously-skip-permissions", cwd: "/work/project", env: { ANTHROPIC_BASE_URL: agentBaseUrl("http://127.0.0.1:3344", launched.recording) } },
+    ]);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });
     const launcher = parseLauncher(await (await fetch(`${url}/launch`)).text());
     expect(launcher.settings).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });

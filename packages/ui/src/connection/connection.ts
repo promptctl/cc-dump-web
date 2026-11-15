@@ -5,11 +5,11 @@ import type { Launch, Launched, Launcher } from "@cc-dump/server/format";
 // and launches agents, and how they are reached is the implementation's alone (the browser on the proxy's reader and
 // the app server today; an Electron shell later).
 export type Connection = {
-  // The recordings, oldest first.
+  // The recordings, by name.
   recordings: (signal: AbortSignal) => Promise<Listing[]>;
-  // Reads a recording from its start, then, while it is live, each event as it is written. A read ends in exactly
-  // one way: its recording ends, it fails, or `signal` aborts it, which reports nothing. A signal already aborted
-  // throws its reason, as `fetch` does.
+  // Reads a recording from its start, then, while it is followed (an agent's, or this run's), each event as it is
+  // written. A read ends in exactly one way: its recording ends, it fails, or `signal` aborts it, which reports
+  // nothing. A signal already aborted throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
   // The proxy's status now and at each change, across restarts of the proxy (the restarted proxy's status follows),
   // until `signal` aborts it, which reports nothing, or the status is not served, which fails it. A status it cannot

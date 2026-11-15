@@ -1,8 +1,8 @@
 import { request as httpRequest, type ClientRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
-import type { Header } from "./format.ts";
-import type { Recorder } from "./recording.ts";
+import { agentOf, type Header } from "./format.ts";
+import type { Recordings } from "./recordings.ts";
 
 const requestFor = { "http:": httpRequest, "https:": httpsRequest };
 
@@ -24,15 +24,19 @@ export function parseUpstream(value: unknown): Upstream {
 // [LAW:decomposition] The proxy never parses a body: bytes pass through in both directions as
 // they arrive, which is what keeps the agent's view of the API unchanged. Every request on every
 // path is recorded as it was seen; what a recording means is for its readers to decide.
-export function createProxy(upstream: Upstream, record: Recorder): Handler {
+// [LAW:one-source-of-truth] A request is recorded in its agent's recording, which its URL names (`agentOf`), and one
+// that names none in the run's. The path that names the agent is the proxy's own: it is removed before the request is
+// forwarded and before its URL is recorded, since the recording already names the agent.
+export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings, "record" | "run">): Handler {
   const url = new URL(upstream);
   const request = requestFor[url.protocol as keyof typeof requestFor];
   const basePath = url.pathname.replace(/\/$/, "");
 
   return (req, res, { trace_id, fail, ended }) => {
-    const seen = record(trace_id);
+    const { name, url: target } = agentOf(req.url!) ?? { name: run, url: req.url! };
+    const seen = record(name, trace_id);
     const headers = pairs(req.rawHeaders);
-    seen({ type: "request", method: req.method!, url: req.url!, http_version: req.httpVersion, headers });
+    seen({ type: "request", method: req.method!, url: target, http_version: req.httpVersion, headers });
     const requestBody = (chunk: Buffer) => seen({ type: "request_body", chunk });
     // pipe() relays no trailers, so a body's end is relayed here: its trailers are seen, then passed on.
     const relayEnd = (from: IncomingMessage, to: OutgoingMessage, type: "request_trailers" | "response_trailers") => () => {
@@ -60,7 +64,7 @@ export function createProxy(upstream: Upstream, record: Recorder): Handler {
     try {
       outgoing = request(url, {
         method: req.method,
-        path: basePath + req.url,
+        path: basePath + target,
         // node adds no Host when headers are an array, so the upstream's replaces the agent's.
         headers: [["host", url.host], ...endToEnd(headers, towardUpstream).filter(([name]) => name.toLowerCase() !== "host")].flat(),
       });

@@ -18,10 +18,17 @@ export type View = { open: OpenRecording; flipped: Record<string, true>; positio
 // The search: its query, and the match last stepped to, the one holder of which match is current. A new query has none.
 export type Search = { query: string; current: Match | undefined };
 
+// A tab opens with no recording: the person launches an agent, or opens one.
+const initial: View = { open: null, flipped: {}, position: { at: "end" }, search: { query: "", current: undefined } };
+
+// The stored view's version. A view stored by another version names its recording in a form this one does not read, so
+// the tab opens as a new one.
 export const useView = create<View>()(
-  persist((): View => ({ open: { recording: "live" }, flipped: {}, position: { at: "end" }, search: { query: "", current: undefined } }), {
+  persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
+    version: 1,
+    migrate: () => initial,
   }),
 );
 
@@ -31,7 +38,7 @@ export const view = {
   // [LAW:no-ambient-temporal-coupling] The events shown are emptied as it opens, so the view of the last recording's
   // events unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
   // as that commit's effects run (useRecording), and reads it from its start.
-  open: (open: OpenRecording) => {
+  open: (open: string) => {
     events.reset();
     useView.setState(({ search }) => ({ open, position: { at: "end" }, search: { ...search, current: undefined } }));
   },

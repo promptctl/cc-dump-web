@@ -15,7 +15,8 @@ import { ThemePicker } from "./view/ThemePicker.tsx";
 
 export function App({ connection }: { connection: Connection }) {
   useTheme();
-  const reading = useRecording(connection, useView((state) => state.open));
+  const open = useView((state) => state.open);
+  const reading = useRecording(connection, open);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
   const read = useEvents((store) => store.read);
@@ -38,15 +39,19 @@ export function App({ connection }: { connection: Connection }) {
         </div>
       </header>
       {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
-          way (docs/design/01-mvp.md, "One path to the screen"). */}
-      <Conversation key={read} formatted={shown} reading={reading.state === "opening" || reading.state === "reading"} />
+          way (docs/design/01-mvp.md, "One path to the screen"). With no recording open there is none to show. */}
+      {open === null ? (
+        <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
+      ) : (
+        <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
+      )}
     </div>
   );
 }
 
 function ReadingState({ reading }: { reading: Reading }) {
   switch (reading.state) {
-    case "opening":
+    case "none":
     case "reading":
       return null;
     case "ended":

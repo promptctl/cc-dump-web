@@ -3,18 +3,18 @@ import { LOOPBACK } from "@cc-dump/log/address";
 import type { ProxyInfo } from "./format.ts";
 import { createProxy, type Upstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import type { Recording } from "./recording.ts";
+import type { Recordings } from "./recordings.ts";
 import type { Source } from "./source.ts";
 import { createStatus, watchSource } from "./status.ts";
 
-export type Proxying = { upstream: Upstream; recording: Recording; source: Source; proxyPort: number; readerPort: number };
+export type Proxying = { upstream: Upstream; recordings: Recordings; source: Source; proxyPort: number; readerPort: number };
 
 // [LAW:single-enforcer] The one way the proxy is put together, for main.ts and for the tests that run it as its own
 // process: the proxy on its port, and on the reader port the proxy's status and info beside the recording's read side.
-export async function startProxy(log: Log, { upstream, recording, source, proxyPort, readerPort }: Proxying) {
+export async function startProxy(log: Log, { upstream, recordings, source, proxyPort, readerPort }: Proxying) {
   const status = createStatus(watchSource(log, source));
-  const reader = createReader(log, recording);
-  const proxy = await serve(log, createProxy(upstream, recording.record), proxyPort);
+  const reader = createReader(log, recordings);
+  const proxy = await serve(log, createProxy(upstream, recordings), proxyPort);
   const routes: Record<string, Handler> = { "/status": status, "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}` }) };
   const readers: Handler = (req, res, work) => {
     // [LAW:single-enforcer] Every answer on the reader port, any route's: the browser's origin is the UI's, not the

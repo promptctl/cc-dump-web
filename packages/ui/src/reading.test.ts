@@ -1,23 +1,15 @@
-import type { Listing, RecordedEvent } from "@cc-dump/proxy/format";
-import { setImmediate } from "node:timers/promises";
+import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { onScreen, readRecording, toOpenRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
+import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
-const past: Listing = { name: "20261113T080000.000Z.jsonl", live: false };
-const live: Listing = { name: "20261113T090000.000Z.jsonl", live: true };
+const agent = "20261113T080000.000Z.jsonl";
 const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
 
-// A connection the test drives: it lists `listings`, or fails with it when it is an error, and hands the test each
-// read's reader. A read begun aborted throws, as the browser's does.
-function fakeConnection(listings: Listing[] | Error = [past, live]) {
+// A connection the test drives: it hands the test each read's reader. A read begun aborted throws, as the browser's does.
+function fakeConnection() {
   const reads: { name: string; reader: Reader }[] = [];
   const connection: Parameters<typeof readRecording>[0] = {
-    recordings: (signal) =>
-      new Promise((resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason));
-        void setImmediate().then(() => (listings instanceof Error ? reject(listings) : resolve(listings)));
-      }),
     read: (name, reader, signal) => {
       signal.throwIfAborted();
       reads.push({ name, reader });
@@ -42,23 +34,21 @@ function handFrames() {
 }
 
 // readRecording of `open` into a sink that records its calls, with every state it reported.
-async function started(listings?: Listing[] | Error, open: OpenRecording = { recording: "live" }) {
-  const { connection, reads } = fakeConnection(listings);
+function started(open: OpenRecording = agent) {
+  const { connection, reads } = fakeConnection();
   const frames = handFrames();
   const calls: (["reset"] | ["append", RecordedEvent[]])[] = [];
   const sink = { reset: () => void calls.push(["reset"]), append: (batch: RecordedEvent[]) => void calls.push(["append", batch]) };
   const states: Reading[] = [];
   const abort = new AbortController();
   readRecording(connection, open, sink, frames.frames, abort.signal, (reading) => states.push(reading));
-  await setImmediate();
-  await setImmediate();
   return { reads, frames, calls, states, abort };
 }
 
 describe("readRecording", () => {
-  it("reads the listing marked live, appending the events that arrive between frames in one call", async () => {
-    const { reads, frames, calls, states } = await started();
-    expect(reads.map(({ name }) => name)).toEqual([live.name]);
+  it("reads the recording open by its name, appending the events that arrive between frames in one call", () => {
+    const { reads, frames, calls, states } = started();
+    expect(reads.map(({ name }) => name)).toEqual([agent]);
     const { reader } = reads[0]!;
     [1, 2, 3].map(event).forEach(reader.event);
     expect(calls).toEqual([["reset"]]);
@@ -66,89 +56,61 @@ describe("readRecording", () => {
     reader.event(event(4));
     frames.run();
     expect(calls).toEqual([["reset"], ["append", [1, 2, 3].map(event)], ["append", [event(4)]]]);
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }]);
+    expect(states).toEqual([{ state: "reading", name: agent }]);
   });
 
-  it("appends what is pending before it reports its end, and no frame of it runs after", async () => {
-    const { reads, frames, calls, states } = await started();
+  it("appends what is pending before it reports its end, and no frame of it runs after", () => {
+    const { reads, frames, calls, states } = started();
     const { reader } = reads[0]!;
     [1, 2].map(event).forEach(reader.event);
     reader.end({ unterminated_bytes: 3 });
     expect(calls).toEqual([["reset"], ["append", [1, 2].map(event)]]);
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }, { state: "ended", name: live.name, end: { unterminated_bytes: 3 } }]);
+    expect(states).toEqual([{ state: "reading", name: agent }, { state: "ended", name: agent, end: { unterminated_bytes: 3 } }]);
     expect(frames.pending()).toBe(0);
   });
 
-  it("appends what is pending before it reports its failure", async () => {
-    const { reads, frames, calls, states } = await started();
+  it("appends what is pending before it reports its failure", () => {
+    const { reads, frames, calls, states } = started();
     const { reader } = reads[0]!;
     const error = new Error("refused");
     reader.event(event(1));
     reader.failed(error);
     expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }, { state: "failed", error }]);
+    expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
     expect(frames.pending()).toBe(0);
   });
 
-  it("cancels its pending frame when aborted, and reports nothing", async () => {
-    const { reads, frames, calls, states, abort } = await started();
+  it("cancels its pending frame when aborted, and reports nothing", () => {
+    const { reads, frames, calls, states, abort } = started();
     reads[0]!.reader.event(event(1));
     abort.abort();
     expect(frames.pending()).toBe(0);
     expect(calls).toEqual([["reset"]]);
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: live.name }]);
+    expect(states).toEqual([{ state: "reading", name: agent }]);
   });
 
-  it("reads a past recording open by its name, by the same read, whatever the list says", async () => {
-    const { reads, frames, calls, states } = await started(new Error("GET /recordings: 500"), { recording: "past", name: past.name });
-    expect(reads.map(({ name }) => name)).toEqual([past.name]);
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: past.name }]);
-    reads[0]!.reader.event(event(1));
-    frames.run();
-    expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
-  });
-
-  it("reports a list that fails, or one without exactly one live recording, as failed", async () => {
-    const error = new Error("GET /recordings: 500");
-    expect((await started(error)).states).toEqual([{ state: "opening" }, { state: "failed", error }]);
-    for (const listings of [[], [live, { ...live, name: "20261113T100000.000Z.jsonl" }]]) {
-      const { reads, states } = await started(listings);
-      expect(reads).toEqual([]);
-      expect(states).toEqual([{ state: "opening" }, { state: "failed", error: new Error(`GET /recordings listed ${listings.length} live recordings, not one`) }]);
-    }
-  });
-
-  it("ends in a failure the read reports as it begins", async () => {
+  it("ends in a failure the read reports as it begins", () => {
     const error = new Error("GET /recordings/x: not served");
-    const connection: Parameters<typeof readRecording>[0] = { recordings: () => Promise.reject(new Error("not listed")), read: (_name, reader) => reader.failed(error) };
     const states: Reading[] = [];
-    readRecording(connection, { recording: "past", name: past.name }, { reset: () => {}, append: () => {} }, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
-    await setImmediate();
-    expect(states).toEqual([{ state: "opening" }, { state: "reading", name: past.name }, { state: "failed", error }]);
+    readRecording({ read: (_name, reader) => reader.failed(error) }, agent, { reset: () => {}, append: () => {} }, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
   });
 
-  it.each<OpenRecording>([{ recording: "live" }, { recording: "past", name: past.name }])("reads nothing and reports nothing when aborted as it begins, open %o", async (open) => {
-    const { connection, reads } = fakeConnection();
-    const states: Reading[] = [];
-    const abort = new AbortController();
-    readRecording(connection, open, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, (reading) => states.push(reading));
-    abort.abort();
-    await setImmediate();
-    await setImmediate();
+  it("empties what is shown and reads nothing when no recording is open", () => {
+    const { reads, calls, states } = started(null);
     expect(reads).toEqual([]);
-    expect(states).toEqual([{ state: "opening" }]);
+    expect(calls).toEqual([["reset"]]);
+    expect(states).toEqual([{ state: "none" }]);
   });
 });
 
-describe("the recording open", () => {
-  it("is opened from a listing: live by its role, a past one by its name", () => {
-    expect(toOpenRecording(live)).toEqual({ recording: "live" });
-    expect(toOpenRecording(past)).toEqual({ recording: "past", name: past.name });
+describe("the recording on screen", () => {
+  it("is the one being read or read to its end, by its name", () => {
+    expect(onScreen({ state: "reading", name: agent })).toBe(agent);
+    expect(onScreen({ state: "ended", name: agent, end: { unterminated_bytes: 0 } })).toBe(agent);
   });
 
-  it("is on screen by the name of the run read, so after the proxy restarts the run that ended is, not the new live one", () => {
-    expect(onScreen({ state: "reading", name: live.name })).toBe(live.name);
-    expect(onScreen({ state: "ended", name: live.name, end: { unterminated_bytes: 0 } })).toBe(live.name);
-    expect([onScreen({ state: "opening" }), onScreen({ state: "failed", error: new Error("refused") })]).toEqual([undefined, undefined]);
+  it("is none when no recording is open, or the read failed", () => {
+    expect([onScreen({ state: "none" }), onScreen({ state: "failed", error: new Error("refused") })]).toEqual([undefined, undefined]);
   });
 });

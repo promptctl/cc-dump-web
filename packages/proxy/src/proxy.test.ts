@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,9 +11,9 @@ import { LOOPBACK } from "@cc-dump/log/address";
 import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy, parseUpstream } from "./proxy.ts";
-import type { RecordedEvent } from "./format.ts";
-import { createRecording } from "./recording.ts";
-import { proxyProcess } from "./testing.ts";
+import { agentBaseUrl, recordingName, type RecordedEvent } from "./format.ts";
+import { createRecordings } from "./recordings.ts";
+import { proxyProcess, runName } from "./testing.ts";
 
 async function upstreamServing(handler: Handler): Promise<URL> {
   return new URL((await serving(handler)).url);
@@ -23,24 +23,25 @@ async function upstreamServing(handler: Handler): Promise<URL> {
 // hosts, and refusal by all of them is an AggregateError.
 const refusingAddress = new URL("http://localhost:1");
 
-// A recording path in a fresh directory, removed when the test finishes; `events` reads it back.
-function recordingPath() {
-  const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
-  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-  const path = join(dir, "recordings", "run.jsonl");
-  const events = () =>
-    readFileSync(path, "utf8")
+// A recordings directory in a fresh directory, removed when the test finishes. `path` is the run's recording, where the
+// traffic no agent claims is recorded; `events` reads a recording back, the run's unless another is named.
+function recordingsDir() {
+  const root = mkdtempSync(join(tmpdir(), "cc-dump-"));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  const dir = join(root, "recordings");
+  const events = (name = runName) =>
+    readFileSync(join(dir, name), "utf8")
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as RecordedEvent);
-  return { path, events };
+  return { dir, path: join(dir, runName), events };
 }
 
-// The proxy, recording to a fresh path. The recording's own events go to `recordLog`.
+// The proxy, recording into a fresh directory. The recordings' own events go to `recordLog`.
 async function proxyTo(upstream: URL) {
-  const { path, events } = recordingPath();
+  const { dir, path, events } = recordingsDir();
   const recordLog = eventLog();
-  return { ...(await serving(createProxy(parseUpstream(upstream.href), createRecording(recordLog.log, path).record))), path, events, recordLog };
+  return { ...(await serving(createProxy(parseUpstream(upstream.href), createRecordings(recordLog.log, dir, runName)))), dir, path, events, recordLog };
 }
 
 const bodyOf = (events: RecordedEvent[], type: "request_body" | "response_body") =>
@@ -289,6 +290,36 @@ describe("createProxy", () => {
       expect(recorded.at(-1)).toEqual({ type: "end", outcome: "ok", timestamp: expect.any(String), trace_id: logged.trace_id });
     });
 
+    it("records each agent's requests in its own recording, forwarded without the path that names it, and the rest in the run's, forwarded as sent", async () => {
+      const received: (string | undefined)[] = [];
+      const upstream = await upstreamServing((req, res) => {
+        received.push(req.url);
+        res.end("answer");
+      });
+      const { port, next, dir, events } = await proxyTo(upstream);
+      const [first, second] = [recordingName(new Date("2026-11-15T00:42:15.438Z")), recordingName(new Date("2026-11-15T00:43:00.000Z"))];
+      const requests = [
+        { path: `${agentBaseUrl("", first)}/v1/messages?beta=true`, to: first, as: "/v1/messages?beta=true" },
+        { path: `${agentBaseUrl("", second)}/v1/models`, to: second, as: "/v1/models" },
+        { path: `${agentBaseUrl("", first)}/api/hello`, to: first, as: "/api/hello" },
+        { path: "/v1/models", to: runName, as: "/v1/models" },
+        // A stem that is no recording's name names no agent.
+        { path: "/agent/notes/v1/models", to: runName, as: "/agent/notes/v1/models" },
+      ];
+
+      for (const { path } of requests) {
+        await buffer(await send(port, { path }));
+        await next();
+      }
+
+      expect(received).toEqual(requests.map(({ as }) => as));
+      expect(readdirSync(dir).sort()).toEqual([first, second, runName].sort());
+      for (const name of [first, second, runName]) {
+        const wanted = requests.filter(({ to }) => to === name).map(({ as }) => as);
+        expect(events(name).flatMap((event) => (event.type === "request" ? [event.url] : []))).toEqual(wanted);
+      }
+    });
+
     it("logs each exchange's recording as its own event in the exchange's trace, counting what it wrote", async () => {
       const upstream = await upstreamServing((_req, res) => res.end("answer"));
       const { port, next, path, recordLog } = await proxyTo(upstream);
@@ -503,22 +534,20 @@ describe("createProxy", () => {
       });
     });
 
-    it("never writes over a file already at the run's path, and logs each event it could not write", async () => {
+    it("continues a recording already at its path after its last whole line, cutting what a crash left", async () => {
       const upstream = await upstreamServing((_req, res) => res.end("answer"));
-      const { port, next, path, recordLog } = await proxyTo(upstream);
-      writeFileSync(path, "an earlier run's event\n");
+      const { port, next, path, events, recordLog } = await proxyTo(upstream);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, '{"an":"earlier event"}\n{"cut');
 
       expect(await buffer(await send(port, { path: "/v1/models" }))).toEqual(Buffer.from("answer"));
-      const exchange = await next();
+      await next();
 
-      expect(readFileSync(path, "utf8")).toBe("an earlier run's event\n");
-      expect(await recordLog.next()).toMatchObject({
-        event: "record",
-        trace_id: exchange.trace_id,
-        outcome: "error",
-        error: expect.stringContaining("EEXIST"),
-        counts: { events_written: 0, bytes_written: 0, events_failed: 6 },
-      });
+      const written = readFileSync(path, "utf8");
+      expect(written.startsWith('{"an":"earlier event"}\n{"timestamp"')).toBe(true);
+      expect(written).not.toContain('{"cut');
+      expect(shape(events().slice(1))).toEqual(["request", "request_trailers", "response", "response_body", "response_trailers", "end"]);
+      expect(await recordLog.next()).toMatchObject({ event: "record", outcome: "ok" });
     });
 
     it("never recreates a recording deleted mid-run, and logs each event it could not write", async () => {
@@ -553,8 +582,8 @@ describe("createProxy", () => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
-      const { path, events } = recordingPath();
-      const { child, proxyPort } = await proxyProcess(upstream.href, path, "unlimited");
+      const { dir, events } = recordingsDir();
+      const { child, proxyPort } = await proxyProcess(upstream.href, dir, "unlimited");
 
       const res = await send(proxyPort, { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
       await once(res, "data");
@@ -569,17 +598,17 @@ describe("createProxy", () => {
     });
 
     // A proxy process with the work a stop must cut open: an exchange streaming from an upstream that never
-    // ends, and a reader following the live recording. `untilShutdown` takes every event up to the stop's own.
+    // ends, and a reader following a recording. `untilShutdown` takes every event up to the stop's own.
     async function proxyWithWorkOpen() {
       const upstream = await upstreamServing((_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
-      const { path, events } = recordingPath();
-      const { child, proxyPort, readerPort, next } = await proxyProcess(upstream.href, path, "unlimited");
+      const { dir, events } = recordingsDir();
+      const { child, proxyPort, readerPort, next } = await proxyProcess(upstream.href, dir, "unlimited");
       const exchange = await send(proxyPort, { method: "POST", path: "/v1/messages", headers: { "content-length": String(body.length) }, body });
       await once(exchange, "data");
-      const reader = await send(readerPort, { path: "/recordings/run.jsonl" });
+      const reader = await send(readerPort, { path: `/recordings/${runName}` });
       const cut = Promise.all([exchange, reader].map((res) => expect(buffer(res)).rejects.toThrow(/aborted/)));
       const untilShutdown = async () => {
         const logged = [];
@@ -603,7 +632,7 @@ describe("createProxy", () => {
       expect(requests).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ method: "POST", url: "/v1/messages", outcome: "stopped", status: 200 }),
-          expect.objectContaining({ method: "GET", url: "/recordings/run.jsonl", outcome: "stopped", status: 200 }),
+          expect.objectContaining({ method: "GET", url: `/recordings/${runName}`, outcome: "stopped", status: 200 }),
         ]),
       );
       expect(requests).toHaveLength(2);

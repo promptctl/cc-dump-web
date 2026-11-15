@@ -1,78 +1,68 @@
-import { appendFileSync, closeSync, constants, ftruncateSync, mkdirSync, openSync } from "node:fs";
-import { basename, dirname } from "node:path";
-import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
+import { appendFileSync, closeSync, constants, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
 import type { Recorded, RecordedEvent } from "./format.ts";
 
-const { O_APPEND, O_CREAT, O_EXCL, O_WRONLY } = constants;
+const { O_APPEND, O_CREAT, O_WRONLY } = constants;
 
 // What the proxy saw of one exchange, as it saw it: the recorded format, with body chunks as the bytes.
 type Body = Extract<Recorded, { base64: string }>;
 export type Seen = Exclude<Recorded, Body> | { type: Body["type"]; chunk: Buffer };
 
-// One exchange's recording, opened when its request arrives.
-export type Recorder = (trace_id: string) => (seen: Seen) => void;
+// One exchange's recording into the recording `name`, opened when its request arrives.
+export type Recorder = (name: string, trace_id: string) => (seen: Seen) => void;
 
-// The run's recording: where it is, how to record an exchange into it, and the writer's word on its growth,
-// which only the writer knows. `written` is the length in bytes of the whole events written so far, all a
-// reader may read: past it the file may hold what the last write left when it failed, and before the first event
-// there may be no file. Each `onWritten` listener is called after every event written, as `written` grows,
-// until the function it returned is called.
-export type Recording = {
-  name: string;
-  path: string;
-  record: Recorder;
-  written: () => number;
-  onWritten: (listener: () => void) => () => void;
-};
+// [LAW:one-source-of-truth] The measure of a recording's file that every part uses, the one source of how much of it
+// may be read: the bytes through its last newline, which are whole events, and the bytes after it, which a write that
+// failed left. No file is neither. The writer starts there, and a reader of a recording with no writer stops there, so
+// the bytes a writer will cut are never sent, and a recording continued after a crash never has a fragment glued onto
+// its next event.
+export function recordedLength(path: string): { terminated: number; unterminated: number } {
+  let file: number;
+  try {
+    file = openSync(path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { terminated: 0, unterminated: 0 };
+    throw error;
+  }
+  try {
+    const size = fstatSync(file).size;
+    // From the end, a block at a time, to the last newline: a cut line may be longer than one block.
+    const block = Buffer.allocUnsafe(16 * 1024);
+    for (let end = size; end > 0; ) {
+      const start = Math.max(0, end - block.length);
+      const read = readSync(file, block, 0, end - start, start);
+      const newline = block.subarray(0, read).lastIndexOf(0x0a);
+      if (newline !== -1) return { terminated: start + newline + 1, unterminated: size - (start + newline + 1) };
+      end = start;
+    }
+    return { terminated: 0, unterminated: size };
+  } finally {
+    closeSync(file);
+  }
+}
+
+// One recording's file, and the writer's word on its growth, which only the writer knows. `written` is the length in
+// bytes of the whole events in the file, all a reader may read: past it the file may hold what the last write left
+// when it failed.
+export type Writer = { written: () => number; append: (line: Buffer) => void };
 
 // Each event is written before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
-// [LAW:one-source-of-truth] The file is the run's own and its length is the writer's: the first write
-// creates it, refusing a file already at the path, and every later write opens it without creating it, so
-// one deleted mid-run fails loudly. Each write cuts the file back to `written` before appending the event,
-// so what a failed write left is gone at the next write, every line below `written` is a whole event, and
-// those bytes never change once written.
-// [LAW:nothing-unseen] An exchange's recording is its own unit of work, in the exchange's trace: its
-// event, written with `end`, counts what was written and what failed, and names the first failure. A
-// write that fails is counted and never stops or alters the agent's traffic. Writes are synchronous,
-// so a disk that stalls stalls forwarding with it: that is the price of the kill guarantee above.
-export function createRecording(log: Log, path: string): Recording {
-  mkdirSync(dirname(path), { recursive: true });
-  let written = 0;
-  let flags = O_WRONLY | O_APPEND | O_CREAT | O_EXCL;
-  const listeners = new Set<() => void>();
-  const record: Recorder = (trace_id) => {
-    const span = startSpan(trace_id);
-    const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
-    let failure: string | undefined;
-    return (seen) => {
-      const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
-      const line = Buffer.from(`${JSON.stringify(event)}\n`);
-      try {
-        const fd = openSync(path, flags);
-        flags = O_WRONLY | O_APPEND;
-        appendAfter(fd, written, line);
-        counts.events_written++;
-        counts.bytes_written += line.length;
-        written += line.length;
-        for (const listener of listeners) listener();
-      } catch (error) {
-        counts.events_failed++;
-        failure ??= describeError(error);
-      }
-      if (seen.type !== "end") return;
-      const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
-      log({ event: "record", ...span.end(), ...ending, path, counts });
-    };
-  };
+// [LAW:one-source-of-truth] The writer starts at the recording's `recordedLength`, so one already at the path is
+// continued after its last whole event: an agent outlives a proxy restart and goes on sending to its path. The first
+// write creates the file if it is not there, and every later write opens it without creating it, so one deleted
+// mid-run fails loudly. Each write cuts the file back to `written` before appending the event, so what a failed write
+// left, or a crash, is gone at the next write, every line below `written` is a whole event, and those bytes never
+// change once written.
+export function createWriter(path: string): Writer {
+  let written = recordedLength(path).terminated;
+  let flags = O_WRONLY | O_APPEND | O_CREAT;
   return {
-    name: basename(path),
-    path,
-    record,
     written: () => written,
-    onWritten: (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
+    append: (line) => {
+      const fd = openSync(path, flags);
+      flags = O_WRONLY | O_APPEND;
+      appendAfter(fd, written, line);
+      written += line.length;
     },
   };
 }
@@ -85,6 +75,12 @@ function appendAfter(fd: number, length: number, line: Buffer) {
   } finally {
     closeSync(fd);
   }
+}
+
+// The line the recording holds for `seen`: one JSON event, the credentials removed.
+export function eventLine(trace_id: string, seen: Seen): Buffer {
+  const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
+  return Buffer.from(`${JSON.stringify(event)}\n`);
 }
 
 function recorded(seen: Seen): Recorded {

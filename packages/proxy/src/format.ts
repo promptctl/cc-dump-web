@@ -23,23 +23,57 @@ export type Recorded =
   | ({ type: "end" } & Ending);
 export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
 
-// One recording in `GET /recordings`: the live one is the run's, still being written.
-export type Listing = { name: string; live: boolean };
+// One recording in `GET /recordings`: a `.jsonl` file in the recordings directory.
+export type Listing = { name: string };
 
-// [LAW:one-source-of-truth] A recording's name, the moment its run started in ISO 8601 basic format (no colons, which
-// Finder and Windows refuse), and the start read back from it: the writer's format and its reader, side by side.
+// [LAW:one-source-of-truth] The names of recordings, the writer's formats and their reader, side by side. A recording is
+// one Claude Code process's (docs/design/01-mvp.md, Vocabulary), named for the moment the app launched it, in ISO 8601
+// basic format (no colons, which Finder and Windows refuse). Traffic that names no process goes to the proxy run's
+// recording, named for the moment the run started, so the two kinds are told apart by the name alone.
+const basicStart = (start: Date) => start.toISOString().replace(/[-:]/g, "");
+
 export function recordingName(start: Date): string {
-  return `${start.toISOString().replace(/[-:]/g, "")}.jsonl`;
+  return `${basicStart(start)}.jsonl`;
 }
 
-// The start a name was made from, or undefined for a name `recordingName` did not make: the recordings directory is
-// the user's too, and every `.jsonl` file in it is listed.
-export function recordingStart(name: string): Date | undefined {
-  const basic = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2}\.\d{3})Z\.jsonl$/.exec(name);
+export function runRecordingName(start: Date): string {
+  return `run-${basicStart(start)}.jsonl`;
+}
+
+export type RecordingKind = "agent" | "run";
+
+// The kind and the start a name was made from, or undefined for a name no part of the app made: the recordings
+// directory is the user's too, and every `.jsonl` file in it is listed.
+export function parseRecordingName(name: string): { kind: RecordingKind; start: Date } | undefined {
+  const basic = /^(run-)?(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2}\.\d{3})Z\.jsonl$/.exec(name);
   if (!basic) return undefined;
-  const [, year, month, day, hours, minutes, seconds] = basic;
+  const [, run, year, month, day, hours, minutes, seconds] = basic;
   const start = new Date(`${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`);
-  return !Number.isNaN(start.getTime()) && recordingName(start) === name ? start : undefined;
+  const kind = run ? "run" : "agent";
+  return !Number.isNaN(start.getTime()) && (kind === "run" ? runRecordingName(start) : recordingName(start)) === name ? { kind, start } : undefined;
+}
+
+// The start of an agent's recording, or undefined for any other name.
+export function recordingStart(name: string): Date | undefined {
+  const parsed = parseRecordingName(name);
+  return parsed?.kind === "agent" ? parsed.start : undefined;
+}
+
+// An agent's way to its recording is the base URL it is launched with: the proxy's, then the recording's name without
+// its `.jsonl`. Claude Code keeps that path on every request it makes, so the proxy tells whose a request is from its
+// URL. No header names a process: one process's requests carry several session IDs.
+const agentPath = "/agent/";
+export function agentBaseUrl(baseUrl: string, name: string): string {
+  return `${baseUrl}${agentPath}${name.slice(0, -".jsonl".length)}`;
+}
+
+// The recording an agent's request belongs to, and its URL without the path the proxy gave the agent, which is the URL
+// as the upstream knows it. Undefined for a request that is no agent's: one naming none, or a stem that is not a
+// recording's name, which is the proxy run's own.
+export function agentOf(url: string): { name: string; url: string } | undefined {
+  const [, stem, rest] = new RegExp(`^${agentPath}([^/?#]+)(/.*)$`).exec(url) ?? [];
+  const name = `${stem}.jsonl`;
+  return stem !== undefined && recordingStart(name) !== undefined ? { name, url: rest! } : undefined;
 }
 
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
@@ -67,7 +101,7 @@ export function parseListings(json: string): Listing[] {
   if (!Array.isArray(listings)) throw new Error("recordings list: is not an array");
   return listings.map((listing: unknown) => {
     const f = fields(listing, "recordings list entry");
-    return { name: f.string("name"), live: f.boolean("live") };
+    return { name: f.string("name") };
   });
 }
 

@@ -23,8 +23,9 @@ export type Launcher = { settings: LaunchSettings; sessions: Sessions };
 // `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line.
 export type Launch = { session: string; command: string };
 
-// `POST /launch`'s answer: the window opened, by the ids tmux gave it.
-export type Launched = { session: string; window_id: string; pane_id: string };
+// `POST /launch`'s answer: the window opened, by the ids tmux gave it, and `recording`, the name of the recording the
+// agent's process records to (docs/design/01-mvp.md, F1), which exists once the process sends its first request.
+export type Launched = { session: string; window_id: string; pane_id: string; recording: string };
 
 // Every refused or failed request's answer: why, in words the user is shown as they are (tmux's own, when tmux refused).
 export type Failure = { error: string };
@@ -63,7 +64,7 @@ export function sessions(names: string[]): Sessions {
 
 export function parseLaunched(json: string): Launched {
   const f = fields(parseJson(json, "launched"), "launched");
-  return { session: sessionName(f.string("session")), window_id: f.string("window_id"), pane_id: f.string("pane_id") };
+  return { session: sessionName(f.string("session")), window_id: f.string("window_id"), pane_id: f.string("pane_id"), recording: f.string("recording") };
 }
 
 export function parseFailure(json: string): Failure {

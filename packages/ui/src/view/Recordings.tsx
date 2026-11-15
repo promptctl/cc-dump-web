@@ -1,30 +1,25 @@
-import { recordingStart, type Listing } from "@cc-dump/proxy/format";
+import { parseRecordingName, type Listing } from "@cc-dump/proxy/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
-import { onScreen, toOpenRecording, type OpenRecording, type Reading } from "../reading.ts";
+import { onScreen, type OpenRecording, type Reading } from "../reading.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 import { useView, view } from "./state.ts";
 
-// The recordings control (docs/design/01-mvp.md, F7): the recording open, the list of every recording to open another
-// from, and, while a past one is open, the way back to the live one. The list is read each time it opens, so it holds
-// the runs started since it last did. `reading`: the read of the recording open, which names the one on screen.
+// The recordings control (docs/design/01-mvp.md, F7): the recording open, and the list of every recording to open
+// another from. The list is read each time it opens, so it holds the agents launched since it last did. `reading`: the
+// read of the recording open, which names the one on screen.
 export function Recordings({ connection, reading }: { connection: Pick<Connection, "recordings">; reading: Reading }) {
   const open = useView((state) => state.open);
   const shown = onScreen(reading);
   const list = useRef<HTMLDivElement>(null);
-  const pick = (opened: OpenRecording) => {
+  const pick = (opened: string) => {
     view.open(opened);
     list.current!.hidePopover();
   };
   return (
     <div className="flex items-center gap-2 text-xs">
-      {open.recording === "past" && (
-        <button type="button" data-back-to-live className="control" onClick={() => view.open({ recording: "live" })}>
-          Back to live
-        </button>
-      )}
-      <HeaderPopover id="recordings" popover={list} label={open.recording === "live" ? "Live recording" : `Recording of ${startOf(open.name)}`} className="min-w-72 p-1">
+      <HeaderPopover id="recordings" popover={list} label={labelOf(open)} className="min-w-72 p-1">
         <RecordingList connection={connection} shown={shown} pick={pick} />
       </HeaderPopover>
     </div>
@@ -34,9 +29,9 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
 // [LAW:types-are-the-program] Where the list stands: being read, read, or failed.
 type Listed = { state: "listing" } | { state: "listed"; listings: Listing[] } | { state: "failed"; error: Error };
 
-// Every recording, newest first, so the live one is on top. Read as it mounts, which is as the list opens. The one on
-// screen is not opened again: that would read it again from its start, and lose the reader's place in it.
-function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: OpenRecording) => void }) {
+// Every recording, newest first. Read as it mounts, which is as the list opens. The one on screen is not opened again:
+// that would read it again from its start, and lose the reader's place in it.
+function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: string) => void }) {
   const [listed, setListed] = useState<Listed>({ state: "listing" });
   useEffect(() => {
     const abort = new AbortController();
@@ -55,7 +50,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
     case "listed":
       return (
         <ul>
-          {listed.listings.toReversed().map((listing) => (
+          {newestFirst(listed.listings).map((listing) => (
             <li key={listing.name}>
               <button
                 type="button"
@@ -64,10 +59,10 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 disabled={listing.name === shown}
                 title={listing.name}
                 className="menu-item justify-between gap-4"
-                onClick={() => pick(toOpenRecording(listing))}
+                onClick={() => pick(listing.name)}
               >
                 <span>{startOf(listing.name)}</span>
-                {listing.live && <span className="text-foreground-muted">live</span>}
+                <span className="text-foreground-muted">{kindOf(listing.name)}</span>
               </button>
             </li>
           ))}
@@ -76,7 +71,31 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
   }
 }
 
-// When a recording's run started, in the reader's local time, or its name for a file no run was named.
+// The recordings by their start, the newest first. A file no part of the app named has no start, and comes after every
+// recording that has one.
+function newestFirst(listings: Listing[]): Listing[] {
+  const time = ({ name }: Listing) => parseRecordingName(name)?.start.getTime() ?? 0;
+  return listings.toSorted((a, b) => time(b) - time(a));
+}
+
+// When a recording started, in the reader's local time, or its name for a file no part of the app named.
 function startOf(name: string): string {
-  return recordingStart(name)?.toLocaleString() ?? name;
+  return parseRecordingName(name)?.start.toLocaleString() ?? name;
+}
+
+// What a recording is of: an agent's process, or the proxy's run, which holds the traffic no agent claimed.
+function kindOf(name: string): string {
+  switch (parseRecordingName(name)?.kind) {
+    case "agent":
+      return "agent";
+    case "run":
+      return "proxy run";
+    case undefined:
+      return "";
+  }
+}
+
+// The control's label: the recording open by its start, or the control's name when none is.
+function labelOf(open: OpenRecording): string {
+  return open === null ? "Recordings" : `Recording of ${startOf(open)}`;
 }

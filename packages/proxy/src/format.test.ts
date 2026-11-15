@@ -2,8 +2,22 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, recordingName, recordingStart, type ProxyStatus } from "./format.ts";
-import { createRecording, type Seen } from "./recording.ts";
+import {
+  agentBaseUrl,
+  agentOf,
+  parseListings,
+  parseProxyStatus,
+  parseReadFailure,
+  parseRecordedEvent,
+  parseRecordingEnd,
+  parseRecordingName,
+  recordingName,
+  recordingStart,
+  runRecordingName,
+  type ProxyStatus,
+} from "./format.ts";
+import type { Seen } from "./recording.ts";
+import { createRecordings } from "./recordings.ts";
 
 // Every kind of event the recorder writes, each ending among them.
 const seen: Seen[] = [
@@ -23,10 +37,10 @@ describe("parseRecordedEvent", () => {
   it("reads back every event the recorder wrote as it was seen, body chunks as their base64", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-    const recording = createRecording(() => {}, join(dir, "run.jsonl"));
+    const recordings = createRecordings(() => {}, dir, "run.jsonl");
     const trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
-    seen.forEach(recording.record(trace_id));
-    const lines = readFileSync(recording.path, "utf8").split("\n").filter(Boolean);
+    seen.forEach(recordings.record("run.jsonl", trace_id));
+    const lines = readFileSync(join(dir, "run.jsonl"), "utf8").split("\n").filter(Boolean);
     expect(lines.map(parseRecordedEvent)).toEqual(
       seen.map((event) => ({
         timestamp: expect.any(String),
@@ -53,10 +67,7 @@ describe("parseRecordedEvent", () => {
 
 describe("the reader's messages", () => {
   it("reads back a recordings list, a recording's end, and a read's failure", () => {
-    const listings = [
-      { name: "20261113T080000.000Z.jsonl", live: false },
-      { name: "20261113T090000.000Z.jsonl", live: true },
-    ];
+    const listings = [{ name: "20261113T080000.000Z.jsonl" }, { name: "run-20261113T090000.000Z.jsonl" }];
     expect(parseListings(JSON.stringify(listings))).toEqual(listings);
     expect(parseRecordingEnd(JSON.stringify({ unterminated_bytes: 12 }))).toEqual({ unterminated_bytes: 12 });
     expect(parseReadFailure(JSON.stringify({ message: "EISDIR: illegal operation on a directory, read" }))).toEqual({
@@ -66,7 +77,7 @@ describe("the reader's messages", () => {
 
   it("refuses a list, an end, or a failure of another shape", () => {
     expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
-    expect(() => parseListings('[{"name":"a.jsonl","live":"yes"}]')).toThrow("recordings list entry: live is not a boolean");
+    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name is not a string");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
     expect(() => parseReadFailure('{"error":"EISDIR"}')).toThrow("read failure: message is not a string");
   });
@@ -87,13 +98,49 @@ describe("the reader's messages", () => {
 });
 
 describe("a recording's name", () => {
-  it("is the run's start in ISO 8601 basic format, and gives that start back", () => {
-    const start = new Date("2026-11-13T18:18:44.123Z");
+  const start = new Date("2026-11-13T18:18:44.123Z");
+
+  it("is a process's launch, or the proxy run's start, in ISO 8601 basic format, and gives its kind and start back", () => {
     expect(recordingName(start)).toBe("20261113T181844.123Z.jsonl");
+    expect(runRecordingName(start)).toBe("run-20261113T181844.123Z.jsonl");
+    expect(parseRecordingName(recordingName(start))).toEqual({ kind: "agent", start });
+    expect(parseRecordingName(runRecordingName(start))).toEqual({ kind: "run", start });
     expect(recordingStart(recordingName(start))).toEqual(start);
   });
 
-  it.each(["notes.jsonl", "20261113T181844Z.jsonl", "20261313T181844.123Z.jsonl", "20261113T181844.123Z.jsonl.jsonl"])("gives no start for %s, which no run was named", (name) => {
-    expect(recordingStart(name)).toBeUndefined();
+  it("is no agent's start when it is the run's", () => {
+    expect(recordingStart(runRecordingName(start))).toBeUndefined();
+  });
+
+  it.each(["notes.jsonl", "20261113T181844Z.jsonl", "20261313T181844.123Z.jsonl", "20261113T181844.123Z.jsonl.jsonl", "run-run-20261113T181844.123Z.jsonl", "RUN-20261113T181844.123Z.jsonl"])(
+    "gives no start for %s, which nothing named",
+    (name) => {
+      expect(parseRecordingName(name)).toBeUndefined();
+      expect(recordingStart(name)).toBeUndefined();
+    },
+  );
+});
+
+describe("an agent's path", () => {
+  const name = recordingName(new Date("2026-11-15T00:42:15.438Z"));
+
+  it("is the proxy's base URL and the recording's name without its extension", () => {
+    expect(agentBaseUrl("http://127.0.0.1:3399", name)).toBe("http://127.0.0.1:3399/agent/20261115T004215.438Z");
+  });
+
+  it.each(["/v1/messages?beta=true", "/api/hello", "/", "//double"])("names its recording and leaves the request's URL %s as the upstream knows it", (url) => {
+    expect(agentOf(`/agent/20261115T004215.438Z${url}`)).toEqual({ name, url });
+  });
+
+  it.each([
+    "/v1/messages",
+    "/agent/20261115T004215.438Z",
+    "/agent/20261115T004215.438Z?x=1",
+    "/agent/notes/v1/messages",
+    "/agent/run-20261115T004215.438Z/v1/messages",
+    "/agent//v1/messages",
+    "/agents/20261115T004215.438Z/v1/messages",
+  ])("names no agent in %s", (url) => {
+    expect(agentOf(url)).toBeUndefined();
   });
 });

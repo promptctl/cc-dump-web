@@ -1,4 +1,4 @@
-import type { ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
+import { agentBaseUrl, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,14 +11,14 @@ import { app, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
-const finishedName = "20261113T080000.000Z.jsonl";
-const liveName = "20261113T090000.000Z.jsonl";
+const finishedName = "run-20261113T080000.000Z.jsonl";
+const agentName = "20261113T090000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
   { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "a", type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
   { timestamp: "2026-11-13T08:00:01.000Z", trace_id: "a", type: "end", outcome: "aborted" },
 ];
 
-// The proxy as its own process, recording to the live recording beside a finished one that a write left cut off,
+// The proxy as its own process, recording into a directory that holds a past run's recording a write left cut off,
 // with an upstream that answers every request, and the browser connection to its reader.
 async function proxyAndConnection() {
   const dir = join(mkdtempSync(join(tmpdir(), "cc-dump-")), "recordings");
@@ -26,7 +26,7 @@ async function proxyAndConnection() {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, finishedName), `${finishedEvents.map((event) => JSON.stringify(event)).join("\n")}\n{"tim`);
   const upstream = await serving((_req, res) => res.end("answer"));
-  const proxy = await proxyProcess(upstream.url, join(dir, liveName), "unlimited");
+  const proxy = await proxyProcess(upstream.url, dir, "unlimited");
   // The next event of the proxy's log that `matches`.
   const logged = async (matches: (event: Event) => boolean) => {
     for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
@@ -73,12 +73,9 @@ function watchEventSources() {
 }
 
 describe("the browser connection", () => {
-  it("lists the recordings, oldest first, the live one marked", async () => {
+  it("lists the recordings by name, an agent's once its process has written to it", async () => {
     const { connection } = await proxyAndConnection();
-    expect(await connection.recordings(new AbortController().signal)).toEqual([
-      { name: finishedName, live: false },
-      { name: liveName, live: true },
-    ]);
+    expect(await connection.recordings(new AbortController().signal)).toEqual([{ name: finishedName }]);
   });
 
   it("fails a list it could not get, naming what it asked", async () => {
@@ -96,17 +93,17 @@ describe("the browser connection", () => {
     expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 5 } }]);
   });
 
-  it("reads the live recording as it is written: every event, parsed, in file order", async () => {
+  it("reads an agent's recording as it is written: every event, parsed, in file order", async () => {
     const { dir, proxy, logged, connection } = await proxyAndConnection();
-    const read = reading(connection, liveName);
-    await logged(({ event, live }) => event === "catch_up" && live === true);
-    await buffer(await send(proxy.proxyPort, { path: "/v1/models" }));
+    const read = reading(connection, agentName);
+    await logged(({ event, followed }) => event === "catch_up" && followed === true);
+    await buffer(await send(proxy.proxyPort, { path: `${agentBaseUrl("", agentName)}/v1/models` }));
     const arrivals: Arrival[] = [];
     for (let arrival = await read.next(); ; arrival = await read.next()) {
       arrivals.push(arrival);
       if ("event" in arrival && arrival.event.type === "end") break;
     }
-    const written = readFileSync(join(dir, liveName), "utf8").split("\n").filter(Boolean);
+    const written = readFileSync(join(dir, agentName), "utf8").split("\n").filter(Boolean);
     expect(arrivals).toEqual(written.map((line) => ({ event: JSON.parse(line) })));
     expect(arrivals.map((arrival) => "event" in arrival && arrival.event.type)).toEqual(["request", "request_trailers", "response", "response_body", "response_trailers", "end"]);
   });
@@ -167,16 +164,16 @@ describe("the browser connection", () => {
 
   it("reports a read of a recording the proxy does not list as failed", async () => {
     const { connection } = await proxyAndConnection();
-    const arrival = await reading(connection, "20261113T070000.000Z.jsonl").next();
-    expect(arrival).toEqual({ failed: expect.objectContaining({ message: expect.stringMatching(/\/recordings\/20261113T070000\.000Z\.jsonl: not served; /) }) });
+    const arrival = await reading(connection, "run-20261113T070000.000Z.jsonl").next();
+    expect(arrival).toEqual({ failed: expect.objectContaining({ message: expect.stringMatching(/\/recordings\/run-20261113T070000\.000Z\.jsonl: not served; /) }) });
   });
 
   it("ends the read at the proxy when it is aborted", async () => {
     const { logged, connection } = await proxyAndConnection();
-    const read = reading(connection, liveName);
+    const read = reading(connection, agentName);
     await logged(({ event }) => event === "catch_up");
     read.abort.abort();
-    expect(await logged(({ event }) => event === "request")).toMatchObject({ url: `/recordings/${liveName}`, outcome: "aborted" });
+    expect(await logged(({ event }) => event === "request")).toMatchObject({ url: `/recordings/${agentName}`, outcome: "aborted" });
   });
 
   it("follows the running proxy's status", async () => {
@@ -250,7 +247,7 @@ describe("launching", () => {
     const { port, opened } = await app();
     const connection = createBrowserConnection({ serverPort: port });
     expect(await connection.launcher(signal())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
-    expect(await connection.launch({ session: "play", command: "claude -c" }, signal())).toEqual({ session: "play", window_id: "@7", pane_id: "%9" });
+    expect(await connection.launch({ session: "play", command: "claude -c" }, signal())).toEqual({ session: "play", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
     expect(opened).toMatchObject([{ session: "play", command: "claude -c" }]);
   });
 

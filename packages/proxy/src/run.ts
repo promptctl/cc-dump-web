@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createLog, logged, shutdownOnSignal } from "@cc-dump/log";
 import { READER_PORT } from "./address.ts";
-import { recordingName } from "./format.ts";
-import { createRecording } from "./recording.ts";
+import { runRecordingName } from "./format.ts";
+import { createRecordings } from "./recordings.ts";
 import { readProxySettings } from "./settings.ts";
 import type { Source } from "./source.ts";
 import { startProxy } from "./start.ts";
@@ -26,11 +26,12 @@ export async function run(source: Source) {
     ({ settings, file_keys }) => ({ file_keys, ...settings }),
   );
 
-  // One recording per run, named for the moment the run started, under the XDG data home. Its event says which data
-  // home, and where.
+  // The recordings, one per Claude Code process, under the XDG data home; the traffic of no process goes to the run's own,
+  // named for the moment the run started. Its event says which data home, and where.
   const dataHome = baseDirectory("XDG_DATA_HOME", process.env, homedir());
-  const path = join(dataHome.dir, "cc-dump/recordings", recordingName(new Date()));
-  const recording = logged(log, "recording", { path, data_home_from: dataHome.from, xdg_data_home: process.env.XDG_DATA_HOME }, () => createRecording(log, path));
+  const dir = join(dataHome.dir, "cc-dump/recordings");
+  const run = runRecordingName(new Date());
+  const recordings = logged(log, "recordings", { dir, run, data_home_from: dataHome.from, xdg_data_home: process.env.XDG_DATA_HOME }, () => createRecordings(log, dir, run));
 
-  shutdownOnSignal(log, await startProxy(log, { upstream: settings.upstream, recording, source, proxyPort: settings.port, readerPort: READER_PORT }));
+  shutdownOnSignal(log, await startProxy(log, { upstream: settings.upstream, recordings, source, proxyPort: settings.port, readerPort: READER_PORT }));
 }

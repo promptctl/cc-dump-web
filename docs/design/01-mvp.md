@@ -14,7 +14,7 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, metadata, thinking. |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
-| Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. |
+| Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
 
 ## Features
 
@@ -66,7 +66,7 @@ Each feature is stated as what the person using the app can do and see.
 - A recording that was being written when the app crashed can still be opened.
 - The user can pick any past recording from a list and read it with every feature in this document.
 - A reopened recording and live traffic reach the screen through the same path. There is no second implementation for replay.
-- Live capture keeps recording while the user reads a past recording.
+- Live capture keeps recording while the user reads another recording.
 
 ### F8. Status and info
 - **Connection status,** always on screen: whether the browser is connected to the proxy, how many requests are in flight, and how long ago the last request arrived.
@@ -103,7 +103,7 @@ Hot reload is designed in first, because it decides where every other piece live
 
 | Part | Reloads | Does |
 |---|---|---|
-| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to the recording, lists the recordings, and serves a recording to readers from any position, then live. Reads its port and upstream from its settings file at its start. |
+| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, lists the recordings, and serves a recording to readers from any position, then live. Reads its port and upstream from its settings file at its start. |
 | App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores the settings it launches with, relays logs. |
 | Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
 

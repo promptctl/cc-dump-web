@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { Event } from "@cc-dump/log";
 import { arrivals, eventLog, send } from "@cc-dump/log/testing";
 import { expect, onTestFinished } from "vitest";
+import { runRecordingName } from "./format.ts";
 
 export type ServerSentEvent = { id?: string; event?: string; data: string };
 
@@ -36,25 +37,28 @@ const script = `
   import { recordSource } from ${JSON.stringify(new URL("./source.ts", import.meta.url).href)};
   const recordingSource = recordSource();
   const { createLog, shutdownOnSignal } = await import(${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)});
-  const { createRecording } = await import(${JSON.stringify(new URL("./recording.ts", import.meta.url).href)});
+  const { createRecordings } = await import(${JSON.stringify(new URL("./recordings.ts", import.meta.url).href)});
   const { startProxy } = await import(${JSON.stringify(new URL("./start.ts", import.meta.url).href)});
   const { parseUpstream } = await import(${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)});
-  const [upstream, path] = process.argv.slice(1);
+  const [upstream, dir, run] = process.argv.slice(1);
   const log = createLog("proxy", (line) => process.stdout.write(line));
-  const recording = createRecording(log, path);
+  const recordings = createRecordings(log, dir, run);
   const source = recordingSource.loaded();
-  shutdownOnSignal(log, await startProxy(log, { upstream: parseUpstream(upstream), recording, source, proxyPort: 0, readerPort: 0 }));
+  shutdownOnSignal(log, await startProxy(log, { upstream: parseUpstream(upstream), recordings, source, proxyPort: 0, readerPort: 0 }));
 `;
 
+// The name of the run's recording in a proxy process: the traffic no agent claims is recorded there.
+export const runName = runRecordingName(new Date("2026-11-13T09:00:00.000Z"));
+
 // The proxy and its reader as their own process, served as main.ts serves them, killed when the test finishes,
-// recording to `path` under the shell's file size limit (`ulimit -f`: a count of blocks, or "unlimited"). Node
+// recording into `dir` under the shell's file size limit (`ulimit -f`: a count of blocks, or "unlimited"). Node
 // ignores SIGXFSZ, so a write past the limit fails with EFBIG instead of killing the process. Its log is its
 // stdout: `next()` resolves with each event after its start: the watch of its source and its first check, then the two
 // `listen` events the ports are read from. What the checks find is not the test's: the source watched is the repo's,
 // and a save to it while the test runs is a change the test did not cause, so only the start-up check and a check that
 // fails reach the test.
-export async function proxyProcess(upstream: string, path: string, fileSizeLimit: string) {
-  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, "--input-type=module", "-e", script, upstream, path];
+export async function proxyProcess(upstream: string, dir: string, fileSizeLimit: string) {
+  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, "--input-type=module", "-e", script, upstream, dir, runName];
   const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "inherit"] });
   onTestFinished(() => void child.kill("SIGKILL"));
   const { log, next } = eventLog();
