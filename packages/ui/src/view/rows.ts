@@ -14,7 +14,9 @@ export type Change = "added" | "same" | "changed";
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title
 // `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment and however
 // many rows arrive around it. A block row shows the item's version at the step shown, `block`, and the one before,
-// `before`, which is none for a block the step added. A fold stands for a run of unchanged rows, keyed by the first.
+// `before`, which is none for a block the step added. A fold stands for a run of unchanged rows, keyed by the first:
+// that row is listed exactly when the fold is not, so a place held at it holds whether the fold is closed, opened, or
+// gone.
 export type Row =
   | { kind: "exchange"; key: string; exchange: FormattedExchange; change: Change }
   | { kind: "group"; key: string; title: Group["title"]; change: Change }
@@ -28,8 +30,7 @@ export type Row =
 export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys } };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// fold it is in, or else the row listed before it, whose end is where it stands; a fold's, of the fold, or of its first
-// row once it is opened. [LAW:types-are-the-program] The same
+// fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
 // object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
 // row) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
@@ -37,12 +38,8 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 // How many unchanged rows stay listed beside a change, above and below it, as a diff's context lines do.
 export const context = 3;
 
-// The key of the fold standing for a run of rows, by the run's first.
+// The key a fold is opened by, among the flips, by its first row's key: a flip of its own, apart from that row's.
 export const foldKey = (first: string) => `fold:${first}`;
-
-// The key of the row a key's place begins at: a fold's first row, any other row itself. No other row's key begins
-// `fold:`: it begins with a trace_id or `thread:` (view/history.ts).
-export const firstRowOf = (key: string) => (key.startsWith(foldKey("")) ? key.slice(foldKey("").length) : key);
 
 // Lays out the conversation at step `step` of `history`, leaving out the blocks of each category `visibility` hides
 // (docs/design/01-mvp.md, F5) but the one at the key `revealed`, which the search has stepped to (F6), and a group with
@@ -117,8 +114,7 @@ const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
 
 // The listed rows with each run of unchanged ones folded, beyond `context` rows beside a change, unless the run is opened
 // in `opened` or the reader shows every unchanged row; `revealed` is never folded. A run of one row is listed as itself,
-// which is what its fold would take the room of. `placeOf`: each listed row's place among the rows, and each fold's, a
-// closed one's its own and an opened one's its first row's, so a place held on a fold holds as it opens.
+// which is what its fold would take the room of. `placeOf`: each listed row's place among the rows.
 function fold(listed: Row[], revealed: string | undefined, opened: Record<string, true>, unchanged: Unchanged): { rows: Row[]; placeOf: Map<string, number> } {
   const changed = (row: Row) => row.kind !== "fold" && row.change !== "same";
   // How far each row is from the nearest change above it and below it.
@@ -138,11 +134,9 @@ function fold(listed: Row[], revealed: string | undefined, opened: Record<string
     while (end < listed.length && folds(end)) end++;
     // A row that folds in no run is a run of its own, listed.
     const run = listed.slice(index, Math.max(end, index + 1));
-    const key = foldKey(run[0]!.key);
-    if (run.length > 1) placeOf.set(key, rows.length);
-    if (run.length > 1 && opened[key] !== true) {
+    if (run.length > 1 && opened[foldKey(run[0]!.key)] !== true) {
       for (const row of run) placeOf.set(row.key, rows.length);
-      rows.push({ kind: "fold", key, count: run.length });
+      rows.push({ kind: "fold", key: run[0]!.key, count: run.length });
     } else run.forEach(list);
     index += run.length;
   }

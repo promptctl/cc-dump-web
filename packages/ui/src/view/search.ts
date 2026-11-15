@@ -3,7 +3,7 @@ import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import { firstRowOf, jsonText, type Keys, type Row } from "./rows.ts";
+import { jsonText, type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
@@ -175,7 +175,7 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     return inside === undefined ? (forward ? -Infinity : Infinity) : inside + 0.5;
   };
   const place =
-    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(firstRowOf(position.key), -0.5) : position.at === "start" ? -Infinity : Infinity;
+    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);

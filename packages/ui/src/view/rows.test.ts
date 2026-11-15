@@ -65,7 +65,7 @@ describe("layout", () => {
     const at = layouts(turns(4), shown, "fold");
     const step = at(4);
     const fold = step.rows[0]!;
-    expect(fold).toMatchObject({ kind: "fold", key: foldKey("t1") });
+    expect(fold).toMatchObject({ kind: "fold", key: "t1" });
     // Every row of the steps before but the context above the change.
     const unfolded = layouts(turns(4))(4);
     const firstChange = unfolded.rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
@@ -73,11 +73,12 @@ describe("layout", () => {
     expect(step.rows.slice(1, 1 + context)).toEqual(unfolded.rows.slice(firstChange - context, firstChange));
     // A folded row is at its fold.
     expect(step.keys.indexOf("thread:t1/request/system.0")).toBe(0);
-    expect(step.keys.indexOf(foldKey("t1"))).toBe(0);
-    expect(listed(at(4, undefined, { [foldKey("t1")]: true }))).toEqual(listed(unfolded));
-    // An opened fold is at its first row, so a place held on it as it opens holds.
-    const opened = at(4, undefined, { [foldKey("t1")]: true }).keys;
-    expect(opened.at(opened.indexOf(foldKey("t1"))!)).toBe("t1");
+    expect(step.keys.indexOf("t1")).toBe(0);
+    // Opened, its rows are listed, the first under the key the fold had, so a place held on the fold holds.
+    const opened = at(4, undefined, { [foldKey("t1")]: true });
+    expect(listed(opened)).toEqual(listed(unfolded));
+    expect(opened.rows[opened.keys.indexOf("t1")!]).toMatchObject({ kind: "exchange", key: "t1" });
+    expect(unfolded.rows[unfolded.keys.indexOf("t1")!]).toMatchObject({ kind: "exchange", key: "t1" });
     // A step with no step before it has nothing unchanged.
     const two = layouts(turns(2), shown, "fold")(2);
     expect(two.rows.some(({ kind }) => kind === "fold")).toBe(true);

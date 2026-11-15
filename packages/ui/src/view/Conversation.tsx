@@ -9,7 +9,7 @@ import { createHistory, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, isExpanded, jsonText, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -68,10 +68,12 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
 
-  // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to.
+  // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to, or at a step
+  // they chose in time.
   const follow = useSettings((state) => state.follow);
   const atEnd = useView((state) => state.position.at === "end");
-  const following = !follow ? "off" : atEnd ? "on" : "paused";
+  const chosen = useView((state) => state.moment.at === "chosen");
+  const following = !follow ? "off" : atEnd ? "on" : chosen ? "chosen" : "paused";
   const control = followStates[following];
 
   const written = useRef(0);
@@ -157,11 +159,12 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   }, [virtualizer, now]);
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
-  // rows above the step's first change, or, following, at the end.
+  // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
+  // step's own rows.
   const toStep = (target: number) => {
     const latestStep = target === steps;
     const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : beforeChange(layOut(conversation, target, revealed, flipped));
-    view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace: conversation.segments[target - 1]!.formatted.exchange.trace_id }, position);
+    flushSync(() => view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace: conversation.segments[target - 1]!.formatted.exchange.trace_id }, position));
     latest.current("choose");
   };
   // [LAW:no-ambient-temporal-coupling] The step the last move is going to, until its update commits: a move made while a
@@ -173,7 +176,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     const from = aimed.current ?? shown;
     if (target === from) return;
     aimed.current = target;
-    void inMotion(target < from ? "back" : "forward", () => flushSync(() => moves.current.toStep(target))).finally(() => {
+    void inMotion(target < from ? "back" : "forward", () => moves.current.toStep(target)).finally(() => {
       if (aimed.current === target) aimed.current = undefined;
     });
   };
@@ -259,6 +262,8 @@ const followStates = {
     glyph: "○", label: "Follow paused",
     title: "Away from the newest content. Scroll back to the end, or click, to follow again.",
   },
+  // A step chosen in time ends where it ends, so scrolling there resumes nothing.
+  chosen: { pressed: "mixed", glyph: "○", label: "Follow paused", title: "At an earlier step. Click, or go to the latest step, to follow again." },
   off: { pressed: false, glyph: "○", label: "Follow off", title: "Click to follow the newest content." },
 } as const;
 
@@ -387,7 +392,7 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
       className="flex w-full items-center gap-3 py-0.5 pl-7 text-left font-sans text-foreground-muted hover:bg-hover"
       onClick={() => {
         hold();
-        view.toggle(fold.key);
+        view.toggle(foldKey(fold.key));
       }}
     >
       <span className="w-3">▸</span>

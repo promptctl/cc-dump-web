@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import type { FormattedExchange } from "../format/format.ts";
 import type { Segment } from "./history.ts";
 import { clockTime } from "./rows.ts";
@@ -6,7 +6,8 @@ import { clockTime } from "./rows.ts";
 // The conversation's steps, above the columns (docs/design/02-design.md, "Two axes"): one mark per step, in the order
 // they began, the step shown marked in the theme's primary and a failed exchange in its error color, each titled with
 // what it was; a click on a mark goes to that step. Previous and next move one step, and say where the moment is among
-// them. `shown`: the step shown, from 1. `onGo`: a move to a step; `onStep`: a move of one step, back or forward.
+// them. `shown`: the step shown, from 1. `onGo`: a move to a step; `onStep`: a move of one step, back or forward. More
+// steps than the strip has pixels for scroll it sideways, the mark shown kept in view, so every mark can be reached.
 export const TurnStrip = memo(function TurnStrip({
   segments,
   shown,
@@ -29,7 +30,7 @@ export const TurnStrip = memo(function TurnStrip({
       <button type="button" className="control" disabled={shown >= segments.length} title="The step after (→)" onClick={() => onStep(1)}>
         →
       </button>
-      <ol className="flex h-3 min-w-0 flex-1 items-stretch gap-px overflow-hidden">
+      <ol className="flex h-3 min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]">
         {segments.map(({ formatted }, index) => (
           <Mark key={formatted.exchange.trace_id} formatted={formatted} step={index + 1} isShown={index + 1 === shown} onGo={onGo} />
         ))}
@@ -52,8 +53,12 @@ const Mark = memo(function Mark({
   onGo: (step: number) => void;
 }) {
   const failed = exchange.end?.outcome === "error" || (facts.status !== undefined && facts.status >= 400);
+  const mark = useRef<HTMLLIElement>(null);
+  useLayoutEffect(() => {
+    if (isShown) mark.current!.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [isShown]);
   return (
-    <li className="flex max-w-3 min-w-px flex-1">
+    <li ref={mark} className="flex max-w-3 min-w-px flex-1">
       <button
         type="button"
         aria-current={isShown ? "step" : undefined}
