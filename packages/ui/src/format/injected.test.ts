@@ -46,13 +46,28 @@ describe("split", () => {
     ]);
   });
 
-  it("keeps a line that looks like hook output as what a person said, and in a reminder as the reminder's", () => {
+  it("keeps a line that looks like hook output as what a person said", () => {
     const line = "PreToolUse hook additional context: x";
     expect(typed(line)).toEqual([{ kind: "said", text: line }]);
     expect(typed(`Look:\n${line}\n\nWhy?`)).toEqual([{ kind: "said", text: `Look:\n${line}\n\nWhy?` }]);
-    expect(typed(reminder("PostToolUse:Read hook additional context: Mind the size."))).toEqual([
-      { kind: "reminder", text: reminder("PostToolUse:Read hook additional context: Mind the size.") },
-    ]);
+  });
+
+  it("names a tag whose content opens with a hook's line for that hook, whole, in both modes", () => {
+    const wrapped = reminder("PostToolUse:Read hook additional context: Mind the size.\n\n# Heading\nContents of /work/CLAUDE.md (x):\nOther hook additional context: later");
+    const tagged = "<user-prompt-submit-hook>\n  UserPromptSubmit hook additional context: Load it.\n</user-prompt-submit-hook>";
+    for (const split of [typed, sent]) {
+      expect(split(wrapped)).toEqual([{ kind: "hook", name: "PostToolUse:Read", text: wrapped }]);
+      expect(split(`${wrapped}\n\nSay hello.`)).toEqual([
+        { kind: "hook", name: "PostToolUse:Read", text: `${wrapped}\n\n` },
+        split === typed ? { kind: "said", text: "Say hello." } : { kind: "reminder", text: "Say hello." },
+      ]);
+      expect(split(tagged)).toEqual([{ kind: "hook", name: "UserPromptSubmit", text: tagged }]);
+    }
+  });
+
+  it("leaves a hook's line in the middle of a reminder in the one reminder", () => {
+    const middle = reminder("Context for this turn.\n\nPreToolUse hook additional context: later");
+    for (const split of [typed, sent]) expect(split(middle)).toEqual([{ kind: "reminder", text: middle }]);
   });
 
   it("opens no section or hook inside a tag: a heading in a reminder's CLAUDE.md stays in the CLAUDE.md", () => {
@@ -132,6 +147,7 @@ describe("split", () => {
       `${global}\n\nUserPromptSubmit hook additional context: z`,
       `# A\n\`\`\`\n# B\nSessionStart hook additional context: q\n\`\`\`\n${reminder(`# C\n${global}`)}\n~~~\n# D`,
       "```\n# never closed\n",
+      `Before.\n\n${reminder("SessionStart hook additional context: x\n# H\n```\n")}\n  ${reminder(`${preamble}\nPreToolUse hook additional context: y`)}\nAfter.`,
     ];
     for (const text of texts) {
       expect(typed(text).map((piece) => piece.text).join("")).toBe(text);

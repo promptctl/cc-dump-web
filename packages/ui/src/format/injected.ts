@@ -26,9 +26,11 @@ const said = (text: string): Piece => ({ kind: "said", text });
 const reminder = (text: string): Piece => ({ kind: "reminder", text });
 
 // A hook's output, which Claude Code introduces with a line naming the hook, such as `SessionStart hook additional
-// context:`, and which runs to the next piece's opening or the end. Nothing wraps it: only a system-role message's
-// text, which is the harness's, has it at its top level; a person may type such a line, which is what they said.
-const hook: Marker = { pattern: /^(\S+) hook additional context:/gm, fenced: false, piece: ([, name]) => (text) => ({ kind: "hook", name: name!, text }) };
+// context:`. Unwrapped it runs to the next piece's opening or the end, and only a system-role message's text, which is
+// the harness's, has it at its top level: a person may type such a line, which is what they said. Wrapped in a tag, it
+// is what the tag's content opens with, and names the whole tag (see `wrapped`).
+const hookLine = String.raw`(\S+) hook additional context:`;
+const hook: Marker = { pattern: new RegExp(`^${hookLine}`, "gm"), fenced: false, piece: ([, name]) => (text) => ({ kind: "hook", name: name!, text }) };
 
 // A file's contents inside a reminder: Claude Code introduces each with a line `Contents of <path> (<description>):`
 // and the file's text runs to the next file's line or the end. Only a CLAUDE.md is a piece of its own; another file's
@@ -47,7 +49,11 @@ const heading: Marker = { pattern: /^# (.+)$/gm, fenced: false, piece: ([, title
 
 // What the harness wraps its content in: a tag, with the whitespace around it, which is the tag's and not the text's, so
 // no text is left that is only a line break. A tag with no closing tag wraps nothing, so it stays text.
+// A tag whose content opens with a hook's line is that hook's output, whole: the tag's edges are known from the wire, so
+// a hook's line later in the content starts nothing. Without one, a user-prompt-submit-hook tag is that hook's, and a
+// system reminder is a reminder, in which only a file opens a piece.
 const wrapped = /\s*<(system-reminder|user-prompt-submit-hook)>[\s\S]*?<\/\1>\s*/g;
+const opensWithHook = new RegExp(`^\\s*<[^>]+>\\s*${hookLine}`);
 
 // What differs by whose text it is: the piece for text before any opening, and the markers that open a piece in its top
 // level, outside every tag and fence. Inside a reminder only a file opens one, whoever's the text is.
@@ -65,11 +71,18 @@ export function split(text: string, own: OwnText): Piece[] {
   let end = 0;
   for (const match of text.matchAll(wrapped)) {
     pieces.push(...within(text.slice(end, match.index), rest, topLevel));
-    pieces.push(...(match[1] === "system-reminder" ? within(match[0], reminder, [file]) : [{ kind: "hook" as const, name: "UserPromptSubmit", text: match[0] }]));
+    pieces.push(...tagged(match[0], match[1]!));
     end = match.index + match[0].length;
   }
   pieces.push(...within(text.slice(end), rest, topLevel));
   return pieces.length === 0 ? [rest(text)] : pieces;
+}
+
+// The pieces of one tag and the whitespace around it.
+function tagged(text: string, tag: string): Piece[] {
+  const [, name] = opensWithHook.exec(text) ?? [];
+  if (name !== undefined) return [{ kind: "hook", name, text }];
+  return tag === "system-reminder" ? within(text, reminder, [file]) : [{ kind: "hook", name: "UserPromptSubmit", text }];
 }
 
 // A text cut at each opening the markers find in it: the text before the first is a `rest` piece, and each opening's
