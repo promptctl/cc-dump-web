@@ -7,10 +7,10 @@
 //   EOF
 //
 // Commands:
-//   open [path]          go to the UI (http://127.0.0.1:3346) plus path, wait for network idle
+//   open [path]          go to path in the UI (http://127.0.0.1:3346), wait for network idle
 //   ss <name>            full-window screenshot to $CC_DUMP_SHOTS/<name>.png (default /tmp/cc-dump-shots)
 //   click <selector>     Playwright selector: css, text=Foo, role=button[name="Launch"], ...
-//   fill <selector> | <text>   ("fill <selector> <text>" also works when the selector has no spaces)
+//   fill <selector> | <text>   (split at the first " | ")
 //   press <key>          keyboard key on the focused element (Enter, Escape, ArrowRight, Meta+f, ...)
 //   wait <selector>      wait (10s) for the selector to be visible
 //   text [selector]      print innerText (default body), cut at 4000 chars
@@ -18,7 +18,7 @@
 //   eval <js>            evaluate an expression in the page, print the JSON result
 //   sleep <ms>
 //   errors               print console errors and page errors seen so far
-// Lines starting with # are ignored. A failing command prints ERR and the run continues; the exit code is 1 if any did.
+// A command's argument is the rest of its line, as written. Lines starting with # are ignored. A failing command prints ERR and the run continues; the exit code is 1 if any did.
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -46,27 +46,27 @@ page.on("console", (m) => m.type() === "error" && errors.push(`console: ${m.text
 page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
 
 const commands = {
-  open: async (path = "/") => {
-    await page.goto(base + path, { waitUntil: "networkidle" });
+  open: async (path) => {
+    await page.goto(new URL(path || "/", base).href, { waitUntil: "networkidle" });
     return page.url();
   },
-  ss: async (name = `shot-${Date.now()}`) => {
-    const file = join(shots, `${name}.png`);
+  ss: async (name) => {
+    const file = join(shots, `${name || `shot-${Date.now()}`}.png`);
     await page.screenshot({ path: file });
     return file;
   },
-  click: async (...s) => (await page.locator(s.join(" ")).first().click({ timeout: 10_000 }), "ok"),
-  fill: async (...args) => {
-    const line = args.join(" ");
-    const [sel, text] = line.includes(" | ") ? line.split(" | ", 2) : [args[0], args.slice(1).join(" ")];
-    await page.locator(sel).first().fill(text, { timeout: 10_000 });
+  click: async (sel) => (await page.locator(sel).first().click({ timeout: 10_000 }), "ok"),
+  fill: async (arg) => {
+    const at = arg.indexOf(" | ");
+    if (at === -1) throw new Error("fill takes <selector> | <text>");
+    await page.locator(arg.slice(0, at)).first().fill(arg.slice(at + 3), { timeout: 10_000 });
     return "ok";
   },
   press: async (key) => (await page.keyboard.press(key), "ok"),
-  wait: async (...s) => (await page.locator(s.join(" ")).first().waitFor({ state: "visible", timeout: 10_000 }), "ok"),
-  text: async (...s) => (await page.locator(s.join(" ") || "body").first().innerText({ timeout: 10_000 })).slice(0, 4000),
-  count: async (...s) => String(await page.locator(s.join(" ")).count()),
-  eval: async (...js) => JSON.stringify(await page.evaluate(js.join(" "))),
+  wait: async (sel) => (await page.locator(sel).first().waitFor({ state: "visible", timeout: 10_000 }), "ok"),
+  text: async (sel) => (await page.locator(sel || "body").first().innerText({ timeout: 10_000 })).slice(0, 4000),
+  count: async (sel) => String(await page.locator(sel).count()),
+  eval: async (js) => JSON.stringify(await page.evaluate(js)),
   sleep: async (ms) => (await page.waitForTimeout(Number(ms)), "ok"),
   errors: async () => (errors.length ? errors.join("\n") : "(none)"),
 };
@@ -75,11 +75,11 @@ let failed = false;
 for await (const raw of createInterface({ input: process.stdin })) {
   const line = raw.trim();
   if (!line || line.startsWith("#")) continue;
-  const [name, ...args] = line.split(/\s+/);
+  const [name] = line.split(/\s/, 1);
   const command = commands[name];
   try {
     if (!command) throw new Error(`unknown command: ${name}`);
-    console.log(`> ${line}\n${await command(...args)}`);
+    console.log(`> ${line}\n${await command(line.slice(name.length).trimStart())}`);
   } catch (error) {
     failed = true;
     console.log(`> ${line}\nERR ${error.message.split("\n")[0]}`);

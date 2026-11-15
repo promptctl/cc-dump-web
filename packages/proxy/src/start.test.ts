@@ -13,7 +13,7 @@ describe("the reader port", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const upstream = await serving((_req, res) => res.end());
-    return { dir, ...(await proxyProcess(upstream.url, dir, "unlimited")) };
+    return { dir, upstream: upstream.url, ...(await proxyProcess(upstream.url, dir, "unlimited")) };
   };
 
   it("serves the recordings and the proxy's status and info, every answer to any origin", async () => {
@@ -56,9 +56,9 @@ describe("the reader port", () => {
     res.destroy();
   });
 
-  it("gives agents the address of the port the proxy bound", async () => {
-    const { proxyPort, readerPort } = await proxy();
+  it("gives agents the address of the port the proxy bound, and says where it forwards to", async () => {
+    const { proxyPort, readerPort, upstream } = await proxy();
     const res = await send(readerPort, { path: "/info" });
-    expect(parseProxyInfo((await buffer(res)).toString())).toEqual({ base_url: `http://${LOOPBACK}:${proxyPort}` });
+    expect(parseProxyInfo((await buffer(res)).toString())).toEqual({ base_url: `http://${LOOPBACK}:${proxyPort}`, upstream: `${upstream}/` });
   });
 });

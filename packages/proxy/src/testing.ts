@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import type { Event } from "@cc-dump/log";
 import { arrivals, eventLog, send } from "@cc-dump/log/testing";
 import { expect, onTestFinished } from "vitest";
@@ -32,21 +33,6 @@ export async function subscribe(port: number, path: string, headers: Record<stri
   return { res, next, take };
 }
 
-// Built as main.ts builds the proxy: its source recorded before the rest of it loads, then `startProxy`.
-const script = `
-  import { recordSource } from ${JSON.stringify(new URL("./source.ts", import.meta.url).href)};
-  const recordingSource = recordSource();
-  const { createLog, shutdownOnSignal } = await import(${JSON.stringify(new URL("../../log/src/index.ts", import.meta.url).href)});
-  const { createRecordings } = await import(${JSON.stringify(new URL("./recordings.ts", import.meta.url).href)});
-  const { startProxy } = await import(${JSON.stringify(new URL("./start.ts", import.meta.url).href)});
-  const { parseUpstream } = await import(${JSON.stringify(new URL("./proxy.ts", import.meta.url).href)});
-  const [upstream, dir, run] = process.argv.slice(1);
-  const log = createLog("proxy", (line) => process.stdout.write(line));
-  const recordings = createRecordings(log, dir, run);
-  const source = recordingSource.loaded();
-  shutdownOnSignal(log, await startProxy(log, { upstream: parseUpstream(upstream), recordings, source, proxyPort: 0, readerPort: 0 }));
-`;
-
 // The name of the run's recording in a proxy process: the traffic no agent claims is recorded there.
 export const runName = runRecordingName(new Date("2026-11-13T09:00:00.000Z"));
 
@@ -58,7 +44,7 @@ export const runName = runRecordingName(new Date("2026-11-13T09:00:00.000Z"));
 // and a save to it while the test runs is a change the test did not cause, so only the start-up check and a check that
 // fails reach the test.
 export async function proxyProcess(upstream: string, dir: string, fileSizeLimit: string) {
-  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, "--input-type=module", "-e", script, upstream, dir, runName];
+  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, fileURLToPath(new URL("./isolated.ts", import.meta.url)), upstream, dir, runName, "0", "0"];
   const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "inherit"] });
   onTestFinished(() => void child.kill("SIGKILL"));
   const { log, next } = eventLog();

@@ -15,7 +15,7 @@ export { TmuxRefused } from "./tmux.ts";
 // `tmux`, `proxyInfo` and `proxyRecording` replace any, to make it fail. `work` resolves with each event of the app's own work.
 export async function app({
   tmux = {},
-  proxyInfo = async () => ({ base_url: "http://127.0.0.1:3344" }),
+  proxyInfo = async () => ({ base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/" }),
   proxyRecording,
 }: { tmux?: Partial<Tmux>; proxyInfo?: () => Promise<ProxyInfo>; proxyRecording?: () => Promise<Listing> } = {}) {
   let made = 0;

@@ -19,15 +19,17 @@ pnpm install
 
 ## First: is a cc-dump already running?
 
-The four ports are constants in `packages/*/src/address.ts`, not settings, so **only one stack can run per machine**.
-Other worktrees here often have one up, sometimes observing a live Claude Code. Check before anything else:
+The server, UI and reader ports (3345-3347) are constants in `packages/*/src/address.ts`, not settings, so **only one
+stack can run per machine**. (3344 is the default of the proxy's `port` setting.) Other worktrees here often have one
+up, sometimes observing a live Claude Code. Check before anything else:
 
 ```bash
 .claude/skills/run-cc-dump/stack.sh status
 ```
 
 - Ports held by another worktree's stack → **do not stop it**; drive it as-is with the driver (read-only flows are
-  safe), or use the isolated proxy below for traffic. It runs *that worktree's* code, not yours.
+  safe), or use the isolated proxy below for traffic. It runs *that worktree's* code, not yours. `traffic.mjs` refuses
+  it unless its upstream is a fake on loopback.
 - Ports free → `stack.sh up` (next section).
 
 ## Run (agent path)
@@ -35,15 +37,16 @@ Other worktrees here often have one up, sometimes observing a live Claude Code. 
 ### Start a stack with scratch data and a fake upstream
 
 ```bash
-.claude/skills/run-cc-dump/stack.sh up      # tmux session run-cc-dump: windows "fake" and "dev"
-.claude/skills/run-cc-dump/stack.sh logs    # interleaved proxy/server/ui log
-.claude/skills/run-cc-dump/stack.sh down
+.claude/skills/run-cc-dump/stack.sh up      # tmux session run-cc-dump-<worktree>: windows "fake" and "dev"
+.claude/skills/run-cc-dump/stack.sh logs    # the fake's log, and the interleaved proxy/server/ui log
+.claude/skills/run-cc-dump/stack.sh down    # this worktree's session only
 ```
 
 `up` sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME` under `/tmp/cc-dump-run` (override with `CC_DUMP_HOME`) and writes a
-`proxy.json` there pointing upstream at the fake on 3399. `CC_DUMP_UPSTREAM=real` keeps the real upstream.
+`proxy.json` there pointing upstream at the fake on 3399; the logs are `fake.log` and `dev.log` there. A start that is
+not up in 60s kills its session and prints both logs.
 Its refusal when ports are held is verified; the start itself has **not** been run yet (ports were held throughout
-the session that wrote this) — if it fails, fix the script and this line.
+the sessions that wrote this) — if it fails, fix the script and this line.
 
 ### Put traffic in it
 
@@ -51,8 +54,10 @@ the session that wrote this) — if it fails, fix the script and this line.
 node .claude/skills/run-cc-dump/traffic.mjs 3
 ```
 
-Creates an agent recording (`POST :3347/recordings`, what Launch does) and plays 3 streaming turns through the proxy
-under `/agent/<recording-stem>/v1/messages`. Each reply has a thinking block and a text block echoing the user turn.
+Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless its upstream is on
+loopback; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming turns through
+the proxy under `/agent/<recording-stem>/v1/messages`, failing on any non-2xx. Each reply has a thinking block and a
+text block echoing the user turn.
 
 ### Drive the UI
 
@@ -74,7 +79,8 @@ EOF
 
 Screenshots land in `/tmp/cc-dump-shots/<name>.png` (`CC_DUMP_SHOTS` to change) — Read them to look. Commands:
 `open [path]`, `ss <name>`, `click <sel>`, `fill <sel> | <text>`, `press <key>`, `wait <sel>`, `text [sel]`,
-`count <sel>`, `eval <js>`, `sleep <ms>`, `errors`. Selectors are Playwright's; one browser session per heredoc, so
+`count <sel>`, `eval <js>`, `sleep <ms>`, `errors`; the argument is the rest of the line as written. Selectors are
+Playwright's; one browser session per heredoc, so
 state (open recording, filters) does not carry between runs. Exit code 1 if any command printed `ERR`.
 
 Stable selectors (from `packages/ui/src/view/`):
@@ -91,15 +97,18 @@ Stable selectors (from `packages/ui/src/view/`):
 ### Proxy only, beside a stack that holds the ports
 
 ```bash
-node .claude/skills/run-cc-dump/fake-anthropic.mjs 3399 &
-node .claude/skills/run-cc-dump/isolated-proxy.mjs http://127.0.0.1:3399 /tmp/ccd-iso/rec 3390 3391 &
-sleep 2   # traffic before the proxy's `listen` events fails to connect
-CC_DUMP_PROXY_PORT=3390 CC_DUMP_READER_PORT=3391 node .claude/skills/run-cc-dump/traffic.mjs 2
+mkdir -p /tmp/ccd-iso/rec
+tmux new-session -d -s ccd-iso -n fake "node .claude/skills/run-cc-dump/fake-anthropic.mjs 3398 > /tmp/ccd-iso/fake.log 2>&1"
+tmux new-window -t ccd-iso -n proxy "node packages/proxy/src/isolated.ts http://127.0.0.1:3398 /tmp/ccd-iso/rec run-20260101T000000.000Z.jsonl 3390 3391 > /tmp/ccd-iso/proxy.log 2>&1"
+until curl -sf -o /dev/null http://127.0.0.1:3391/info; do sleep 0.2; done
+CC_DUMP_READER_PORT=3391 node .claude/skills/run-cc-dump/traffic.mjs 2
 ls /tmp/ccd-iso/rec
-kill %1 %2
+tmux kill-session -t ccd-iso
 ```
 
-Runs this worktree's proxy source on spare ports. A real Claude Code works against it too, for free:
+Runs this worktree's proxy source on spare ports, with its fake on 3398 so a `stack.sh` fake on 3399 is left alone;
+each line is its own command, so the steps may be separate calls. The run recording's name must have that shape.
+`isolated.ts` is also what the proxy's tests run. A real Claude Code works against it too, for free:
 
 ```bash
 curl -s -X POST http://127.0.0.1:3391/recordings          # -> {"name":"<stem>.jsonl"}
@@ -132,4 +141,5 @@ pnpm test        # vitest, ~2s; binds port 0, so it runs fine beside a live stac
 ## Troubleshooting
 
 - `stack.sh up` prints holders and exits 1 → another stack (its cwd is printed) or a leftover fake on 3399 is running.
+  A cwd in this worktree is yours: `stack.sh down`.
 - `playwright-core not found under ~/.cache/run-cc-dump` → run the Prerequisites install.

@@ -94,8 +94,8 @@ export type ReadFailure = { message: string };
 export type ProxyStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
 // `GET /info`: what the running proxy is, for as long as it runs. `base_url`: the address agents are pointed at, the
-// `ANTHROPIC_BASE_URL` they are given, on the port the proxy bound.
-export type ProxyInfo = { base_url: string };
+// `ANTHROPIC_BASE_URL` they are given, on the port the proxy bound. `upstream`: where it forwards what they send.
+export type ProxyInfo = { base_url: string; upstream: string };
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
@@ -128,7 +128,8 @@ export function parseProxyStatus(json: string): ProxyStatus {
 }
 
 export function parseProxyInfo(json: string): ProxyInfo {
-  return { base_url: fields(parseJson(json, "proxy info"), "proxy info").string("base_url") };
+  const f = fields(parseJson(json, "proxy info"), "proxy info");
+  return { base_url: f.string("base_url"), upstream: f.string("upstream") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {

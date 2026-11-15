@@ -18,7 +18,7 @@ export async function startProxy(log: Log, { upstream, recordings, source, proxy
   const proxy = await serve(log, createProxy(upstream, recordings), proxyPort);
   const routes: Record<string, Handler> = {
     "/status": status,
-    "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}` }),
+    "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}`, upstream }),
     "/recordings": byMethod({ GET: reader, POST: createRecording(recordings) }),
   };
   const readers: Handler = (req, res, work) => {

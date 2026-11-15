@@ -2,7 +2,8 @@
 // A stand-in for api.anthropic.com, so traffic through the proxy costs nothing and needs no key.
 //   node .claude/skills/run-cc-dump/fake-anthropic.mjs [port]     (default 3399)
 // POST /v1/messages answers like the real API: an SSE stream when the body says "stream": true, else one JSON message.
-// The reply is a thinking block and a text block that echoes the last user message. Every other path answers 404.
+// The reply is a thinking block and a text block that echoes the last user message. A body that is not JSON answers
+// 400, as the API does; every other path answers 404.
 import { createServer } from "node:http";
 
 const port = Number(process.argv[2] ?? 3399);
@@ -53,7 +54,13 @@ createServer((req, res) => {
   req.on("data", (c) => chunks.push(c));
   req.on("end", async () => {
     if (req.method !== "POST" || !new URL(req.url, "http://x").pathname.endsWith("/v1/messages")) return void res.writeHead(404).end('{"type":"error"}');
-    const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+    let body;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString());
+    } catch (error) {
+      console.log(`fake-anthropic: ${req.method} ${req.url} -> 400 ${error.message}`);
+      return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: error.message } }));
+    }
     const message = reply(body, ++count);
     console.log(`fake-anthropic: ${req.method} ${req.url} -> ${message.id}`);
     if (!body.stream) return void res.writeHead(200, { "content-type": "application/json", "request-id": `req_fake_${count}` }).end(JSON.stringify(message));
