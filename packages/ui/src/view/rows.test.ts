@@ -2,7 +2,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Category } from "../format/blocks.ts";
-import { createFormatter } from "../format/format.ts";
+import { createFormatter, type FormattedExchange } from "../format/format.ts";
 import { parseSettings, type Visibility } from "../settings.ts";
 import { clockTime, compact, createGroupRows, createLayout, describeSize, preview, seconds } from "./rows.ts";
 
@@ -14,7 +14,11 @@ const request = (trace_id: string, body: unknown): RecordedEvent[] => [
 ];
 const body = { model: "m", messages: [{ role: "user", content: "Hello." }] };
 const shown = parseSettings(undefined).visibility;
-const layout = (visibility: Record<Category, Visibility>) => createLayout(visibility, createGroupRows());
+// A layout of exchanges, with no hidden block revealed unless one is given.
+const layout = (visibility: Record<Category, Visibility>) => {
+  const layOut = createLayout(visibility, createGroupRows());
+  return (formatted: FormattedExchange[], revealed?: string) => layOut(formatted, revealed);
+};
 
 describe("layout", () => {
   it("lays each exchange out as its line, then each group's title and blocks, keyed by what they are", () => {
@@ -124,9 +128,45 @@ describe("layout", () => {
   it("lists the same group and block rows whichever categories are hidden, so showing or hiding one sizes and renders no other", () => {
     const formatted = createFormatter()(exchanges(request("a", { ...body, system: "Be brief." })));
     const groupRows = createGroupRows();
-    const all = createLayout(shown, groupRows)(formatted).rows;
-    const some = createLayout({ ...shown, system: "hidden" }, groupRows)(formatted).rows;
+    const all = createLayout(shown, groupRows)(formatted, undefined).rows;
+    const some = createLayout({ ...shown, system: "hidden" }, groupRows)(formatted, undefined).rows;
     expect(some.length).toBe(all.length - 1);
     for (const row of some.filter(({ kind }) => kind !== "exchange")) expect(all).toContain(row);
+  });
+
+  it("lists the one hidden block revealed, in its place, and no other, and its group's title with it", () => {
+    const formatted = createFormatter()(exchanges(request("a", { ...body, tools: [{ name: "read" }] })));
+    const hidden = { ...shown, tools: "hidden" } as const;
+    const keysOf = (revealed?: string) => layout(hidden)(formatted, revealed).rows.map(({ key }) => key);
+    expect(keysOf()).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0"]);
+    expect(keysOf("a/request/tools")).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/tools", "a/message.0", "a/message.0/content.0"]);
+    // A block already listed is listed once.
+    expect(keysOf("a/message.0/content.0")).toEqual(keysOf());
+    // Revealing a block of a group whose every block is hidden lists the title over it.
+    const dialogue = { ...shown, user: "hidden", tools: "hidden" } as const;
+    expect(layout(dialogue)(formatted, "a/message.0/content.0").rows.map(({ key }) => key)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0"]);
+  });
+
+  it("keeps every row, whether listed or not, in order, and lays out again only the exchanges a reveal leaves and enters", () => {
+    const withTools = { ...body, tools: [{ name: "read" }] };
+    const formatted = createFormatter()(exchanges([...request("a", withTools), ...request("b", withTools)]));
+    const layOut = layout({ ...shown, tools: "hidden" });
+    const first = layOut(formatted);
+    const everyKey = first.every.rows.map(({ key }) => key);
+    expect(everyKey).toContain("a/request/tools");
+    expect(first.rows.map(({ key }) => key)).not.toContain("a/request/tools");
+    expect(everyKey.map((_, index) => first.every.keys.at(index))).toEqual(everyKey);
+    expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
+    expect(first.every.keys.indexOf("a/request/tools")).toBeLessThan(first.every.keys.indexOf("a/message.0/content.0")!);
+    const revealed = layOut(formatted, "a/request/tools");
+    expect(revealed.rows).toContain(first.every.rows[everyKey.indexOf("a/request/tools")]);
+    // Every row is the same however the reveal changes, and exchange b's rows are the ones laid out before.
+    expect(revealed.every.rows.map(({ key }) => key)).toEqual(everyKey);
+    expect(revealed.every.keys).toBe(first.every.keys);
+    expect(revealed.keys.indexOf("a/request/tools")).toBe(revealed.rows.findIndex(({ key }) => key === "a/request/tools"));
+    for (const row of first.rows.filter(({ key }) => key.startsWith("b"))) expect(revealed.rows).toContain(row);
+    const moved = layOut(formatted, "b/request/tools");
+    expect(moved.rows.map(({ key }) => key)).not.toContain("a/request/tools");
+    expect(moved.rows.map(({ key }) => key)).toContain("b/request/tools");
   });
 });

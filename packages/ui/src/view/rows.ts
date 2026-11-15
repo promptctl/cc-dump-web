@@ -11,8 +11,10 @@ export type Row =
   | { kind: "group"; key: string; title: Group["title"] }
   | { kind: "block"; key: string; block: KeyedBlock; size: number };
 
-// The rows of a conversation, and their keys.
-export type Layout = { rows: Row[]; keys: Keys };
+// The rows of a conversation, and their keys: those listed, which are every row but the blocks of a hidden category, the
+// group titles over none left, and the block revealed; and `every` row, listed or not, which the search reads, since a
+// hidden category's blocks are searched (docs/design/01-mvp.md, F6).
+export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys } };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the row
 // listed before it, whose end is where it stands. [LAW:types-are-the-program] The same object while no row, listed or
@@ -20,8 +22,13 @@ export type Layout = { rows: Row[]; keys: Keys };
 // first row, at 5 ms a time over a long recording) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 
-// One exchange's rows, their keys, the keys of its groups' rows listed or not, and each key's index among them.
-type ExchangeRows = { trace: string; rows: Row[]; keys: string[]; places: string[]; index: Map<string, number> };
+// The keys of a list of rows, in order, and each key's index among them; among the rows listed, a row not listed is at
+// the row listed before it, whose end is where it stands.
+type Places = { keys: string[]; index: Map<string, number> };
+
+// One exchange's rows listed and the places of their keys, every row of it and the places of theirs, and `revealed`, the
+// key of the hidden block they were laid out with listed, when it is in this exchange.
+type ExchangeRows = { trace: string; rows: Row[]; listed: Places; every: Row[]; all: Places; revealed: string | undefined };
 
 // A group's rows, its title and every block, each sized, whichever categories are hidden.
 type GroupRows = { title: Extract<Row, { kind: "group" }>; blocks: Extract<Row, { kind: "block" }>[] };
@@ -40,65 +47,109 @@ export function createGroupRows(): (trace: string, group: Group) => GroupRows {
 }
 
 // Lays out exchanges as rows, leaving out the blocks of each category `visibility` hides (docs/design/01-mvp.md, F5),
-// and a group with no block left, rather than a title over nothing. [LAW:no-shared-mutable-globals] Its cache is its
-// own: the formatter returns an unchanged exchange as the same object, so its rows are the ones laid out before: a frame
-// lays out only what changed, and only those rows render. It holds for one visibility, so another is another layout.
-export function createLayout(visibility: Record<Category, Visibility>, groupRows: (trace: string, group: Group) => GroupRows): (formatted: FormattedExchange[]) => Layout {
+// but the one at the key `revealed`, which the search has stepped to (F6), and a group with no block left, rather than a
+// title over nothing. [LAW:no-shared-mutable-globals] Its cache is its own: the formatter returns an unchanged exchange
+// as the same object, so its rows are the ones laid out before: a frame lays out only what changed, and only those rows
+// render. It holds for one visibility, so another is another layout; a change of `revealed` lays out again only the
+// exchange it leaves and the one it enters.
+export function createLayout(
+  visibility: Record<Category, Visibility>,
+  groupRows: (trace: string, group: Group) => GroupRows,
+): (formatted: FormattedExchange[], revealed: string | undefined) => Layout {
   const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
-  const groupLayout = (trace: string, group: Group) => {
+  const groupLayout = (trace: string, group: Group, revealed: string | undefined) => {
     const { title, blocks } = groupRows(trace, group);
-    const shown = blocks.filter(({ block }) => isListed[visibility[block.category]]);
+    const shown = blocks.filter(({ key, block }) => isListed[visibility[block.category]] || key === revealed);
     return { listed: shown.length === 0 ? [] : [title, ...shown], every: [title, ...blocks] };
   };
   // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
   // ones before is the layout before, as when only traffic the view does not show arrived.
-  let last: { exchanges: ExchangeRows[]; layout: Layout } = { exchanges: [], layout: { rows: [], keys: keysOf([]) } };
-  return (formatted) => {
+  let last: { exchanges: ExchangeRows[]; layout: Layout } = {
+    exchanges: [],
+    layout: { rows: [], keys: keysOf([], (own) => own.listed), every: { rows: [], keys: keysOf([], (own) => own.all) } },
+  };
+  return (formatted, revealed) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
-      const own = laidOut.get(exchange) ?? exchangeRows(exchange, groupLayout, before.get(exchange.exchange.trace_id));
+      const trace = exchange.exchange.trace_id;
+      const here = revealed?.startsWith(`${trace}/`) ? revealed : undefined;
+      const cached = laidOut.get(exchange);
+      const own = cached !== undefined && cached.revealed === here ? cached : exchangeRows(exchange, groupLayout, here, before.get(trace));
       laidOut.set(exchange, own);
       return own;
     });
     const sameAs = (pick: (own: ExchangeRows) => unknown) =>
       exchanges.length === last.exchanges.length && exchanges.every((own, index) => pick(own) === pick(last.exchanges[index]!));
     if (sameAs((own) => own.rows)) return last.layout;
-    const rows: Row[] = [];
-    for (const own of exchanges) for (const row of own.rows) rows.push(row);
-    last = { exchanges, layout: { rows, keys: sameAs((own) => own.keys) ? last.layout.keys : keysOf(exchanges) } };
+    last = {
+      exchanges,
+      layout: {
+        rows: concat(exchanges, (own) => own.rows),
+        keys: sameAs((own) => own.listed) ? last.layout.keys : keysOf(exchanges, (own) => own.listed),
+        every: {
+          rows: concat(exchanges, (own) => own.every),
+          keys: sameAs((own) => own.all) ? last.layout.every.keys : keysOf(exchanges, (own) => own.all),
+        },
+      },
+    };
     return last.layout;
   };
 }
 
-// An exchange's rows: of each group, those `groupLayout` lists, and every one. `before`: the exchange's rows laid out
-// last, whose keys it keeps, the same arrays, when its rows' keys are the same.
-function exchangeRows(formatted: FormattedExchange, groupLayout: (trace: string, group: Group) => { listed: Row[]; every: Row[] }, before: ExchangeRows | undefined): ExchangeRows {
+// The rows `pick` gives for each exchange, one list in order.
+function concat(exchanges: ExchangeRows[], pick: (own: ExchangeRows) => Row[]): Row[] {
+  const rows: Row[] = [];
+  for (const own of exchanges) for (const row of pick(own)) rows.push(row);
+  return rows;
+}
+
+// An exchange's rows: of each group, those `groupLayout` lists, and every one. `revealed`: the hidden block to list, if
+// it is in this exchange. `before`: the exchange's rows laid out last, whose places it keeps, the same objects, while the
+// keys they are of are the same.
+function exchangeRows(
+  formatted: FormattedExchange,
+  groupLayout: (trace: string, group: Group, revealed: string | undefined) => { listed: Row[]; every: Row[] },
+  revealed: string | undefined,
+  before: ExchangeRows | undefined,
+): ExchangeRows {
   const trace = formatted.exchange.trace_id;
-  const laidOut = formatted.groups.map((group) => groupLayout(trace, group));
-  const rows: Row[] = [{ kind: "exchange", key: trace, exchange: formatted }, ...laidOut.flatMap(({ listed }) => listed)];
+  const laidOut = formatted.groups.map((group) => groupLayout(trace, group, revealed));
+  const line: Row = { kind: "exchange", key: trace, exchange: formatted };
+  const rows = [line, ...laidOut.flatMap(({ listed }) => listed)];
+  const every = [line, ...laidOut.flatMap(({ every }) => every)];
   const keys = rows.map(({ key }) => key);
-  const places = laidOut.flatMap(({ every }) => every.map(({ key }) => key));
-  if (before !== undefined && same(before.keys, keys) && same(before.places, places)) return { ...before, rows };
-  // A row not listed is at the row listed before it, the exchange's own line at the latest, whose end is where it
-  // stands: a reader whose row a category hid is shown what now stands there, not the group or exchange it was inside.
+  const all = every.map(({ key }) => key);
+  // Each list of places is the one before while its keys are the same: revealing a block changes what is listed, not what
+  // is.
+  const listed = before !== undefined && same(before.listed.keys, keys) ? before.listed : listedPlaces(keys, all);
+  const places = before !== undefined && same(before.all.keys, all) ? before.all : { keys: all, index: new Map(all.map((key, at) => [key, at])) };
+  return { trace, rows, listed, every, all: places, revealed };
+}
+
+// The places of the keys listed, `keys`, among those of every row, `all`. A row not listed is at the row listed before
+// it, the exchange's own line at the latest, whose end is where it stands: a reader whose row a category hid is shown
+// what now stands there, not the group or exchange it was inside.
+function listedPlaces(keys: string[], all: string[]): Places {
   const index = new Map(keys.map((key, at) => [key, at]));
   let listedBefore = 0;
-  for (const key of places) {
+  for (const key of all) {
     const own = index.get(key);
     if (own === undefined) index.set(key, listedBefore);
     else listedBefore = own;
   }
-  return { trace, rows, keys, places, index };
+  return { keys, index };
 }
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((key, at) => key === b[at]);
 
-function keysOf(exchanges: ExchangeRows[]): Keys {
+// The keys of the rows `places` gives for each exchange, in order.
+function keysOf(exchanges: ExchangeRows[], places: (own: ExchangeRows) => Places): Keys {
   const keys: string[] = [];
   const starts = new Map<string, { start: number; index: Map<string, number> }>();
-  for (const { trace, keys: own, index } of exchanges) {
-    starts.set(trace, { start: keys.length, index });
-    for (const key of own) keys.push(key);
+  for (const own of exchanges) {
+    const { keys: ownKeys, index } = places(own);
+    starts.set(own.trace, { start: keys.length, index });
+    for (const key of ownKeys) keys.push(key);
   }
   return {
     at: (index) => keys[index]!,

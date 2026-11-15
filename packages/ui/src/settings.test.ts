@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parseSettings } from "./settings.ts";
 
 describe("settings", () => {
-  const defaults = { follow: true, visibility: { user: "shown", assistant: "shown", tools: "shown", system: "shown", metadata: "shown", thinking: "shown" }, theme: "system" };
+  const defaults = { follow: true, visibility: { user: "shown", assistant: "shown", tools: "shown", system: "shown", metadata: "shown", thinking: "shown" },
+    theme: "system",
+    search: { caseSensitive: false, wholeWord: false, regex: true },
+  };
 
   it("reads nothing stored as every setting's default", () => {
     expect(parseSettings(undefined)).toEqual(defaults);
@@ -10,11 +13,14 @@ describe("settings", () => {
   });
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
-    expect(parseSettings({ follow: false, visibility: { tools: "hidden", system: "summary", metadata: 1 }, theme: "nord" })).toEqual({
+    expect(
+      parseSettings({ follow: false, visibility: { tools: "hidden", system: "summary", metadata: 1 }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false } }),
+    ).toEqual({
       follow: false,
       visibility: { ...defaults.visibility, tools: "hidden" },
       theme: "nord",
+      search: { caseSensitive: true, wholeWord: false, regex: false },
     });
-    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped" })).toEqual(defaults);
+    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true] })).toEqual(defaults);
   });
 });

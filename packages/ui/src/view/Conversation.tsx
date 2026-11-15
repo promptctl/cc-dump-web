@@ -25,7 +25,11 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const visibility = useSettings(useShallow((state) => state.visibility));
   const groupRows = useMemo(() => createGroupRows(), []);
   const layOut = useMemo(() => createLayout(visibility, groupRows), [visibility, groupRows]);
-  const { rows, keys } = useMemo(() => layOut(formatted), [layOut, formatted]);
+  // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
+  // the step after, which makes another current, hides it again.
+  const current = useView((state) => state.search.current);
+  const revealed = current?.key;
+  const { rows, keys, every } = useMemo(() => layOut(formatted, revealed), [layOut, formatted, revealed]);
   const flipped = useView((state) => state.flipped);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
@@ -103,21 +107,22 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     if (following !== "on") view.moveTo({ at: "end" });
     latest.current("choose");
   };
-  // The search (docs/design/01-mvp.md, F6): its matches among the rows listed, so in the shown categories only.
+  // The search (docs/design/01-mvp.md, F6): its matches among every row, in the hidden categories as well.
   const query = useView((state) => state.search.query);
-  const current = useView((state) => state.search.current);
-  const pattern = useMemo(() => patternOf(query), [query]);
+  const options = useSettings(useShallow((state) => state.search));
+  const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
   const search = useMemo(() => createSearch(), []);
-  const found = useMemo(() => search(rows, pattern), [search, rows, pattern]);
+  const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
   // is put at the match's line, a few of its lines below the top.
   const stepTo = (direction: Direction) => {
-    const next = adjacent(found, current, useView.getState().position, direction, pattern, keys);
+    const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
     flushSync(() => view.goTo(next));
     const match = currentMatch();
-    // [LAW:no-silent-failure] A step goes only to a match found in a row listed, so it is painted once committed.
+    // [LAW:no-silent-failure] A step goes to a match found in a block, which the step lists if its category is hidden, so
+    // it is painted once committed.
     if (match === undefined) throw new Error(`The match stepped to is not on screen: ${JSON.stringify(next.match)}`);
     const text = match.startContainer.parentElement!;
     const row = text.closest<HTMLElement>("[data-index]")!;
@@ -142,7 +147,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       {/* The filter, the gutter's legend, and the search share one bar (docs/design/02-design.md, "Layout"). */}
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-1.5 bg-surface px-4 py-1.5 text-xs">
         <FilterBar />
-        <SearchBar count={found.count} ordinal={currentOrdinal} onStep={stepTo} />
+        <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} />
       </div>
       {/* The browser's own scroll anchoring would be a second writer of the offset. */}
       <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">

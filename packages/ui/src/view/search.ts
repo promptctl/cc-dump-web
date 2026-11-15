@@ -1,11 +1,12 @@
 import type { Block, Part } from "../format/blocks.ts";
 import type { KeyedBlock } from "../format/format.ts";
+import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
 import { jsonText, type Keys, type Row } from "./rows.ts";
 
-// Search (docs/design/01-mvp.md, F6): the matches of a query in the texts the shown categories' blocks show, counted,
-// stepped through in order, and found in each text shown for highlighting.
+// Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
+// in, counted, stepped through in order, and found in each text shown for highlighting.
 
 export type BlockRow = Extract<Row, { kind: "block" }>;
 
@@ -56,16 +57,42 @@ function partTexts(part: Part, index: number): Shown[] {
   }
 }
 
-// [LAW:parse-dont-validate] A query as the pattern its matches are found with: its characters literally, in any case
-// (search options are not in the MVP). The empty query matches nothing, so no search is a pattern like any other.
-export function patternOf(query: string): RegExp {
-  return new RegExp(query === "" ? "(?!)" : RegExp.escape(query), "giu");
+// A query as read under the search's options: the `pattern` its matches are found with, and `error`, why it is not one,
+// as the regular expression engine words it, when it is not a valid regular expression. [LAW:dataflow-not-control-flow]
+// A query that is none has a pattern that matches nothing, so the search runs the same for it, and what it shows is
+// that it found nothing, and why.
+export type Query = { pattern: RegExp; error: string | undefined };
+
+// The pattern that matches nothing: the empty query's, so no search is a pattern like any other, and an invalid one's.
+const nothing = new RegExp("(?!)", "gu");
+
+// What a word is made of, in Unicode: letters, digits and the underscore, as `\w` is in ASCII. JavaScript's `\b` is
+// ASCII only, so it would find a boundary inside "café".
+const word = String.raw`[\p{L}\p{N}_]`;
+
+// [LAW:parse-dont-validate] The one place a query is parsed: read under `options` as its characters, or as a regular
+// expression when `regex` is on; in any case unless `caseSensitive`; and with no word character beside a match when
+// `wholeWord`.
+export function patternOf(query: string, { caseSensitive, wholeWord, regex }: SearchOptions): Query {
+  if (query === "") return { pattern: nothing, error: undefined };
+  const source = regex ? query : RegExp.escape(query);
+  const flags = caseSensitive ? "gu" : "giu";
+  try {
+    // The query is compiled alone first: inside the group that wraps it for a whole word, an unbalanced one such as
+    // `a)(b` could close the group and still compile, as another expression.
+    const alone = new RegExp(source, flags);
+    return { pattern: wholeWord ? new RegExp(`(?<!${word})(?:${source})(?!${word})`, flags) : alone, error: undefined };
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { pattern: nothing, error: error.message };
+  }
 }
 
 // [LAW:single-enforcer] Where a pattern matches a text, in order: the one definition of a match, which the count, the
-// highlighting and the steps between matches all use.
+// highlighting and the steps between matches all use. A match has characters: where an expression matches nothing, as
+// `x*` can, there is nothing to highlight and nowhere to step.
 export function find(pattern: RegExp, text: string): Range[] {
-  return Array.from(text.matchAll(pattern), (found) => ({ start: found.index, end: found.index + found[0].length }));
+  return Array.from(text.matchAll(pattern), (found) => ({ start: found.index, end: found.index + found[0].length })).filter(({ start, end }) => end > start);
 }
 
 // A block with matches: its row, the row's index among the rows, how many matches it holds, and how many come before.
@@ -108,7 +135,7 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
-// block is hidden.
+// block is one the formatter replaced.
 export function ordinal(found: Found, current: Match | undefined, pattern: RegExp): number | undefined {
   const block = current === undefined ? undefined : found.byKey.get(current.key);
   if (block === undefined) return undefined;
@@ -123,12 +150,12 @@ export type Step = { match: Match; block: BlockRow | undefined; regions: string[
 export type Direction = "next" | "previous";
 
 // The match after or before `current`, in the order the conversation shows them, wrapping at either end; undefined
-// when there is no match. A current whose row is not listed stands just after the row `rowIndex` gives for it, as the
-// view does: the row listed before it when its category is hidden, or the row it was inside when the formatter replaced
-// it. So the steps go on from where it was. With no current, the steps start from the view's `position`: its top row's
-// matches first going on, and the matches above it going back. One whose exchange is not among the rows goes to the
-// first match, or back to the last.
-export function adjacent(found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys): Step | undefined {
+// when there is no match. `order`: the places of every row, hidden or not, which `found` was made from. A current whose
+// block is not among them stands just after the row `rowIndex` gives for it, as the view does: the row it was inside
+// when the formatter replaced it. So the steps go on from where it was. With no current, the steps start from the
+// view's `position`: its top row's matches first going on, and the matches above it going back. One whose exchange is
+// not among the rows goes to the first match, or back to the last.
+export function adjacent(found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, order: Keys): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
@@ -140,10 +167,12 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(own.row, past);
   }
-  // Where the step starts among the rows; `bias`: where it stands against its row when the row is listed.
+  // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
   const placeOf = (key: string, bias: number) => {
-    const index = rowIndex(key, keys.indexOf);
-    return index === undefined ? (forward ? -Infinity : Infinity) : keys.at(index) === key ? index + bias : index + 0.5;
+    const own = order.indexOf(key);
+    if (own !== undefined) return own + bias;
+    const inside = rowIndex(key, order.indexOf);
+    return inside === undefined ? (forward ? -Infinity : Infinity) : inside + 0.5;
   };
   const place =
     current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
