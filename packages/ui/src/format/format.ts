@@ -2,7 +2,7 @@ import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { fitting, formatBlock, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { fitting, formatBlock, formatContent, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
 // A run of an exchange's blocks under one heading: the request's own, each message the request sends, the response.
@@ -114,6 +114,11 @@ function one(key: string, blocks: BlockOrNone): KeyedBlock[] {
 function each(key: string, blocks: Block[]): KeyedBlock[] {
   return blocks.map((block, index) => ({ ...block, key: `${key}.${index}` }));
 }
+// The blocks of one content block of a message: the one block keeps the content block's key, so a text nothing was
+// injected into is keyed as it always was, and a text split into several is keyed by the place of each piece in it.
+function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
+  return blocks.length === 1 ? blocks.map((block) => ({ ...block, key })) : each(key, blocks);
+}
 
 // The Messages API's exchanges; requests to other paths, and to a target that is no URL, are forwarded and not shown
 // (F2). One whose request was not recorded is shown, since its path is not known.
@@ -158,7 +163,7 @@ function messageGroup(message: unknown, index: number): Group {
       const content = fields.value("content");
       const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
-      return { key, title: role, blocks: [...each("content", blocks.map((block) => formatBlock(block, role))), ...one("fields", restBlock(fields, "message"))] };
+      return { key, title: role, blocks: [...blocks.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role))), ...one("fields", restBlock(fields, "message"))] };
     },
     (reason) => ({ key, title: "message", blocks: one("message", [raw("metadata", "message", reason, { kind: "json", value: message })]) }),
   );

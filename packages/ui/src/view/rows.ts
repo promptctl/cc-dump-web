@@ -246,10 +246,12 @@ export function seconds(milliseconds: number): string {
 }
 
 // Whether a row shows expanded: a block as its category starts, the user's and the assistant's expanded and the rest
-// collapsed (docs/design/01-mvp.md, F4), unless the reader flipped it. Rows of other kinds are a line.
+// collapsed, and what the harness injected into their messages collapsed with the rest, since it is not what they said
+// (docs/design/01-mvp.md, F4), unless the reader flipped it. Rows of other kinds are a line.
 export function isExpanded(flipped: Record<string, true>, row: Row): boolean {
-  return row.kind === "block" && (flipped[row.key] === true) !== (row.block.category === "user" || row.block.category === "assistant");
+  return row.kind === "block" && (flipped[row.key] === true) !== startsExpanded(row.block);
 }
+const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or a block's
 // content at about 100 characters a line. Only rows not yet on screen use it, so it decides how the scrollbar reads, not

@@ -326,6 +326,50 @@ describe("format", () => {
     ]);
   });
 
+  it("shows what the harness injected into a user message as blocks of their own, each named for what it is, and the prompt alone", () => {
+    const reminder = (inner: string) => `<system-reminder>\n${inner}\n</system-reminder>`;
+    const notes = "Contents of /work/app/CLAUDE.md (project instructions, checked into the codebase):\n\n## Build\nRun make.";
+    const context = reminder(`Codebase and user instructions are shown below.\n\n${notes}`);
+    const messages = [
+      { role: "user", content: [{ type: "text", text: context }, { type: "text", text: "Say hello.", cache_control: { type: "ephemeral" } }, { type: "image", source: png }] },
+      { role: "system", content: [{ type: "text", text: "SessionStart hook additional context: Be explanatory." }] },
+      { role: "user", content: "Again." },
+    ];
+    const formatted = one(request("a", { model: "m", messages }));
+    const [user, system, again] = formatted.groups.filter(({ key }) => key.startsWith("message"));
+    const shown = ({ blocks }: { blocks: Array<Block & { key: string }> }) => blocks.map(({ key, name, category, injected }) => [key, name, category, injected]);
+    expect(shown(user!)).toEqual([
+      ["content.0.0", "system reminder", "user", true],
+      ["content.0.1", "CLAUDE.md /work/app/CLAUDE.md", "user", true],
+      ["content.1", "text", "user", undefined],
+      ["content.2", "image", "user", undefined],
+    ]);
+    // The pieces are the text, nothing lost and nothing twice, and the prompt's other fields stay with it.
+    expect(user!.blocks.slice(0, 2).map(({ parts }) => parts)).toEqual([
+      [{ kind: "text", text: "<system-reminder>\nCodebase and user instructions are shown below.\n\n" }],
+      [{ kind: "text", text: `${notes}\n</system-reminder>` }],
+    ]);
+    expect(user!.blocks[2]!.parts).toEqual([{ kind: "text", text: "Say hello." }, { kind: "json", label: "fields", value: { cache_control: { type: "ephemeral" } } }]);
+    // Whatever the role, and the category stays the role's.
+    expect(shown(system!)).toEqual([["content.0", "SessionStart hook", "system", true]]);
+    expect(shown(again!)).toEqual([["content.0", "text", "user", undefined]]);
+  });
+
+  it("splits no text but a message's own: a tool result's, the system prompt's and the reply's stay as sent", () => {
+    const reminder = "<system-reminder>\nUse the tool.\n</system-reminder>";
+    const formatted = one([
+      ...request("a", {
+        model: "m",
+        system: [{ type: "text", text: reminder }],
+        messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: reminder }] }] }],
+      }),
+      ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content: [{ type: "text", text: reminder }] }))),
+    ]);
+    expect(group(formatted, "request").at(-1)).toMatchObject({ name: "text", parts: [{ kind: "text", text: reminder }] });
+    expect(group(formatted, "user")[0]!.parts).toContainEqual({ kind: "text", text: reminder });
+    expect(group(formatted, "response")[1]).toMatchObject({ name: "text", parts: [{ kind: "text", text: reminder }] });
+  });
+
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
     const constructor = { type: "constructor", value: 1 };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [constructor] }] }));

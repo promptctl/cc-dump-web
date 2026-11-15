@@ -1,4 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
+import { split, type Piece } from "./injected.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -19,7 +20,9 @@ export type Part =
   | { kind: "fields"; label?: string; fields: Header[] }
   | { kind: "media"; label?: string; of: Medium; source: Source };
 
-export type Block = { category: Category; name: string; parts: Part[] };
+// [LAW:types-are-the-program] `injected`: the harness's own content in a message the user or the assistant sent, a system
+// reminder, hook output or a CLAUDE.md, which the view never mistakes for what they said, whatever its category.
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -194,6 +197,39 @@ export function formatBlock(block: unknown, role: Role): Block {
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
+}
+
+// A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
+// block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
+// shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields, a cache breakpoint, follow its last
+// piece, which is where the breakpoint is.
+export function formatContent(block: unknown, role: Role): Block[] {
+  const formatted = formatBlock(block, role);
+  if (!isText(block)) return [formatted];
+  const [, ...fields] = formatted.parts;
+  const pieces = split(block.text);
+  return pieces.map((piece, index) => {
+    const parts: Part[] = [{ kind: "text", text: piece.text }, ...(index === pieces.length - 1 ? fields : [])];
+    return pieceBlock(piece, formatted.category, formatted.name, parts);
+  });
+}
+
+function isText(block: unknown): block is { type: "text"; text: string } {
+  return typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string";
+}
+
+// A piece as a block: what was said is named as the text block it is, and what was injected for what it is.
+function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[]): Block {
+  switch (piece.kind) {
+    case "said":
+      return { category, name: said, parts };
+    case "reminder":
+      return { category, name: "system reminder", parts, injected: true };
+    case "hook":
+      return { category, name: `${piece.name} hook`, parts, injected: true };
+    case "claude_md":
+      return { category, name: `CLAUDE.md ${piece.path}`, parts, injected: true };
+  }
 }
 
 // The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows.

@@ -4,7 +4,7 @@ import { exchanges } from "../exchanges.ts";
 import type { Category } from "../format/blocks.ts";
 import { createFormatter, type FormattedExchange } from "../format/format.ts";
 import { parseSettings, type Visibility } from "../settings.ts";
-import { clockTime, compact, createGroupRows, createLayout, describeSize, preview, seconds } from "./rows.ts";
+import { clockTime, compact, createGroupRows, createLayout, describeSize, isExpanded, preview, seconds, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -168,5 +168,14 @@ describe("layout", () => {
     const moved = layOut(formatted, "b/request/tools");
     expect(moved.rows.map(({ key }) => key)).not.toContain("a/request/tools");
     expect(moved.rows.map(({ key }) => key)).toContain("b/request/tools");
+  });
+
+  it("starts a user's or an assistant's block expanded and what the harness injected, like the other categories, collapsed, until the reader flips it", () => {
+    const block = (key: string, category: Category, injected: boolean): Row => ({ kind: "block", key, size: 1, block: { key, category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) } });
+    const said = block("said", "user", false);
+    const reminder = block("reminder", "user", true);
+    const tools = block("tools", "tools", false);
+    expect([said, reminder, tools].map((row) => isExpanded({}, row))).toEqual([true, false, false]);
+    expect([said, reminder, tools].map((row) => isExpanded({ said: true, reminder: true, tools: true }, row))).toEqual([false, true, true]);
   });
 });
