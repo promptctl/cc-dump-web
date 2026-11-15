@@ -14,7 +14,8 @@ unit=$(cd "$skill/../../.." && pwd)
 # would then use the real settings, recordings and upstream.
 home=${CC_DUMP_HOME:-/tmp/cc-dump-run}
 case $home in /*) ;; *) home=$PWD/$home ;; esac
-session=run-cc-dump-$(basename "$unit")
+# tmux reads "." and ":" in a target as window and pane separators, and worktrees are named for tickets like a.b.
+session=run-cc-dump-$(basename "$unit" | tr .: __)
 # server, UI, reader: constants in packages/*/src/address.ts. proxy: the default of proxy.json's `port`, which `up`
 # leaves unset. The fake upstream.
 ports="3344 3345 3346 3347 3399"
@@ -31,10 +32,7 @@ holders() {
 }
 
 logs() {
-  for log in fake dev; do
-    echo "== $home/$log.log"
-    tail -"$1" "$home/$log.log"
-  done
+  tail -n "$1" "$home/fake.log" "$home/dev.log"
 }
 
 up() {

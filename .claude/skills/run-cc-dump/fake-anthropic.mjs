@@ -3,7 +3,8 @@
 //   node .claude/skills/run-cc-dump/fake-anthropic.mjs [port]     (default 3399)
 // POST /v1/messages answers like the real API: an SSE stream when the body says "stream": true, else one JSON message.
 // The reply is a thinking block and a text block that echoes the last user message. A body that is not JSON answers
-// 400, as the API does; every other path answers 404.
+// 400, as the API does. GET /fake-anthropic answers 200, so a client can tell this fake is what it reaches. Every other
+// path answers 404.
 import { createServer } from "node:http";
 
 const port = Number(process.argv[2] ?? 3399);
@@ -53,6 +54,7 @@ createServer((req, res) => {
   const chunks = [];
   req.on("data", (c) => chunks.push(c));
   req.on("end", async () => {
+    if (req.method === "GET" && new URL(req.url, "http://x").pathname.endsWith("/fake-anthropic")) return void res.writeHead(200).end("fake-anthropic");
     if (req.method !== "POST" || !new URL(req.url, "http://x").pathname.endsWith("/v1/messages")) return void res.writeHead(404).end('{"type":"error"}');
     let body;
     try {

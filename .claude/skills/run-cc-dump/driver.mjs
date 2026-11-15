@@ -82,7 +82,7 @@ for await (const raw of createInterface({ input: process.stdin })) {
     console.log(`> ${line}\n${await command(line.slice(name.length).trimStart())}`);
   } catch (error) {
     failed = true;
-    console.log(`> ${line}\nERR ${error.message.split("\n")[0]}`);
+    console.log(`> ${line}\nERR ${String(error instanceof Error ? error.message : error).split("\n")[0]}`);
   }
 }
 await browser.close();

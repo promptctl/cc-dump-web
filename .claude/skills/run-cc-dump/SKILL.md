@@ -13,7 +13,7 @@ All paths are relative to the repo (or worktree) root.
 Node ≥ 26, pnpm 11, tmux, Google Chrome in /Applications. The driver's one dependency lives outside the repo:
 
 ```bash
-mkdir -p ~/.cache/run-cc-dump && cd ~/.cache/run-cc-dump && npm init -y && npm install playwright-core
+(mkdir -p ~/.cache/run-cc-dump && cd ~/.cache/run-cc-dump && npm init -y && npm install playwright-core)
 pnpm install
 ```
 
@@ -29,7 +29,7 @@ up, sometimes observing a live Claude Code. Check before anything else:
 
 - Ports held by another worktree's stack → **do not stop it**; drive it as-is with the driver (read-only flows are
   safe), or use the isolated proxy below for traffic. It runs *that worktree's* code, not yours. `traffic.mjs` refuses
-  it unless its upstream is a fake on loopback.
+  it unless its upstream is the fake.
 - Ports free → `stack.sh up` (next section).
 
 ## Run (agent path)
@@ -54,8 +54,8 @@ the sessions that wrote this) — if it fails, fix the script and this line.
 node .claude/skills/run-cc-dump/traffic.mjs 3
 ```
 
-Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless its upstream is on
-loopback; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming turns through
+Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless `fake-anthropic.mjs`
+answers at its upstream; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming turns through
 the proxy under `/agent/<recording-stem>/v1/messages`, failing on any non-2xx. Each reply has a thinking block and a
 text block echoing the user turn.
 
@@ -99,7 +99,7 @@ Stable selectors (from `packages/ui/src/view/`):
 ```bash
 mkdir -p /tmp/ccd-iso/rec
 tmux new-session -d -s ccd-iso -n fake "node .claude/skills/run-cc-dump/fake-anthropic.mjs 3398 > /tmp/ccd-iso/fake.log 2>&1"
-tmux new-window -t ccd-iso -n proxy "node packages/proxy/src/isolated.ts http://127.0.0.1:3398 /tmp/ccd-iso/rec run-20260101T000000.000Z.jsonl 3390 3391 > /tmp/ccd-iso/proxy.log 2>&1"
+tmux new-window -t ccd-iso -n proxy "node packages/proxy/src/isolated.ts http://127.0.0.1:3398 /tmp/ccd-iso/rec "$(date -u +%FT%TZ)" 3390 3391 > /tmp/ccd-iso/proxy.log 2>&1"
 until curl -sf -o /dev/null http://127.0.0.1:3391/info; do sleep 0.2; done
 CC_DUMP_READER_PORT=3391 node .claude/skills/run-cc-dump/traffic.mjs 2
 ls /tmp/ccd-iso/rec
@@ -107,7 +107,8 @@ tmux kill-session -t ccd-iso
 ```
 
 Runs this worktree's proxy source on spare ports, with its fake on 3398 so a `stack.sh` fake on 3399 is left alone;
-each line is its own command, so the steps may be separate calls. The run recording's name must have that shape.
+each line is its own command, so the steps may be separate calls. The third argument is the run's start, which names
+its recording.
 `isolated.ts` is also what the proxy's tests run. A real Claude Code works against it too, for free:
 
 ```bash

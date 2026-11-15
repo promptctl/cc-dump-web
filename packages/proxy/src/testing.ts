@@ -34,7 +34,8 @@ export async function subscribe(port: number, path: string, headers: Record<stri
 }
 
 // The name of the run's recording in a proxy process: the traffic no agent claims is recorded there.
-export const runName = runRecordingName(new Date("2026-11-13T09:00:00.000Z"));
+const runStart = "2026-11-13T09:00:00.000Z";
+export const runName = runRecordingName(new Date(runStart));
 
 // The proxy and its reader as their own process, served as main.ts serves them, killed when the test finishes,
 // recording into `dir` under the shell's file size limit (`ulimit -f`: a count of blocks, or "unlimited"). Node
@@ -44,7 +45,7 @@ export const runName = runRecordingName(new Date("2026-11-13T09:00:00.000Z"));
 // and a save to it while the test runs is a change the test did not cause, so only the start-up check and a check that
 // fails reach the test.
 export async function proxyProcess(upstream: string, dir: string, fileSizeLimit: string) {
-  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, fileURLToPath(new URL("./isolated.ts", import.meta.url)), upstream, dir, runName, "0", "0"];
+  const args = ["-c", 'ulimit -f "$1" && shift && exec "$@"', "sh", fileSizeLimit, process.execPath, fileURLToPath(new URL("./isolated.ts", import.meta.url)), upstream, dir, runStart, "0", "0"];
   const child = spawn("/bin/sh", args, { stdio: ["ignore", "pipe", "inherit"] });
   onTestFinished(() => void child.kill("SIGKILL"));
   const { log, next } = eventLog();
