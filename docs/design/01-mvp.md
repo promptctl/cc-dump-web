@@ -70,7 +70,7 @@ Each feature is stated as what the person using the app can do and see.
 
 ### F8. Status and info
 - **Connection status,** always on screen: whether the browser is connected to the proxy, how many requests are in flight, and how long ago the last request arrived.
-- **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, the upstream address, the path of the current recording, the agent's session ID when the traffic carries one, the tmux session used for launching, and the app version. Every value can be copied with one click.
+- **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, which gives the agent started with it a recording of its own, the upstream address, the path of the current recording, the agent's session ID when the traffic carries one, the tmux session used for launching, and the app version. Every value can be copied with one click.
 
 ### F9. Logs panel
 - A panel shows the log lines of the proxy and the app server as they are written, and can be filtered by level.
