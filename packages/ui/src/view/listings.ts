@@ -5,6 +5,10 @@ import { parseRecordingName, type Listing, type RecordingKind } from "@cc-dump/p
 // named.
 export type Entry = { listing: Listing; parsed: ReturnType<typeof parseRecordingName> };
 
+// The one parse of a listing: the list's entries and the label of a recording open that the list does not hold are made
+// by it.
+export const entryOf = (listing: Listing): Entry => ({ listing, parsed: parseRecordingName(listing.name) });
+
 // [LAW:types-are-the-program] Of two recordings that started together, an agent's comes before the proxy run's.
 const kindOrder: Record<RecordingKind, number> = { agent: 0, run: 1 };
 
@@ -17,5 +21,5 @@ export function entriesOf(listings: Listing[]): Entry[] {
     }
     return b.parsed.start.getTime() - a.parsed.start.getTime() || kindOrder[a.parsed.kind] - kindOrder[b.parsed.kind];
   };
-  return listings.map((listing): Entry => ({ listing, parsed: parseRecordingName(listing.name) })).toSorted(newestFirst);
+  return listings.map(entryOf).toSorted(newestFirst);
 }

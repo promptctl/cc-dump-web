@@ -47,16 +47,12 @@ export type Writer = { written: () => number; append: (line: Buffer) => void };
 
 // Each event is written before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
-// [LAW:one-source-of-truth] The file, not this writer's count of it, is the truth of what it holds. The writer starts at
-// the recording's `recordedLength`, so one already at the path is continued after its last whole event: an agent
-// outlives a proxy restart and goes on sending to its path. A file that is not there when the writer is made is created
-// by its first write; one that is there is never created, so a recording deleted before its first write, or mid-run,
-// fails loudly. A write whose file is `written` bytes long appends to it as it is. A file of another length was written
-// by someone else (an old proxy draining a stream while a restarted one takes the agent's next request) or ends in what
-// a failed write or a crash left: `written` becomes the file's own last newline, and the file is cut there only if
-// bytes follow it, so another writer's whole events are never cut, only a fragment. The length is read and the event
-// appended in two steps: an event another process appends between them is kept, and this writer learns of it at its
-// next write.
+// [LAW:one-source-of-truth] A recording has one writer: one proxy holds the port, and its shutdown cuts every open
+// request, so none outlives it to write on. The writer starts at the recording's `recordedLength`, so a recording
+// already at the path is continued after its last whole event: an agent outlives a proxy restart and goes on sending to
+// its path. Each write cuts the file to `written` first, which removes what a failed write or a crash left after the
+// last whole event. A file that is not there when the writer is made is created by its first write; one that is there
+// is never created, so a recording deleted before its first write, or mid-run, fails loudly.
 export function createWriter(path: string): Writer {
   let written = recordedLength(path).terminated;
   let flags = O_WRONLY | O_APPEND | (existsSync(path) ? 0 : O_CREAT);
@@ -66,11 +62,7 @@ export function createWriter(path: string): Writer {
       const fd = openSync(path, flags);
       flags = O_WRONLY | O_APPEND;
       try {
-        if (fstatSync(fd).size !== written) {
-          const { terminated, unterminated } = recordedLength(path);
-          written = terminated;
-          if (unterminated > 0) ftruncateSync(fd, terminated);
-        }
+        ftruncateSync(fd, written);
         appendFileSync(fd, line);
       } finally {
         closeSync(fd);

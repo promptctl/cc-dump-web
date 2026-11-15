@@ -67,10 +67,12 @@ function list(names: string[], res: ServerResponse) {
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The name that may be read, or none: a file the directory lists,
 // spelled as it lists it, or a recording the run holds a writer for, by the name it was given. Nothing else in the URL
 // reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
-// serve it as finished. A name that is neither, a typo or one nothing made, is not waited on.
+// serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
+// A name that is neither, a typo or one nothing made, is not waited on.
 async function readableName(recordings: Recordings, asked: string | undefined): Promise<string | undefined> {
-  const listed = (await files(recordings.dir)).find((name) => name === asked);
-  return listed ?? (asked !== undefined && recordings.follows(asked) ? asked : undefined);
+  if (asked === undefined) return undefined;
+  if (recordings.follows(asked)) return asked;
+  return (await files(recordings.dir)).find((name) => name === asked);
 }
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
@@ -215,7 +217,8 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         stream.push(`event: end\ndata: ${JSON.stringify(end)}\n\n`);
         return void stream.push(null);
       }
-      catchUp({ outcome: "ok" }, reading.unterminated());
+      // Measured by the first arrival at the end only: a followed read arrives at it after every event written.
+      if (!caughtUp) catchUp({ outcome: "ok" }, reading.unterminated());
       stopWaiting = recordings.onWritten((written) => {
         if (written !== name) return;
         stopWaiting?.();

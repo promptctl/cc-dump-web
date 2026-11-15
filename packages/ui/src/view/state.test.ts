@@ -9,7 +9,7 @@ const agent = "20261113T080000.000Z.jsonl";
 describe("opening a recording", () => {
   beforeEach(() => {
     useView.setState(useView.getInitialState(), true);
-    events.reset();
+    events.clear();
   });
 
   it("opens a tab with none open", () => {
@@ -26,6 +26,19 @@ describe("opening a recording", () => {
       position: { at: "end" },
       search: { query: "x", current: undefined },
     });
+  });
+
+  // What a read depends on besides the name (useRecording): a retry of a failed read opens the recording already open.
+  it("changes what a read depends on whenever a recording is opened, the one already open again too, and not when a read empties the events", () => {
+    view.open(agent);
+    const first = useEvents.getState().read;
+    view.open(agent);
+    const again = useEvents.getState().read;
+    events.clear();
+
+    expect(again).not.toBe(first);
+    expect(useEvents.getState().read).toBe(again);
+    expect(useView.getState().open).toBe(agent);
   });
 
   it("never has it open with the last recording's events", () => {

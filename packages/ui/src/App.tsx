@@ -38,7 +38,7 @@ export function App({ connection }: { connection: Connection }) {
           <ThemePicker />
         </div>
       </header>
-      {/* Each read is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
+      {/* Each opening is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
           way (docs/design/01-mvp.md, "One path to the screen"). With no recording open there is none to show. */}
       {open === null ? (
         <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>

@@ -1,7 +1,7 @@
 import type { RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
-import { events } from "./store.ts";
+import { events, useEvents } from "./store.ts";
 
 // The recording open (docs/design/01-mvp.md, F7), by its name, or none: a tab that has launched no agent and opened no
 // recording shows neither.
@@ -76,12 +76,16 @@ const animationFrames: Frames = (callback) => {
 
 // The recording open, read into the store for as long as the component using it is mounted, and read again from its
 // start each time one is opened.
+// [LAW:one-source-of-truth] A recording is opened again by its own name, which changes nothing in `open`: the store's
+// `read` is what changes on every open, so it is what a read depends on. The read empties the events with `clear`, which
+// leaves `read` as it was; were it `open`, the read would change its own dependency.
 export function useRecording(connection: Connection, open: OpenRecording): Reading {
   const [reading, setReading] = useState<Reading>(() => begun(open));
+  const read = useEvents((store) => store.read);
   useEffect(() => {
     const abort = new AbortController();
-    readRecording(connection, open, events, animationFrames, abort.signal, setReading);
+    readRecording(connection, open, { reset: events.clear, append: events.append }, animationFrames, abort.signal, setReading);
     return () => abort.abort();
-  }, [connection, open]);
+  }, [connection, open, read]);
   return reading;
 }

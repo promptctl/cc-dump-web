@@ -70,35 +70,4 @@ describe("createWriter", () => {
     expect(readFileSync(path, "utf8")).toBe('{"a":1}\n{"c":3}\n');
     expect(writer.written()).toBe(16);
   });
-
-  it("keeps every whole event of every process writing the file: two writers, interleaved, cut nothing but fragments", () => {
-    const path = pathOf("a.jsonl");
-    // An old proxy draining a stream, and a restarted one taking the agent's next request, one recording.
-    const [old, restarted] = [createWriter(path), createWriter(path)];
-    const events = [
-      [old, '{"w":"old","n":1}\n'],
-      [restarted, '{"w":"new","n":1}\n'],
-      [restarted, '{"w":"new","n":2}\n'],
-      [old, '{"w":"old","n":2}\n'],
-      [old, '{"w":"old","n":3}\n'],
-      [restarted, '{"w":"new","n":3}\n'],
-    ] as const;
-
-    for (const [writer, line] of events) writer.append(Buffer.from(line));
-
-    expect(readFileSync(path, "utf8")).toBe(events.map(([, line]) => line).join(""));
-    expect(recordedLength(path).unterminated).toBe(0);
-  });
-
-  it("cuts only the fragment, never the other writer's events, when a fragment follows them", () => {
-    const path = pathOf("a.jsonl");
-    const [first, second] = [createWriter(path), createWriter(path)];
-    first.append(Buffer.from('{"a":1}\n'));
-    second.append(Buffer.from('{"b":2}\n'));
-    appendFileSync(path, '{"c":');
-
-    first.append(Buffer.from('{"d":4}\n'));
-
-    expect(readFileSync(path, "utf8")).toBe('{"a":1}\n{"b":2}\n{"d":4}\n');
-  });
 });

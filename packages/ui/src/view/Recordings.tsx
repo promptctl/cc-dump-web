@@ -1,10 +1,9 @@
-import { parseRecordingName } from "@cc-dump/proxy/format";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { onScreen, type OpenRecording, type Reading } from "../reading.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
-import { entriesOf, type Entry } from "./listings.ts";
+import { entriesOf, entryOf, type Entry } from "./listings.ts";
 import { useView, view } from "./state.ts";
 
 // The recordings control (docs/design/01-mvp.md, F7): the recording open, and the list of every recording to open
@@ -90,7 +89,8 @@ function kindOf(parsed: Entry["parsed"]): string {
   }
 }
 
-// The control's label: the recording open by its start, or the control's name when none is.
+// The control's label: the recording open by its start, or the control's name when none is. The list is mounted only
+// while it is open, so the label reads the open recording by the list's own parse, not from its entries.
 function labelOf(open: OpenRecording): string {
-  return open === null ? "Recordings" : `Recording of ${startOf(open, parseRecordingName(open))}`;
+  return open === null ? "Recordings" : `Recording of ${startOf(open, entryOf({ name: open }).parsed)}`;
 }

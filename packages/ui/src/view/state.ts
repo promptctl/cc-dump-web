@@ -38,9 +38,10 @@ export const view = {
   // recording's. Flips are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
   // [LAW:no-ambient-temporal-coupling] The events shown are emptied as it opens, so the view of the last recording's
   // events unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
-  // as that commit's effects run (useRecording), and reads it from its start.
+  // as that commit's effects run (useRecording), and reads it from its start, the one already open again as well: a read
+  // that failed is opened to try again.
   open: (open: string) => {
-    events.reset();
+    events.open();
     useView.setState(({ search }) => ({ open, position: { at: "end" }, search: { ...search, current: undefined } }));
   },
   toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
