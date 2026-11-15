@@ -1,40 +1,150 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
-import type { Category } from "../format/blocks.ts";
-import { createFormatter, type FormattedExchange } from "../format/format.ts";
-import { parseSettings, type Visibility } from "../settings.ts";
-import { clockTime, compact, createGroupRows, createLayout, describeSize, isExpanded, preview, seconds, type Row } from "./rows.ts";
+import type { Block, Category } from "../format/blocks.ts";
+import { createFormatter } from "../format/format.ts";
+import { parseSettings, type Unchanged, type Visibility } from "../settings.ts";
+import { createHistory } from "./history.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, preview, seconds, sizeOf, type Row } from "./rows.ts";
 
-const timestamp = "2026-11-13T08:00:00.000Z";
+const timestamp = "2026-11-15T14:00:00.000Z";
+const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
   { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
+  { timestamp, trace_id, type: "request_body", base64: base64(body) },
   { timestamp, trace_id, type: "request_trailers", headers: [] },
 ];
-const body = { model: "m", messages: [{ role: "user", content: "Hello." }] };
+const text = (text: string) => ({ type: "text", text });
+// A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
+const turns = (count: number, system = "Be brief.") =>
+  Array.from({ length: count }, (_, turn) =>
+    request(`t${turn + 1}`, { model: "m", system: [text(system)], tools: [{ name: "Read" }], messages: Array.from({ length: turn + 1 }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] })) }),
+  ).flat();
 const shown = parseSettings(undefined).visibility;
-// A layout of exchanges, with no hidden block revealed unless one is given.
-const layout = (visibility: Record<Category, Visibility>) => {
-  const layOut = createLayout(visibility, createGroupRows());
-  return (formatted: FormattedExchange[], revealed?: string) => layOut(formatted, revealed);
-};
+const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
+
+// The layout at each step of `events`, as the view lays them out.
+function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, unchanged: Unchanged = "show") {
+  const history = createHistory()(createFormatter()(exchanges(events)));
+  const layOut = createLayout(visibility, unchanged);
+  return (step: number, revealed?: string, opened: Record<string, true> = {}) => layOut(history, step, revealed, opened);
+}
+const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.count}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
 
 describe("layout", () => {
-  it("lays each exchange out as its line, then each group's title and blocks, keyed by what they are", () => {
-    const { rows, keys } = layout(shown)(createFormatter()(exchanges([...request("a", body), ...request("b", body)])));
-    const listed = rows.map(({ key }) => key);
-    // A response not begun has no block, so no title over nothing.
-    expect(listed.slice(0, 7)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0", "b"]);
-    expect(keys.indexOf("b/message.0/content.0")).toBe(listed.indexOf("b/message.0/content.0"));
-    expect(listed.map((_, index) => keys.at(index))).toEqual(listed);
-    expect(keys.indexOf("b/message.9/content.0")).toBeUndefined();
-    expect(keys.indexOf("c/request")).toBeUndefined();
+  it("lays out the conversation at a step: each step's exchange, then what first arrived with it, the step shown's added", () => {
+    const at = layouts(turns(2));
+    expect(listed(at(1))).toEqual([
+      "t1",
+      "t1/request",
+      "t1/request/http added",
+      "thread:t1/request/parameters added",
+      "thread:t1/request/tools added",
+      "thread:t1/request/system.0 added",
+      "t1/message.0",
+      "thread:t1/message.0/content.0 added",
+    ]);
+    // The second turn resends the first: only its HTTP and its new message are its, and the first's rows are unchanged.
+    expect(listed(at(2)).slice(8)).toEqual(["t2", "t2/request", "t2/request/http added", "t2/message.1", "thread:t1/message.1/content.0 added"]);
+    expect(at(2).rows.slice(0, 8).every((row) => row.kind !== "block" || (row.change === "same" && row.before === row.block))).toBe(true);
+    expect(at(2).rows.filter((row) => row.kind !== "block").map((row) => row.kind !== "fold" && row.change)).toEqual(["same", "same", "same", "added", "added", "added"]);
+    // An added row has nothing before it; a step of 0 shows nothing.
+    expect(at(2).rows.filter((row) => row.kind === "block" && row.change === "added").every((row) => row.kind === "block" && row.before === undefined)).toBe(true);
+    expect(at(0).rows).toEqual([]);
   });
 
+  it("marks a block a step gave a new version as changed, with the version before it on the left", () => {
+    const at = layouts([...turns(1), ...request("t2", { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages: [{ role: "user", content: [text("Say 0.")] }] })]);
+    const system = at(2).rows.find(({ key }) => key === "thread:t1/request/system.0");
+    expect(system).toMatchObject({ change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, block: { parts: [{ kind: "text", text: "Be briefer." }] } });
+    // At the step it arrived, the item is what it was then.
+    expect(at(1).rows.find(({ key }) => key === "thread:t1/request/system.0")).toMatchObject({ change: "added", block: { parts: [{ kind: "text", text: "Be brief." }] } });
+  });
+
+  it("folds each run of unchanged rows beyond the context beside a change into one row, and lists an opened one", () => {
+    const at = layouts(turns(4), shown, "fold");
+    const step = at(4);
+    const fold = step.rows[0]!;
+    expect(fold).toMatchObject({ kind: "fold", key: foldKey("t1") });
+    // Every row of the steps before but the context above the change.
+    const unfolded = layouts(turns(4))(4);
+    const firstChange = unfolded.rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
+    expect(fold.kind === "fold" && fold.count).toBe(firstChange - context);
+    expect(step.rows.slice(1, 1 + context)).toEqual(unfolded.rows.slice(firstChange - context, firstChange));
+    // A folded row is at its fold.
+    expect(step.keys.indexOf("thread:t1/request/system.0")).toBe(0);
+    expect(step.keys.indexOf(foldKey("t1"))).toBe(0);
+    expect(listed(at(4, undefined, { [foldKey("t1")]: true }))).toEqual(listed(unfolded));
+    // A step with no step before it has nothing unchanged.
+    const two = layouts(turns(2), shown, "fold")(2);
+    expect(two.rows.some(({ kind }) => kind === "fold")).toBe(true);
+    expect(layouts(turns(1), shown, "fold")(1).rows.some(({ kind }) => kind === "fold")).toBe(false);
+  });
+
+  it("never folds the block the search revealed, hidden or not", () => {
+    const at = layouts(turns(4), shown, "fold");
+    const revealed = "thread:t1/request/tools";
+    expect(at(4).rows.map(({ key }) => key)).not.toContain(revealed);
+    const keys = at(4, revealed).rows.map(({ key }) => key);
+    expect(keys).toContain(revealed);
+    expect(at(4, revealed).keys.indexOf(revealed)).toBe(keys.indexOf(revealed));
+    const hidden = layouts(turns(4), { ...shown, tools: "hidden" }, "fold");
+    expect(hidden(4, revealed).rows.map(({ key }) => key)).toContain(revealed);
+    expect(hidden(4).rows.map(({ key }) => key)).not.toContain(revealed);
+  });
+
+  it("leaves out a hidden category's blocks, and a group with none left, and puts a row not listed at the row listed before it", () => {
+    const at = layouts(turns(2), dialogue);
+    expect(listed(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0 same", "t2", "t2/message.1", "thread:t1/message.1/content.0 added"]);
+    const { keys } = at(2);
+    expect(keys.at(keys.indexOf("t1/request/http")!)).toBe("t1");
+    expect(keys.at(keys.indexOf("thread:t1/request/system.0")!)).toBe("t1");
+    expect(keys.at(keys.indexOf("t2/request/http")!)).toBe("t2");
+    expect(keys.indexOf("t3")).toBeUndefined();
+  });
+
+  it("keeps every row, listed or not, in order, as one object while no block of it changed, and the keys while no row moved", () => {
+    const at = layouts(turns(3), { ...shown, tools: "hidden" });
+    const first = at(3);
+    const everyKey = first.every.rows.map(({ key }) => key);
+    expect(everyKey).toContain("thread:t1/request/tools");
+    expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
+    const revealed = at(3, "thread:t1/request/tools");
+    expect(revealed.every).toBe(first.every);
+    expect(revealed.keys).not.toBe(first.keys);
+    expect(at(3).keys).not.toBe(revealed.keys);
+    expect(at(3).keys).toBe(at(3).keys);
+    // Another step is other rows.
+    expect(at(2).every).not.toBe(first.every);
+  });
+
+  it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
+    const t1 = turns(1);
+    const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages: [{ role: "user", content: [text("Say 0.")] }] });
+    const history = createHistory();
+    const format = createFormatter();
+    const layOut = createLayout({ ...shown, system: "hidden", metadata: "hidden" }, "show");
+    const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
+    const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
+    expect(listed(after)).toEqual(listed(before));
+    expect(after.every.rows.map(({ key }) => key)).toContain("thread:t1/request/system.1");
+    expect(after.keys).not.toBe(before.keys);
+  });
+
+  it("starts each side of a row as its own version starts, a user's or an assistant's block expanded and what the harness injected collapsed, and one flip turns both", () => {
+    const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
+    const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
+    expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
+    expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
+    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed" };
+    expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
+    expect(estimateHeight(row, { k: true })).toBe(20);
+  });
+});
+
+describe("a block's line", () => {
   it("sizes a block by the characters of its content", () => {
-    const { rows } = layout(shown)(createFormatter()(exchanges(request("a", body))));
-    expect(rows.find(({ key }) => key === "a/message.0/content.0")).toMatchObject({ size: "Hello.".length });
+    expect(sizeOf({ category: "user", name: "text", parts: [{ kind: "text", text: "Hello." }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe("Hello.".length + 4);
     expect([999, 12_345, 999_949, 999_960, 2_500_000].map(describeSize)).toEqual(["999 chars", "12.3k chars", "999.9k chars", "1.0M chars", "2.5M chars"]);
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
@@ -53,133 +163,5 @@ describe("layout", () => {
     expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
-  });
-
-  it("lays an unchanged exchange out as the same rows", () => {
-    const format = createFormatter();
-    const layOut = layout(shown);
-    const a = request("a", body);
-    const first = layOut(format(exchanges(a)));
-    const later = layOut(format(exchanges([...a, ...request("b", body)])));
-    expect(later.rows.slice(0, first.rows.length)).toEqual(first.rows);
-    first.rows.forEach((row, index) => expect(later.rows[index]).toBe(row));
-  });
-
-  it("is the layout before when no exchange's rows changed, as when only traffic the view does not show arrived", () => {
-    const format = createFormatter();
-    const layOut = layout(shown);
-    const a = request("a", body);
-    const first = layOut(format(exchanges(a)));
-    expect(layOut(format(exchanges([...a, ...request("b", body).map((event) => ({ ...event, ...(event.type === "request" ? { url: "/v1/messages/count_tokens" } : {}) }))])))).toBe(first);
-  });
-
-  it("lays a changed exchange's unchanged groups out as the same rows, as a request's while its response arrives", () => {
-    const format = createFormatter();
-    const layOut = layout(shown);
-    const a = request("a", body);
-    const first = layOut(format(exchanges(a)));
-    const later = layOut(format(exchanges([...a, { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] }])));
-    const requestRows = first.rows.filter(({ key }) => !key.startsWith("a/response") && key !== "a");
-    requestRows.forEach((row) => expect(later.rows[later.keys.indexOf(row.key)!]).toBe(row));
-    expect(later.rows[0]).not.toBe(first.rows[0]);
-  });
-
-  it("keeps the same keys while only what the rows show changes, as while a body arrives, and new ones when a row arrives", () => {
-    const head: RecordedEvent = { timestamp, trace_id: "a", type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] };
-    const chunk = (text: string): RecordedEvent => ({ timestamp, trace_id: "a", type: "response_body", base64: Buffer.from(text).toString("base64") });
-    const format = createFormatter();
-    const layOut = layout(shown);
-    const a = [...request("a", body), head, chunk('{"type":')];
-    const first = layOut(format(exchanges(a)));
-    const later = layOut(format(exchanges([...a, chunk('"message"')])));
-    expect(later.rows).not.toEqual(first.rows);
-    expect(later.keys).toBe(first.keys);
-    const more = layOut(format(exchanges([...a, chunk('"message"'), ...request("b", body)])));
-    expect(more.keys).not.toBe(first.keys);
-    expect(more.keys.at(more.rows.length - 1)).toBe(more.rows.at(-1)!.key);
-  });
-
-  it("leaves out a hidden category's blocks, and a group with none left, and keeps each exchange's line", () => {
-    const withTools = { ...body, system: "Be brief.", tools: [{ name: "read" }] };
-    const formatted = createFormatter()(exchanges(request("a", withTools)));
-    const listed = (visibility: Record<Category, Visibility>) => layout(visibility)(formatted).rows.map(({ key }) => key);
-    expect(listed(shown)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/tools", "a/request/system.0", "a/message.0", "a/message.0/content.0"]);
-    expect(listed({ ...shown, tools: "hidden" })).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/system.0", "a/message.0", "a/message.0/content.0"]);
-    const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
-    const { rows, keys } = layout(dialogue)(formatted);
-    expect(rows.map(({ key }) => key)).toEqual(["a", "a/message.0", "a/message.0/content.0"]);
-    expect(keys.indexOf("a/message.0/content.0")).toBe(2);
-    expect(listed({ ...dialogue, user: "hidden" })).toEqual(["a"]);
-  });
-
-  it("puts a row not listed at the row listed before it in its exchange, so it stays there as exchanges arrive", () => {
-    const format = createFormatter();
-    const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
-    const layOut = layout(dialogue);
-    const a = request("a", { ...body, system: "Be brief." });
-    const { keys } = layOut(format(exchanges(a)));
-    expect(keys.at(keys.indexOf("a/request")!)).toBe("a");
-    expect(keys.at(keys.indexOf("a/request/system.0")!)).toBe("a");
-    const { keys: more } = layout({ ...dialogue, user: "hidden" })(format(exchanges([...a, ...request("b", body)])));
-    expect(more.at(more.indexOf("a/message.0/content.0")!)).toBe("a");
-    expect(more.at(more.indexOf("b/message.0/content.0")!)).toBe("b");
-  });
-
-  it("lists the same group and block rows whichever categories are hidden, so showing or hiding one sizes and renders no other", () => {
-    const formatted = createFormatter()(exchanges(request("a", { ...body, system: "Be brief." })));
-    const groupRows = createGroupRows();
-    const all = createLayout(shown, groupRows)(formatted, undefined).rows;
-    const some = createLayout({ ...shown, system: "hidden" }, groupRows)(formatted, undefined).rows;
-    expect(some.length).toBe(all.length - 1);
-    for (const row of some.filter(({ kind }) => kind !== "exchange")) expect(all).toContain(row);
-  });
-
-  it("lists the one hidden block revealed, in its place, and no other, and its group's title with it", () => {
-    const formatted = createFormatter()(exchanges(request("a", { ...body, tools: [{ name: "read" }] })));
-    const hidden = { ...shown, tools: "hidden" } as const;
-    const keysOf = (revealed?: string) => layout(hidden)(formatted, revealed).rows.map(({ key }) => key);
-    expect(keysOf()).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0"]);
-    expect(keysOf("a/request/tools")).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/request/tools", "a/message.0", "a/message.0/content.0"]);
-    // A block already listed is listed once.
-    expect(keysOf("a/message.0/content.0")).toEqual(keysOf());
-    // Revealing a block of a group whose every block is hidden lists the title over it.
-    const dialogue = { ...shown, user: "hidden", tools: "hidden" } as const;
-    expect(layout(dialogue)(formatted, "a/message.0/content.0").rows.map(({ key }) => key)).toEqual(["a", "a/request", "a/request/http", "a/request/parameters", "a/message.0", "a/message.0/content.0"]);
-  });
-
-  it("keeps every row, whether listed or not, in order, and lays out again only the exchanges a reveal leaves and enters", () => {
-    const withTools = { ...body, tools: [{ name: "read" }] };
-    const formatted = createFormatter()(exchanges([...request("a", withTools), ...request("b", withTools)]));
-    const layOut = layout({ ...shown, tools: "hidden" });
-    const first = layOut(formatted);
-    const everyKey = first.every.rows.map(({ key }) => key);
-    expect(everyKey).toContain("a/request/tools");
-    expect(first.rows.map(({ key }) => key)).not.toContain("a/request/tools");
-    expect(everyKey.map((_, index) => first.every.keys.at(index))).toEqual(everyKey);
-    expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
-    expect(first.every.keys.indexOf("a/request/tools")).toBeLessThan(first.every.keys.indexOf("a/message.0/content.0")!);
-    const revealed = layOut(formatted, "a/request/tools");
-    expect(revealed.rows).toContain(first.every.rows[everyKey.indexOf("a/request/tools")]);
-    // Every row is the same however the reveal changes, and exchange b's rows are the ones laid out before.
-    expect(revealed.every.rows.map(({ key }) => key)).toEqual(everyKey);
-    expect(revealed.every.keys).toBe(first.every.keys);
-    // Not rebuilt: the one object, so a search over its rows is not run again by a step of the search.
-    expect(revealed.every).toBe(first.every);
-    expect(layOut(formatted, "b/request/tools").every).toBe(first.every);
-    expect(layOut(formatted).every).toBe(first.every);
-    expect(revealed.keys.indexOf("a/request/tools")).toBe(revealed.rows.findIndex(({ key }) => key === "a/request/tools"));
-    for (const row of first.rows.filter(({ key }) => key.startsWith("b"))) expect(revealed.rows).toContain(row);
-    const moved = layOut(formatted, "b/request/tools");
-    expect(moved.rows.map(({ key }) => key)).not.toContain("a/request/tools");
-    expect(moved.rows.map(({ key }) => key)).toContain("b/request/tools");
-  });
-
-  it("starts a user's or an assistant's block expanded and what the harness injected, like the other categories, collapsed, until the reader flips it", () => {
-    const block = (key: string, category: Category, injected: boolean): Row => ({ kind: "block", key, size: 1, block: { key, category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) } });
-    const said = block("said", "user", false);
-    const reminder = block("reminder", "user", true);
-    const tools = block("tools", "tools", false);
-    expect([said, reminder, tools].map((row) => isExpanded({}, row))).toEqual([true, false, false]);
-    expect([said, reminder, tools].map((row) => isExpanded({ said: true, reminder: true, tools: true }, row))).toEqual([false, true, true]);
   });
 });

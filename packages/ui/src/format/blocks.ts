@@ -1,5 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
-import { split, type OwnText, type Piece } from "./injected.ts";
+import { split, type Piece } from "./injected.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -30,8 +30,18 @@ export type BlockOrNone = [] | [Block];
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
-// Whose a message's own text is: what its sender said, or the harness's, as the system role's is.
-const ownText: Record<Role, OwnText> = { user: "said", assistant: "said", system: "harness" };
+// The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
+// where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
+// (docs/design/01-mvp.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
+const pieces: Record<Role, (text: string) => Piece[]> = {
+  user: (text) => split(text, "said"),
+  assistant: (text) => [{ kind: "said", text }],
+  system: (text) => split(text, "harness"),
+};
+
+// The label of the part holding a block's fields no read asked for. [LAW:one-source-of-truth] The history reads a
+// reply's by it (view/history.ts).
+export const unreadLabel = "fields";
 
 // A JSON value that is not the shape its reader needs.
 export class Misfit extends Error {}
@@ -62,7 +72,7 @@ export function parseJson(text: string, what: string): unknown {
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
 export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...restParts(fields, "fields")] };
+  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...restParts(fields, unreadLabel)] };
 }
 
 // [LAW:parse-dont-validate] The fields of a JSON object, each read as the type it must have or a Misfit naming it, and
@@ -98,7 +108,7 @@ export function restParts(fields: Fields, label: string): Part[] {
 
 // The fields of an object no read asked for, as a metadata block of their own, when there are any.
 export function restBlock(fields: Fields, name: string): BlockOrNone {
-  const parts = restParts(fields, "fields");
+  const parts = restParts(fields, unreadLabel);
   return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
 }
 
@@ -195,7 +205,7 @@ export function formatBlock(block: unknown, role: Role): Block {
       const fields = readObject(block, type);
       fields.value("type");
       const parts = entry.parts(fields, role);
-      return { category: entry.category(role), name: entry.name?.(fields) ?? type, parts: [...parts, ...restParts(fields, "fields")] };
+      return { category: entry.category(role), name: entry.name?.(fields) ?? type, parts: [...parts, ...restParts(fields, unreadLabel)] };
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
@@ -203,15 +213,14 @@ export function formatBlock(block: unknown, role: Role): Block {
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
-// shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields, a cache breakpoint, follow its last
-// piece, which is where the breakpoint is.
+// shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields follow its last piece.
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role);
   if (!isText(block)) return [formatted];
   const [, ...fields] = formatted.parts;
-  const pieces = split(block.text, ownText[role]);
-  return pieces.map((piece, index) => {
-    const parts: Part[] = [{ kind: "text", text: piece.text }, ...(index === pieces.length - 1 ? fields : [])];
+  const textPieces = pieces[role](block.text);
+  return textPieces.map((piece, index) => {
+    const parts: Part[] = [{ kind: "text", text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
     return pieceBlock(piece, formatted.category, formatted.name, parts);
   });
 }

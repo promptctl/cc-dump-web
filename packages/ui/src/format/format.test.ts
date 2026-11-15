@@ -41,6 +41,8 @@ const one = (events: RecordedEvent[]): FormattedExchange => {
 const lines = (blocks: Block[]) => blocks.map(({ category, name }) => `${category} ${name}`);
 const group = ({ groups }: FormattedExchange, title: string, nth = 0) => groups.filter((group) => group.title === title)[nth]!.blocks;
 
+// The place of a block of the first message.
+const firstMessage = { in: "message", index: 0 } as const;
 const png = { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" };
 const messageStart = { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-fable-5-2", content: [], stop_reason: null, usage: { input_tokens: 2, output_tokens: 1 } } };
 const messageDelta = { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 90 }, context_management: { applied_edits: [] } };
@@ -100,7 +102,7 @@ describe("format", () => {
       end("a"),
     ]);
 
-    expect(lines(group(formatted, "request"))).toEqual(["metadata HTTP request", "metadata parameters", "tools tool definitions: 2", "system text"]);
+    expect(lines(group(formatted, "request"))).toEqual(["metadata HTTP request", "metadata parameters", "tools tool definitions: 2", "system text", "metadata cache breakpoints: 1"]);
     expect(lines(group(formatted, "user"))).toEqual(["user text", "user image", "user document"]);
     expect(lines(group(formatted, "assistant"))).toEqual([
       "thinking thinking",
@@ -147,7 +149,41 @@ describe("format", () => {
     expect(message!.parts).toEqual([{ kind: "json", label: "fields", value: expect.objectContaining({ id: "msg_1", context_management: { applied_edits: [] } }) }]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
     expect(group(formatted, "request")[1]!.parts).toEqual([{ kind: "json", value: { model: "claude-fable-5-2", max_tokens: 32000, thinking: body.thinking } }]);
-    expect(group(formatted, "request")[3]!.parts).toContainEqual({ kind: "json", label: "fields", value: { cache_control: { type: "ephemeral" } } });
+    // The cache breakpoint is the request's, out of the block it was set on.
+    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "text", text: "You are Claude Code." }]);
+    expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "fields", fields: [["system.0", '{"type":"ephemeral"}']] }]);
+  });
+
+  it("lifts the cache breakpoints out of the blocks into the request's, in the order the cache's prefix is built", () => {
+    const breakpoint = { type: "ephemeral", ttl: "1h" };
+    const formatted = one(
+      request("a", {
+        model: "m",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "Hi." }, { type: "text", text: "Go.", cache_control: breakpoint }] },
+          { role: "assistant", content: "Done." },
+        ],
+        system: [{ type: "text", text: "S", cache_control: breakpoint }],
+        tools: [{ name: "Read", input_schema: {} }, { name: "Bash", input_schema: {}, cache_control: breakpoint }],
+      }),
+    );
+    const request_ = group(formatted, "request");
+    expect(request_.at(-1)).toEqual({
+      key: "cache",
+      category: "metadata",
+      name: "cache breakpoints: 3",
+      parts: [{ kind: "fields", fields: [["tools.1", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
+    });
+    // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
+    expect(group(formatted, "request")[2]!.parts).toEqual([
+      { kind: "json", label: "Read", value: { name: "Read", input_schema: {} } },
+      { kind: "json", label: "Bash", value: { name: "Bash", input_schema: {} } },
+    ]);
+    expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "text", text: "Go." }]);
+    // What the request sends is its thread's; the breakpoints and its HTTP are its own.
+    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request" }], ["tools", { in: "request" }], ["system.0", { in: "request" }], ["cache", undefined]]);
+    expect(group(formatted, "assistant").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
+    expect(formatted.messages).toBe(2);
   });
 
   it("returns beside the blocks the facts the exchange line prints: the model from the request, the usage and stop reason from the message, the timing from the events", () => {
@@ -203,9 +239,9 @@ describe("format", () => {
         messageDelta,
       ]),
     ]);
-    expect(group(formatted, "user")).toEqual([{ key: "content.0", category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
+    expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
     const blocks = group(formatted, "response");
-    expect(blocks).toContainEqual({ key: "content.0", category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
+    expect(blocks).toContainEqual({ key: "content.0", place: { in: "reply" }, category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
     // The events it cannot apply are shown too, each raw under its event name with why.
     expect(lines(blocks)).toEqual(expect.arrayContaining(["metadata content_block_delta event", "metadata sparkle event"]));
     expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", label: "not applied", text: "sparkle is not an event this view applies" });
@@ -216,6 +252,7 @@ describe("format", () => {
     expect(group(formatted, "user")).toEqual([
       {
         key: "content.0",
+        place: firstMessage,
         category: "user",
         name: "text",
         parts: [
@@ -368,31 +405,52 @@ describe("format", () => {
       [{ kind: "text", text: "<system-reminder>\nCodebase and user instructions are shown below.\n\n" }],
       [{ kind: "text", text: `${notes}\n</system-reminder>` }],
     ]);
-    expect(user!.blocks[2]!.parts).toEqual([{ kind: "text", text: "Say hello." }, { kind: "json", label: "fields", value: { cache_control: { type: "ephemeral" } } }]);
+    expect(user!.blocks[2]!.parts).toEqual([{ kind: "text", text: "Say hello." }]);
     // Whatever the role, and the category stays the role's.
     expect(shown(system!)).toEqual([["content.0", "SessionStart hook", "system", true]]);
     expect(shown(again!)).toEqual([["content.0", "text", "user", undefined]]);
   });
 
-  it("splits no text but a message's own: a tool result's, the system prompt's and the reply's stay as sent", () => {
+  it("splits no text but a user's or a system-role message's: a tool result's, the system prompt's, an assistant's and the reply's stay as sent", () => {
     const reminder = "<system-reminder>\nUse the tool.\n</system-reminder>";
     const formatted = one([
       ...request("a", {
         model: "m",
         system: [{ type: "text", text: reminder }],
-        messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: reminder }] }] }],
+        messages: [
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: reminder }] }] },
+          { role: "assistant", content: [{ type: "text", text: `It said:\n${reminder}` }] },
+        ],
       }),
       ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content: [{ type: "text", text: reminder }] }))),
     ]);
     expect(group(formatted, "request").at(-1)).toMatchObject({ name: "text", parts: [{ kind: "text", text: reminder }] });
     expect(group(formatted, "user")[0]!.parts).toContainEqual({ kind: "text", text: reminder });
-    expect(group(formatted, "response")[1]).toMatchObject({ name: "text", parts: [{ kind: "text", text: reminder }] });
+    expect(group(formatted, "assistant")).toMatchObject([{ key: "content.0", name: "text", parts: [{ kind: "text", text: `It said:\n${reminder}` }] }]);
+    expect(group(formatted, "response")[1]).toMatchObject({ key: "content.0", name: "text", parts: [{ kind: "text", text: reminder }] });
+  });
+
+  it("formats a reply as the next request resends it, at the next message's place", () => {
+    const content = [
+      { type: "thinking", thinking: "", signature: "c2ln" },
+      { type: "text", text: "Looking." },
+      { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/a" } },
+    ];
+    const [replied, resent] = format([
+      ...request("a", { model: "m", messages: [{ role: "user", content: "Read /a." }] }),
+      ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content }))),
+      ...request("b", { model: "m", messages: [{ role: "user", content: "Read /a." }, { role: "assistant", content }] }),
+    ]);
+    const reply = group(replied!, "response").filter(({ place }) => place !== undefined);
+    expect(replied!.messages).toBe(1);
+    expect(reply.map(({ place, ...block }) => [place, block])).toEqual(group(resent!, "assistant").map((block) => [{ in: "reply" }, { ...block, place: undefined }]));
+    expect(group(resent!, "assistant").map(({ place }) => place)).toEqual(content.map(() => ({ in: "message", index: 1 })));
   });
 
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
     const constructor = { type: "constructor", value: 1 };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [constructor] }] }));
-    expect(group(formatted, "user")).toEqual([{ key: "content.0", category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
+    expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
   });
 
   it("shows a tool result with no content, as a failed tool may return", () => {
@@ -400,6 +458,7 @@ describe("format", () => {
     expect(group(formatted, "user")).toEqual([
       {
         key: "content.0",
+        place: firstMessage,
         category: "tools",
         name: "tool_result",
         parts: [

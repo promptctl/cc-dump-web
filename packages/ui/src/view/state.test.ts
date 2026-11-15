@@ -71,9 +71,49 @@ describe("the search", () => {
   });
 });
 
+describe("the moment", () => {
+  const place = { at: "row", key: "t1", offset: 4 } as const;
+  beforeEach(() => useView.setState(useView.getInitialState(), true));
+
+  it("is never changed by the view's own placing, now or held", () => {
+    view.place(place, "view", "t9");
+    expect(useView.getState().moment).toEqual({ at: "now" });
+    useView.setState({ moment: { at: "chosen", trace: "t3" } });
+    view.place(place, "view", "t9");
+    expect(useView.getState().moment).toEqual({ at: "chosen", trace: "t3" });
+  });
+
+  it("is left at now's step by a reader's act away from it, and is now again at the end", () => {
+    view.place(place, "reader", "t9");
+    expect(useView.getState()).toMatchObject({ position: place, moment: { at: "left", trace: "t9" } });
+    // Another act leaves it where it was left.
+    view.place({ ...place, offset: 9 }, "reader", "t10");
+    expect(useView.getState().moment).toEqual({ at: "left", trace: "t9" });
+    view.place({ at: "end" }, "reader", "t10");
+    expect(useView.getState().moment).toEqual({ at: "now" });
+    // A step of the search is the reader's act too.
+    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10");
+    expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
+  });
+
+  it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
+    view.moveInTime({ at: "chosen", trace: "t3" }, place);
+    view.place({ ...place, offset: 9 }, "reader", "t10");
+    expect(useView.getState()).toMatchObject({ position: { ...place, offset: 9 }, moment: { at: "chosen", trace: "t3" } });
+    view.place({ at: "end" }, "view", "t10");
+    expect(useView.getState().moment).toEqual({ at: "now" });
+  });
+
+  it("opens a recording now", () => {
+    useView.setState({ moment: { at: "chosen", trace: "t3" } });
+    view.open(agent);
+    expect(useView.getState().moment).toEqual({ at: "now" });
+  });
+});
+
 describe("a view stored by another version", () => {
   it("opens the tab as a new one, with none open", async () => {
-    const stored = new Map([["cc-dump.view", JSON.stringify({ state: { open: { recording: "live" }, flipped: { k: true } }, version: 0 })]]);
+    const stored = new Map([["cc-dump.view", JSON.stringify({ state: { open: { recording: "live" }, flipped: { k: true } }, version: 1 })]]);
     useView.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: (key) => stored.get(key) ?? null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
 

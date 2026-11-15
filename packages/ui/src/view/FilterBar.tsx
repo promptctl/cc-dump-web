@@ -1,19 +1,41 @@
 import { categories, type Category } from "../format/blocks.ts";
-import { settings, useSettings, type Visibility } from "../settings.ts";
+import { settings, useSettings, type Unchanged, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that changes it.
+// The filter (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that changes it;
+// and whether the rows a step left unchanged fold.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
+  const unchanged = useSettings((state) => state.unchanged);
   return (
-    <div role="group" aria-label="Categories" className="flex flex-wrap items-center gap-2">
-      {categories.map((category) => (
-        <CategoryToggle key={category} category={category} visibility={visibility[category]} />
-      ))}
+    <div className="flex flex-wrap items-center gap-4">
+      <div role="group" aria-label="Categories" className="flex flex-wrap items-center gap-2">
+        {categories.map((category) => (
+          <CategoryToggle key={category} category={category} visibility={visibility[category]} />
+        ))}
+      </div>
+      <UnchangedToggle unchanged={unchanged} />
     </div>
   );
 }
+
+// A click shows every unchanged row, or folds them again.
+function UnchangedToggle({ unchanged }: { unchanged: Unchanged }) {
+  const { next, pressed, now, does } = unchangedStates[unchanged];
+  return (
+    <Toggle pressed={pressed} title={`Unchanged rows: ${now}. Click to ${does}.`} className="control" onClick={() => settings.setUnchanged(next)}>
+      unchanged
+    </Toggle>
+  );
+}
+
+// Each way unchanged rows are listed: the one a click moves to, whether the toggle is pressed, what it is and what a
+// click does.
+const unchangedStates: Record<Unchanged, { next: Unchanged; pressed: boolean; now: string; does: string }> = {
+  fold: { next: "show", pressed: false, now: "folded", does: "show them all" },
+  show: { next: "fold", pressed: true, now: "shown", does: "fold them" },
+};
 
 // A click moves the category to its next visibility.
 function CategoryToggle({ category, visibility }: { category: Category; visibility: Visibility }) {

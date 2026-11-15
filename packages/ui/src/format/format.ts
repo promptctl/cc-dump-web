@@ -9,11 +9,17 @@ import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 // [LAW:types-are-the-program] `key` names what a group or a block is, unique among its siblings, so it never moves as
 // blocks arrive around it: a choice the view keeps about a block (expanded, scrolled to) stays with that block.
 export type Group = { key: string; title: "request" | Role | "message" | "response"; blocks: KeyedBlock[] };
-export type KeyedBlock = Block & { key: string };
+export type KeyedBlock = Block & { key: string; place?: Place };
 
-// One exchange of the conversation: the request, then its response (docs/design/01-mvp.md, F3), and the facts its line
-// prints.
-export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[] };
+// Where a block stands in the thread its exchange is part of (view/history.ts), which every request of the thread
+// resends: among what the request sends besides its messages, its parameters, tools and system prompt; in the message at
+// `index`; or in the reply, the message the response adds after the request's. A block with no place is the exchange's
+// own, as its HTTP, its cache breakpoints and its usage are.
+export type Place = { in: "request" } | { in: "message"; index: number } | { in: "reply" };
+
+// One exchange of the conversation: the request, then its response (docs/design/01-mvp.md, F3), the facts its line
+// prints, and how many messages the request sends, which is the reply's index among the thread's messages.
+export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
@@ -79,6 +85,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
           ...response.message,
         },
         groups: [...request.groups, { key: "response", title: "response", blocks: [...response.blocks, ...one("end", ending(end))] }],
+        messages: request.messages,
       };
       formatted.set(exchange.latest, shown);
       return shown;
@@ -88,8 +95,9 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.
 type Sides = { decode: (side: RequestSide | ResponseSide) => { body: Body; whole: boolean }; reassemble: (side: ResponseSide, body: Body) => Stream };
 
-// A request formatted: its groups and the model it asks for. A response formatted: its blocks and its message's facts.
-type RequestShown = { groups: Group[]; model: string | undefined };
+// A request formatted: its groups, the model it asks for and how many messages it sends. A response formatted: its
+// blocks and its message's facts.
+type RequestShown = { groups: Group[]; model: string | undefined; messages: number };
 type ResponseShown = { blocks: KeyedBlock[]; message: MessageFacts };
 
 function first(side: RequestSide | ResponseSide): object | undefined {
@@ -127,6 +135,14 @@ function each(key: string, blocks: Block[]): KeyedBlock[] {
 function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
   return blocks.length === 1 ? blocks.map((block) => ({ ...block, key })) : each(key, blocks);
 }
+// Blocks standing at `place` in their thread.
+function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
+  return blocks.map((block) => ({ ...block, place }));
+}
+// The blocks of a message's content, in `role`, at `place`: as a request sends it, and as a response replies, the same.
+function messageContent(content: unknown[], role: Role, place: Place): KeyedBlock[] {
+  return placed(place, content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role))));
+}
 
 // The Messages API's exchanges; requests to other paths, and to a target that is no URL, are forwarded and not shown
 // (F2). One whose request was not recorded is shown, since its path is not known.
@@ -139,30 +155,57 @@ function requestGroups(sides: Sides, side: RequestSide): RequestShown {
   const { body, whole } = sides.decode(side);
   const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
   const { blocks, messages, model } = requestBody(body.text, whole);
-  return { groups: [{ key: "request", title: "request", blocks: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...blocks] }, ...messages], model };
+  return { groups: [{ key: "request", title: "request", blocks: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...blocks] }, ...messages], model, messages: messages.length };
 }
 
-// The request body: its parameters, tool definitions and system prompt, then each message it sends; and the model among
-// its parameters.
+// The request body: its parameters, tool definitions and system prompt, then its cache breakpoints, then each message it
+// sends; and the model among its parameters.
 function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; messages: Group[]; model: string | undefined } {
   if (!whole) return { blocks: one("body", leftover("request body so far", text)), messages: [], model: undefined };
   return fitting(
     () => {
       const body = readObject(parseJson(text, "request body"), "request body");
-      const messages = body.array("messages").map(messageGroup);
-      const system = systemBlocks(body.value("system"));
-      const tools = toolBlocks(body.value("tools"));
+      // [LAW:one-source-of-truth] A cache breakpoint is the request's, not the block it is set on: the cache's prefix is
+      // built from the tools, then the system prompt, then the messages, and Claude Code moves the breakpoints to the
+      // newest blocks on every request, so a block left holding one would differ each time it is resent. They are
+      // lifted out of the blocks in that order, into one block of the request's own.
+      const breakpoints: Header[] = [];
+      const tools = toolBlocks(lift(body.value("tools"), (index) => `tools.${index}`, breakpoints));
+      const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
+      const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them.
       const rest = body.rest();
       const parameters: Block = { category: "metadata", name: "parameters", parts: [{ kind: "json", value: rest }] };
-      return { blocks: [...one("parameters", [parameters]), ...one("tools", tools), ...each("system", system)], messages, model: typeof rest.model === "string" ? rest.model : undefined };
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }] }];
+      return {
+        blocks: [...placed({ in: "request" }, [...one("parameters", [parameters]), ...one("tools", tools), ...each("system", system)]), ...one("cache", cache)],
+        messages,
+        model: typeof rest.model === "string" ? rest.model : undefined,
+      };
     },
     (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", text })]), messages: [], model: undefined }),
   );
 }
 
+// A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A
+// value that is not a list, or a block that is not an object, holds no breakpoint, and is left for its reader to show.
+function lift(list: unknown, at: (index: number) => string, breakpoints: Header[]): unknown {
+  if (!Array.isArray(list)) return list;
+  return list.map((block: unknown, index) => {
+    if (typeof block !== "object" || block === null || !("cache_control" in block)) return block;
+    const { cache_control: breakpoint, ...rest } = block;
+    breakpoints.push([at(index), JSON.stringify(breakpoint)]);
+    return rest;
+  });
+}
+function liftContent(message: unknown, at: string, breakpoints: Header[]): unknown {
+  if (typeof message !== "object" || message === null || !("content" in message)) return message;
+  return { ...message, content: lift(message.content, (index) => `${at}/content.${index}`, breakpoints) };
+}
+
 function messageGroup(message: unknown, index: number): Group {
   const key = `message.${index}`;
+  const place: Place = { in: "message", index };
   return fitting(
     (): Group => {
       const fields = readObject(message, "message");
@@ -171,9 +214,9 @@ function messageGroup(message: unknown, index: number): Group {
       const content = fields.value("content");
       const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
-      return { key, title: role, blocks: [...blocks.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role))), ...one("fields", restBlock(fields, "message"))] };
+      return { key, title: role, blocks: [...messageContent(blocks, role, place), ...placed(place, one("fields", restBlock(fields, "message")))] };
     },
-    (reason) => ({ key, title: "message", blocks: one("message", [raw("metadata", "message", reason, { kind: "json", value: message })]) }),
+    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("metadata", "message", reason, { kind: "json", value: message })])) }),
   );
 }
 
@@ -251,7 +294,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
   return fitting(
     (): ResponseShown => {
       const fields = readObject(message, "message");
-      const content = fields.array("content").map((block) => formatBlock(block, "assistant"));
+      const content = messageContent(fields.array("content"), "assistant", { in: "reply" });
       const stopReason = fields.value("stop_reason");
       const stopSequence = show(fields.value("stop_sequence"));
       const usage = fields.value("usage");
@@ -260,7 +303,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const cacheWritten = tokens(usage, "cache_creation_input_tokens");
       return {
         blocks: [
-          ...each("content", content),
+          ...content,
           ...one("stop reason", [
             { category: "metadata", name: `stop reason: ${show(stopReason)}`, parts: [{ kind: "fields", fields: [["stop_reason", show(stopReason)], ["stop_sequence", stopSequence]] }] },
           ]),

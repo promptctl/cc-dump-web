@@ -1,182 +1,154 @@
 import type { Block, Category, Part } from "../format/blocks.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
-import type { Visibility } from "../settings.ts";
+import type { Unchanged, Visibility } from "../settings.ts";
+import type { History, Item } from "./history.ts";
 
-// The conversation as the rows the view lists, one line or one block each, so only the rows on screen are mounted:
-// each request resends the whole history, so a long recording holds blocks by the hundred thousand.
-// [LAW:types-are-the-program] A row's key names what it shows, `<trace_id>`, then `/<group key>`, then
-// `/<block key>`, so it is the same row however many rows arrive around it.
+// The conversation at a moment as the rows the view lists, one line or one block each, so only the rows on screen are
+// mounted. Each row is two sides (docs/design/02-design.md, "Two axes"): the right the conversation at the step shown,
+// the left at the step before, aligned as a side-by-side diff.
+
+// What the step shown did to a row: brought it (`added`, against an empty slot on the left), left it as it was
+// (`same`), or gave its item a new version (`changed`).
+export type Change = "added" | "same" | "changed";
+
+// [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title
+// `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment and however
+// many rows arrive around it. A block row shows the item's version at the step shown, `block`, and the one before,
+// `before`, which is none for a block the step added. A fold stands for a run of unchanged rows, keyed by the first.
 export type Row =
-  | { kind: "exchange"; key: string; exchange: FormattedExchange }
-  | { kind: "group"; key: string; title: Group["title"] }
-  | { kind: "block"; key: string; block: KeyedBlock; size: number };
+  | { kind: "exchange"; key: string; exchange: FormattedExchange; change: Change }
+  | { kind: "group"; key: string; title: Group["title"]; change: Change }
+  | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock | undefined; change: Change }
+  | { kind: "fold"; key: string; count: number };
 
-// The rows of a conversation, and their keys: those listed, which are every row but the blocks of a hidden category, the
-// group titles over none left, and the block revealed; and `every` row, listed or not, which the search reads, since a
-// hidden category's blocks are searched (docs/design/01-mvp.md, F6).
+// The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
+// category, the group titles over none left, and the runs of unchanged rows folded, the block revealed always among them;
+// and `every` row, listed or not, which the search reads, since a hidden category's blocks are searched
+// (docs/design/01-mvp.md, F6).
 export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys } };
 
-// The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the row
-// listed before it, whose end is where it stands. [LAW:types-are-the-program] The same object while no row, listed or
-// not, arrives, goes or moves, however what a row shows changes, so what places rows by key (the virtualizer, from the
-// first row, at 5 ms a time over a long recording) places them again only when one did.
+// The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
+// fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
+// object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
+// row) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 
-// The keys of a list of rows, in order, and each key's index among them; among the rows listed, a row not listed is at
-// the row listed before it, whose end is where it stands.
-type Places = { keys: string[]; index: Map<string, number> };
+// How many unchanged rows stay listed beside a change, above and below it, as a diff's context lines do.
+export const context = 3;
 
-// One exchange's rows listed and the places of their keys, every row of it and the places of theirs, and `revealed`, the
-// key of the hidden block they were laid out with listed, when it is in this exchange. `formatted`: the exchange they
-// are of, which alone decides every row of it.
-type ExchangeRows = { trace: string; formatted: FormattedExchange; rows: Row[]; listed: Places; every: Row[]; all: Places; revealed: string | undefined };
+// The key of the fold standing for a run of rows, by the run's first.
+export const foldKey = (first: string) => `fold:${first}`;
 
-// A group's rows, its title and every block, each sized, whichever categories are hidden.
-type GroupRows = { title: Extract<Row, { kind: "group" }>; blocks: Extract<Row, { kind: "block" }>[] };
-
-// Lays out groups as rows. [LAW:no-shared-mutable-globals] Its cache is its own: the formatter returns an unchanged
-// group as the same object, so its rows are the ones laid out before, and every layout lists the same group and block
-// rows whichever categories it hides: a category shown or hidden sizes no block again, and a block still listed does
-// not render again.
-export function createGroupRows(): (trace: string, group: Group) => GroupRows {
-  const laidOut = new WeakMap<Group, GroupRows>();
-  return (trace, group) => {
-    const rows = laidOut.get(group) ?? rowsOf(trace, group);
-    laidOut.set(group, rows);
-    return rows;
-  };
-}
-
-// Lays out exchanges as rows, leaving out the blocks of each category `visibility` hides (docs/design/01-mvp.md, F5),
-// but the one at the key `revealed`, which the search has stepped to (F6), and a group with no block left, rather than a
-// title over nothing. [LAW:no-shared-mutable-globals] Its cache is its own: the formatter returns an unchanged exchange
-// as the same object, so its rows are the ones laid out before: a frame lays out only what changed, and only those rows
-// render. It holds for one visibility, so another is another layout; a change of `revealed` lays out again only the
-// exchange it leaves and the one it enters.
+// Lays out the conversation at step `step` of `history`, leaving out the blocks of each category `visibility` hides
+// (docs/design/01-mvp.md, F5) but the one at the key `revealed`, which the search has stepped to (F6), and a group with
+// no block left, rather than a title over nothing; and, while `unchanged` folds, each run of unchanged rows not opened in
+// `opened`, beyond the context beside a change. The revealed block is never folded, so a step of the search lists it
+// in the layout that reveals it. A step of 0 is the conversation before anything arrived.
 export function createLayout(
   visibility: Record<Category, Visibility>,
-  groupRows: (trace: string, group: Group) => GroupRows,
-): (formatted: FormattedExchange[], revealed: string | undefined) => Layout {
-  const laidOut = new WeakMap<FormattedExchange, ExchangeRows>();
-  const groupLayout = (trace: string, group: Group, revealed: string | undefined) => {
-    const { title, blocks } = groupRows(trace, group);
-    const shown = blocks.filter(({ key, block }) => isListed[visibility[block.category]] || key === revealed);
-    return { listed: shown.length === 0 ? [] : [title, ...shown], every: [title, ...blocks] };
-  };
-  // The layout returned last, and the exchanges' rows it was laid out from: a layout whose exchanges' rows are all the
-  // ones before is the layout before, as when only traffic the view does not show arrived.
-  let last: { exchanges: ExchangeRows[]; layout: Layout } = {
-    exchanges: [],
-    layout: { rows: [], keys: keysOf([], (own) => own.listed), every: { rows: [], keys: keysOf([], (own) => own.all) } },
-  };
-  return (formatted, revealed) => {
-    const before = new Map(last.exchanges.map((own) => [own.trace, own]));
-    const exchanges = formatted.map((exchange) => {
-      const trace = exchange.exchange.trace_id;
-      const here = revealed?.startsWith(`${trace}/`) ? revealed : undefined;
-      const cached = laidOut.get(exchange);
-      const own = cached !== undefined && cached.revealed === here ? cached : exchangeRows(exchange, groupLayout, here, before.get(trace));
-      laidOut.set(exchange, own);
-      return own;
+  unchanged: Unchanged,
+): (history: History, step: number, revealed: string | undefined, opened: Record<string, true>) => Layout {
+  let last: Layout = { rows: [], keys: keysOf([], new Map()), every: { rows: [], keys: keysOf([], new Map()) } };
+  return (history, step, revealed, opened) => {
+    const every = history.segments.slice(0, step).flatMap((segment, index) => segmentRows(segment, index + 1, step));
+    const isShown = every.map((row) => row.kind !== "block" || isListed[visibility[row.block.category]] || row.key === revealed);
+    // A group's title is listed over a block of it listed: read from the end, whether one follows before the next title.
+    let blockListed = false;
+    for (let index = every.length - 1; index >= 0; index--) {
+      const { kind } = every[index]!;
+      if (kind === "group") isShown[index] = blockListed;
+      blockListed = kind === "block" ? blockListed || isShown[index]! : false;
+    }
+    const listed = every.filter((_, index) => isShown[index]);
+    const folding = fold(listed, revealed, opened, unchanged);
+    // Each row's place among those listed: its own, the fold it is in, or the place of the row listed before it.
+    const places = new Map<string, number>();
+    let before = 0;
+    every.forEach((row, index) => {
+      if (isShown[index]) before = folding.placeOf.get(row.key)!;
+      places.set(row.key, before);
     });
-    const sameAs = (pick: (own: ExchangeRows) => unknown) =>
-      exchanges.length === last.exchanges.length && exchanges.every((own, index) => pick(own) === pick(last.exchanges[index]!));
-    if (sameAs((own) => own.rows)) return last.layout;
+    folding.rows.forEach((row, index) => row.kind === "fold" && places.set(row.key, index));
+    const listedKeys = folding.rows.map(({ key }) => key);
+    const everyKeys = every.map(({ key }) => key);
+    const sameEvery = same(everyKeys, last.every.rows.map(({ key }) => key)) && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
     last = {
-      exchanges,
-      layout: {
-        rows: concat(exchanges, (own) => own.rows),
-        keys: sameAs((own) => own.listed) ? last.layout.keys : keysOf(exchanges, (own) => own.listed),
-        // [LAW:one-source-of-truth] Every row depends on the exchanges alone, never on `revealed`, so the same exchanges
-        // are the same `every`, and what memoizes on it (the search) is not run again by a step of the search.
-        every: sameAs((own) => own.formatted)
-          ? last.layout.every
-          : {
-              rows: concat(exchanges, (own) => own.every),
-              keys: sameAs((own) => own.all) ? last.layout.every.keys : keysOf(exchanges, (own) => own.all),
-            },
-      },
+      rows: folding.rows,
+      keys: sameEvery && same(listedKeys, last.rows.map(({ key }) => key)) ? last.keys : keysOf(listedKeys, places),
+      // [LAW:one-source-of-truth] The search reads every row's block alone, so the same blocks are the same `every`, and
+      // what memoizes on it is not run again by a step of the search or of time that changed none.
+      every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
     };
-    return last.layout;
+    return last;
   };
 }
 
-// The rows `pick` gives for each exchange, one list in order.
-function concat(exchanges: ExchangeRows[], pick: (own: ExchangeRows) => Row[]): Row[] {
-  const rows: Row[] = [];
-  for (const own of exchanges) for (const row of pick(own)) rows.push(row);
-  return rows;
-}
-
-// An exchange's rows: of each group, those `groupLayout` lists, and every one. `revealed`: the hidden block to list, if
-// it is in this exchange. `before`: the exchange's rows laid out last, whose places it keeps, the same objects, while the
-// keys they are of are the same.
-function exchangeRows(
-  formatted: FormattedExchange,
-  groupLayout: (trace: string, group: Group, revealed: string | undefined) => { listed: Row[]; every: Row[] },
-  revealed: string | undefined,
-  before: ExchangeRows | undefined,
-): ExchangeRows {
+// The rows of step `own`'s segment at step `step`: its exchange's line, then each group's title and items.
+function segmentRows({ formatted, groups }: History["segments"][number], own: number, step: number): Row[] {
+  const change: Change = own === step ? "added" : "same";
   const trace = formatted.exchange.trace_id;
-  const laidOut = formatted.groups.map((group) => groupLayout(trace, group, revealed));
-  const line: Row = { kind: "exchange", key: trace, exchange: formatted };
-  const rows = [line, ...laidOut.flatMap(({ listed }) => listed)];
-  const every = [line, ...laidOut.flatMap(({ every }) => every)];
-  const keys = rows.map(({ key }) => key);
-  const all = every.map(({ key }) => key);
-  // Each list of places is the one before while its keys are the same: revealing a block changes what is listed, not what
-  // is.
-  const listed = before !== undefined && same(before.listed.keys, keys) ? before.listed : listedPlaces(keys, all);
-  const places = before !== undefined && same(before.all.keys, all) ? before.all : { keys: all, index: new Map(all.map((key, at) => [key, at])) };
-  return { trace, formatted, rows, listed, every, all: places, revealed };
+  return [
+    { kind: "exchange", key: trace, exchange: formatted, change },
+    ...groups
+      .filter(({ items }) => items.length > 0)
+      .flatMap(({ key, title, items }): Row[] => [{ kind: "group", key: `${trace}/${key}`, title, change }, ...items.map((item) => itemRow(item, own, step))]),
+  ];
 }
 
-// The places of the keys listed, `keys`, among those of every row, `all`. A row not listed is at the row listed before
-// it, the exchange's own line at the latest, whose end is where it stands: a reader whose row a category hid is shown
-// what now stands there, not the group or exchange it was inside.
-function listedPlaces(keys: string[], all: string[]): Places {
-  const index = new Map(keys.map((key, at) => [key, at]));
-  let listedBefore = 0;
-  for (const key of all) {
-    const own = index.get(key);
-    if (own === undefined) index.set(key, listedBefore);
-    else listedBefore = own;
+// An item's row at step `step`: its version then, and the one before, unless step `own`, the step it arrived at, is it.
+function itemRow(item: Item, own: number, step: number): Row {
+  const now = versionAt(item, step);
+  const before = own === step ? undefined : versionAt(item, step - 1);
+  return { kind: "block", key: item.key, block: now.block, before: before?.block, change: before === undefined ? "added" : before === now ? "same" : "changed" };
+}
+
+// An item's version at a step at or after the one it arrived at.
+function versionAt(item: Item, step: number) {
+  return item.versions.findLast((version) => version.step <= step)!;
+}
+
+const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
+
+// The listed rows with each run of unchanged ones folded, beyond `context` rows beside a change, unless the run is opened
+// in `opened` or the reader shows every unchanged row; `revealed` is never folded. A run of one row is listed as itself,
+// which is what its fold would take the room of. `placeOf`: each listed row's place among the rows.
+function fold(listed: Row[], revealed: string | undefined, opened: Record<string, true>, unchanged: Unchanged): { rows: Row[]; placeOf: Map<string, number> } {
+  const changed = (row: Row) => row.kind !== "fold" && row.change !== "same";
+  // How far each row is from the nearest change above it and below it.
+  const above: number[] = [];
+  listed.forEach((row, index) => (above[index] = changed(row) ? 0 : (above[index - 1] ?? Infinity) + 1));
+  const below: number[] = [];
+  for (let index = listed.length - 1; index >= 0; index--) below[index] = changed(listed[index]!) ? 0 : (below[index + 1] ?? Infinity) + 1;
+  const folds = (index: number) => unchanged === "fold" && above[index]! > context && below[index]! > context && listed[index]!.key !== revealed;
+  const rows: Row[] = [];
+  const placeOf = new Map<string, number>();
+  const list = (row: Row) => {
+    placeOf.set(row.key, rows.length);
+    rows.push(row);
+  };
+  for (let index = 0; index < listed.length; ) {
+    let end = index;
+    while (end < listed.length && folds(end)) end++;
+    // A row that folds in no run is a run of its own, listed.
+    const run = listed.slice(index, Math.max(end, index + 1));
+    if (run.length > 1 && opened[foldKey(run[0]!.key)] !== true) {
+      for (const row of run) placeOf.set(row.key, rows.length);
+      rows.push({ kind: "fold", key: foldKey(run[0]!.key), count: run.length });
+    } else run.forEach(list);
+    index += run.length;
   }
-  return { keys, index };
+  return { rows, placeOf };
 }
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((key, at) => key === b[at]);
 
-// The keys of the rows `places` gives for each exchange, in order.
-function keysOf(exchanges: ExchangeRows[], places: (own: ExchangeRows) => Places): Keys {
-  const keys: string[] = [];
-  const starts = new Map<string, { start: number; index: Map<string, number> }>();
-  for (const own of exchanges) {
-    const { keys: ownKeys, index } = places(own);
-    starts.set(own.trace, { start: keys.length, index });
-    for (const key of ownKeys) keys.push(key);
-  }
-  return {
-    at: (index) => keys[index]!,
-    indexOf: (key) => {
-      const trace = starts.get(key.split("/", 1)[0]!);
-      const local = trace?.index.get(key);
-      return local === undefined ? undefined : trace!.start + local;
-    },
-  };
+// The keys of the rows listed, in order, and each key's place among them.
+function keysOf(keys: string[], places: Map<string, number>): Keys {
+  return { at: (index) => keys[index]!, indexOf: (key) => places.get(key) };
 }
 
 // [LAW:types-are-the-program] Whether a block of each visibility is listed: the compiler asks for an entry for each.
 const isListed: Record<Visibility, boolean> = { shown: true, hidden: false };
-
-// A group is one exchange's, so `trace` is the same for every call with it.
-function rowsOf(trace: string, group: Group): GroupRows {
-  const key = `${trace}/${group.key}`;
-  return {
-    title: { kind: "group", key, title: group.title },
-    blocks: group.blocks.map((block) => ({ kind: "block", key: `${key}/${block.key}`, block, size: sizeOf(block.parts) })),
-  };
-}
 
 // The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
 // object while its side of the exchange is unchanged, for the block's size, its view and the search; the cache is this
@@ -190,19 +162,24 @@ export function jsonText(part: Extract<Part, { kind: "json" }>): string {
 
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is
 // estimated from. A JSON string is counted by its length, so a tool's input still streaming is not serialized each time.
-function sizeOf(parts: Part[]): number {
-  return parts.reduce((size, part) => {
-    switch (part.kind) {
-      case "text":
-        return size + part.text.length;
-      case "json":
-        return size + (typeof part.value === "string" ? part.value.length : jsonText(part).length);
-      case "fields":
-        return size + part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
-      case "media":
-        return size + (part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length);
-    }
-  }, 0);
+// Counted once per block, which the formatter keeps the same object while its side of the exchange is unchanged.
+const sizes = new WeakMap<Block, number>();
+export function sizeOf(block: Block): number {
+  const size = sizes.get(block) ?? block.parts.reduce((size, part) => size + partSize(part), 0);
+  sizes.set(block, size);
+  return size;
+}
+function partSize(part: Part): number {
+  switch (part.kind) {
+    case "text":
+      return part.text.length;
+    case "json":
+      return typeof part.value === "string" ? part.value.length : jsonText(part).length;
+    case "fields":
+      return part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
+    case "media":
+      return part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length;
+  }
 }
 
 // A count to one decimal of the largest unit it reaches once rounded, so 999,960 reads 1.0M, not 1000.0k.
@@ -250,19 +227,28 @@ export function seconds(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
-// Whether a row shows expanded: a block as its category starts, the user's and the assistant's expanded and the rest
+// Whether a block at `key` shows expanded: as its category starts, the user's and the assistant's expanded and the rest
 // collapsed, and what the harness injected into their messages collapsed with the rest, since it is not what they said
-// (docs/design/01-mvp.md, F4), unless the reader flipped it. Rows of other kinds are a line.
-export function isExpanded(flipped: Record<string, true>, row: Row): boolean {
-  return row.kind === "block" && (flipped[row.key] === true) !== startsExpanded(row.block);
+// (docs/design/01-mvp.md, F4), unless the reader flipped it. One flip turns both sides of a row, and each side starts as
+// its own version does.
+export function isExpanded(flipped: Record<string, true>, key: string, block: Block): boolean {
+  return (flipped[key] === true) !== startsExpanded(block);
 }
 const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or a block's
-// content at about 100 characters a line. Only rows not yet on screen use it, so it decides how the scrollbar reads, not
-// where anything lands.
-export function estimateHeight(row: Row, expanded: boolean): number {
+// content at about 100 characters a line, on its taller side. Only rows not yet on screen use it, so it decides how the
+// scrollbar reads, not where anything lands.
+export function estimateHeight(row: Row, flipped: Record<string, true>): number {
   const line = 20;
-  if (row.kind === "exchange") return 36;
-  return row.kind === "block" && expanded ? line + Math.ceil(row.size / 100) * 16 : line;
+  const side = (block: Block | undefined) => (block !== undefined && isExpanded(flipped, row.key, block) ? line + Math.ceil(sizeOf(block) / 100) * 16 : line);
+  switch (row.kind) {
+    case "exchange":
+      return 36;
+    case "group":
+    case "fold":
+      return line;
+    case "block":
+      return Math.max(side(row.block), side(row.before));
+  }
 }

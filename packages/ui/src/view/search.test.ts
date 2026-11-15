@@ -5,7 +5,8 @@ import type { Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
-import { createGroupRows, createLayout, type Layout } from "./rows.ts";
+import { createHistory } from "./history.ts";
+import { createLayout, type Layout } from "./rows.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, type Match } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -25,9 +26,11 @@ const body = {
     { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: `Found it:\n${section}\nDone.` }] },
   ],
 };
+// b's first message is its own, so it is a thread of its own, every row of it b's.
+const other = { ...body, messages: [{ role: "user", content: "Look for the needle!" }, ...body.messages.slice(1)] };
 const { visibility: shown, search: defaults } = parseSettings(undefined);
 const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
-  createLayout(visibility, createGroupRows())(createFormatter()(exchanges([...request("a", body), ...request("b", body)])), revealed);
+  createLayout(visibility, "show")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
 // A query read under the default options, with those given changed.
 const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(query, { ...defaults, ...options });
 const { pattern } = read("needle");
@@ -132,7 +135,7 @@ describe("search", () => {
     expect(seen[10]).toEqual(seen[0]);
     expect(adjacent(found, seen[0], top, "previous", pattern, keys)!.match).toEqual(seen[9]);
     expect(adjacent(found, undefined, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
-    expect(seen[2]).toEqual({ key: "a/message.1/content.0", at: address.name, start: 10 });
+    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10 });
     const absent = read("absent").pattern;
     expect(adjacent(createSearch()(every.rows, absent), undefined, top, "next", absent, keys)).toBeUndefined();
   });
@@ -153,10 +156,10 @@ describe("search", () => {
   it("steps on from a current match in a hidden category to the match before and after it in the conversation", () => {
     const { every } = layOut({ ...shown, tools: "hidden" });
     const found = createSearch()(every.rows, pattern);
-    const toolResult = adjacent(found, { key: "a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, every.keys)!.match;
+    const toolResult = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, every.keys)!.match;
     // After exchange a's tool result: exchange b's header; before it: the JSON of exchange a's tool call, also hidden.
     expect(adjacent(found, toolResult, top, "next", pattern, every.keys)!.match.key).toBe("b/request/http");
-    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "a/message.1/content.0", at: address.part(1) });
+    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(1) });
   });
 
   it("lists a hidden category's block while it holds the current match, and no longer once a step moves on from it", () => {
@@ -179,15 +182,15 @@ describe("search", () => {
       expect(hiddenBlocksListed(current.key)).toEqual(isHidden ? [current.key] : []);
       if (isHidden) inHidden.push(current.key);
     }
-    expect(new Set(inHidden)).toEqual(new Set(["a/request/http", "a/message.1/content.0", "a/message.2/content.0", "b/request/http", "b/message.1/content.0", "b/message.2/content.0"]));
+    expect(new Set(inHidden)).toEqual(new Set(["a/request/http", "thread:a/message.1/content.0", "thread:a/message.2/content.0", "b/request/http", "thread:b/message.1/content.0", "thread:b/message.2/content.0"]));
   });
 
   it("steps on from a current match whose block the formatter replaced, from the row it was inside, as the view does", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const replaced = { key: "a/message.1/content.0/so-far", at: address.part(0), start: 0 };
-    expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("a/message.2/content.0");
-    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "a/message.1/content.0", at: address.part(1) });
+    const replaced = { key: "thread:a/message.1/content.0/so-far", at: address.part(0), start: 0 };
+    expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
+    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(1) });
     // One whose exchange is not among the rows at all: the first match going on, the last going back.
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
   });
@@ -195,8 +198,8 @@ describe("search", () => {
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const at = { at: "row", key: "b/message.0/content.0", offset: 40 } as const;
-    expect(adjacent(found, undefined, at, "next", pattern, keys)!.match.key).toBe("b/message.0/content.0");
+    const at = { at: "row", key: "thread:b/message.0/content.0", offset: 40 } as const;
+    expect(adjacent(found, undefined, at, "next", pattern, keys)!.match.key).toBe("thread:b/message.0/content.0");
     expect(adjacent(found, undefined, at, "previous", pattern, keys)!.match.key).toBe("b/request/http");
     // At the end, going on wraps to the first match.
     expect(adjacent(found, undefined, { at: "end" }, "next", pattern, keys)!.match.key).toBe("a/request/http");
@@ -205,15 +208,15 @@ describe("search", () => {
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const result = adjacent(found, { key: "a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, keys)!;
+    const result = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, keys)!;
     // The tool result's part 0 is its tool_use_id; its text is part 1.
-    const part = partKey("a/message.2/content.0", address.part(1));
+    const part = partKey("thread:a/message.2/content.0", address.part(1));
     expect(result).toEqual({
-      match: { key: "a/message.2/content.0", at: address.part(1), start: result.match.start },
-      block: rows.find((row) => row.key === "a/message.2/content.0"),
+      match: { key: "thread:a/message.2/content.0", at: address.part(1), start: result.match.start },
+      block: rows.find((row) => row.key === "thread:a/message.2/content.0"),
       regions: [regionKey(part, 1), regionKey(part, 3)],
     });
-    const name = adjacent(found, { key: "a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
+    const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
     expect(name).toMatchObject({ block: undefined, regions: [] });
   });
 

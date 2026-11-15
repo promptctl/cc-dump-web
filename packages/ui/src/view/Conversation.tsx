@@ -1,36 +1,49 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { createContext, memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import type { Part } from "../format/blocks.ts";
-import type { FormattedExchange } from "../format/format.ts";
+import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
-import { positionAt, rowIndex } from "./position.ts";
+import { createHistory, type History } from "./history.ts";
+import { inMotion } from "./motion.ts";
+import { positionAt, rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
-import { clockTime, compact, createGroupRows, createLayout, describeSize, estimateHeight, isExpanded, jsonText, preview, seconds, type Row } from "./rows.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, isExpanded, jsonText, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch, paint } from "./highlights.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
+import { address, adjacent, createSearch, find, nothing, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
-import { useView, view } from "./state.ts";
+import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
+import { TurnStrip } from "./TurnStrip.tsx";
 
-// The conversation, scrolling: each exchange's request, then its response, as rows of which only those on screen are
-// mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an exchange its end.
+// The conversation side by side in time (docs/design/02-design.md, "Two axes"): two columns over one scroll, the
+// conversation at the moment shown on the right and a step before on the left, aligned, as rows of which only those on
+// screen are mounted (docs/design/01-mvp.md, F4); a window too narrow for two shows the right alone. `reading`: whether
+// the read can still bring an exchange its end.
 export function Conversation({ formatted, reading }: { formatted: FormattedExchange[]; reading: boolean }) {
+  // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
+  const history = useMemo(() => createHistory(), []);
+  const conversation = useMemo(() => history(formatted), [history, formatted]);
+  const steps = conversation.segments.length;
+  // Now's step, the latest, by its exchange: where a reader's act away from now leaves the moment.
+  const now = conversation.segments.at(-1)?.formatted.exchange.trace_id;
+  const moment = useView((state) => state.moment);
+  const shown = stepShown(moment, conversation);
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
-  // and its cache are kept. Fast Refresh keeps state but re-runs memos, so an edited module's layout is the one used.
+  // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
-  const groupRows = useMemo(() => createGroupRows(), []);
-  const layOut = useMemo(() => createLayout(visibility, groupRows), [visibility, groupRows]);
+  const unchanged = useSettings((state) => state.unchanged);
+  const layOut = useMemo(() => createLayout(visibility, unchanged), [visibility, unchanged]);
   // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
   // the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
   const revealed = current?.key;
-  const { rows, keys, every } = useMemo(() => layOut(formatted, revealed), [layOut, formatted, revealed]);
   const flipped = useView((state) => state.flipped);
+  const { rows, keys, every } = useMemo(() => layOut(conversation, shown, revealed, flipped), [layOut, conversation, shown, revealed, flipped]);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -40,7 +53,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     count: rows.length,
     getScrollElement: () => scroller.current,
     getItemKey: keys.at,
-    estimateSize: (index) => estimateHeight(rows[index]!, isExpanded(flipped, rows[index]!)),
+    estimateSize: (index) => estimateHeight(rows[index]!, flipped),
     overscan: 10,
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
@@ -66,16 +79,16 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   // carries it out.
   const sync = (cause: Cause) => {
     const element = scroller.current!;
-    const { position } = useView.getState();
+    const { position, moment } = useView.getState();
     const rowsNow = {
       indexOf: keys.indexOf,
       placed: (index: number) => virtualizer.measurementsCache[index],
       rowAt: virtualizer.getVirtualItemForOffset,
     };
     const kept = { position, written: written.current };
-    const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, rowsNow);
+    const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
     written.current = next.written;
-    if (next.position !== position) view.moveTo(next.position);
+    if (next.position !== position) view.place(next.position, next.by, now);
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
@@ -101,10 +114,10 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
       resized.disconnect();
     };
   }, []);
-  // Following, a click stops; paused or off, it follows from the end.
+  // Following, a click stops; paused or off, it follows from the end, now, whichever moment was shown.
   const toggleFollow = () => {
     settings.setFollow(following !== "on");
-    if (following !== "on") view.moveTo({ at: "end" });
+    if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
   // The search (docs/design/01-mvp.md, F6): its matches among every row, in the hidden categories as well.
@@ -114,12 +127,13 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
+  const painted = useMemo(() => ({ right: { pattern, current: true }, left: unpainted }), [pattern]);
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
   // is put at the match's line, a few of its lines below the top.
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
-    flushSync(() => view.goTo(next));
+    flushSync(() => view.goTo(next, now));
     const match = currentMatch();
     // [LAW:no-silent-failure] A step goes to a match found in a block, which the step lists if its category is hidden, so
     // it is painted once committed.
@@ -131,16 +145,58 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     // view had resolved the offset against the height the row had: its height is committed now.
     flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
     const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
-    view.moveTo({ at: "row", key: next.match.key, offset: Math.max(0, match.getBoundingClientRect().top - rowBox.top - lead) });
+    view.place({ at: "row", key: next.match.key, offset: Math.max(0, match.getBoundingClientRect().top - rowBox.top - lead) }, "reader", now);
     latest.current("choose");
   };
 
-  // A click on a block or region is reading where the view is: the position becomes the place under the view, so
+  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
   // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
   const hold = useCallback(() => {
-    view.moveTo(positionAt(scroller.current!.scrollTop, virtualizer.getVirtualItemForOffset));
+    view.place(positionAt(scroller.current!.scrollTop, virtualizer.getVirtualItemForOffset), "reader", now);
     latest.current("choose");
-  }, [virtualizer]);
+  }, [virtualizer, now]);
+
+  // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
+  // rows above the step's first change, or, following, at the end.
+  const toStep = (target: number) => {
+    const latestStep = target === steps;
+    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : beforeChange(layOut(conversation, target, revealed, flipped));
+    view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace: conversation.segments[target - 1]!.formatted.exchange.trace_id }, position);
+    latest.current("choose");
+  };
+  // [LAW:no-ambient-temporal-coupling] The step the last move is going to, until its update commits: a move made while a
+  // motion runs goes on from there, so three quick presses move three steps. It is cleared however the update ends.
+  const aimed = useRef<number | undefined>(undefined);
+  const go = (target: number) => {
+    const from = aimed.current ?? shown;
+    aimed.current = target;
+    void inMotion(target < from ? "back" : "forward", () => flushSync(() => toStep(target))).finally(() => {
+      if (aimed.current === target) aimed.current = undefined;
+    });
+  };
+  const goBy = (by: -1 | 1) => {
+    const target = Math.min(steps, Math.max(1, (aimed.current ?? shown) + by));
+    if (target !== (aimed.current ?? shown)) go(target);
+  };
+  // The strip's and the keys' moves, through the render last committed, so the strip, memoized, renders only as its
+  // steps or the step shown change.
+  const moves = useRef({ go, goBy });
+  useLayoutEffect(() => {
+    moves.current = { go, goBy };
+  });
+  const onGo = useCallback((target: number) => moves.current.go(target), []);
+  const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
+  // ← and → move one step, unless a field takes the keys.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const by = arrows[event.key];
+      if (by === undefined || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || takesKeys(event.target)) return;
+      event.preventDefault();
+      onStep(by);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onStep]);
 
   return (
     <>
@@ -149,13 +205,15 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         <FilterBar />
         <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} />
       </div>
-      {/* The browser's own scroll anchoring would be a second writer of the offset. */}
-      <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none]">
+      <TurnStrip segments={conversation.segments} shown={shown} onGo={onGo} onStep={onStep} />
+      {/* The browser's own scroll anchoring would be a second writer of the offset. The area is what a move in time
+          slides (index.css). */}
+      <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none] [view-transition-name:conversation]">
         {rows.length === 0 ? (
           <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
         ) : (
           <Hold.Provider value={hold}>
-            <Pattern.Provider value={pattern}>
+            <Painted.Provider value={painted}>
               <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => (
                   <div
@@ -169,7 +227,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
                   </div>
                 ))}
               </div>
-            </Pattern.Provider>
+            </Painted.Provider>
           </Hold.Provider>
         )}
         {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
@@ -205,8 +263,31 @@ const followStates = {
   off: { pressed: false, glyph: "○", label: "Follow off", title: "Click to follow the newest content." },
 } as const;
 
-// The search's pattern, for every text shown to highlight its matches with.
-const Pattern = createContext<RegExp | undefined>(undefined);
+// The moment's step: the latest, now; or the step held, which, until its exchange is read, as after a reload, is as far
+// as the read has come.
+function stepShown(moment: Moment, { segments, stepOf }: History): number {
+  return moment.at === "now" ? segments.length : (stepOf(moment.trace) ?? segments.length);
+}
+
+// The place `context` rows above the first change of a layout, so what the step did is in view with what it follows.
+function beforeChange({ rows, keys }: Layout): Position {
+  const first = rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
+  return { at: "row", key: keys.at(Math.max(0, first - context)), offset: 0 };
+}
+
+// The keys that move in time, and whether an element takes them for its own: a field typed or chosen in.
+const arrows: Partial<Record<string, -1 | 1>> = { ArrowLeft: -1, ArrowRight: 1 };
+function takesKeys(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+}
+
+// How each side paints the search's matches: the right, the moment shown, with the pattern and the current match, so
+// what is painted is what the search counts; the left with neither.
+type Painting = { pattern: RegExp; current: boolean };
+const unpainted: Painting = { pattern: nothing, current: false };
+const Painted = createContext<{ right: Painting; left: Painting } | undefined>(undefined);
+// The side a block is shown on.
+const Side = createContext<"right" | "left">("right");
 
 // Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
 // in this text.
@@ -215,10 +296,11 @@ type Where = { blockKey: string; at: string; ranges: Range[]; current: number | 
 // A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
 // current match leaves and enters.
 function useWhere(blockKey: string, at: string, text: string): Where {
-  const pattern = useContext(Pattern);
-  if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
+  const painted = useContext(Painted);
+  if (painted === undefined) throw new Error("A text is shown outside a Conversation");
+  const { pattern, current: paintsCurrent } = painted[useContext(Side)];
   const ranges = useMemo(() => find(pattern, text), [pattern, text]);
-  const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
+  const current = useView(({ search: { current } }) => (paintsCurrent && current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
   return { blockKey, at, ranges, current };
 }
 
@@ -249,17 +331,71 @@ function largest(element: HTMLElement): number {
   return element.scrollHeight - element.clientHeight;
 }
 
-// Memoized: the layout keeps an unchanged exchange's rows the same objects, so only changed rows render again.
-const RowView = memo(function RowView({ row, reading }: { row: Row; reading: boolean }) {
+// A row: a fold across both columns; anything else its two sides, aligned, with a band between them in the color of
+// what the step did, none where it left the row as it was. Below `lg` only the right side shows. The band stands where
+// a ground would: the theme's text is promised legible on its muted grounds only in their own `text-` color, and the
+// foreground fails on them in most themes. Memoized on what it shows, every field of the row, so a row the layout makes
+// again as it was does not render again.
+const RowView = memo(
+  function RowView({ row, reading }: { row: Row; reading: boolean }) {
+    if (row.kind === "fold") return <FoldLine fold={row} />;
+    const sides = sidesOf(row, reading);
+    return (
+      <div className="grid grid-cols-[4px_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_4px_minmax(0,1fr)]">
+        <div className="hidden lg:block">
+          <Side.Provider value="left">{sides.left}</Side.Provider>
+        </div>
+        <div className={bands[row.change]} />
+        <div>{sides.right}</div>
+      </div>
+    );
+  },
+  (before, after) => before.reading === after.reading && sameFields(before.row, after.row),
+);
+
+// What each side of a row shows: the right, the moment shown; the left, the step before, nothing where the step added
+// the row.
+function sidesOf(row: Exclude<Row, { kind: "fold" }>, reading: boolean): { left: ReactNode; right: ReactNode } {
   switch (row.kind) {
-    case "exchange":
-      return <ExchangeLine exchange={row.exchange} reading={reading} />;
-    case "group":
-      return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
+    case "exchange": {
+      const line = <ExchangeLine exchange={row.exchange} reading={reading} />;
+      return { left: row.change === "added" ? null : line, right: line };
+    }
+    case "group": {
+      const title = <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
+      return { left: row.change === "added" ? null : title, right: title };
+    }
     case "block":
-      return <BlockView row={row} />;
+      return { left: row.before === undefined ? null : <BlockView rowKey={row.key} block={row.before} />, right: <BlockView rowKey={row.key} block={row.block} /> };
   }
-});
+}
+
+// [LAW:dataflow-not-control-flow] The band between a row's sides, by what the step did to it.
+const bands: Record<Change, string> = { added: "bg-(--success)", changed: "bg-(--warning)", same: "" };
+
+// Whether two rows show the same: every field the same value.
+function sameFields(a: Row, b: Row): boolean {
+  const fields = Object.entries(a);
+  return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
+}
+
+// A run of unchanged rows, folded: one line saying how many, across both columns, which opens it on a click.
+function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
+  const hold = useContext(Hold);
+  return (
+    <button
+      type="button"
+      className="flex w-full items-center gap-3 py-0.5 pl-7 text-left font-sans text-foreground-muted hover:bg-hover"
+      onClick={() => {
+        hold();
+        view.toggle(fold.key);
+      }}
+    >
+      <span className="w-3">▸</span>
+      {fold.count} unchanged
+    </button>
+  );
+}
 
 // The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns of fixed widths, aligned down
 // the conversation, each cut with an ellipsis where a rare value outgrows its column, and how it ended. It is a band on
@@ -307,12 +443,12 @@ function Fact({ label, count }: { label: string; count: number | undefined }) {
 // since its status says so, and of one still in flight; a word for the rest.
 const endings = { ok: "", pending: "", unread: "no end read", error: "error", aborted: "aborted", stopped: "stopped" } as const;
 
-// A block: collapsed, one line naming it, a preview of its content and its size; expanded, that line and all its parts.
-// Clicking the line switches between them. The gutter bar in its category's color runs its whole height
-// (docs/design/02-design.md, "One bold element").
-function BlockView({ row }: { row: Extract<Row, { kind: "block" }> }) {
-  const { key, block, size } = row;
-  const open = useView((state) => isExpanded(state.flipped, row));
+// A block, one side's version of the row at `rowKey`: collapsed, one line naming it, a preview of its content and its
+// size; expanded, that line and all its parts. Clicking the line switches between them, on both sides. The gutter bar
+// in its category's color runs its whole height (docs/design/02-design.md, "One bold element").
+function BlockView({ rowKey: key, block }: { rowKey: string; block: KeyedBlock }) {
+  const size = sizeOf(block);
+  const open = useView((state) => isExpanded(state.flipped, key, block));
   const hold = useContext(Hold);
   return (
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>

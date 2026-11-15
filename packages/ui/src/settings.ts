@@ -9,6 +9,11 @@ import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 export const visibilities = ["shown", "hidden"] as const;
 export type Visibility = (typeof visibilities)[number];
 
+// Whether the runs of rows a step left unchanged fold into one row each, or are all shown (docs/design/02-design.md, "Two
+// axes").
+export const unchangedRows = ["fold", "show"] as const;
+export type Unchanged = (typeof unchangedRows)[number];
+
 // How a search reads its query (docs/design/01-mvp.md, F6). `caseSensitive`: letters match only in the case typed.
 // `wholeWord`: a match is not part of a longer word. `regex`: the query is a regular expression, not the characters it
 // says. Each is on or off and no other, so the choices are independent.
@@ -17,8 +22,9 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
-// is on. `visibility`: each category's. `theme`: the theme chosen (F10). `search`: how a query is read (F6).
-export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions };
+// is on. `visibility`: each category's. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
+// whether unchanged rows fold.
+export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions; unchanged: Unchanged };
 
 const name = "cc-dump.settings";
 
@@ -27,6 +33,7 @@ const name = "cc-dump.settings";
 export function parseSettings(stored: unknown): Settings {
   const follow = fieldOf(stored, "follow");
   const theme = fieldOf(stored, "theme");
+  const unchanged = fieldOf(stored, "unchanged");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
     return isVisibility(value) ? value : "shown";
@@ -41,10 +48,12 @@ export function parseSettings(stored: unknown): Settings {
     visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
     theme: isThemeChoice(theme) ? theme : "system",
     search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
+    unchanged: isUnchanged(unchanged) ? unchanged : "fold",
   };
 }
 
 const isVisibility = (value: unknown): value is Visibility => (visibilities as readonly unknown[]).includes(value);
+const isUnchanged = (value: unknown): value is Unchanged => (unchangedRows as readonly unknown[]).includes(value);
 
 export const useSettings = create<Settings>()(
   persist(() => parseSettings(undefined), { name, storage: createJSONStorage(() => localStorage), merge: (stored) => parseSettings(stored) }),
@@ -54,6 +63,7 @@ export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
   setSearchOption: (option: keyof SearchOptions, on: boolean) => useSettings.setState((state) => ({ search: { ...state.search, [option]: on } })),
   setTheme: (theme: ThemeChoice) => useSettings.setState({ theme }),
+  setUnchanged: (unchanged: Unchanged) => useSettings.setState({ unchanged }),
   setVisibility: (category: Category, visibility: Visibility) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: visibility } })),
   // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
   // so every tab holds the settings the reader chose last.

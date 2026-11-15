@@ -66,3 +66,45 @@
   background-color: var(--match-current);
   color: var(--match-current-foreground);
 }
+
+/* Moving in time (view/motion.ts): the conversation area the moment leaves slides toward the side it leaves for, by half
+   its width, or its whole width when it is one column, while the next moment fades in: forward, the right side into the
+   left slot; back, the left side into the right. Under reduced motion nothing moves. */
+:root {
+  --slide: 100%;
+}
+@media (width >= 64rem) {
+  :root {
+    --slide: 50%;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-group(conversation) {
+    animation-duration: 200ms;
+  }
+  :active-view-transition-type(forward)::view-transition-old(conversation) {
+    animation: 200ms ease-in both slide-out-left;
+  }
+  :active-view-transition-type(back)::view-transition-old(conversation) {
+    animation: 200ms ease-in both slide-out-right;
+  }
+}
+@keyframes slide-out-left {
+  to {
+    translate: calc(-1 * var(--slide));
+    opacity: 0;
+  }
+}
+@keyframes slide-out-right {
+  to {
+    translate: var(--slide);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}

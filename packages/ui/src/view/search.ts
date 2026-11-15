@@ -64,7 +64,7 @@ function partTexts(part: Part, index: number): Shown[] {
 export type Query = { pattern: RegExp; error: string | undefined };
 
 // The pattern that matches nothing: the empty query's, so no search is a pattern like any other, and an invalid one's.
-const nothing = new RegExp("(?!)", "gu");
+export const nothing = new RegExp("(?!)", "gu");
 
 // What a word is made of, in Unicode: letters, digits and the underscore, as `\w` is in ASCII. JavaScript's `\b` is
 // ASCII only, so it would find a boundary inside "café".
