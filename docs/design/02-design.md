@@ -2,7 +2,7 @@
 
 **Owner:** Brandon · **Status:** agreed 2026-11-14 · **Builds on:** `01-mvp.md`
 
-The MVP works and looks like nothing: one weight, one gray, one typeface, the word "metadata" forty times an exchange. This document is the design the app is built to from here. It is driven by what the screen is for, then made handsome. It is built in four tickets under the epic `dump-design-59q`, in order: foundation, turns side by side, minimap, keyboard.
+The MVP works and looks like nothing: one weight, one gray, one typeface, the word "metadata" forty times an exchange. This document is the design the app is built to from here. It is driven by what the screen is for, then made handsome. It is built in four tickets under the epic `dump-design-59q`, in order: foundation, the conversation side by side in time, minimap, keyboard.
 
 ## What the screen is for
 
@@ -12,11 +12,11 @@ The reader is watching an agent work, or reading a run after, and asks three que
 
 The web is a far more expressive canvas than a terminal, so the view uses its dimensions to say where the reader is.
 
-- **Vertical is position within a turn.** Top is the earliest content the model was sent: the system prompt, the tools, the first message. Bottom is the most recent: the last message, then the response.
-- **Horizontal is the turn.** Left is the earlier turn, right the later. Two consecutive turns are shown side by side, aligned block by block like a side-by-side diff: unchanged blocks level, changed blocks marked, blocks only the later turn has against an empty slot on the left. The response on the left reappears on the right as history, level with itself. Runs of unchanged blocks fold into one row.
-- **Moving between turns is one motion.** The right column's turn slides to the left slot and the next turn fades in on the right. Follow mode's pair is the newest turn and the one before it.
+- **Vertical is position within the conversation.** Top is the earliest content, bottom the most recent.
+- **Horizontal is time.** Each side shows the entire conversation of the recording at a moment: left as it was a step earlier, right as it is at the moment shown. A step is something arriving in the conversation: stepping forward in time adds it, stepping back removes it. Every exchange is an addition to the one conversation, a quota probe or a title request as much as a turn; none starts a conversation of its own. The two sides are aligned like a side-by-side diff: unchanged content level, changed content marked, what only the right has against an empty slot on the left. Runs of unchanged content fold into one row.
+- **Moving in time is one motion.** The right side slides to the left slot and the next moment fades in on the right. Follow mode's moment is now.
 
-The request the model receives each turn is a whole document and the run is a sequence of versions of it. The diff is the honest view of that, and it answers the first two questions at once: what is new on the right is what just happened, and what the harness changed between turns is the only other thing marked.
+The diff answers the first two questions at once: what is new on the right is what just happened, and what the harness changed is the only other thing marked.
 
 ## Principles
 
@@ -66,7 +66,7 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
                                                                  minimap ─┘  └─ panels
 ```
 
-Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. The minimap is the vertical navigator, the turn strip the horizontal one. The info and logs panels (F8, F9) open at the right.
+Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info and logs panels (F8, F9) open at the right.
 
 ## Not decided here
 

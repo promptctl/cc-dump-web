@@ -2,7 +2,7 @@
 
 **Owner:** Brandon · **Status:** draft, scope set by Brandon 2026-11-12 · **Builds on:** `00-premise.md`
 
-The MVP is a web application that launches Claude Code in tmux, captures its Anthropic API traffic through a local proxy, and shows that traffic as a live, filterable, searchable conversation that is recorded and can be reopened. It is a from-scratch rewrite of the Python/Textual cc-dump; nothing here is required to match the old app's behavior.
+The MVP is a web application that launches Claude Code in tmux, captures its Anthropic API traffic through a local proxy, and shows that traffic as a live, filterable, searchable conversation that is recorded and can be reopened. It is a from-scratch rewrite of the Python/Textual cc-dump. Its display and some of its behavior differ, and it may do more than the original (managing many agents, say), but how a user monitors a session is the original's (`divergences.md`).
 
 ## Vocabulary
 
@@ -14,7 +14,7 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, metadata, thinking. |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
-| Recording | The stored file holding everything the proxy saw for one run. |
+| Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. |
 
 ## Features
 
@@ -23,6 +23,7 @@ Each feature is stated as what the person using the app can do and see.
 ### F1. Launch
 - The user picks a tmux session from a list of the sessions on their tmux server and presses Launch.
 - The app creates a new window in that session running the agent command, with `ANTHROPIC_BASE_URL` set to the proxy. The agent's first request appears in the conversation.
+- The conversation shown is the launched process's recording, and only it.
 - The agent command is a setting holding a full command line with its arguments, for example `claude --dangerously-skip-permissions`. Its default is `claude`.
 - When tmux has no running server or no sessions, the launch control says so. When tmux refuses the launch, the user sees tmux's error text.
 - An agent started by hand also works: the info panel (F8) gives the line to export.
@@ -39,7 +40,8 @@ Each feature is stated as what the person using the app can do and see.
 ### F3. Format
 - Each exchange is shown as one unit: the request, then its response.
 - The request shows the model and parameters, the HTTP headers, the tool definitions, the system prompt, and every message with its content blocks.
-- The response shows its content blocks, the stop reason, and the token usage the API reported.
+- The response shows its content blocks, the stop reason, and the token usage the API reported. Input is shown as its total, the uncached, cache-read and cache-written tokens together, with the cache read and the cache written beside it.
+- Content the harness injects into a user message is split out of it into blocks of its own, each named for what it is: a system reminder, hook output, the contents of a CLAUDE.md file named by its path.
 - Every content block type has a rendering: text, thinking, redacted thinking, tool use, tool result, image, document, server tool use and its results.
 - A block of a type the app does not know is shown under its type name as raw JSON. No block is ever dropped.
 
@@ -55,11 +57,12 @@ Each feature is stated as what the person using the app can do and see.
 - A filter bar that is always on screen shows each category's current state. It is also the control that changes it.
 
 ### F6. Search
-- The user types a query and every match in the shown categories is highlighted, with a count.
-- Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it.
+- The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
+- The query is a regular expression, matched without regard to case. Each of case, whole word and regular expression can be switched.
+- Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, and moving to a match in a hidden category shows its block.
 
 ### F7. Record and reopen
-- Every exchange is written to the recording as it happens, with no action from the user.
+- Every exchange is written to its process's recording as it happens, with no action from the user.
 - A recording that was being written when the app crashed can still be opened.
 - The user can pick any past recording from a list and read it with every feature in this document.
 - A reopened recording and live traffic reach the screen through the same path. There is no second implementation for replay.
@@ -135,13 +138,15 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 
 ## Not in the MVP
 
-- Detail levels beyond shown and hidden, search options (regex, case, whole word), search inside hidden categories, per-tool renderers, markdown rendering, splitting injected content out of user messages, and token-cost figures. These were proposed as the next layer and are not part of this scope.
+- Detail levels beyond shown and hidden, per-tool renderers, markdown rendering, and token-cost figures. These were proposed as the next layer and are not part of this scope.
+- A tool result linked to its call, as in the original: named for its tool and the call's detail (the path, command or pattern), in a color shared with the call.
 - Everything in the intermediate and advanced layers.
 
 ## Open issues
 
 | Item | Type |
 |---|---|
-| The recording holds what was on the wire, so it is not a HAR file and the old app's recordings will not open. | question |
+| The recording holds what was on the wire, every event as it arrived, so a reopened recording is read by the same path as live traffic and reaches the same state. The original's HAR files hold a non-streaming summary of each exchange, so they will not open here. | question |
+| Whether launching again resumes the session the recording holds, as the original's `auto_resume` does. Open until the basics of how the app works are settled. | question |
 | Re-deriving a very long conversation on every reload may be slow. Not measured. | risk |
 | The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial. Not checked against the current Claude Code. | risk |
