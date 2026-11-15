@@ -10,11 +10,14 @@ const memory = instructions("/home/ann/.claude/projects/app/memory/MEMORY.md", "
 const preamble = "Codebase and user instructions are shown below.";
 const withInstructions = reminder(`${preamble}\n\n${global}\n\n${project}`);
 
+// A message's text as a person typed it, and as the harness sent it in a system-role message.
+const typed = (text: string) => split(text, "said");
+const sent = (text: string) => split(text, "harness");
 const kinds = (pieces: Piece[]) => pieces.map((piece) => piece.kind);
 
 describe("split", () => {
   it("gives a reminder holding two CLAUDE.md files as the reminder, then each file by its path", () => {
-    expect(split(withInstructions)).toEqual([
+    expect(typed(withInstructions)).toEqual([
       { kind: "reminder", text: `<system-reminder>\n${preamble}\n\n` },
       { kind: "claude_md", path: "/home/ann/.claude/CLAUDE.md", text: `${global}\n\n` },
       { kind: "claude_md", path: "/work/app/CLAUDE.md", text: `${project}\n</system-reminder>` },
@@ -23,13 +26,13 @@ describe("split", () => {
 
   it("gives the typed prompt alone, after the reminders that came with it", () => {
     const context = reminder("As you answer the user's questions, you can use the following context:\n# userEmail\nann@example.com");
-    expect(split(`${context}\n`)).toEqual([{ kind: "reminder", text: `${context}\n` }]);
-    expect(split("Say hello.")).toEqual([{ kind: "said", text: "Say hello." }]);
-    expect(split(`${context}\n\nSay hello.`)).toEqual([
+    expect(typed(`${context}\n`)).toEqual([{ kind: "reminder", text: `${context}\n` }]);
+    expect(typed("Say hello.")).toEqual([{ kind: "said", text: "Say hello." }]);
+    expect(typed(`${context}\n\nSay hello.`)).toEqual([
       { kind: "reminder", text: `${context}\n\n` },
       { kind: "said", text: "Say hello." },
     ]);
-    expect(split(`Say hello.\n\n${context}`)).toEqual([
+    expect(typed(`Say hello.\n\n${context}`)).toEqual([
       { kind: "said", text: "Say hello." },
       { kind: "reminder", text: `\n\n${context}` },
     ]);
@@ -37,11 +40,11 @@ describe("split", () => {
 
   it("gives hook output, which names its hook, each to the next hook or the end", () => {
     const text = "SessionStart hook additional context: Be explanatory.\n\n# Environment\ncwd: /work\n\nUserPromptSubmit hook additional context: Load the craft skill.";
-    expect(split(text)).toEqual([
+    expect(typed(text)).toEqual([
       { kind: "hook", name: "SessionStart", text: "SessionStart hook additional context: Be explanatory.\n\n# Environment\ncwd: /work\n\n" },
       { kind: "hook", name: "UserPromptSubmit", text: "UserPromptSubmit hook additional context: Load the craft skill." },
     ]);
-    expect(split(reminder("PostToolUse:Read hook additional context: Mind the size."))).toEqual([
+    expect(typed(reminder("PostToolUse:Read hook additional context: Mind the size."))).toEqual([
       { kind: "reminder", text: "<system-reminder>\n" },
       { kind: "hook", name: "PostToolUse:Read", text: "PostToolUse:Read hook additional context: Mind the size.\n</system-reminder>" },
     ]);
@@ -49,14 +52,14 @@ describe("split", () => {
 
   it("gives a user-prompt-submit-hook tag as that hook's output", () => {
     const tagged = "<user-prompt-submit-hook>\nRemember the tests.\n</user-prompt-submit-hook>";
-    expect(split(`${tagged}\n\nFix it.`)).toEqual([
+    expect(typed(`${tagged}\n\nFix it.`)).toEqual([
       { kind: "hook", name: "UserPromptSubmit", text: `${tagged}\n\n` },
       { kind: "said", text: "Fix it." },
     ]);
   });
 
   it("does not take another file's contents for a CLAUDE.md's, and ends the CLAUDE.md before it", () => {
-    expect(split(reminder(`${global}\n\n${memory}`))).toEqual([
+    expect(typed(reminder(`${global}\n\n${memory}`))).toEqual([
       { kind: "reminder", text: "<system-reminder>\n" },
       { kind: "claude_md", path: "/home/ann/.claude/CLAUDE.md", text: `${global}\n\n` },
       { kind: "reminder", text: `${memory}\n</system-reminder>` },
@@ -65,7 +68,7 @@ describe("split", () => {
 
   it("leaves a text with nothing injected as one said piece, and an unclosed reminder tag as said text", () => {
     for (const text of ["", "  \n", "Plain words.", "A line:\nContents of nothing", "<system-reminder>\nnever closed", "</system-reminder> closed, never opened", `Quoted: ${project}`]) {
-      expect(split(text)).toEqual([{ kind: "said", text }]);
+      expect(typed(text)).toEqual([{ kind: "said", text }]);
     }
   });
 
@@ -78,7 +81,34 @@ describe("split", () => {
       reminder(""),
       `${global}\n\nUserPromptSubmit hook additional context: z`,
     ];
-    for (const text of texts) expect(split(text).map((piece) => piece.text).join("")).toBe(text);
-    expect(kinds(split(texts[1]!))).toEqual(["reminder", "claude_md", "claude_md", "reminder", "said"]);
+    for (const text of texts) {
+      expect(typed(text).map((piece) => piece.text).join("")).toBe(text);
+      expect(sent(text).map((piece) => piece.text).join("")).toBe(text);
+    }
+    expect(kinds(typed(texts[1]!))).toEqual(["reminder", "claude_md", "claude_md", "reminder", "said"]);
+  });
+
+  it("gives a system-role message's titled sections as pieces of their own, each ending at the next, and a deeper heading inside its piece", () => {
+    const hookOutput = "SessionStart hook additional context: Be explanatory.\n\n## Insights\nShare one.\n\n";
+    const environment = "# Environment\nWorking directory: /work\n\n";
+    const servers = "# MCP Server Instructions\n\n## docs\nUse it for docs.\n\n## search\nUse it to search.\n\n";
+    const second = "UserPromptSubmit hook additional context: Load the craft skill.";
+    expect(sent(hookOutput + environment + servers + second)).toEqual([
+      { kind: "hook", name: "SessionStart", text: hookOutput },
+      { kind: "section", title: "Environment", text: environment },
+      { kind: "section", title: "MCP Server Instructions", text: servers },
+      { kind: "hook", name: "UserPromptSubmit", text: second },
+    ]);
+  });
+
+  it("takes what a system-role message holds before any opening as the harness's, and a person's headings as what they said", () => {
+    expect(sent("Context left: 80%.")).toEqual([{ kind: "reminder", text: "Context left: 80%." }]);
+    expect(sent("Context left: 80%.\n\n# Environment\ncwd: /work")).toEqual([
+      { kind: "reminder", text: "Context left: 80%.\n\n" },
+      { kind: "section", title: "Environment", text: "# Environment\ncwd: /work" },
+    ]);
+    const heading = "# Heading\nSome words.\n\n## Deeper\nMore.";
+    expect(typed(heading)).toEqual([{ kind: "said", text: heading }]);
+    expect(typed(`Before.\n\n${heading}`)).toEqual([{ kind: "said", text: `Before.\n\n${heading}` }]);
   });
 });

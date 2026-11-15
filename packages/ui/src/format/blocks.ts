@@ -1,5 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
-import { split, type Piece } from "./injected.ts";
+import { split, type OwnText, type Piece } from "./injected.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -30,6 +30,8 @@ export type BlockOrNone = [] | [Block];
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
+// Whose a message's own text is: what its sender said, or the harness's, as the system role's is.
+const ownText: Record<Role, OwnText> = { user: "said", assistant: "said", system: "harness" };
 
 // A JSON value that is not the shape its reader needs.
 export class Misfit extends Error {}
@@ -207,7 +209,7 @@ export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role);
   if (!isText(block)) return [formatted];
   const [, ...fields] = formatted.parts;
-  const pieces = split(block.text);
+  const pieces = split(block.text, ownText[role]);
   return pieces.map((piece, index) => {
     const parts: Part[] = [{ kind: "text", text: piece.text }, ...(index === pieces.length - 1 ? fields : [])];
     return pieceBlock(piece, formatted.category, formatted.name, parts);
@@ -229,6 +231,8 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
       return { category, name: `${piece.name} hook`, parts, injected: true };
     case "claude_md":
       return { category, name: `CLAUDE.md ${piece.path}`, parts, injected: true };
+    case "section":
+      return { category, name: piece.title, parts, injected: true };
   }
 }
 

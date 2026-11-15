@@ -111,7 +111,7 @@ describe("format", () => {
       "tools web_search_tool_result",
     ]);
     expect(lines(group(formatted, "user", 1))).toEqual(["tools tool_result"]);
-    expect(lines(group(formatted, "system"))).toEqual(["system text"]);
+    expect(lines(group(formatted, "system"))).toEqual(["system system reminder"]);
     expect(lines(group(formatted, "response"))).toEqual([
       "metadata HTTP response",
       "thinking thinking",
