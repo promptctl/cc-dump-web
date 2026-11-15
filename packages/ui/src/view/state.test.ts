@@ -97,7 +97,10 @@ describe("the moment", () => {
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
+    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
+    // The match current was another moment's.
+    expect(useView.getState().search.current).toBeUndefined();
     view.place({ ...place, offset: 9 }, "reader", "t10");
     expect(useView.getState()).toMatchObject({ position: { ...place, offset: 9 }, moment: { at: "chosen", trace: "t3" } });
     view.place({ at: "end" }, "view", "t10");

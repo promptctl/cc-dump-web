@@ -59,8 +59,10 @@ export const view = {
   // the moment is now, leaves it at now's step, `now`, the latest step's exchange.
   place: (position: Position, by: By, now: string | undefined) =>
     useView.setState(({ moment }) => ({ position, moment: position.at === "end" ? { at: "now" } : by === "reader" ? leave(moment, now) : moment })),
-  // A move in time, to `moment`, with the view put at `position`.
-  moveInTime: (moment: Exclude<Moment, { at: "left" }>, position: Position) => useView.setState({ moment, position }),
+  // A move in time, to `moment`, with the view put at `position`, and no current match: the one there was is in another
+  // moment's text, where the search, which walks the moment shown, no longer counts it.
+  moveInTime: (moment: Exclude<Moment, { at: "left" }>, position: Position) =>
+    useView.setState(({ search }) => ({ moment, position, search: { ...search, current: undefined } })),
   search: (query: string) => useView.setState({ search: { query, current: undefined } }),
   // A change of how the query is read finds other matches, as a change of the query does, so none is current.
   // [LAW:one-source-of-truth] The option itself is the settings', which every tab shares.

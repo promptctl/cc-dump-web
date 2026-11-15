@@ -188,11 +188,11 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
-  // ← and → move one step, unless a field takes the keys.
+  // ← and → move one step, unless a field takes the keys or what they were pressed in handled them.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const by = arrows[event.key];
-      if (by === undefined || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || takesKeys(event.target)) return;
+      if (by === undefined || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || takesKeys(event.target)) return;
       event.preventDefault();
       onStep(by);
     };
