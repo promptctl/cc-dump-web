@@ -50,7 +50,7 @@ Each feature is stated as what the person using the app can do and see.
 - **Follow mode:** while on, the view stays at the newest content. Scrolling away pauses it and returning to the bottom resumes it. A control shows whether it is on, paused or off.
 - **Expanding:** every block has a collapsed form (one line naming the block and its size) and an expanded form (all of its content). Clicking the block switches between them.
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
-- Blocks in the user and assistant categories start expanded. Blocks in the other categories start collapsed.
+- Blocks in the user and assistant categories start expanded, except the content the harness injects (F3). Blocks in the other categories start collapsed.
 
 ### F5. Filter
 - Each of the six categories can be shown or hidden independently.
@@ -80,7 +80,7 @@ Each feature is stated as what the person using the app can do and see.
 - Every color, including the six category colors, comes from the theme. Adding a theme means adding one set of values and changing no component.
 
 ### F11. Settings persist
-- These survive a restart of the browser, the app and the machine: the theme, each category's shown or hidden state, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.
+- These survive a restart of the browser, the app and the machine: the theme, each category's shown or hidden state, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.
 
 ### F12. Hot reload
 - Saving a change to any source file except the proxy's takes effect in the running app without restarting the proxy.
