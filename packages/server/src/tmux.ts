@@ -15,8 +15,9 @@ import {
 } from "@promptctl/tmux-control-mode-js";
 import { sessions, type Sessions } from "./format.ts";
 
-// A window to open in a session: the command its pane runs, through the user's shell, with `env` set for it alone.
-export type NewWindow = { session: string; command: string; env: Record<string, string> };
+// A window to open in a session: the command its pane runs, through the user's shell, in `cwd`, an absolute directory,
+// with `env` set for it alone.
+export type NewWindow = { session: string; command: string; cwd: string; env: Record<string, string> };
 
 // The window opened, by the ids tmux gave it.
 export type Window = { window_id: string; pane_id: string };
@@ -53,7 +54,7 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
   };
   return {
     sessions: () => connected(async (client) => sessions((await listSessions(client)).map((session) => session.sessionName))),
-    newWindow: ({ session, command, env }) =>
+    newWindow: ({ session, command, cwd, env }) =>
       connected(async (client) => {
         // tmux takes a session by id: a name it would also match as a prefix, a pattern, another session's id or a client.
         const named = (await listSessions(client)).find((found) => found.sessionName === session);
@@ -65,7 +66,7 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
         try {
           await client.execute(`set-option -p -t %${paneId} remain-on-exit failed`);
           await client.execute(`set-option -p -t %${paneId} remain-on-exit-format ''`);
-          await respawnPane(client, paneId, { command, environment: env });
+          await respawnPane(client, paneId, { command, cwd, environment: env });
         } catch (error) {
           // A window whose command never started is the launch's to remove. One that stays is named in the failure,
           // which keeps its kind: tmux's refusal, in tmux's words, or the app server's failure.

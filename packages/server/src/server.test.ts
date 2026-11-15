@@ -52,7 +52,7 @@ describe("POST /launch", () => {
       pane_id: "%9",
     });
     expect(parseLaunched(await res.text())).toEqual({ session: "work", window_id: "@7", pane_id: "%9" });
-    expect(opened).toEqual([{ session: "work", command: "claude --dangerously-skip-permissions", env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344" } }]);
+    expect(opened).toEqual([{ session: "work", command: "claude --dangerously-skip-permissions", cwd: "/work/project", env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344" } }]);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });
     const launcher = parseLauncher(await (await fetch(`${url}/launch`)).text());
     expect(launcher.settings).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });

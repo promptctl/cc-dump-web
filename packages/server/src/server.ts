@@ -9,8 +9,8 @@ import { launchSettings } from "./settings.ts";
 import { TmuxRefused, type Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
-// tmux server, and the running proxy.
-export type Parts = { log: Log; settingsPath: string; tmux: Tmux; proxyInfo: () => Promise<ProxyInfo> };
+// tmux server, the running proxy, and `directory`, the one the app was started in, where every agent it launches starts.
+export type Parts = { log: Log; settingsPath: string; tmux: Tmux; proxyInfo: () => Promise<ProxyInfo>; directory: string };
 
 // A request the app server refuses, answered with `status` and the refusal's message.
 class Refused extends Error {
@@ -25,7 +25,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 
 // The app server restarts on every source change, so it holds nothing that must survive one: the settings are on disk,
 // and tmux and the proxy are asked again on each request.
-export function createApp({ log, settingsPath, tmux, proxyInfo }: Parts): Handler {
+export function createApp({ log, settingsPath, tmux, proxyInfo, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
   const readSettings = async (trace_id: string) =>
@@ -50,8 +50,8 @@ export function createApp({ log, settingsPath, tmux, proxyInfo }: Parts): Handle
       log,
       trace_id,
       "launch",
-      { session, command, base_url, settings_path: settingsPath },
-      () => tmux.newWindow({ session, command, env: { ANTHROPIC_BASE_URL: base_url } }),
+      { session, command, directory, base_url, settings_path: settingsPath },
+      () => tmux.newWindow({ session, command, cwd: directory, env: { ANTHROPIC_BASE_URL: base_url } }),
       (window) => window,
     );
     return { session, ...window };

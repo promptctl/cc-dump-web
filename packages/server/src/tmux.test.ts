@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tmuxSocketDir } from "@promptctl/tmux-control-mode-js";
@@ -50,36 +50,36 @@ describe("createTmux", () => {
     tmux("set-environment", "-t", "=work", "SSH_AUTH_SOCK", "/the-session's");
     setEnv("SSH_AUTH_SOCK", "/the-app-server's");
     await createTmux({ socketPath }).sessions();
-    await createTmux({ socketPath }).newWindow({ session: "work", command: "true", env: {} });
+    await createTmux({ socketPath }).newWindow({ session: "work", command: "true", cwd: tmpdir(), env: {} });
     expect(tmux("show-environment", "-t", "=work", "SSH_AUTH_SOCK").trim()).toBe("SSH_AUTH_SOCK=/the-session's");
   });
 
-  it("opens a window in the session, current there, running the command with its environment", async () => {
+  it("opens a window in the session, current there, running the command in its directory with its environment", async () => {
     const { socketPath, tmux } = tmuxServer("work", "other");
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const out = join(dir, "out");
     // Quotes, `$` and `#` reach the shell as written: tmux expands no format in the command or the environment. The
     // command stays, as an agent does, since a pane whose command succeeds closes its window, which is then not current.
-    const command = `printf '%s #{session_name}' "$ANTHROPIC_BASE_URL" > '${out}'; exec sleep 60`;
+    const command = `printf '%s #{session_name} %s' "$ANTHROPIC_BASE_URL" "$(pwd -P)" > out; exec sleep 60`;
 
-    const window = await createTmux({ socketPath }).newWindow({ session: "work", command, env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/#x" } });
+    const window = await createTmux({ socketPath }).newWindow({ session: "work", command, cwd: dir, env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/#x" } });
 
     expect(window).toEqual({ window_id: expect.stringMatching(/^@\d+$/), pane_id: expect.stringMatching(/^%\d+$/) });
     expect(tmux("display-message", "-p", "-t", "=work:", "#{window_id}").trim()).toBe(window.window_id);
-    await vi.waitFor(() => expect(readFileSync(out, "utf8")).toBe("http://127.0.0.1:3344/#x #{session_name}"));
+    await vi.waitFor(() => expect(readFileSync(out, "utf8")).toBe(`http://127.0.0.1:3344/#x #{session_name} ${realpathSync(dir)}`));
   });
 
   it("keeps the window of a command that cannot run, its pane showing why", async () => {
     const { socketPath, tmux } = tmuxServer("work");
-    const { pane_id } = await createTmux({ socketPath }).newWindow({ session: "work", command: "cc-dump-no-such-command", env: {} });
+    const { pane_id } = await createTmux({ socketPath }).newWindow({ session: "work", command: "cc-dump-no-such-command", cwd: tmpdir(), env: {} });
     await vi.waitFor(() => expect(tmux("display-message", "-p", "-t", pane_id, "#{pane_dead}").trim()).toBe("1"));
     expect(tmux("capture-pane", "-p", "-t", pane_id)).toContain("cc-dump-no-such-command");
   });
 
   it("is refused, opening nothing, when no session has the name", async () => {
     const { socketPath, tmux } = tmuxServer("workshop");
-    const opened = createTmux({ socketPath }).newWindow({ session: "work", command: "true", env: {} });
+    const opened = createTmux({ socketPath }).newWindow({ session: "work", command: "true", cwd: tmpdir(), env: {} });
     await expect(opened).rejects.toBeInstanceOf(TmuxRefused);
     await expect(opened).rejects.toThrow("no session named work");
     expect(tmux("list-windows", "-a").trim().split("\n")).toHaveLength(1);
@@ -88,7 +88,7 @@ describe("createTmux", () => {
   it("removes the window of a command tmux was never given", async () => {
     const { socketPath, tmux } = tmuxServer("work");
     // The library refuses a NUL in the command line, after the window is open, before sending it.
-    await expect(createTmux({ socketPath }).newWindow({ session: "work", command: "true\0", env: {} })).rejects.toThrow(RangeError);
+    await expect(createTmux({ socketPath }).newWindow({ session: "work", command: "true\0", cwd: tmpdir(), env: {} })).rejects.toThrow(RangeError);
     expect(tmux("list-windows", "-t", "=work").trim().split("\n")).toHaveLength(1);
   });
 

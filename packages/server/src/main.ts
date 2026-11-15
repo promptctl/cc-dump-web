@@ -11,4 +11,7 @@ import { createTmux } from "./tmux.ts";
 const log = createLog("server", (line) => process.stdout.write(line));
 // The launch settings, in cc-dump/launch.json under the XDG config home, beside the proxy's settings.
 const settingsPath = join(baseDirectory("XDG_CONFIG_HOME", process.env, homedir()).dir, "cc-dump/launch.json");
-shutdownOnSignal(log, [await serve(log, createApp({ log, settingsPath, tmux: createTmux(), proxyInfo: () => fetchProxyInfo() }), SERVER_PORT)]);
+// The directory the app was started in, where agents start: pnpm's, which runs each part in its package's directory
+// and says where it was started in INIT_CWD, or, run as a command of its own, this process's.
+const directory = process.env.INIT_CWD ?? process.cwd();
+shutdownOnSignal(log, [await serve(log, createApp({ log, settingsPath, tmux: createTmux(), proxyInfo: () => fetchProxyInfo(), directory }), SERVER_PORT)]);

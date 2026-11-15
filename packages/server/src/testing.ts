@@ -10,7 +10,7 @@ import type { NewWindow, Tmux } from "./tmux.ts";
 export { TmuxRefused } from "./tmux.ts";
 
 // The app server on a free port, until the test finishes: its launch settings in a directory of the test's own, a tmux
-// with the sessions "work" and "play" that opens every window asked for (`opened`, in order), and a proxy at port 3344.
+// with the sessions "work" and "play" that opens every window asked for (`opened`, in order), and a proxy at port 3344, started in /work/project.
 // `tmux` and `proxyInfo` replace either, to make it fail. `work` resolves with each event of the app's own work.
 export async function app({ tmux = {}, proxyInfo = async () => ({ base_url: "http://127.0.0.1:3344" }) }: { tmux?: Partial<Tmux>; proxyInfo?: () => Promise<ProxyInfo> } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
@@ -23,7 +23,7 @@ export async function app({ tmux = {}, proxyInfo = async () => ({ base_url: "htt
     ...tmux,
   };
   const events = eventLog();
-  const { url, port, next } = await serving(createApp({ log: events.log, settingsPath, tmux: fake, proxyInfo }));
+  const { url, port, next } = await serving(createApp({ log: events.log, settingsPath, tmux: fake, proxyInfo, directory: "/work/project" }));
   const launch = (body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${url}/launch`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return { url, port, next, work: events.next, settingsPath, opened, launch };
