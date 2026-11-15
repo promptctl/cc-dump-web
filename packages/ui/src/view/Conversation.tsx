@@ -165,24 +165,23 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     latest.current("choose");
   };
   // [LAW:no-ambient-temporal-coupling] The step the last move is going to, until its update commits: a move made while a
-  // motion runs goes on from there, so three quick presses move three steps. It is cleared however the update ends.
+  // motion runs goes on from there, so three quick presses move three steps. It is cleared however the update ends. A
+  // move to the step it would leave from is none. The update runs once the motion has taken the page as it was, so it
+  // moves through the render last committed then, not the one pressed in.
   const aimed = useRef<number | undefined>(undefined);
   const go = (target: number) => {
     const from = aimed.current ?? shown;
+    if (target === from) return;
     aimed.current = target;
-    void inMotion(target < from ? "back" : "forward", () => flushSync(() => toStep(target))).finally(() => {
+    void inMotion(target < from ? "back" : "forward", () => flushSync(() => moves.current.toStep(target))).finally(() => {
       if (aimed.current === target) aimed.current = undefined;
     });
   };
-  const goBy = (by: -1 | 1) => {
-    const target = Math.min(steps, Math.max(1, (aimed.current ?? shown) + by));
-    if (target !== (aimed.current ?? shown)) go(target);
-  };
-  // The strip's and the keys' moves, through the render last committed, so the strip, memoized, renders only as its
-  // steps or the step shown change.
-  const moves = useRef({ go, goBy });
+  const goBy = (by: -1 | 1) => go(Math.min(steps, Math.max(1, (aimed.current ?? shown) + by)));
+  // The moves, through the render last committed, so the strip's marks, memoized, render only as what they show changes.
+  const moves = useRef({ go, goBy, toStep });
   useLayoutEffect(() => {
-    moves.current = { go, goBy };
+    moves.current = { go, goBy, toStep };
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);

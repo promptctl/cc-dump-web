@@ -28,7 +28,8 @@ export type Row =
 export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys } };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
+// fold it is in, or else the row listed before it, whose end is where it stands; a fold's, of the fold, or of its first
+// row once it is opened. [LAW:types-are-the-program] The same
 // object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
 // row) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
@@ -38,6 +39,10 @@ export const context = 3;
 
 // The key of the fold standing for a run of rows, by the run's first.
 export const foldKey = (first: string) => `fold:${first}`;
+
+// The key of the row a key's place begins at: a fold's first row, any other row itself. No other row's key begins
+// `fold:`: it begins with a trace_id or `thread:` (view/history.ts).
+export const firstRowOf = (key: string) => (key.startsWith(foldKey("")) ? key.slice(foldKey("").length) : key);
 
 // Lays out the conversation at step `step` of `history`, leaving out the blocks of each category `visibility` hides
 // (docs/design/01-mvp.md, F5) but the one at the key `revealed`, which the search has stepped to (F6), and a group with
@@ -62,19 +67,20 @@ export function createLayout(
     const listed = every.filter((_, index) => isShown[index]);
     const folding = fold(listed, revealed, opened, unchanged);
     // Each row's place among those listed: its own, the fold it is in, or the place of the row listed before it.
-    const places = new Map<string, number>();
+    const places = folding.placeOf;
     let before = 0;
     every.forEach((row, index) => {
-      if (isShown[index]) before = folding.placeOf.get(row.key)!;
-      places.set(row.key, before);
+      if (isShown[index]) before = places.get(row.key)!;
+      else places.set(row.key, before);
     });
-    folding.rows.forEach((row, index) => row.kind === "fold" && places.set(row.key, index));
     const listedKeys = folding.rows.map(({ key }) => key);
     const everyKeys = every.map(({ key }) => key);
-    const sameEvery = same(everyKeys, last.every.rows.map(({ key }) => key)) && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
+    const sameKeys = same(everyKeys, last.every.rows.map(({ key }) => key));
+    const sameEvery = sameKeys && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
     last = {
       rows: folding.rows,
-      keys: sameEvery && same(listedKeys, last.rows.map(({ key }) => key)) ? last.keys : keysOf(listedKeys, places),
+      // What a row shows changing, as a streaming block does, moves no row, so the keys are the ones before.
+      keys: sameKeys && same(listedKeys, last.rows.map(({ key }) => key)) ? last.keys : keysOf(listedKeys, places),
       // [LAW:one-source-of-truth] The search reads every row's block alone, so the same blocks are the same `every`, and
       // what memoizes on it is not run again by a step of the search or of time that changed none.
       every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
@@ -111,7 +117,8 @@ const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
 
 // The listed rows with each run of unchanged ones folded, beyond `context` rows beside a change, unless the run is opened
 // in `opened` or the reader shows every unchanged row; `revealed` is never folded. A run of one row is listed as itself,
-// which is what its fold would take the room of. `placeOf`: each listed row's place among the rows.
+// which is what its fold would take the room of. `placeOf`: each listed row's place among the rows, and each fold's, a
+// closed one's its own and an opened one's its first row's, so a place held on a fold holds as it opens.
 function fold(listed: Row[], revealed: string | undefined, opened: Record<string, true>, unchanged: Unchanged): { rows: Row[]; placeOf: Map<string, number> } {
   const changed = (row: Row) => row.kind !== "fold" && row.change !== "same";
   // How far each row is from the nearest change above it and below it.
@@ -131,9 +138,11 @@ function fold(listed: Row[], revealed: string | undefined, opened: Record<string
     while (end < listed.length && folds(end)) end++;
     // A row that folds in no run is a run of its own, listed.
     const run = listed.slice(index, Math.max(end, index + 1));
-    if (run.length > 1 && opened[foldKey(run[0]!.key)] !== true) {
+    const key = foldKey(run[0]!.key);
+    if (run.length > 1) placeOf.set(key, rows.length);
+    if (run.length > 1 && opened[key] !== true) {
       for (const row of run) placeOf.set(row.key, rows.length);
-      rows.push({ kind: "fold", key: foldKey(run[0]!.key), count: run.length });
+      rows.push({ kind: "fold", key, count: run.length });
     } else run.forEach(list);
     index += run.length;
   }

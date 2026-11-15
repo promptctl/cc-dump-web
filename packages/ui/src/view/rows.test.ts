@@ -75,6 +75,9 @@ describe("layout", () => {
     expect(step.keys.indexOf("thread:t1/request/system.0")).toBe(0);
     expect(step.keys.indexOf(foldKey("t1"))).toBe(0);
     expect(listed(at(4, undefined, { [foldKey("t1")]: true }))).toEqual(listed(unfolded));
+    // An opened fold is at its first row, so a place held on it as it opens holds.
+    const opened = at(4, undefined, { [foldKey("t1")]: true }).keys;
+    expect(opened.at(opened.indexOf(foldKey("t1"))!)).toBe("t1");
     // A step with no step before it has nothing unchanged.
     const two = layouts(turns(2), shown, "fold")(2);
     expect(two.rows.some(({ kind }) => kind === "fold")).toBe(true);
@@ -116,6 +119,16 @@ describe("layout", () => {
     expect(at(3).keys).toBe(at(3).keys);
     // Another step is other rows.
     expect(at(2).every).not.toBe(first.every);
+  });
+
+  it("keeps the keys while what a row shows changes and no row moves, as while a block streams", () => {
+    const events = turns(3);
+    const layOut = createLayout(shown, "show");
+    // Two formatters make the same rows of other block objects.
+    const first = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
+    const again = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
+    expect(again.every).not.toBe(first.every);
+    expect(again.keys).toBe(first.keys);
   });
 
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {

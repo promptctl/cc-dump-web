@@ -1,4 +1,5 @@
 import { memo } from "react";
+import type { FormattedExchange } from "../format/format.ts";
 import type { Segment } from "./history.ts";
 import { clockTime } from "./rows.ts";
 
@@ -29,23 +30,38 @@ export const TurnStrip = memo(function TurnStrip({
         →
       </button>
       <ol className="flex h-3 min-w-0 flex-1 items-stretch gap-px overflow-hidden">
-        {segments.map(({ formatted: { exchange, facts } }, index) => {
-          const step = index + 1;
-          const failed = exchange.end?.outcome === "error" || (facts.status !== undefined && facts.status >= 400);
-          return (
-            <li key={exchange.trace_id} className="flex max-w-3 min-w-px flex-1">
-              <button
-                type="button"
-                aria-current={step === shown ? "step" : undefined}
-                title={[`${step}`, clockTime(facts.began), facts.model, failed ? "failed" : undefined].filter((fact) => fact !== undefined).join(" · ")}
-                className={`flex-1 rounded-[1px] ${marks[step === shown ? "shown" : failed ? "failed" : "step"]}`}
-                onClick={() => onGo(step)}
-              />
-            </li>
-          );
-        })}
+        {segments.map(({ formatted }, index) => (
+          <Mark key={formatted.exchange.trace_id} formatted={formatted} step={index + 1} isShown={index + 1 === shown} onGo={onGo} />
+        ))}
       </ol>
     </nav>
+  );
+});
+
+// A step's mark. Memoized on what it shows: the formatter keeps an exchange the same object while it is unchanged, so
+// as one streams, or the step shown moves, only the marks it changes render again.
+const Mark = memo(function Mark({
+  formatted: { exchange, facts },
+  step,
+  isShown,
+  onGo,
+}: {
+  formatted: FormattedExchange;
+  step: number;
+  isShown: boolean;
+  onGo: (step: number) => void;
+}) {
+  const failed = exchange.end?.outcome === "error" || (facts.status !== undefined && facts.status >= 400);
+  return (
+    <li className="flex max-w-3 min-w-px flex-1">
+      <button
+        type="button"
+        aria-current={isShown ? "step" : undefined}
+        title={[`${step}`, clockTime(facts.began), facts.model, failed ? "failed" : undefined].filter((fact) => fact !== undefined).join(" · ")}
+        className={`flex-1 rounded-[1px] ${marks[isShown ? "shown" : failed ? "failed" : "step"]}`}
+        onClick={() => onGo(step)}
+      />
+    </li>
   );
 });
 

@@ -6,7 +6,7 @@ import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { createHistory } from "./history.ts";
-import { createLayout, type Layout } from "./rows.ts";
+import { createLayout, foldKey, type Layout } from "./rows.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, type Match } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -203,6 +203,10 @@ describe("search", () => {
     expect(adjacent(found, undefined, at, "previous", pattern, keys)!.match.key).toBe("b/request/http");
     // At the end, going on wraps to the first match.
     expect(adjacent(found, undefined, { at: "end" }, "next", pattern, keys)!.match.key).toBe("a/request/http");
+    // A fold at the top steps from its first row, as that row at the top would.
+    const fold = { at: "row", key: foldKey("thread:b/message.0/content.0"), offset: 0 } as const;
+    expect(adjacent(found, undefined, fold, "next", pattern, keys)!.match.key).toBe("thread:b/message.0/content.0");
+    expect(adjacent(found, undefined, fold, "previous", pattern, keys)!.match.key).toBe("b/request/http");
   });
 
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
