@@ -269,7 +269,7 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
-    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_9ch_12ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
+    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_9ch_12ch_14ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
       <span className="text-right text-foreground-muted">{facts.ordinal}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
@@ -283,6 +283,7 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
       </span>
       <Fact label="in" count={facts.input} />
       <Fact label="cache" count={facts.cacheRead} />
+      <Fact label="written" count={facts.cacheWritten} />
       <Fact label="out" count={facts.output} />
       <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}

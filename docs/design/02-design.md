@@ -52,7 +52,7 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 │ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ▣  ·  ·     turn strip     │
 ├────────────────────────────────────┬────────────────────────────────────┬──┬──┤
 │ 11  14:03:19  opus-5-5  2.1s  200  │ 12  14:03:22  opus-5-5  3.4s  200  │▒▒│  │
-│     in 46.1k  cache 44k  out 390   │     in 48.2k  cache 46k  out 812   │▒▒│  │
+│ in 46k cache 44k written 2k out 390│ in 48k cache 46k written 2k out 812│▒▒│  │
 │ ▌▸ HTTP request              929   │ ▌▸ HTTP request              929   │░░│  │
 │ ▌▸ parameters              12.5k   │ ▌▸ parameters              12.5k   │░░│  │
 │ ▌▸ tool definitions  63     183k   │ ▌▸ tool definitions  63     183k   │▒▒│  │
