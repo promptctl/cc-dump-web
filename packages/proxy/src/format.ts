@@ -23,7 +23,8 @@ export type Recorded =
   | ({ type: "end" } & Ending);
 export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
 
-// One recording in `GET /recordings`: a `.jsonl` file in the recordings directory.
+// One recording in `GET /recordings`: a `.jsonl` file in the recordings directory. `POST /recordings` answers the one it
+// created.
 export type Listing = { name: string };
 
 // [LAW:one-source-of-truth] The names of recordings, the writer's formats and their reader, side by side. A recording is
@@ -67,13 +68,17 @@ export function agentBaseUrl(baseUrl: string, name: string): string {
   return `${baseUrl}${agentPath}${name.slice(0, -".jsonl".length)}`;
 }
 
+// The agent's path, its stem, and what follows the stem: the rest of the URL's path, a query, or nothing, which is a
+// request to the base URL itself.
+const agentUrl = new RegExp(`^${agentPath}([^/?#]+)(/.*|\\?.*)?$`);
+
 // The recording an agent's request belongs to, and its URL without the path the proxy gave the agent, which is the URL
-// as the upstream knows it. Undefined for a request that is no agent's: one naming none, or a stem that is not a
-// recording's name, which is the proxy run's own.
+// as the upstream knows it: a request to the base URL itself is the upstream's `/`, with its query. Undefined for a
+// request that is no agent's: one naming none, or a stem that is not a recording's name, which is the proxy run's own.
 export function agentOf(url: string): { name: string; url: string } | undefined {
-  const [, stem, rest] = new RegExp(`^${agentPath}([^/?#]+)(/.*)$`).exec(url) ?? [];
+  const [, stem, rest = ""] = agentUrl.exec(url) ?? [];
   const name = `${stem}.jsonl`;
-  return stem !== undefined && recordingStart(name) !== undefined ? { name, url: rest! } : undefined;
+  return stem !== undefined && recordingStart(name) !== undefined ? { name, url: rest.startsWith("/") ? rest : `/${rest}` } : undefined;
 }
 
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
@@ -99,11 +104,14 @@ export type ProxyInfo = { base_url: string };
 export function parseListings(json: string): Listing[] {
   const listings = parseJson(json, "recordings list");
   if (!Array.isArray(listings)) throw new Error("recordings list: is not an array");
-  return listings.map((listing: unknown) => {
-    const f = fields(listing, "recordings list entry");
-    return { name: f.string("name") };
-  });
+  return listings.map((listing: unknown) => listingOf(listing, "recordings list entry"));
 }
+
+export function parseListing(json: string): Listing {
+  return listingOf(parseJson(json, "recording"), "recording");
+}
+
+const listingOf = (listing: unknown, what: string): Listing => ({ name: fields(listing, what).string("name") });
 
 export function parseRecordingEnd(json: string): RecordingEnd {
   return { unterminated_bytes: fields(parseJson(json, "recording end"), "recording end").integer("unterminated_bytes") };

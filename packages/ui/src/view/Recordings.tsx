@@ -1,9 +1,10 @@
-import { parseRecordingName, type Listing } from "@cc-dump/proxy/format";
-import { useEffect, useRef, useState } from "react";
+import { parseRecordingName } from "@cc-dump/proxy/format";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { onScreen, type OpenRecording, type Reading } from "../reading.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
+import { entriesOf, type Entry } from "./listings.ts";
 import { useView, view } from "./state.ts";
 
 // The recordings control (docs/design/01-mvp.md, F7): the recording open, and the list of every recording to open
@@ -13,13 +14,14 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
   const open = useView((state) => state.open);
   const shown = onScreen(reading);
   const list = useRef<HTMLDivElement>(null);
+  const label = useMemo(() => labelOf(open), [open]);
   const pick = (opened: string) => {
     view.open(opened);
     list.current!.hidePopover();
   };
   return (
     <div className="flex items-center gap-2 text-xs">
-      <HeaderPopover id="recordings" popover={list} label={labelOf(open)} className="min-w-72 p-1">
+      <HeaderPopover id="recordings" popover={list} label={label} className="min-w-72 p-1">
         <RecordingList connection={connection} shown={shown} pick={pick} />
       </HeaderPopover>
     </div>
@@ -27,7 +29,7 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
 }
 
 // [LAW:types-are-the-program] Where the list stands: being read, read, or failed.
-type Listed = { state: "listing" } | { state: "listed"; listings: Listing[] } | { state: "failed"; error: Error };
+type Listed = { state: "listing" } | { state: "listed"; entries: Entry[] } | { state: "failed"; error: Error };
 
 // Every recording, newest first. Read as it mounts, which is as the list opens. The one on screen is not opened again:
 // that would read it again from its start, and lose the reader's place in it.
@@ -36,7 +38,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
   useEffect(() => {
     const abort = new AbortController();
     connection.recordings(abort.signal).then(
-      (listings) => setListed({ state: "listed", listings }),
+      (listings) => setListed({ state: "listed", entries: entriesOf(listings) }),
       // An abort rejects what it cut short; that is the list closing, not failing.
       (error: Error) => abort.signal.aborted || setListed({ state: "failed", error }),
     );
@@ -50,7 +52,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
     case "listed":
       return (
         <ul>
-          {newestFirst(listed.listings).map((listing) => (
+          {listed.entries.map(({ listing, parsed }) => (
             <li key={listing.name}>
               <button
                 type="button"
@@ -61,8 +63,8 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
                 className="menu-item justify-between gap-4"
                 onClick={() => pick(listing.name)}
               >
-                <span>{startOf(listing.name)}</span>
-                <span className="text-foreground-muted">{kindOf(listing.name)}</span>
+                <span>{startOf(listing.name, parsed)}</span>
+                <span className="text-foreground-muted">{kindOf(parsed)}</span>
               </button>
             </li>
           ))}
@@ -71,21 +73,14 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
   }
 }
 
-// The recordings by their start, the newest first. A file no part of the app named has no start, and comes after every
-// recording that has one.
-function newestFirst(listings: Listing[]): Listing[] {
-  const time = ({ name }: Listing) => parseRecordingName(name)?.start.getTime() ?? 0;
-  return listings.toSorted((a, b) => time(b) - time(a));
-}
-
 // When a recording started, in the reader's local time, or its name for a file no part of the app named.
-function startOf(name: string): string {
-  return parseRecordingName(name)?.start.toLocaleString() ?? name;
+function startOf(name: string, parsed: Entry["parsed"]): string {
+  return parsed?.start.toLocaleString() ?? name;
 }
 
 // What a recording is of: an agent's process, or the proxy's run, which holds the traffic no agent claimed.
-function kindOf(name: string): string {
-  switch (parseRecordingName(name)?.kind) {
+function kindOf(parsed: Entry["parsed"]): string {
+  switch (parsed?.kind) {
     case "agent":
       return "agent";
     case "run":
@@ -97,5 +92,5 @@ function kindOf(name: string): string {
 
 // The control's label: the recording open by its start, or the control's name when none is.
 function labelOf(open: OpenRecording): string {
-  return open === null ? "Recordings" : `Recording of ${startOf(open)}`;
+  return open === null ? "Recordings" : `Recording of ${startOf(open, parseRecordingName(open))}`;
 }

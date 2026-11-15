@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -9,7 +9,7 @@ import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import { agentBaseUrl, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
+import { agentBaseUrl, parseListing, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
 import { createRecordings, type Recordings } from "./recordings.ts";
 import { proxyProcess, runName, subscribe, type ServerSentEvent } from "./testing.ts";
 
@@ -25,9 +25,10 @@ function recordingsDir() {
 const agentName = recordingName(new Date("2026-11-13T08:00:00.000Z"));
 const pastRun = "run-20261101T000000.000Z.jsonl";
 
-// The proxy recording into the directory, an upstream that answers every request, and the reader.
+// The proxy recording into the directory, an upstream that answers every request, and the reader. `recordings.create()`
+// makes `agentName`, the moment the proxy's clock stands at.
 async function proxyAndReader(dir = recordingsDir(), wrap = (recordings: Recordings) => recordings) {
-  const recordings = wrap(createRecordings(() => {}, dir, runName));
+  const recordings = wrap(createRecordings(() => {}, dir, runName, () => new Date("2026-11-13T08:00:00.000Z")));
   const upstream = await serving((_req, res) => res.end("answer"));
   const proxy = await serving(createProxy(parseUpstream(upstream.url), recordings));
   const readerLog = eventLog();
@@ -82,29 +83,64 @@ describe("createReader", () => {
   it("serves a recording cut mid-line by a crash up to its last whole line, counting the cut bytes", async () => {
     const dir = recordingsDir();
     writeFileSync(join(dir, pastRun), '{"a":1}\n{"b":');
-    const { reader } = await proxyAndReader(dir);
+    const { reader, readerLog } = await proxyAndReader(dir);
 
     const stream = await subscribe(reader.port, `/recordings/${pastRun}`);
 
     expect(await stream.take(2)).toEqual([...expected(['{"a":1}']), { event: "end", data: '{"unterminated_bytes":5}' }]);
+    expect(await readerLog.next()).toMatchObject({ event: "catch_up", followed: false, to: 8, unterminated_bytes: 5 });
   });
 
-  it("follows an agent's recording that a crash cut mid-line, sending its last whole line, then only whole events once the process continues it", async () => {
+  it("ends an agent's recording this run holds no writer for, as finished, until a request continues it", async () => {
     const dir = recordingsDir();
     writeFileSync(join(dir, agentName), '{"a":1}\n{"b":');
-    const { reader, exchange } = await proxyAndReader(dir);
+    const { reader, readerLog, exchange } = await proxyAndReader(dir);
 
-    const stream = await subscribe(reader.port, `/recordings/${agentName}`);
-    expect(await stream.take(1)).toEqual(expected(['{"a":1}']));
+    const finished = await subscribe(reader.port, `/recordings/${agentName}`);
+    expect(await finished.take(2)).toEqual([...expected(['{"a":1}']), { event: "end", data: '{"unterminated_bytes":5}' }]);
+    expect(await readerLog.next()).toMatchObject({ event: "catch_up", followed: false });
+
+    // The agent outlived the proxy's restart and goes on: its recording is continued after its last whole line, and is
+    // this run's to follow from then on, so only whole events are sent.
     await exchange("/v1/models");
     const lines = linesOf(join(dir, agentName));
+    const stream = await subscribe(reader.port, `/recordings/${agentName}`, { "last-event-id": String(Buffer.byteLength('{"a":1}\n')) });
     const sent = await stream.take(lines.length - 1);
+    expect(await readerLog.next()).toMatchObject({ event: "catch_up", followed: true, unterminated_bytes: 0 });
     stream.res.destroy();
 
     expect(lines[0]).toBe('{"a":1}');
     expect(readFileSync(join(dir, agentName), "utf8")).not.toContain('{"b":');
     expect(sent).toEqual(expected(lines.slice(1), Buffer.byteLength('{"a":1}\n')));
     expect(sent.map(({ data }) => (JSON.parse(data) as RecordedEvent).type)).toEqual(["request", "request_trailers", "response", "response_body", "response_trailers", "end"]);
+  });
+
+  it("counts the bytes after the last whole line of a recording it follows in its catch_up, as it does of one it does not", async () => {
+    const { dir, reader, readerLog, recordings } = await proxyAndReader();
+    const name = recordings.create();
+    // What a write that failed left past the writer's last whole event.
+    writeFileSync(join(dir, name), '{"a":1}\n{"b":');
+
+    const stream = await subscribe(reader.port, `/recordings/${name}`);
+
+    expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "ok", followed: true, unterminated_bytes: 5 });
+    stream.res.destroy();
+  });
+
+  it("measures a recording no writer holds once, and reads no further than it measured while the file grows", async () => {
+    const dir = recordingsDir();
+    const line = `${JSON.stringify({ data: "x".repeat(1000) })}\n`;
+    writeFileSync(join(dir, pastRun), line.repeat(500));
+    const { reader } = await proxyAndReader(dir);
+
+    const stream = await subscribe(reader.port, `/recordings/${pastRun}`);
+    await stream.next();
+    appendFileSync(join(dir, pastRun), line.repeat(50));
+    const events = [];
+    do events.push(await stream.next());
+    while (events.at(-1)!.event !== "end");
+
+    expect(events.length).toBe(499 + 1);
   });
 
   it.each([
@@ -132,8 +168,9 @@ describe("createReader", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // The run's recording spelled in lower case: a case-insensitive filesystem would open it.
-  it.each(["run-20200101T000000.000Z.jsonl", "..%2F..%2Fsecret.jsonl", "notes.txt", "notes.jsonl", runName.toLowerCase(), agentName.toLowerCase()])(
+  // The run's recording spelled in lower case: a case-insensitive filesystem would open it. An agent's name that no
+  // file has and no writer holds is a typo or a stale name, which is not waited on for ever.
+  it.each(["run-20200101T000000.000Z.jsonl", "..%2F..%2Fsecret.jsonl", "notes.txt", "notes.jsonl", runName.toLowerCase(), agentName.toLowerCase(), agentName])(
     "answers 404 for %s, which is not a recording",
     async (name) => {
       const { reader, exchange } = await proxyAndReader();
@@ -146,7 +183,7 @@ describe("createReader", () => {
     },
   );
 
-  it("lists the files of the directory, sorted by name, and none an agent's recording that has no file yet", async () => {
+  it("lists the files of the directory, sorted by name, whatever they are named", async () => {
     const dir = recordingsDir();
     for (const name of [agentName, pastRun, "notes.jsonl", "notes.txt"]) writeFileSync(join(dir, name), "");
     const { reader } = await proxyAndReader(dir);
@@ -156,13 +193,14 @@ describe("createReader", () => {
     expect(JSON.parse((await buffer(res)).toString())).toEqual([{ name: agentName }, { name: "notes.jsonl" }, { name: pastRun }]);
   });
 
-  it("follows an agent's recording from before its file exists, creating neither a file nor a listing entry, and sends its events once its process writes them", async () => {
-    const { dir, reader, readerLog, exchange, lines } = await proxyAndReader();
+  it("follows a recording the run made for an agent about to launch, empty until its process writes, and sends its events once it does", async () => {
+    const { dir, recordings, reader, readerLog, exchange, lines } = await proxyAndReader();
+    expect(recordings.create()).toBe(agentName);
 
     const stream = await subscribe(reader.port, `/recordings/${agentName}`);
     expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "ok", followed: true, from: 0, to: 0, events_read: 0 });
-    expect(readdirSync(dir)).toEqual([]);
-    expect(JSON.parse((await buffer(await send(reader.port, { path: "/recordings" }))).toString())).toEqual([]);
+    expect(readdirSync(dir)).toEqual([agentName]);
+    expect(JSON.parse((await buffer(await send(reader.port, { path: "/recordings" }))).toString())).toEqual([{ name: agentName }]);
 
     await exchange("/v1/models");
 
@@ -196,7 +234,8 @@ describe("createReader", () => {
         };
       },
     });
-    const { reader, readerLog } = await proxyAndReader(undefined, counted);
+    const { recordings, reader, readerLog } = await proxyAndReader(undefined, counted);
+    recordings.create();
 
     const stream = await subscribe(reader.port, `/recordings/${agentName}`);
     await readerLog.next();
@@ -281,7 +320,6 @@ describe("createReader", () => {
 
   it("sends each event written whole after a write that failed part-way as its own event", async () => {
     const dir = recordingsDir();
-    const path = join(dir, agentName);
     const upstream = await serving((_req, res) => res.end("answer"));
     // A file size limit of 8 blocks: 4096 or 8192 bytes, as the shell counts them. The exchange's first
     // event, its request, is over 10 KB: POSIX has a write with less room than it asks for write what fits,
@@ -289,8 +327,11 @@ describe("createReader", () => {
     // events are small enough to fit below the limit.
     const { proxyPort, readerPort } = await proxyProcess(upstream.url, dir, "8");
 
-    const stream = await subscribe(readerPort, `/recordings/${agentName}`);
-    await buffer(await send(proxyPort, { path: `${agentBaseUrl("", agentName)}/v1/models?pad=${"x".repeat(10_000)}` }));
+    // The recording is made by the proxy, over its reader port, as the app server's launch asks.
+    const { name } = parseListing((await buffer(await send(readerPort, { method: "POST", path: "/recordings" }))).toString());
+    const path = join(dir, name);
+    const stream = await subscribe(readerPort, `/recordings/${name}`);
+    await buffer(await send(proxyPort, { path: `${agentBaseUrl("", name)}/v1/models?pad=${"x".repeat(10_000)}` }));
     const sent: ServerSentEvent[] = [];
     do sent.push(await stream.next());
     while ((JSON.parse(sent.at(-1)!.data) as RecordedEvent).type !== "end");

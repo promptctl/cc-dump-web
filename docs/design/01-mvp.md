@@ -103,7 +103,7 @@ Hot reload is designed in first, because it decides where every other piece live
 
 | Part | Reloads | Does |
 |---|---|---|
-| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, lists the recordings, and serves a recording to readers from any position, then live. Reads its port and upstream from its settings file at its start. |
+| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, lists the recordings, and serves a recording to readers from any position: one the proxy run is writing to its end and then live, any other to its end. Reads its port and upstream from its settings file at its start. |
 | App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores the settings it launches with, relays logs. |
 | Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
 

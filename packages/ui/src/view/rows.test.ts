@@ -163,6 +163,10 @@ describe("layout", () => {
     // Every row is the same however the reveal changes, and exchange b's rows are the ones laid out before.
     expect(revealed.every.rows.map(({ key }) => key)).toEqual(everyKey);
     expect(revealed.every.keys).toBe(first.every.keys);
+    // Not rebuilt: the one object, so a search over its rows is not run again by a step of the search.
+    expect(revealed.every).toBe(first.every);
+    expect(layOut(formatted, "b/request/tools").every).toBe(first.every);
+    expect(layOut(formatted).every).toBe(first.every);
     expect(revealed.keys.indexOf("a/request/tools")).toBe(revealed.rows.findIndex(({ key }) => key === "a/request/tools"));
     for (const row of first.rows.filter(({ key }) => key.startsWith("b"))) expect(revealed.rows).toContain(row);
     const moved = layOut(formatted, "b/request/tools");

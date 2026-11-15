@@ -27,8 +27,9 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 type Places = { keys: string[]; index: Map<string, number> };
 
 // One exchange's rows listed and the places of their keys, every row of it and the places of theirs, and `revealed`, the
-// key of the hidden block they were laid out with listed, when it is in this exchange.
-type ExchangeRows = { trace: string; rows: Row[]; listed: Places; every: Row[]; all: Places; revealed: string | undefined };
+// key of the hidden block they were laid out with listed, when it is in this exchange. `formatted`: the exchange they
+// are of, which alone decides every row of it.
+type ExchangeRows = { trace: string; formatted: FormattedExchange; rows: Row[]; listed: Places; every: Row[]; all: Places; revealed: string | undefined };
 
 // A group's rows, its title and every block, each sized, whichever categories are hidden.
 type GroupRows = { title: Extract<Row, { kind: "group" }>; blocks: Extract<Row, { kind: "block" }>[] };
@@ -67,8 +68,7 @@ export function createLayout(
   let last: { exchanges: ExchangeRows[]; layout: Layout } = {
     exchanges: [],
     layout: { rows: [], keys: keysOf([], (own) => own.listed), every: { rows: [], keys: keysOf([], (own) => own.all) } },
-  };
-  return (formatted, revealed) => {
+  };  return (formatted, revealed) => {
     const before = new Map(last.exchanges.map((own) => [own.trace, own]));
     const exchanges = formatted.map((exchange) => {
       const trace = exchange.exchange.trace_id;
@@ -86,10 +86,14 @@ export function createLayout(
       layout: {
         rows: concat(exchanges, (own) => own.rows),
         keys: sameAs((own) => own.listed) ? last.layout.keys : keysOf(exchanges, (own) => own.listed),
-        every: {
-          rows: concat(exchanges, (own) => own.every),
-          keys: sameAs((own) => own.all) ? last.layout.every.keys : keysOf(exchanges, (own) => own.all),
-        },
+        // [LAW:one-source-of-truth] Every row depends on the exchanges alone, never on `revealed`, so the same exchanges
+        // are the same `every`, and what memoizes on it (the search) is not run again by a step of the search.
+        every: sameAs((own) => own.formatted)
+          ? last.layout.every
+          : {
+              rows: concat(exchanges, (own) => own.every),
+              keys: sameAs((own) => own.all) ? last.layout.every.keys : keysOf(exchanges, (own) => own.all),
+            },
       },
     };
     return last.layout;
@@ -123,7 +127,7 @@ function exchangeRows(
   // is.
   const listed = before !== undefined && same(before.listed.keys, keys) ? before.listed : listedPlaces(keys, all);
   const places = before !== undefined && same(before.all.keys, all) ? before.all : { keys: all, index: new Map(all.map((key, at) => [key, at])) };
-  return { trace, rows, listed, every, all: places, revealed };
+  return { trace, formatted, rows, listed, every, all: places, revealed };
 }
 
 // The places of the keys listed, `keys`, among those of every row, `all`. A row not listed is at the row listed before

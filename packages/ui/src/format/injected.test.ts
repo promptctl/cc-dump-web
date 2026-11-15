@@ -38,15 +38,65 @@ describe("split", () => {
     ]);
   });
 
-  it("gives hook output, which names its hook, each to the next hook or the end", () => {
-    const text = "SessionStart hook additional context: Be explanatory.\n\n# Environment\ncwd: /work\n\nUserPromptSubmit hook additional context: Load the craft skill.";
-    expect(typed(text)).toEqual([
-      { kind: "hook", name: "SessionStart", text: "SessionStart hook additional context: Be explanatory.\n\n# Environment\ncwd: /work\n\n" },
+  it("gives a system-role message's hook output, which names its hook, each to the next opening or the end", () => {
+    const text = "SessionStart hook additional context: Be explanatory.\n\nUserPromptSubmit hook additional context: Load the craft skill.";
+    expect(sent(text)).toEqual([
+      { kind: "hook", name: "SessionStart", text: "SessionStart hook additional context: Be explanatory.\n\n" },
       { kind: "hook", name: "UserPromptSubmit", text: "UserPromptSubmit hook additional context: Load the craft skill." },
     ]);
+  });
+
+  it("keeps a line that looks like hook output as what a person said, and in a reminder as the reminder's", () => {
+    const line = "PreToolUse hook additional context: x";
+    expect(typed(line)).toEqual([{ kind: "said", text: line }]);
+    expect(typed(`Look:\n${line}\n\nWhy?`)).toEqual([{ kind: "said", text: `Look:\n${line}\n\nWhy?` }]);
     expect(typed(reminder("PostToolUse:Read hook additional context: Mind the size."))).toEqual([
+      { kind: "reminder", text: reminder("PostToolUse:Read hook additional context: Mind the size.") },
+    ]);
+  });
+
+  it("opens no section or hook inside a tag: a heading in a reminder's CLAUDE.md stays in the CLAUDE.md", () => {
+    const operations = instructions("/work/app/CLAUDE.md", "project instructions", "# OPERATIONS\nWork well.\n\nSessionStart hook additional context: quoted");
+    const inside = reminder(`${preamble}\n\n${operations}`);
+    for (const pieces of [typed(inside), sent(inside)]) {
+      expect(pieces).toEqual([
+        { kind: "reminder", text: `<system-reminder>\n${preamble}\n\n` },
+        { kind: "claude_md", path: "/work/app/CLAUDE.md", text: `${operations}\n</system-reminder>` },
+      ]);
+    }
+    const hooked = "<user-prompt-submit-hook>\n# Tip\nBe brief.\n</user-prompt-submit-hook>";
+    expect(sent(`${hooked}\n\n# Environment\ncwd: /work`)).toEqual([
+      { kind: "hook", name: "UserPromptSubmit", text: `${hooked}\n\n` },
+      { kind: "section", title: "Environment", text: "# Environment\ncwd: /work" },
+    ]);
+  });
+
+  it("opens no section or hook inside a fenced code block, whichever fence opens it, and the text after the fence closes does", () => {
+    const backticks = "# Setup\nRun:\n```sh\n# install deps\nnpm i\nSessionStart hook additional context: not a hook\n```\nDone.\n\n";
+    const tildes = "# Setup\n~~~\n# install deps\n~~~\n\n";
+    const unclosed = "# Setup\n```\n# install deps\nstill code";
+    const mismatched = "# Setup\n```\n~~~\n# install deps\n```\n\n";
+    expect(sent(`${backticks}# Next\nMore.`)).toEqual([
+      { kind: "section", title: "Setup", text: backticks },
+      { kind: "section", title: "Next", text: "# Next\nMore." },
+    ]);
+    expect(sent(`${tildes}# Next\nMore.`)).toEqual([
+      { kind: "section", title: "Setup", text: tildes },
+      { kind: "section", title: "Next", text: "# Next\nMore." },
+    ]);
+    expect(sent(unclosed)).toEqual([{ kind: "section", title: "Setup", text: unclosed }]);
+    expect(sent(`${mismatched}# Next`)).toEqual([
+      { kind: "section", title: "Setup", text: mismatched },
+      { kind: "section", title: "Next", text: "# Next" },
+    ]);
+  });
+
+  it("does not let a fence left open in a CLAUDE.md hide the next file's contents", () => {
+    const first = instructions("/work/app/CLAUDE.md", "project instructions", "```\nnever closed");
+    expect(typed(reminder(`${first}\n\n${global}`))).toEqual([
       { kind: "reminder", text: "<system-reminder>\n" },
-      { kind: "hook", name: "PostToolUse:Read", text: "PostToolUse:Read hook additional context: Mind the size.\n</system-reminder>" },
+      { kind: "claude_md", path: "/work/app/CLAUDE.md", text: `${first}\n\n` },
+      { kind: "claude_md", path: "/home/ann/.claude/CLAUDE.md", text: `${global}\n</system-reminder>` },
     ]);
   });
 
@@ -80,6 +130,8 @@ describe("split", () => {
       `\n\n${reminder("Padded.")}  \n\n`,
       reminder(""),
       `${global}\n\nUserPromptSubmit hook additional context: z`,
+      `# A\n\`\`\`\n# B\nSessionStart hook additional context: q\n\`\`\`\n${reminder(`# C\n${global}`)}\n~~~\n# D`,
+      "```\n# never closed\n",
     ];
     for (const text of texts) {
       expect(typed(text).map((piece) => piece.text).join("")).toBe(text);

@@ -3,14 +3,22 @@ import { buffer } from "node:stream/consumers";
 import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { describe } from "@cc-dump/log/describe";
-import { agentBaseUrl, recordingName, type ProxyInfo } from "@cc-dump/proxy/format";
+import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
 import { launchSettings } from "./settings.ts";
 import { TmuxRefused, type Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
-// tmux server, the running proxy, and `directory`, the one the app was started in, where every agent it launches starts.
-export type Parts = { log: Log; settingsPath: string; tmux: Tmux; proxyInfo: () => Promise<ProxyInfo>; directory: string };
+// tmux server, the running proxy (what it says it is, and the recording it makes for an agent), and `directory`, the one
+// the app was started in, where every agent it launches starts.
+export type Parts = {
+  log: Log;
+  settingsPath: string;
+  tmux: Tmux;
+  proxyInfo: () => Promise<ProxyInfo>;
+  proxyRecording: () => Promise<Listing>;
+  directory: string;
+};
 
 // A request the app server refuses, answered with `status` and the refusal's message.
 class Refused extends Error {
@@ -25,7 +33,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 
 // The app server restarts on every source change, so it holds nothing that must survive one: the settings are on disk,
 // and tmux and the proxy are asked again on each request.
-export function createApp({ log, settingsPath, tmux, proxyInfo, directory }: Parts): Handler {
+export function createApp({ log, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
   const readSettings = async (trace_id: string) =>
@@ -41,14 +49,16 @@ export function createApp({ log, settingsPath, tmux, proxyInfo, directory }: Par
 
   // `POST /launch`: stores the settings asked for, then opens the agent's window, pointed at the running proxy by a path
   // of its own, which is how the proxy tells its process's requests from every other's (`agentBaseUrl`). The command is
-  // run as the user wrote it. The launch's moment names the recording that process will be.
+  // run as the user wrote it. The proxy makes the recording that process will be, since it is the proxy that writes it.
   const launch: Answer = async (req, { trace_id }): Promise<Launched> => {
     const { session, command } = parsed(parseLaunch, (await buffer(req)).toString());
     launchSettings.write(settingsPath, { session, command });
     const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info).catch((error: unknown) => {
       throw new Refused(502, `The proxy did not say where agents reach it: ${describe(error)}`, { cause: error });
     });
-    const recording = recordingName(new Date());
+    const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name })).catch((error: unknown) => {
+      throw new Refused(502, `The proxy did not make a recording for the agent: ${describe(error)}`, { cause: error });
+    });
     const window = await loggedIn(
       log,
       trace_id,

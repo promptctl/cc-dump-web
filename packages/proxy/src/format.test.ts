@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import {
   agentBaseUrl,
   agentOf,
+  parseListing,
   parseListings,
   parseProxyStatus,
   parseReadFailure,
@@ -69,6 +70,7 @@ describe("the reader's messages", () => {
   it("reads back a recordings list, a recording's end, and a read's failure", () => {
     const listings = [{ name: "20261113T080000.000Z.jsonl" }, { name: "run-20261113T090000.000Z.jsonl" }];
     expect(parseListings(JSON.stringify(listings))).toEqual(listings);
+    expect(parseListing(JSON.stringify(listings[0]))).toEqual(listings[0]);
     expect(parseRecordingEnd(JSON.stringify({ unterminated_bytes: 12 }))).toEqual({ unterminated_bytes: 12 });
     expect(parseReadFailure(JSON.stringify({ message: "EISDIR: illegal operation on a directory, read" }))).toEqual({
       message: "EISDIR: illegal operation on a directory, read",
@@ -78,6 +80,8 @@ describe("the reader's messages", () => {
   it("refuses a list, an end, or a failure of another shape", () => {
     expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
     expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name is not a string");
+    expect(() => parseListing("[]")).toThrow("recording: is not an object");
+    expect(() => parseListing('{"name":7}')).toThrow("recording: name is not a string");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
     expect(() => parseReadFailure('{"error":"EISDIR"}')).toThrow("read failure: message is not a string");
   });
@@ -133,9 +137,20 @@ describe("an agent's path", () => {
   });
 
   it.each([
+    ["", "/"],
+    ["?x=1", "/?x=1"],
+    ["?", "/?"],
+  ])("names its recording for a request to the base URL itself, %j, which is the upstream's %j", (rest, url) => {
+    expect(agentOf(`/agent/20261115T004215.438Z${rest}`)).toEqual({ name, url });
+  });
+
+  it.each([
     "/v1/messages",
-    "/agent/20261115T004215.438Z",
-    "/agent/20261115T004215.438Z?x=1",
+    "/agent/20261115T004215.438Z#fragment",
+    "/agent/20261115T004215.438Zx",
+    "/agent/20261115T004215.438Z.jsonl",
+    "/agent/notes",
+    "/agent/notes?x=1",
     "/agent/notes/v1/messages",
     "/agent/run-20261115T004215.438Z/v1/messages",
     "/agent//v1/messages",

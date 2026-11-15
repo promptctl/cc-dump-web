@@ -47,12 +47,14 @@ export type Writer = { written: () => number; append: (line: Buffer) => void };
 
 // Each event is written before the next is handled, so a proxy killed at any moment leaves every event
 // it saw up to then, and no traffic leaves no file.
-// [LAW:one-source-of-truth] The writer starts at the recording's `recordedLength`, so one already at the path is
-// continued after its last whole event: an agent outlives a proxy restart and goes on sending to its path. The first
-// write creates the file if it is not there, and every later write opens it without creating it, so one deleted
-// mid-run fails loudly. Each write cuts the file back to `written` before appending the event, so what a failed write
-// left, or a crash, is gone at the next write, every line below `written` is a whole event, and those bytes never
-// change once written.
+// [LAW:one-source-of-truth] The file, not this writer's count of it, is the truth of what it holds. The writer starts at
+// the recording's `recordedLength`, so one already at the path is continued after its last whole event: an agent
+// outlives a proxy restart and goes on sending to its path. The first write creates the file if it is not there, and
+// every later write opens it without creating it, so one deleted mid-run fails loudly. Each write cuts the file back to
+// `written` before appending the event, so what a failed write left, or a crash, is gone at the next write, and every
+// line below `written` is a whole event. Another process may be writing the same file, an old proxy draining a stream
+// while a restarted one takes the agent's next request: a file whose size is not `written` has grown, so `written`
+// becomes the file's own last newline first, and the other's whole events are never cut, only a fragment.
 export function createWriter(path: string): Writer {
   let written = recordedLength(path).terminated;
   let flags = O_WRONLY | O_APPEND | O_CREAT;
@@ -61,20 +63,16 @@ export function createWriter(path: string): Writer {
     append: (line) => {
       const fd = openSync(path, flags);
       flags = O_WRONLY | O_APPEND;
-      appendAfter(fd, written, line);
+      try {
+        if (fstatSync(fd).size !== written) written = recordedLength(path).terminated;
+        ftruncateSync(fd, written);
+        appendFileSync(fd, line);
+      } finally {
+        closeSync(fd);
+      }
       written += line.length;
     },
   };
-}
-
-// Cuts the file to `length`, appends `line` after it, and closes the file, or throws.
-function appendAfter(fd: number, length: number, line: Buffer) {
-  try {
-    ftruncateSync(fd, length);
-    appendFileSync(fd, line);
-  } finally {
-    closeSync(fd);
-  }
 }
 
 // The line the recording holds for `seen`: one JSON event, the credentials removed.

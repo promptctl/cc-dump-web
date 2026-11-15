@@ -42,6 +42,7 @@ describe("POST /launch", () => {
     const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions" });
     expect(res.status).toBe(200);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "ok", base_url: "http://127.0.0.1:3344" });
+    expect(await work()).toMatchObject({ event: "proxy_recording", outcome: "ok", recording: expect.any(String) });
     expect(await work()).toMatchObject({
       event: "launch",
       outcome: "ok",
@@ -96,6 +97,26 @@ describe("POST /launch", () => {
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
     expect(await next()).toMatchObject({ event: "request", status: 502, outcome: "error", error: expect.stringContaining("did not say where agents reach it") });
     expect(parseFailure(await res.text())).toEqual({ error: "The proxy did not say where agents reach it: GET http://127.0.0.1:3347/info: fetch failed" });
+    expect(opened).toEqual([]);
+    expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude" });
+  });
+
+  it("launches the agent into the recording the proxy made, named by the proxy and not by the app", async () => {
+    const proxyRecording = async () => ({ name: "20200102T030405.006Z.jsonl" });
+    const { opened, launch } = await app({ proxyRecording });
+    const launched = parseLaunched(await (await launch({ session: "work", command: "claude" })).text());
+    expect(launched.recording).toBe("20200102T030405.006Z.jsonl");
+    expect(opened.map(({ env }) => env)).toEqual([{ ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/agent/20200102T030405.006Z" }]);
+  });
+
+  it("does not launch an agent the proxy refused a recording, and keeps what was asked for the next try", async () => {
+    const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new Error("POST http://127.0.0.1:3347/recordings", { cause: new Error("500 Internal Server Error") })) });
+    const res = await launch({ session: "work", command: "claude" });
+    expect(res.status).toBe(502);
+    await work();
+    expect(await work()).toMatchObject({ event: "proxy_recording", outcome: "error", error: expect.stringContaining("500 Internal Server Error") });
+    expect(await next()).toMatchObject({ event: "request", status: 502, outcome: "error", error: expect.stringContaining("did not make a recording") });
+    expect(parseFailure(await res.text())).toEqual({ error: "The proxy did not make a recording for the agent: POST http://127.0.0.1:3347/recordings: 500 Internal Server Error" });
     expect(opened).toEqual([]);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude" });
   });

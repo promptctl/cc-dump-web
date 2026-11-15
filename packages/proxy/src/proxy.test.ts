@@ -302,6 +302,9 @@ describe("createProxy", () => {
         { path: `${agentBaseUrl("", first)}/v1/messages?beta=true`, to: first, as: "/v1/messages?beta=true" },
         { path: `${agentBaseUrl("", second)}/v1/models`, to: second, as: "/v1/models" },
         { path: `${agentBaseUrl("", first)}/api/hello`, to: first, as: "/api/hello" },
+        // The base URL itself is the upstream's root.
+        { path: agentBaseUrl("", second), to: second, as: "/" },
+        { path: `${agentBaseUrl("", first)}?x=1`, to: first, as: "/?x=1" },
         { path: "/v1/models", to: runName, as: "/v1/models" },
         // A stem that is no recording's name names no agent.
         { path: "/agent/notes/v1/models", to: runName, as: "/agent/notes/v1/models" },

@@ -1,4 +1,4 @@
-import { agentBaseUrl, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
+import { agentBaseUrl, parseListing, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +12,6 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
-const agentName = "20261113T090000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
   { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "a", type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
   { timestamp: "2026-11-13T08:00:01.000Z", trace_id: "a", type: "end", outcome: "aborted" },
@@ -31,7 +30,9 @@ async function proxyAndConnection() {
   const logged = async (matches: (event: Event) => boolean) => {
     for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
   };
-  return { dir, proxy, logged, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
+  // The recording the proxy makes for an agent about to launch, which is the one it follows.
+  const newRecording = async () => parseListing((await buffer(await send(proxy.readerPort, { method: "POST", path: "/recordings" }))).toString()).name;
+  return { dir, proxy, logged, newRecording, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
 }
 
 type Arrival = { event: RecordedEvent } | { end: RecordingEnd } | { failed: Error };
@@ -94,7 +95,8 @@ describe("the browser connection", () => {
   });
 
   it("reads an agent's recording as it is written: every event, parsed, in file order", async () => {
-    const { dir, proxy, logged, connection } = await proxyAndConnection();
+    const { dir, proxy, logged, newRecording, connection } = await proxyAndConnection();
+    const agentName = await newRecording();
     const read = reading(connection, agentName);
     await logged(({ event, followed }) => event === "catch_up" && followed === true);
     await buffer(await send(proxy.proxyPort, { path: `${agentBaseUrl("", agentName)}/v1/models` }));
@@ -169,7 +171,8 @@ describe("the browser connection", () => {
   });
 
   it("ends the read at the proxy when it is aborted", async () => {
-    const { logged, connection } = await proxyAndConnection();
+    const { logged, newRecording, connection } = await proxyAndConnection();
+    const agentName = await newRecording();
     const read = reading(connection, agentName);
     await logged(({ event }) => event === "catch_up");
     read.abort.abort();
