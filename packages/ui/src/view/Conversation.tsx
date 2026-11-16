@@ -8,7 +8,7 @@ import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, modelName, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -364,16 +364,17 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
   );
 }
 
-// The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns of fixed widths, aligned down
-// the conversation, each cut with an ellipsis where a rare value outgrows its column, and how it ended. It is a band on
-// the chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring
-// this exchange its end. `branch`: the branch its request is on, which its model's column names first, where a long
-// model's ellipsis does not reach.
+// The exchange's line (docs/design/02-design.md, "Print what varies", "Layout"): its facts in columns of fixed widths,
+// aligned down the conversation, on two rows so that every column fits beside the other side's: who answered and how,
+// then the tokens. Each is cut with an ellipsis where a rare value outgrows its column, the model's first, since its
+// column alone gives way to a narrow side. It is a band on the chrome's ground, so an exchange's start is seen without a
+// line drawn. `reading`: whether the read can still bring this exchange its end. `branch`: the branch its request is on,
+// which its model's column names first, where a long model's ellipsis does not reach.
 function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exchange: FormattedExchange; branch: Branch | undefined; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
-    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_9ch_12ch_14ch_10ch_14ch_auto] items-baseline gap-x-4 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
+    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,18ch)_7ch_3ch_10ch_minmax(0,1fr)] items-baseline gap-x-3 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
       <span className="text-right text-foreground-muted">{facts.ordinal}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
@@ -384,7 +385,7 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       ) : (
         <span className="font-mono" title={branch === undefined ? facts.model : `${facts.model}, on a branch off step ${branch.from}: its blocks are its own, not the thread's`}>
           {branch === undefined ? null : <span className="font-sans text-foreground-muted">↳ off {branch.from} </span>}
-          {facts.model}
+          {facts.model === undefined ? null : modelName(facts.model)}
         </span>
       )}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
@@ -392,15 +393,17 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
         {facts.status}
       </span>
-      <Fact label="in" count={facts.input} />
-      <Fact label="cache" count={facts.cacheRead} />
-      <Fact label="written" count={facts.cacheWritten} />
-      <Fact label="out" count={facts.output} />
       <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}
       <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
         {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
       </span>
+      <div className="col-span-6 col-start-2 grid grid-cols-[9ch_12ch_14ch_10ch] gap-x-3 *:truncate">
+        <Fact label="in" count={facts.input} />
+        <Fact label="cache" count={facts.cacheRead} />
+        <Fact label="written" count={facts.cacheWritten} />
+        <Fact label="out" count={facts.output} />
+      </div>
     </div>
   );
 }

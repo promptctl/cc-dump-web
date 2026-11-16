@@ -281,6 +281,10 @@ export function clockTime(timestamp: string): string {
 }
 const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
+// A model as the exchange line names it: without the "claude-" every model's name starts with, which never varies
+// (docs/design/02-design.md, "Print what varies").
+export const modelName = (model: string): string => model.replace(/^claude-/, "");
+
 // A duration in milliseconds as seconds to one decimal.
 export function seconds(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)}s`;
@@ -303,7 +307,7 @@ export function estimateHeight(row: Row, flipped: Record<string, true>): number 
   const side = (block: Block | undefined) => (block !== undefined && isExpanded(flipped, row.key, block) ? line + Math.ceil(sizeOf(block) / 100) * 16 : line);
   switch (row.kind) {
     case "exchange":
-      return 36;
+      return 52;
     case "group":
     case "fold":
       return line;

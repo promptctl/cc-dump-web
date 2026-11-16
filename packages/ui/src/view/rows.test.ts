@@ -6,7 +6,7 @@ import { createFormatter } from "../format/format.ts";
 import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, preview, seconds, sizeOf, type Row } from "./rows.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -181,6 +181,7 @@ describe("a block's line", () => {
     expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
+    expect(["claude-opus-5-5", "claude-haiku-5-5-20261001", "m", "my-claude-x"].map(modelName)).toEqual(["opus-5-5", "haiku-5-5-20261001", "m", "my-claude-x"]);
   });
 });
 
