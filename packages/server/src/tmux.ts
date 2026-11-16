@@ -13,14 +13,14 @@ import {
   type SpawnOptions,
   type TmuxConnection,
 } from "@promptctl/tmux-control-mode-js";
-import { sessions, type Sessions } from "./format.ts";
+import { startTime, sessions, type Launched, type Sessions, type TmuxWindow } from "./format.ts";
 
 // A window to open in a session: the command its pane runs, through the user's shell, in `cwd`, an absolute directory,
 // with `env` set for it alone.
 export type NewWindow = { session: string; command: string; cwd: string; env: Record<string, string> };
 
-// The window opened, by the ids tmux gave it.
-export type Window = { window_id: string; pane_id: string };
+// The window opened, by its address, and its pane.
+export type Window = Pick<Launched, keyof TmuxWindow | "pane_id">;
 
 // [LAW:locality-or-seam] Everything the app server asks of tmux (docs/design/01-mvp.md, F1). Each call is one
 // control-mode connection, opened for it and closed after, so none outlives the app server's restart on a change.
@@ -37,13 +37,28 @@ export type Tmux = {
 // "error connecting to …" when no server runs).
 export class TmuxRefused extends Error {}
 
-// `options` picks the tmux server, as `tmux -L`/`-S` would: the user's default one when empty.
+// [LAW:single-enforcer] The one way the app server connects to tmux, as `args` say: `options` picks the tmux server, as
+// `tmux -L`/`-S` would, the user's default one when empty. Without TMUX, which an app server started in tmux inherits,
+// `options` alone picks the server.
+function connect(options: SpawnOptions, args: string[]): TmuxClient {
+  return new TmuxClient(spawnTmux(args, { ...options, env: { ...(options.env ?? process.env), TMUX: undefined } }));
+}
+
+// A client attached to `window`'s session, as a terminal attached to it is, so the window can be shown through it and
+// sized by it: the window terminal shows only its client's session's windows. `-E` leaves the session's environment as it
+// was. By the session, never the window: tmux makes a window attached by its id the session's current one, in the user's
+// own terminal too. In the same command the client checks its server is the one that started at the window's start
+// time, and on any other detaches at once, so a window named on a server since restarted is never another's.
+export function attach(options: SpawnOptions, { session_id, start_time }: TmuxWindow): TmuxClient {
+  return connect(options, ["-N", "attach-session", "-E", "-t", session_id, ";", "if-shell", "-F", `#{==:#{start_time},${start_time}}`, "", "detach-client"]);
+}
+
 export function createTmux(options: SpawnOptions = {}): Tmux {
   const connected = async <T>(work: (client: TmuxConnection) => Promise<T>): Promise<T> => {
     // The library's watcher, attached to whichever session tmux picks, since the commands name their target: it changes
-    // nothing the user sees, the session's environment included. Without TMUX, which an app server started in tmux
-    // inherits, `options` alone picks the server, and tmux does not refuse the attach while a launch's window is empty.
-    const client = new TmuxClient(spawnTmux(watchServerArgs(), { ...options, env: { ...(options.env ?? process.env), TMUX: undefined } }));
+    // nothing the user sees, the session's environment included, and tmux does not refuse the attach while a launch's
+    // window is empty.
+    const client = connect(options, watchServerArgs());
     try {
       return await work(client);
     } catch (error) {
@@ -59,6 +74,9 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
         // tmux takes a session by id: a name it would also match as a prefix, a pattern, another session's id or a client.
         const named = (await listSessions(client)).find((found) => found.sessionName === session);
         if (named === undefined) throw new TmuxRefused(`no session named ${session}`);
+        // [LAW:no-ambient-temporal-coupling] The server's start time, part of the window's address, is read before the
+        // window opens: a read that fails after the command started would report a launch failed whose agent runs on.
+        const start_time = startTime((await client.execute("display-message -p '#{start_time}'")).output[0]!);
         // The window opens empty and the command starts once its pane keeps a failed process, so a command that cannot
         // run leaves its pane, dead, showing why, where tmux would close the window. Any dead-pane message tmux prints
         // scrolls the screen, the shell's words with it, off into the pane's history: the pane prints none.
@@ -79,7 +97,7 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
           });
           throw failure;
         }
-        return { window_id: `@${windowId}`, pane_id: `%${paneId}` };
+        return { start_time, session_id: `$${named.sessionId}`, window_id: `@${windowId}`, pane_id: `%${paneId}` };
       }),
   };
 }

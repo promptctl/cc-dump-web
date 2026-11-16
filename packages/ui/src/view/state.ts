@@ -1,3 +1,4 @@
+import type { Launched, TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
@@ -8,14 +9,15 @@ import type { By } from "./scroll.ts";
 import { isExpanded } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
-// [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, each block, region or fold
-// they flipped from how it starts, by key, where they are, the moment shown, and their search. Everything else on
-// screen is derived from the events and the settings. It is kept for the tab in sessionStorage, so after a hot reload
-// or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab opens at the end, now, which follows the
-// conversation while follow is on. While it is off, the end becomes the place under the view at the first step.
+// [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
+// launch opened (F13), each block, region or fold they flipped from how it starts, by key, where they are, the moment
+// shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
+// tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab
+// opens at the end, now, which follows the conversation while follow is on. While it is off, the end becomes the place
+// under the view at the first step.
 // [LAW:types-are-the-program] A flip is a key's presence, so a block flipped back is no entry, not one that says its
 // default.
-export type View = { open: OpenRecording; flipped: Record<string, true>; position: Position; moment: Moment; search: Search };
+export type View = { open: OpenRecording; window: TmuxWindow | null; flipped: Record<string, true>; position: Position; moment: Moment; search: Search };
 
 // The moment shown on the right (docs/design/02-design.md, "Two axes"), by its step's exchange: `now`, the latest step,
 // whichever it is as exchanges arrive; `left`, the step that was now when the reader's own act (a scroll, a click on a
@@ -30,15 +32,15 @@ export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chos
 export type Search = { query: string; current: Match | undefined };
 
 // A tab opens with no recording: the person launches an agent, or opens one.
-const initial: View = { open: null, flipped: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
+const initial: View = { open: null, window: null, flipped: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
-// The stored view's version. A view stored by another version names its recording, or its moment, in a form this one
-// does not read, so the tab opens as a new one.
+// The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
+// this one does not read, so the tab opens as a new one.
 export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 2,
+    version: 3,
     migrate: () => initial,
   }),
 );
@@ -54,6 +56,14 @@ export const view = {
     events.open();
     useView.setState(({ search }) => ({ open, position: { at: "end" }, moment: { at: "now" }, search: { ...search, current: undefined } }));
   },
+  // A launch shows its agent: the recording its process makes, opened, and its window, beside it, which stays shown when
+  // another recording is opened, since the agent goes on running there.
+  launched: ({ recording, start_time, session_id, window_id }: Launched) => {
+    view.open(recording);
+    useView.setState({ window: { start_time, session_id, window_id } });
+  },
+  // The terminal put away; the agent runs on in its window, and the next launch shows its own.
+  putAway: () => useView.setState({ window: null }),
   toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
   // The position moved, by `by`. At the end it is following, so the moment is now; a reader's move anywhere else, while
   // the moment is now, leaves it at now's step, `now`, the latest step's exchange.

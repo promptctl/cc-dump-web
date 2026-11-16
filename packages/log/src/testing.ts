@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { serve, type Event, type Handler } from "./index.ts";
+import { serve, type Event, type Handler, type Upgrade } from "./index.ts";
 
 // What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
 // `queued()` counts those arrived and not yet taken.
@@ -45,11 +45,11 @@ export async function send(port: number, { method = "GET", path, headers = {}, b
   return res;
 }
 
-// Serves `handler` on a free port until the test finishes. Binding the port is the log's first event,
+// Serves `handler`, and `upgrade` if given, on a free port until the test finishes. Binding the port is the log's first event,
 // taken here, so `next` yields the events of the handler's work.
-export async function serving(handler: Handler) {
+export async function serving(handler: Handler, upgrade?: Upgrade) {
   const { log, next } = eventLog();
-  const { port, close } = await serve(log, handler, 0);
+  const { port, close } = await serve(log, handler, 0, upgrade);
   onTestFinished(close);
   expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, port });
   return { port, url: `http://${LOOPBACK}:${port}`, next };

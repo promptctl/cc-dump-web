@@ -1,5 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-mvp.md,
 // F1). Imports nothing that needs node, so the UI takes these types, and their parsers, from here.
@@ -23,9 +24,14 @@ export type Launcher = { settings: LaunchSettings; sessions: Sessions };
 // `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line.
 export type Launch = { session: string; command: string };
 
-// `POST /launch`'s answer: the window opened, by the ids tmux gave it, and `recording`, the name of the recording the
-// agent's process records to (docs/design/01-mvp.md, F1), which exists once the process sends its first request.
-export type Launched = { session: string; window_id: string; pane_id: string; recording: string };
+// `POST /launch`'s answer: the window opened, its pane, and `recording`, the name of the recording the agent's process
+// records to (docs/design/01-mvp.md, F1), which exists once the process sends its first request.
+export type Launched = { session: string; pane_id: PaneId; recording: string } & TmuxWindow;
+
+// [LAW:types-are-the-program] A window, as tmux addresses one in a session (`session:window`), by ids, on the one tmux
+// server that has it: `start_time` is that server's (#{start_time}). tmux numbers a new server's sessions and windows
+// from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
+export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
 // Every refused or failed request's answer: why, in words the user is shown as they are (tmux's own, when tmux refused).
 export type Failure = { error: string };
@@ -64,8 +70,40 @@ export function sessions(names: string[]): Sessions {
 
 export function parseLaunched(json: string): Launched {
   const f = fields(parseJson(json, "launched"), "launched");
-  return { session: sessionName(f.string("session")), window_id: f.string("window_id"), pane_id: f.string("pane_id"), recording: f.string("recording") };
+  return {
+    session: sessionName(f.string("session")),
+    pane_id: paneId(f.string("pane_id")),
+    recording: f.string("recording"),
+    start_time: startTime(String(f.integer("start_time"))),
+    session_id: sessionId(f.string("session_id")),
+    window_id: windowId(f.string("window_id")),
+  };
 }
+
+// [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no
+// leading zero, and exact as a JSON number. `@03` is no window's.
+function tmuxNumber(value: string, what: string): number {
+  const number = Number(value);
+  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  return number;
+}
+
+// A session's id, `$1`, a window's, `@3`, or a pane's, `%7`, as tmux writes them. The library's own parsers are in the
+// module that brings xterm.js with it, which node does not load, so the ids are read here.
+const idKinds = { $: "session", "@": "window", "%": "pane" } as const;
+function tmuxId<P extends keyof typeof idKinds>(prefix: P, value: string): `${P}${number}` {
+  const what = `a tmux ${idKinds[prefix]} id`;
+  if (!value.startsWith(prefix)) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  tmuxNumber(value.slice(1), what);
+  return value as `${P}${number}`;
+}
+export type SessionId = `$${number}`;
+export const sessionId = (value: string): SessionId => tmuxId("$", value);
+export const windowId = (value: string): WindowId => tmuxId("@", value);
+export const paneId = (value: string): PaneId => tmuxId("%", value);
+
+// A tmux server's start time, as tmux writes it: seconds since the epoch.
+export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
 
 export function parseFailure(json: string): Failure {
   return { error: fields(parseJson(json, "failure"), "failure").string("error") };

@@ -1,5 +1,6 @@
 import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
-import type { Launch, Launched, Launcher } from "@cc-dump/server/format";
+import type { Launch, Launched, Launcher, TmuxWindow } from "@cc-dump/server/format";
+import type { TerminalConnection } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:locality-or-seam] The UI's one way to the backend: it names recordings, reads them, follows the proxy's status,
 // and launches agents, and how they are reached is the implementation's alone (the browser on the proxy's reader and
@@ -20,7 +21,15 @@ export type Connection = {
   launcher: (signal: AbortSignal) => Promise<Launcher>;
   // Stores the settings asked for as the next launch's, then opens the agent's window. Fails as `launcher` does.
   launch: (launch: Launch, signal: AbortSignal) => Promise<Launched>;
+  // A new connection to `window` on the user's tmux server, which a terminal shows it through (F13), not yet connected:
+  // its owner connects it and closes it.
+  tmux: (window: TmuxWindow) => TmuxConnection;
 };
+
+// [LAW:no-ambient-temporal-coupling] A connection to a window, owned by whoever made it: `connect` opens it, and
+// reconnects it after `close`; `close` ends it at once, with no call left pending and no retry left armed. A connection
+// that drops retries on its own, a bounded number of times, then stays closed.
+export type TmuxConnection = TerminalConnection & { connect: () => Promise<void>; close: () => Promise<void> };
 
 export type StatusWatcher = {
   status: (status: ProxyStatus) => void;

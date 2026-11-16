@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buffer } from "node:stream/consumers";
 import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
-import { LOOPBACK } from "@cc-dump/log/address";
 import { describe } from "@cc-dump/log/describe";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
+import { fromThisMachine } from "./origin.ts";
 import { launchSettings } from "./settings.ts";
 import { TmuxRefused, type Tmux } from "./tmux.ts";
 
@@ -76,8 +76,6 @@ export function createApp({ log, settingsPath, tmux, proxyInfo, proxyRecording, 
     // [LAW:single-enforcer] Every answer, any route's: the browser's origin is the UI's, and security is a non-goal
     // (docs/design/01-mvp.md).
     res.setHeader("access-control-allow-origin", "*");
-    // That non-goal holds for a command the user configured. A page from another site, which the browser lets send a
-    // POST anywhere, would launch a command of its own: a browser's request from anywhere but this machine is refused.
     if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} cannot launch agents`));
     const route = routes[new URL(req.url!, "http://server").pathname];
     if (route === undefined) return void res.writeHead(404).end();
@@ -91,13 +89,6 @@ export function createApp({ log, settingsPath, tmux, proxyInfo, proxyRecording, 
       (error: unknown) => failed(res, work, error),
     );
   };
-}
-
-// Whether a request's Origin header, which a browser sends with each POST and each request across origins, names a page
-// served from this machine, as the UI is, by any of loopback's names. A request with none is no page's; "null", an
-// opaque origin's, names no machine.
-function fromThisMachine(origin: string | undefined): boolean {
-  return origin === undefined || (URL.canParse(origin) && [LOOPBACK, "localhost", "[::1]"].includes(new URL(origin).hostname));
 }
 
 // [LAW:nothing-unseen] Every answer that is not the request's is its failure, on its event as on its answer.

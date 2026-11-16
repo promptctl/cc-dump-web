@@ -51,6 +51,31 @@ describe("opening a recording", () => {
   });
 });
 
+describe("a launch", () => {
+  beforeEach(() => {
+    useView.setState(useView.getInitialState(), true);
+    events.clear();
+  });
+
+  it("opens a tab with no window", () => {
+    expect(useView.getState().window).toBeNull();
+  });
+
+  it("opens its agent's recording and shows its window, which stays shown when another recording is opened", () => {
+    view.launched({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: agent });
+    expect(useView.getState()).toMatchObject({ open: agent, window: { start_time: 1794801953, session_id: "$2", window_id: "@7" }, position: { at: "end" } });
+
+    view.open("20261113T090000.000Z.jsonl");
+    expect(useView.getState().window).toEqual({ start_time: 1794801953, session_id: "$2", window_id: "@7" });
+  });
+
+  it("puts its window away, leaving the recording open", () => {
+    view.launched({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: agent });
+    view.putAway();
+    expect(useView.getState()).toMatchObject({ open: agent, window: null });
+  });
+});
+
 describe("the search", () => {
   const match = { key: "t1/request/http", at: "text", start: 0 };
   beforeEach(() => {

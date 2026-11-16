@@ -10,12 +10,14 @@ import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { Launch } from "./view/Launch.tsx";
 import { Recordings } from "./view/Recordings.tsx";
+import { Terminal } from "./view/Terminal.tsx";
 import { useView } from "./view/state.ts";
 import { ThemePicker } from "./view/ThemePicker.tsx";
 
 export function App({ connection }: { connection: Connection }) {
-  useTheme();
+  const theme = useTheme();
   const open = useView((state) => state.open);
+  const window = useView((state) => state.window);
   const reading = useRecording(connection, open);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
@@ -38,13 +40,19 @@ export function App({ connection }: { connection: Connection }) {
           <ThemePicker />
         </div>
       </header>
-      {/* Each opening is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the one
-          way (docs/design/01-mvp.md, "One path to the screen"). With no recording open there is none to show. */}
-      {open === null ? (
-        <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
-      ) : (
-        <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
-      )}
+      {/* The conversation, and the launched agent's window beside it, each half the width (F13). */}
+      <div className="flex min-h-0 flex-1">
+        {/* Each opening is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the
+            one way (docs/design/01-mvp.md, "One path to the screen"). With no recording open there is none to show. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {open === null ? (
+            <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
+          ) : (
+            <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
+          )}
+        </div>
+        {window === null ? null : <Terminal key={`${window.start_time} ${window.session_id} ${window.window_id}`} connection={connection} window={window} theme={theme} />}
+      </div>
     </div>
   );
 }

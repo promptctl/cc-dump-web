@@ -51,11 +51,13 @@ describe("POST /launch", () => {
       base_url: "http://127.0.0.1:3344",
       recording: expect.any(String),
       settings_path: settingsPath,
+      start_time: 1794801953,
+      session_id: "$2",
       window_id: "@7",
       pane_id: "%9",
     });
     const launched = parseLaunched(await res.text());
-    expect(launched).toEqual({ session: "work", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
+    expect(launched).toEqual({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
     expect(recordingStart(launched.recording)).toBeInstanceOf(Date);
     expect(opened).toEqual([
       { session: "work", command: "claude --dangerously-skip-permissions", cwd: "/work/project", env: { ANTHROPIC_BASE_URL: agentBaseUrl("http://127.0.0.1:3344", launched.recording) } },
@@ -160,5 +162,27 @@ describe("routes", () => {
     const res = await fetch(`${url}/launch`, { method: "DELETE" });
     expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
     expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
+  });
+});
+
+describe("the launch's answer", () => {
+  const launched = (fields: Record<string, unknown>) =>
+    JSON.stringify({ session: "work", start_time: 1794801953, session_id: "$1", window_id: "@12", pane_id: "%30", recording: "r.jsonl", ...fields });
+
+  it("addresses the window by its server's start time, its session's id and its own, beside its pane's", () => {
+    expect(parseLaunched(launched({}))).toMatchObject({ start_time: 1794801953, session_id: "$1", window_id: "@12", pane_id: "%30" });
+  });
+
+  it.each([
+    [{ window_id: "12" }, /not a tmux window id: "12"/],
+    [{ pane_id: "@2" }, /not a tmux pane id: "@2"/],
+    [{ session_id: "@1" }, /not a tmux session id: "@1"/],
+    [{ window_id: "@1x" }, /not a tmux window id/],
+    [{ window_id: "@03" }, /not a tmux window id/],
+    [{ session_id: "$9007199254740993" }, /not a tmux session id/],
+    [{ start_time: -1 }, /not a tmux server's start time: "-1"/],
+    [{ start_time: 1.5 }, /start_time is not an integer/],
+  ])("is refused with %j, which tmux would not write", (fields, error) => {
+    expect(() => parseLaunched(launched(fields))).toThrow(error);
   });
 });

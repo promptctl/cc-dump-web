@@ -1,13 +1,14 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
-import { SERVER_PORT } from "@cc-dump/server/address";
+import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
+import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
 import type { Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader and the app server, on the address they are bound to, whatever host the
-// page was opened at: `fetch` for the list and for launching, and one EventSource per read and per status, which
-// resumes a dropped connection by itself.
+// page was opened at: `fetch` for the list and for launching, one EventSource per read and per status, which
+// resumes a dropped connection by itself, and a WebSocket per terminal, through the app server.
 export function createBrowserConnection({ readerPort = READER_PORT, serverPort = SERVER_PORT } = {}): Connection {
   const origin = `http://${LOOPBACK}:${readerPort}`;
   const server = `http://${LOOPBACK}:${serverPort}`;
@@ -48,6 +49,9 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
     launch: (launch, signal) =>
       answer(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
+    // Ten reconnects, about a minute at the library's backoff, outlast the app server's restart on a change to its
+    // source; a window that is gone is then no longer retried.
+    tmux: (window) => new WebSocketTmuxClient({ url: `ws://${LOOPBACK}:${serverPort}${tmuxPath(window)}`, autoConnect: false, reconnect: { maxAttempts: 10 } }),
   };
 }
 

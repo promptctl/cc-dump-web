@@ -1,28 +1,9 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tmuxSocketDir } from "@promptctl/tmux-control-mode-js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { tmuxServer } from "./testing.ts";
 import { createTmux, TmuxRefused } from "./tmux.ts";
-
-// A tmux server of the test's own, on a socket no other server uses, with `sessions`, reading no configuration, whose
-// hooks and options would be the user's (a pane-died hook that respawns a dead pane). When the test finishes the server,
-// started by its first session, is killed, and the socket's file, which tmux leaves, is removed whether or not it was.
-let servers = 0;
-function tmuxServer(...sessions: string[]) {
-  const socketPath = `cc-dump-test-${process.pid}-${++servers}`;
-  const tmux = (...args: string[]) => execFileSync("tmux", ["-f", "/dev/null", "-L", socketPath, ...args], { encoding: "utf8" });
-  onTestFinished(() => {
-    try {
-      if (sessions.length > 0) tmux("kill-server");
-    } finally {
-      rmSync(join(tmuxSocketDir(), socketPath), { force: true });
-    }
-  });
-  for (const session of sessions) tmux("new-session", "-d", "-s", session);
-  return { socketPath, tmux };
-}
 
 // The app server's environment variable `name` set to `value` until the test finishes, then as it was: unset again
 // when it was unset, since node keeps any value assigned to process.env as a string, undefined as "undefined".
@@ -65,8 +46,8 @@ describe("createTmux", () => {
 
     const window = await createTmux({ socketPath }).newWindow({ session: "work", command, cwd: dir, env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/#x" } });
 
-    expect(window).toEqual({ window_id: expect.stringMatching(/^@\d+$/), pane_id: expect.stringMatching(/^%\d+$/) });
-    expect(tmux("display-message", "-p", "-t", "=work:", "#{window_id}").trim()).toBe(window.window_id);
+    expect(window).toEqual({ start_time: expect.any(Number), session_id: expect.stringMatching(/^\$\d+$/), window_id: expect.stringMatching(/^@\d+$/), pane_id: expect.stringMatching(/^%\d+$/) });
+    expect(tmux("display-message", "-p", "-t", "=work:", "#{start_time} #{session_id} #{window_id}").trim()).toBe(`${window.start_time} ${window.session_id} ${window.window_id}`);
     await vi.waitFor(() => expect(readFileSync(out, "utf8")).toBe(`http://127.0.0.1:3344/#x #{session_name} ${realpathSync(dir)}`));
   });
 

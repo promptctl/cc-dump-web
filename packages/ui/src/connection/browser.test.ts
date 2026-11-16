@@ -7,7 +7,7 @@ import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { arrivals, send, serving } from "@cc-dump/log/testing";
-import { app, TmuxRefused } from "@cc-dump/server/testing";
+import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
 
@@ -250,7 +250,7 @@ describe("launching", () => {
     const { port, opened } = await app();
     const connection = createBrowserConnection({ serverPort: port });
     expect(await connection.launcher(signal())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
-    expect(await connection.launch({ session: "play", command: "claude -c" }, signal())).toEqual({ session: "play", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
+    expect(await connection.launch({ session: "play", command: "claude -c" }, signal())).toEqual({ session: "play", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
     expect(opened).toMatchObject([{ session: "play", command: "claude -c" }]);
   });
 
@@ -269,5 +269,43 @@ describe("launching", () => {
       message: `GET http://${LOOPBACK}:${port}/launch`,
       cause: expect.any(Error),
     });
+  });
+});
+
+describe("a terminal's connection", () => {
+  it("connects when its owner connects it, and closing it detaches its tmux client at once", async () => {
+    const { port, windowOf, clients } = await terminal("work");
+    const tmux = createBrowserConnection({ serverPort: port }).tmux(windowOf("work"));
+    onTestFinished(() => tmux.close());
+
+    await tmux.connect();
+    expect(await tmux.execute("display-message -p '#{session_name}'")).toMatchObject({ output: ["work"] });
+    expect(clients()).toEqual(["work"]);
+
+    await tmux.close();
+    await expect(tmux.execute("display-message -p ok")).rejects.toThrow();
+    await vi.waitFor(() => expect(clients()).toEqual([]));
+  });
+
+  it("connects again after it is closed, as a terminal remounted connects the one it made", async () => {
+    const { port, windowOf } = await terminal("work");
+    const tmux = createBrowserConnection({ serverPort: port }).tmux(windowOf("work"));
+    onTestFinished(() => tmux.close());
+
+    await tmux.connect();
+    await tmux.close();
+    await tmux.connect();
+    expect(await tmux.execute("display-message -p ok")).toMatchObject({ output: ["ok"] });
+  });
+
+  it("is a new one each time it is asked for, so closing one leaves another live", async () => {
+    const { port, windowOf } = await terminal("work");
+    const connection = createBrowserConnection({ serverPort: port });
+    const [first, second] = [connection.tmux(windowOf("work")), connection.tmux(windowOf("work"))];
+    onTestFinished(async () => void (await Promise.all([first.close(), second.close()])));
+
+    await Promise.all([first.connect(), second.connect()]);
+    await first.close();
+    expect(await second.execute("display-message -p ok")).toMatchObject({ output: ["ok"] });
   });
 });

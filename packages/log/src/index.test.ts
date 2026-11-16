@@ -6,7 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { createLog, logged, serve, type Event, type Work } from "./index.ts";
+import { createLog, logged, loggedAfter, serve, type Event, type Work } from "./index.ts";
 import { eventLog, send, sendRaw, serving } from "./testing.ts";
 
 const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -79,6 +79,26 @@ describe("logged", () => {
 
     expect(() => logged(log, "setup", {}, () => 7, found)).toThrow("no such fact");
     expect(await next()).toMatchObject({ event: "setup", outcome: "error", error: expect.stringContaining("no such fact") });
+  });
+});
+
+describe("loggedAfter", () => {
+  it("records work timed elsewhere, in the trace it is part of, as started its duration before now", async () => {
+    const { log, next } = eventLog();
+    const before = Date.now();
+
+    loggedAfter(log, "t1", "call", { method: "send-keys" }, 900, undefined);
+    const event = await next();
+    expect(event).toMatchObject({ event: "call", trace_id: "t1", method: "send-keys", duration_ms: 900, outcome: "ok" });
+    expect(Date.parse(event.started_at)).toBeGreaterThanOrEqual(before - 900);
+    expect(Date.parse(event.started_at)).toBeLessThanOrEqual(Date.now() - 900);
+  });
+
+  it("records the failure it reports", async () => {
+    const { log, next } = eventLog();
+
+    loggedAfter(log, "t1", "call", {}, 0, new Error("denied"));
+    expect(await next()).toMatchObject({ event: "call", outcome: "error", error: expect.stringContaining("denied") });
   });
 });
 
@@ -278,5 +298,150 @@ describe("serve", () => {
     onTestFinished(close);
 
     expect((await send(port, { path: "/" })).statusCode).toBe(204);
+  });
+});
+
+describe("serve with an upgrade", () => {
+  // The client's side of an upgrade, raw: it asks to switch to a WebSocket and resolves once the server's first answer has
+  // arrived, with the socket still open.
+  async function upgradeTo(port: number) {
+    const socket = createConnection(port, LOOPBACK);
+    await once(socket, "connect");
+    socket.write("GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    const [answer] = (await once(socket, "data")) as [Buffer];
+    return { socket, answer: answer.toString() };
+  }
+  const switched = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+
+  it("hands the part the connection and writes one event when its socket closes", async () => {
+    // The part closes its side when the client closes its own, as a WebSocket's closing handshake ends.
+    const { port, next } = await serving(
+      () => {},
+      async (_req, socket) => void socket.on("end", () => socket.end()).write(switched),
+    );
+
+    const { socket, answer } = await upgradeTo(port);
+    const clientPort = socket.localPort;
+    expect(answer).toContain("101 Switching Protocols");
+    socket.end();
+
+    expect(await next()).toMatchObject({
+      event: "upgrade",
+      trace_id: expect.stringMatching(/^[0-9a-f]{32}$/),
+      outcome: "ok",
+      url: "/up",
+      protocol: "websocket",
+      client_address: LOOPBACK,
+      client_port: clientPort,
+    });
+  });
+
+  it("records the failure the part reports", async () => {
+    const { port, next } = await serving(
+      () => {},
+      async (_req, socket, _head, work) => {
+        work.fail(new Error("refused"));
+        socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      },
+    );
+
+    const { answer } = await upgradeTo(port);
+
+    expect(answer).toContain("403");
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining("refused") });
+  });
+
+  it("waits for the part to be done with the connection, so a failure it learns of as the connection ends is the outcome", async () => {
+    const { port, next } = await serving(
+      () => {},
+      async (_req, socket, _head, work) => {
+        socket.on("end", () => socket.end()).write(switched);
+        await once(socket, "close");
+        work.fail(new Error("the peer broke the protocol"));
+      },
+    );
+
+    const { socket } = await upgradeTo(port);
+    socket.end();
+
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining("the peer broke the protocol") });
+  });
+
+  it("records a connection its client reset, as its error and an upgrade aborted, and goes on serving", async () => {
+    const handed = Promise.withResolvers<void>();
+    const { port, next } = await serving(
+      () => {},
+      async (req, socket) => {
+        if (req.url === "/up") return void socket.write(switched);
+        handed.resolve();
+      },
+    );
+
+    const socket = createConnection(port, LOOPBACK);
+    await once(socket, "connect");
+    socket.write("GET /reset HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    await handed.promise;
+    socket.resetAndDestroy();
+
+    expect(await next()).toMatchObject({ event: "client_error", outcome: "error", error: expect.stringContaining("ECONNRESET") });
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "aborted" });
+    expect((await upgradeTo(port)).answer).toBe(switched);
+  });
+
+  it("cuts the connection of a part that throws, and records it", async () => {
+    const { port, next } = await serving(
+      () => {},
+      () => {
+        throw new Error("boom");
+      },
+    );
+
+    const socket = createConnection(port, LOOPBACK);
+    socket.end("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+    socket.resume();
+    await once(socket, "close");
+
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining("boom") });
+  });
+
+  it("cuts an upgraded connection still open when closed, and resolves once its event, ended as stopped, is written", async () => {
+    const { log, next } = eventLog();
+    const { port, close } = await serve(log, () => {}, 0, async (_req, socket) => void socket.write(switched));
+    await next();
+    const { socket } = await upgradeTo(port);
+
+    const cut = once(socket, "close");
+    await close();
+    await cut;
+
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "stopped" });
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0, upgrades_open: 1 });
+  });
+
+  it("hands an upgrade request to the handler, as any other request, when the part takes no upgrades", async () => {
+    const { port, next } = await serving((_req, res) => res.writeHead(426).end());
+
+    const { answer } = await upgradeTo(port);
+
+    expect(answer).toContain("426");
+    expect(await next()).toMatchObject({ event: "request", status: 426 });
+  });
+
+  it("hands a request offering any other upgrade to the handler, as any other request, when the part takes upgrades", async () => {
+    const upgrades: string[] = [];
+    const { port, next } = await serving(
+      (_req, res) => res.writeHead(204).end(),
+      async (req, socket) => void (upgrades.push(req.url!), socket.destroy()),
+    );
+
+    const socket = createConnection(port, LOOPBACK);
+    await once(socket, "connect");
+    socket.write("POST /launch HTTP/1.1\r\nHost: x\r\nConnection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAARAAAAAAAIAAAAA\r\nContent-Length: 0\r\n\r\n");
+    const [answer] = (await once(socket, "data")) as [Buffer];
+    socket.destroy();
+
+    expect(answer.toString()).toContain("204");
+    expect(await next()).toMatchObject({ event: "request", method: "POST", url: "/launch", status: 204 });
+    expect(upgrades).toEqual([]);
   });
 });

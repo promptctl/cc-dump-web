@@ -26,7 +26,7 @@ export function Launch({ connection }: { connection: Launching }) {
     connection.launch(asked, signal).then(
       (launched) => {
         setLaunch({ state: "launched", launched });
-        view.open(launched.recording);
+        view.launched(launched);
       },
       (error: Error) => signal.aborted || setLaunch({ state: "failed", error }),
     );

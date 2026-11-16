@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { inspect } from "node:util";
 import { LOOPBACK } from "./address.ts";
 import type { Ending } from "./ending.ts";
@@ -64,9 +65,18 @@ export async function loggedIn<T>(log: Log, trace_id: string, event: string, fac
   }
 }
 
+// A unit of work, inside another's trace, that something else did and timed, reported once it has ended: it took
+// `duration_ms`, up to now, and failed with `error`, or did not, when `error` is undefined.
+export function loggedAfter(log: Log, trace_id: string, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
+  const span = { end: () => ({ trace_id, started_at: new Date(Date.now() - duration_ms).toISOString(), duration_ms }) };
+  const end = endEvent(log, event, facts, span);
+  if (error === undefined) end.ok({});
+  else end.failed(error);
+}
+
 // [LAW:single-enforcer] The one writer of a unit of work's event, once the work has ended: `ok` with the facts found
 // off its result, or `failed` with its error.
-function endEvent(log: Log, event: string, facts: Facts, span: ReturnType<typeof startSpan>) {
+function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<typeof startSpan>, "end">) {
   return {
     ok: (found: Facts) => log({ event, ...facts, ...span.end(), ...found, outcome: "ok" }),
     failed: (error: unknown) => log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) }),
@@ -82,8 +92,14 @@ export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Pr
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
 
-// `close` stops accepting connections, cuts every one still open, and resolves once the event of every
-// request it cut is written.
+// A request to switch protocols (a WebSocket's) that the part takes over: from here the connection's socket is the
+// part's, and the unit of work is the connection's whole life. The part's promise settles once it is done with the
+// connection, and the event is written, and `work.ended` resolves, once that and the socket's close have both happened,
+// so a failure the part learns of as the connection ends is the upgrade's outcome.
+export type Upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer, work: Work) => Promise<void>;
+
+// `close` stops accepting connections, cuts every one still open, upgraded ones too, and resolves once the event of
+// every request and upgrade it cut is written.
 export type Serving = { port: number; close: () => Promise<void> };
 
 // [LAW:single-enforcer] The one way a part serves HTTP: it hands over its handler, never a server, so
@@ -93,9 +109,14 @@ export type Serving = { port: number; close: () => Promise<void> };
 // The port is bound on LOOPBACK, so a connection dialed there reaches this server or the bind fails: a port another
 // process holds on LOOPBACK is refused, and one held on the wildcard, where the kernel shares it (macOS), is shared
 // with this server, the more specific bind, which takes the connections dialed to LOOPBACK.
-export async function serve(log: Log, handler: Handler, port: number): Promise<Serving> {
+// A part that takes no upgrades gives no `upgrade`, and node hands an upgrade request to `handler` as any other request.
+export async function serve(log: Log, handler: Handler, port: number, upgrade?: Upgrade): Promise<Serving> {
   const inFlight = new Set<Promise<Ending>>();
-  const server = loggedServer(log, handler, inFlight);
+  const upgraded = new Map<Duplex, Promise<Ending>>();
+  // [LAW:single-enforcer] Only a WebSocket's upgrade is the part's: node hands every request that offers any Upgrade
+  // (an h2c POST included) to the upgrade listener once there is one, so every other reaches `handler` as before.
+  const server = loggedServer(log, handler, inFlight, (req) => upgrade !== undefined && req.headers.upgrade?.toLowerCase() === "websocket");
+  if (upgrade) server.on("upgrade", withUpgradeEvent(log, upgrade, server, upgraded));
   const span = startSpan();
   try {
     server.listen(port, LOOPBACK);
@@ -112,9 +133,16 @@ export async function serve(log: Log, handler: Handler, port: number): Promise<S
       // [LAW:no-ambient-temporal-coupling] The server's close can come before the close of a response it
       // cut, which is when that request's event is written, so each cut request's `ended` is awaited too.
       const cut = [...inFlight];
+      const cutUpgrades = [...upgraded];
       const closed = new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
       server.closeAllConnections();
-      return loggedAll(log, "close", { port: bound, requests_open: cut.length }, [closed, ...cut]);
+      // An upgraded socket is no longer the server's connection, so closeAllConnections does not reach it.
+      for (const [socket] of cutUpgrades) socket.destroy();
+      return loggedAll(log, "close", { port: bound, requests_open: cut.length, upgrades_open: cutUpgrades.length }, [
+        closed,
+        ...cut,
+        ...cutUpgrades.map(([, ended]) => ended),
+      ]);
     },
   };
 }
@@ -150,8 +178,8 @@ async function loggedAll(log: Log, event: string, facts: Facts, work: Promise<un
   end.ok({});
 }
 
-function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>): Server {
-  const server = createHttpServer();
+function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>, shouldUpgradeCallback: (req: IncomingMessage) => boolean): Server {
+  const server = createHttpServer({ shouldUpgradeCallback });
   server.on("request", withRequestEvent(log, handler, server, inFlight));
   server.on("connection", (socket: Socket) => {
     const span = startSpan();
@@ -209,6 +237,33 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       fail(error);
       res.destroy();
     }
+  };
+}
+
+// The upgrade's event is written once, when its socket closes: an error the part reported is its outcome; otherwise a
+// socket closed by an error was aborted, one cut by `close` was stopped, and any other ended as it should.
+// The upgrade is open, for `close` to cut and wait on, until its socket closes.
+function withUpgradeEvent(log: Log, upgrade: Upgrade, server: Server, upgraded: Map<Duplex, Promise<Ending>>) {
+  return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const span = startSpan();
+    const client = clientOf(req.socket);
+    let failure: string | undefined;
+    const fail = (error: unknown) => (failure ??= describeError(error));
+    const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
+    upgraded.set(socket, ended);
+    const closed = new Promise<Exclude<Ending["outcome"], "error">>((resolve) =>
+      socket.once("close", (hadError: boolean) => resolve(!server.listening ? "stopped" : hadError ? "aborted" : "ok")),
+    );
+    const done = Promise.try(upgrade, req, socket, head, { trace_id: span.trace_id, fail, ended }).catch((error: unknown) => {
+      fail(error);
+      socket.destroy();
+    });
+    void Promise.all([closed, done]).then(([outcome]) => {
+      const ending: Ending = failure === undefined ? { outcome } : { outcome: "error", error: failure };
+      upgraded.delete(socket);
+      end(ending);
+      log({ event: "upgrade", ...span.end(), ...ending, url: req.url, protocol: req.headers.upgrade, ...client });
+    });
   };
 }
 
