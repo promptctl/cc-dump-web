@@ -272,8 +272,8 @@ export const describeSize = (size: number): string => `${compact(size)} chars`;
 // What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of what its
 // `preview` reads as, or, for a block with none, of its first part with anything to read, on one line, as much as a line
 // could hold, and an ellipsis where it was cut. A block of media alone shows nothing. Read once per block, which the
-// formatter keeps the same object while its side of the exchange is unchanged: a text is read as rendered whole, its
-// rendering the one the body and the search read (view/rendering.ts).
+// formatter keeps the same object while its side of the exchange is unchanged: a text is read as rendered whole, once
+// per text however many parts hold it (view/rendering.ts).
 const previews = new WeakMap<Block, string>();
 export function preview(block: Block): string {
   const line = previews.get(block) ?? previewLine(block);

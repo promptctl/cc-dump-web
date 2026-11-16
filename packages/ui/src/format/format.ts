@@ -364,7 +364,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
           ]),
           ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: [pickedPart(message, ["id"])] })),
+          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
         ],
         message: {
           input: uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0),
