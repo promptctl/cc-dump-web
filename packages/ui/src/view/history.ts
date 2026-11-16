@@ -13,10 +13,10 @@ import { linesOf, type Fact, type Role } from "./lines.ts";
 export type Version = { step: number; block: KeyedBlock; reply: boolean };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
-// [LAW:types-are-the-program] The key names the place, so it is the same at every moment: a thread's place is
-// `thread:<trace>/request/<block>` or `thread:<trace>/message.<i>/<block>`, named apart from any exchange's rows, since a
-// key's `/` prefixes are the rows it stands inside (position.ts) and a thread's place stands inside none of the rows of
-// the exchange that began it. What is an exchange's own is keyed as its row always was, `<trace>/<group>/<block>`.
+// [LAW:types-are-the-program] The key names the item, so it is the same at every moment: a thread's item is
+// `thread:<trace>/request/<block>` or `thread:<trace>/message.<i>/<block>`, by the exchange that first sent it and its
+// place, never by its line, which a later request can decide again; named apart from any exchange's rows, since a key's
+// `/` prefixes are the rows it stands inside (position.ts) and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was, `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, and, for
@@ -123,7 +123,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
         }
         line.places.set(at, { step, group: groupIndex, index: items.length });
         undo.push(() => line.places.delete(at));
-        items.push(arrived(`${role!.line}/${at}`, reply));
+        items.push(arrived(`thread:${trace}/${at}`, reply));
       }
       return { key: group.key, title: group.title, items };
     });

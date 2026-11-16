@@ -44,7 +44,7 @@ export function parseSettings(stored: unknown): Settings {
   const branches = fieldOf(stored, "branches");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
-    return isVisibility(value) ? value : "shown";
+    return isOneOf(visibilities)(value) ? value : "shown";
   };
   // A query is a regular expression, in any case, until the reader chooses otherwise.
   const option = (name: keyof SearchOptions, fallback: boolean) => {
@@ -56,14 +56,13 @@ export function parseSettings(stored: unknown): Settings {
     visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
     theme: isThemeChoice(theme) ? theme : "system",
     search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
-    unchanged: isUnchanged(unchanged) ? unchanged : "fold",
-    branches: isBranches(branches) ? branches : "stay",
+    unchanged: isOneOf(unchangedRows)(unchanged) ? unchanged : "fold",
+    branches: isOneOf(branchPlacements)(branches) ? branches : "stay",
   };
 }
 
-const isVisibility = (value: unknown): value is Visibility => (visibilities as readonly unknown[]).includes(value);
-const isUnchanged = (value: unknown): value is Unchanged => (unchangedRows as readonly unknown[]).includes(value);
-const isBranches = (value: unknown): value is Branches => (branchPlacements as readonly unknown[]).includes(value);
+// Whether a stored value is one of `values`.
+const isOneOf = <T,>(values: readonly T[]) => (value: unknown): value is T => (values as readonly unknown[]).includes(value);
 
 export const useSettings = create<Settings>()(
   persist(() => parseSettings(undefined), { name, storage: createJSONStorage(() => localStorage), merge: (stored) => parseSettings(stored) }),

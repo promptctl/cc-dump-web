@@ -56,12 +56,12 @@ export function createLayout(
   let last: Layout = { rows: [], keys: keysOf([], new Map()), every: { rows: [], keys: keysOf([], new Map()) } };
   const place = placements[branches];
   return (history, step, revealed, opened) => {
-    // Each row of a branch folded into one, by the branch.
-    const collapsed = new Map<string, Branch>();
+    // The keys of the branches folded into one row each.
+    const collapsed = new Set<string>();
     const every = history.segments.slice(0, step).flatMap((segment, index) => {
       const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
       const { rows, collapses } = place(() => segmentRows(segment, index + 1, step), () => segmentRows(segment, index + 1, step - 1).map(removed), past);
-      if (collapses) for (const row of rows) collapsed.set(row.key, segment.branch!);
+      if (collapses) collapsed.add(segment.branch!.key);
       return rows;
     });
     const isShown = every.map((row) => row.kind !== "block" || isListed[visibility[(row.change === "removed" ? row.before : row.block).category]] || row.key === revealed);
@@ -141,19 +141,19 @@ function versionAt(item: Item, step: number) {
 
 const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
 
-// The listed rows with each run of a branch's rows `collapsed` folded, unless opened in `opened` or the block revealed is
-// in it; then each run of unchanged rows folded, beyond `context` rows beside a change, unless opened or the reader shows
-// every unchanged row, `revealed` never among them, and no branch's row. A branch's fold is one row, so it is as far from
-// a change as the row it is listed as. `placeOf`: each listed row's place among the rows.
+// The listed rows with each run of rows of a branch in `collapsed` folded, unless opened in `opened` or the block
+// revealed is in it; then each run of unchanged rows folded, beyond `context` rows beside a change, unless opened or the
+// reader shows every unchanged row, `revealed` never among them, and no branch's row. A branch's fold is one row, so it
+// is as far from a change as the row it is listed as. `placeOf`: each listed row's place among the rows.
 function fold(
   listed: Row[],
   revealed: string | undefined,
   opened: Record<string, true>,
   unchanged: Unchanged,
-  collapsed: ReadonlyMap<string, Branch>,
+  collapsed: ReadonlySet<string>,
 ): { rows: Row[]; placeOf: Map<string, number> } {
   const isOpened = (run: Row[]) => opened[foldKey(run[0]!.key)] === true;
-  const branchOf = (row: Row) => collapsed.get(row.key);
+  const branchOf = ({ branch }: Row) => (branch !== undefined && collapsed.has(branch.key) ? branch : undefined);
   const branches = foldRuns(
     listed,
     (at, first) => branchOf(listed[first]!) !== undefined && branchOf(listed[at]!)?.key === branchOf(listed[first]!)!.key,

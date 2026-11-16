@@ -71,8 +71,8 @@ describe("history", () => {
       // The second turn resends the first, its reply included, and the system prompt and tools: only what is new is its.
       {
         request: ["t2/request/http"],
-        "message.2": ["thread:t1/message.2/content.0"],
-        response: ["t2/response/http", "thread:t1/message.3/content.0", "t2/response/stop reason", "t2/response/usage", "t2/response/fields"],
+        "message.2": ["thread:t2/message.2/content.0"],
+        response: ["t2/response/http", "thread:t2/message.3/content.0", "t2/response/stop reason", "t2/response/usage", "t2/response/fields"],
       },
     ]);
     expect(history(process).stepOf("title")).toBe(3);
@@ -90,7 +90,7 @@ describe("history", () => {
       [2, [{ kind: "text", text: "You are Claude Code." }]],
       [5, [{ kind: "text", text: "You are Claude Code, edited." }]],
     ]);
-    expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"], "message.4": ["thread:t1/message.4/content.0"] });
+    expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"], "message.4": ["thread:t3/message.4/content.0"] });
     // Read without the last step, the history is as it was before it.
     expect(read(exchangesUpTo(edited, 4)).segments).toEqual(history(process).segments);
     // A history once returned is never changed by a later fold.
@@ -103,7 +103,7 @@ describe("history", () => {
     read([...process, ...t3.slice(0, 2)]);
     read([...process, ...t3.slice(0, 5)]);
     expect(read([...process, ...t3]).segments).toEqual(history([...process, ...t3]).segments);
-    expect(arrived(read([...process, ...t3]))[4]).toMatchObject({ "message.4": ["thread:t1/message.4/content.0"] });
+    expect(arrived(read([...process, ...t3]))[4]).toMatchObject({ "message.4": ["thread:t3/message.4/content.0"] });
   });
 
   it("compares a reply with the block the next request resends as it is resent: the fields the API reported and the client drops do not change it", () => {
@@ -129,7 +129,7 @@ describe("history", () => {
       ...reply("t1", quoting),
       ...request("t2", { ...main, messages: [hi, assistant(...quoting), user(text("Go on."))] }),
     ]);
-    expect(segments[1]!.groups.flatMap(({ items }) => items.map(({ key }) => key))).toEqual(["t2/request/http", "thread:t1/message.2/content.0"]);
+    expect(segments[1]!.groups.flatMap(({ items }) => items.map(({ key }) => key))).toEqual(["t2/request/http", "thread:t2/message.2/content.0"]);
   });
 
   it("names a thread's places apart from every row of the exchange that began it", () => {
@@ -164,12 +164,12 @@ const keysAt = ({ segments }: History, step: number) => segments[step - 1]!.grou
 describe("branches", () => {
   it("keeps a side question on the thread until the thread's next turn leaves it out, then makes it a branch of its own", () => {
     const asked = history([...process, ...btw]);
-    expect(keysAt(asked, 5)).toContain("thread:t1/message.4/content.0");
+    expect(keysAt(asked, 5)).toContain("thread:btw/message.4/content.0");
     const after = history([...process, ...btw, ...t3]);
-    expect(keysAt(after, 5)).toEqual(["btw/request/http", "branch:btw/message.4/content.0", "btw/response/http", "branch:btw/message.5/content.0", "btw/response/stop reason", "btw/response/usage", "btw/response/fields"]);
+    expect(keysAt(after, 5)).toEqual(["btw/request/http", "thread:btw/message.4/content.0", "btw/response/http", "thread:btw/message.5/content.0", "btw/response/stop reason", "btw/response/usage", "btw/response/fields"]);
     expect(after.segments[4]!.branch).toEqual({ key: "branch:btw", from: 4 });
     // The turn's message and reply are the thread's own, not versions of the question's.
-    expect(keysAt(after, 6)).toContain("thread:t1/message.4/content.0");
+    expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
     expect(versioned(after)).toEqual([]);
     expect([...after.branches]).toEqual([["branch:btw", 5]]);
   });
@@ -178,14 +178,14 @@ describe("branches", () => {
     const after = history([...process, ...compact, ...t3]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
-      "branch:compact/message.2/content.1",
+      "thread:compact/message.2/content.1",
       "compact/response/http",
-      "branch:compact/message.3/content.0",
+      "thread:compact/message.3/content.0",
       "compact/response/stop reason",
       "compact/response/usage",
       "compact/response/fields",
     ]);
-    expect(keysAt(after, 6)).toContain("thread:t1/message.4/content.0");
+    expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
     expect(after.segments[5]!.branch).toBeUndefined();
     expect(versioned(after)).toEqual([]);
   });
@@ -201,16 +201,16 @@ describe("branches", () => {
       ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
       ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
     ]);
-    expect(keysAt(after, 2)).toContain("branch:s2/message.1/content.0");
-    expect(keysAt(after, 3)).toContain("thread:s1/message.2/content.0");
-    expect(keysAt(after, 4)).toContain("branch:s2/message.2/content.0");
+    expect(keysAt(after, 2)).toContain("thread:s2/message.1/content.0");
+    expect(keysAt(after, 3)).toContain("thread:s3/message.2/content.0");
+    expect(keysAt(after, 4)).toContain("thread:s4/message.2/content.0");
     expect(versioned(after)).toEqual([]);
   });
 
   it("makes a side request with the thread's first message and a system prompt of its own a branch, never a version of the thread's", () => {
     const side = [...request("side", { model: "m", system: [text("Is this a new topic?")], messages: [hi] }), ...reply("side", [text("Yes.")])];
     const after = history([...process, ...side, ...t3]);
-    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["branch:side/request/system.0", "branch:side/message.1/content.0"]));
+    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/request/system.0", "thread:side/message.1/content.0"]));
     expect(versioned(after)).toEqual([]);
   });
 

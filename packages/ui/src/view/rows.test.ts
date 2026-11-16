@@ -46,7 +46,7 @@ describe("layout", () => {
       "thread:t1/message.0/content.0 added",
     ]);
     // The second turn resends the first: only its HTTP and its new message are its, and the first's rows are unchanged.
-    expect(listed(at(2)).slice(8)).toEqual(["t2", "t2/request", "t2/request/http added", "t2/message.1", "thread:t1/message.1/content.0 added"]);
+    expect(listed(at(2)).slice(8)).toEqual(["t2", "t2/request", "t2/request/http added", "t2/message.1", "thread:t2/message.1/content.0 added"]);
     expect(at(2).rows.slice(0, 8).every((row) => row.kind !== "block" || (row.change === "same" && row.before === row.block))).toBe(true);
     expect(at(2).rows.filter((row) => row.kind !== "block").map((row) => row.kind !== "fold" && row.change)).toEqual(["same", "same", "same", "added", "added", "added"]);
     // An added row has nothing before it; a step of 0 shows nothing.
@@ -102,7 +102,7 @@ describe("layout", () => {
 
   it("leaves out a hidden category's blocks, and a group with none left, and puts a row not listed at the row listed before it", () => {
     const at = layouts(turns(2), dialogue);
-    expect(listed(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0 same", "t2", "t2/message.1", "thread:t1/message.1/content.0 added"]);
+    expect(listed(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0 same", "t2", "t2/message.1", "thread:t2/message.1/content.0 added"]);
     const { keys } = at(2);
     expect(keys.at(keys.indexOf("t1/request/http")!)).toBe("t1");
     expect(keys.at(keys.indexOf("thread:t1/request/system.0")!)).toBe("t1");
@@ -145,7 +145,7 @@ describe("layout", () => {
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));
-    expect(after.every.rows.map(({ key }) => key)).toContain("thread:t1/request/system.1");
+    expect(after.every.rows.map(({ key }) => key)).toContain("thread:t2/request/system.1");
     expect(after.keys).not.toBe(before.keys);
   });
 
@@ -193,21 +193,21 @@ const branched = [...turns(2), ...thread("side", [...say(1), { role: "user", con
 describe("branches", () => {
   it("lists a branch where it arrived, as it was, at every later step, marked as the branch it is", () => {
     const at = layouts(branched, shown, "show", "stay");
-    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
-    expect(listed(at(5))).toContain("branch:side/message.1/content.1 same");
+    expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
+    expect(listed(at(5))).toContain("thread:side/message.1/content.1 same");
     expect(at(5).rows.find(({ key }) => key === "side")).toMatchObject({ kind: "exchange", branch: { key: "branch:side", from: 2 } });
   });
 
   it("folds a branch into one row once its last request is behind the step shown, opened by its flip or a block revealed in it", () => {
     const at = layouts(branched, shown, "show", "fold");
-    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
+    expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const folded = at(4).rows.filter(({ kind }) => kind === "fold");
     expect(folded).toEqual([{ kind: "fold", key: "side", count: 5, branch: { key: "branch:side", from: 2 } }]);
     // Its rows are still the search's, and stand where the fold does.
-    expect(at(4).every.rows.map(({ key }) => key)).toContain("branch:side/message.1/content.1");
-    expect(at(4).keys.indexOf("branch:side/message.1/content.1")).toBe(at(4).keys.indexOf("side"));
-    expect(listed(at(4, undefined, { [foldKey("side")]: true }))).toContain("branch:side/message.1/content.1 same");
-    expect(listed(at(4, "branch:side/message.1/content.1"))).toContain("branch:side/message.1/content.1 same");
+    expect(at(4).every.rows.map(({ key }) => key)).toContain("thread:side/message.1/content.1");
+    expect(at(4).keys.indexOf("thread:side/message.1/content.1")).toBe(at(4).keys.indexOf("side"));
+    expect(listed(at(4, undefined, { [foldKey("side")]: true }))).toContain("thread:side/message.1/content.1 same");
+    expect(listed(at(4, "thread:side/message.1/content.1"))).toContain("thread:side/message.1/content.1 same");
     // An unchanged fold never takes a branch's rows.
     const unchanged = layouts(branched, shown, "fold", "fold")(5);
     expect(unchanged.rows.filter(({ kind }) => kind === "fold").map(({ key, branch }) => [key, branch?.key])).toContainEqual(["side", "branch:side"]);
@@ -221,9 +221,9 @@ describe("branches", () => {
 
   it("lists a branch only while its requests are: the step after its last shows it removed, on the left alone, and later steps not at all", () => {
     const at = layouts(branched, shown, "show", "step");
-    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
+    expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const removed = at(4).rows.filter((row) => row.kind !== "fold" && row.change === "removed");
-    expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "branch:side/message.1/content.1"]);
+    expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "thread:side/message.1/content.1"]);
     expect(removed.at(-1)).toMatchObject({ block: undefined, before: { key: "content.1" } });
     // What is removed is not the moment shown's, so the search does not count it.
     expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(0);

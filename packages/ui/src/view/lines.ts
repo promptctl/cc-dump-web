@@ -8,8 +8,8 @@
 // names a line it begins. `messages`: how many messages it sends.
 export type Fact = { step: number; trace: string; left: { step: number; whole: boolean } | undefined; messages: number };
 
-// A request's line, by the prefix of its items' keys: `thread:<trace>`, a thread's main line, named by the exchange that
-// began it, or `branch:<trace>`, named by the branch's first request; and, for a branch, the line it left, `base`, and
+// A request's line, by its key: `thread:<trace>`, a thread's main line, named by the exchange that began it, or
+// `branch:<trace>`, named by the branch's first request; and, for a branch, the line it left, `base`, and
 // the step on it it left from.
 export type Role = { line: string; branch: { base: string; from: number } | undefined };
 
