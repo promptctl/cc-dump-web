@@ -150,12 +150,12 @@ describe("format", () => {
     expect(message!.parts).toEqual([{ kind: "json", label: "fields", value: expect.objectContaining({ id: "msg_1", context_management: { applied_edits: [] } }) }]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
     expect(group(formatted, "request")[1]!.parts).toEqual([{ kind: "json", value: { model: "claude-fable-5-2", max_tokens: 32000, thinking: body.thinking } }]);
-    // A tool's description reads first, what else defines it after; a server tool is named by its type.
+    // A tool's description reads first, what else defines it after; a server tool is named by its type, not shown again.
     expect(group(formatted, "request")[2]!.parts).toEqual([
       { kind: "text", form: "markdown", text: "Reads a file" },
       { kind: "json", label: "fields", value: { input_schema: { type: "object" } } },
     ]);
-    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "json", label: "fields", value: { type: "web_search_20250305", max_uses: 2 } }]);
+    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "json", label: "fields", value: { max_uses: 2 } }]);
     // The cache breakpoint is the request's, out of the block it was set on.
     expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
     expect(group(formatted, "request")[5]!.parts).toEqual([{ kind: "fields", fields: [["system.0", '{"type":"ephemeral"}']] }]);
@@ -179,7 +179,7 @@ describe("format", () => {
       key: "cache",
       category: "metadata",
       name: "cache breakpoints: 3",
-      parts: [{ kind: "fields", fields: [["tools.Bash", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
+      parts: [{ kind: "fields", fields: [["tools.Bash.0", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
     expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([

@@ -9,10 +9,10 @@ import { linesOf, type Fact, type Role } from "./lines.ts";
 // request's block but a block at its place in a thread: it enters with the exchange it first arrives with and stays
 // there, resending it adds nothing, and different content at its place is a new version of it.
 
-// A version of an item: the block at its place from `step` on, or none once a request no longer sends it, `was` the
-// block it stopped sending; and whether it arrived as a reply, which is compared with the block the next request resends
-// as that block is.
-export type Version = Sent | { step: number; block: undefined; was: KeyedBlock; reply: false };
+// A version of an item: the block at its place from `step` on, and whether it arrived as a reply, which is compared with
+// the block the next request resends as that block is; or none once a request no longer sends it, `was` the block it
+// stopped sending.
+export type Version = Sent | { step: number; block: undefined; was: KeyedBlock };
 type Sent = { step: number; block: KeyedBlock; reply: boolean };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
@@ -136,15 +136,16 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     // did not send is gone from the step on: an item of the line's own, its next version; one its base sent, an item of
     // the line's, gone as it arrives. A place is named for the group a request sends it in (format.ts), so the request
     // sends a place when it has that group; a message past its last is the line's after it, which it leaves as a branch.
+    const groupOf = new Map(groups.map(({ key }, index) => [key, index]));
     for (const { line: holder, at, location, upTo } of line === undefined ? [] : resent(line)) {
       if (sent.has(at)) continue;
       sent.add(at);
       const item = itemAt(location);
       const was = item.versions.findLast(({ step }) => step <= upTo)!.block;
       if (was === undefined) continue;
-      const group = groups.findIndex(({ key }) => key === placeName(was.place!, folded[location.step - 1]!.segment.formatted.messages));
-      if (group === -1) continue;
-      const gone: Version = { step, block: undefined, was, reply: false };
+      const group = groupOf.get(placeName(was.place!, folded[location.step - 1]!.segment.formatted.messages));
+      if (group === undefined) continue;
+      const gone: Version = { step, block: undefined, was };
       if (holder === line) {
         replace(location, { ...item, versions: [...item.versions, gone] });
         undo.push(() => replace(location, item));
@@ -265,8 +266,12 @@ function createComparison(): Comparison {
   // A reply is compared as it is resent: a request resends a reply's content block, and only the client knows which of
   // the fields the API reported about it (a thinking block's estimated_tokens, a tool use's caller) it keeps, so of the
   // fields no read asked for, only those the resent block has.
-  const compare = ({ block: was, reply }: Version, block: KeyedBlock) =>
-    was === undefined ? false : reply && block.place?.in !== "reply" ? cached(was, block, () => equal(content(asResent(was, block)), content(block))) : blocks(was, block);
+  const compare = (version: Version, block: KeyedBlock) =>
+    version.block === undefined
+      ? false
+      : version.reply && block.place?.in !== "reply"
+        ? cached(version.block, block, () => equal(content(asResent(version.block, block)), content(block)))
+        : blocks(version.block, block);
   return Object.assign(compare, { blocks });
 }
 

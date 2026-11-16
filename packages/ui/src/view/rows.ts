@@ -117,15 +117,17 @@ const placements: Record<Branches, Placement> = {
 // A row a segment lists while it is shown: any but a fold.
 type Shown = Exclude<Row, { kind: "fold" }>;
 
-// The rows of step `own`'s segment at step `step`: its exchange's line, then each group's title and items.
+// The rows of step `own`'s segment at step `step`: its exchange's line, then each group with an item's row then, its
+// title over them.
 function segmentRows({ formatted, groups, branch }: Segment, own: number, step: number): Shown[] {
   const change = own === step ? "added" : "same";
   const trace = formatted.exchange.trace_id;
   return [
     { kind: "exchange", key: trace, exchange: formatted, change, branch },
-    ...groups
-      .filter(({ items }) => items.length > 0)
-      .flatMap(({ key, title, items }): Shown[] => [{ kind: "group", key: `${trace}/${key}`, title, change, branch }, ...items.flatMap((item) => itemRow(item, own, step, branch))]),
+    ...groups.flatMap(({ key, title, items }): Shown[] => {
+      const rows = items.flatMap((item) => itemRow(item, own, step, branch));
+      return rows.length === 0 ? [] : [{ kind: "group", key: `${trace}/${key}`, title, change, branch }, ...rows];
+    }),
   ];
 }
 

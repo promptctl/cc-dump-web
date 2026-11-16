@@ -172,8 +172,8 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       // newest blocks on every request, so a block left holding one would differ each time it is resent. They are
       // lifted out of the blocks in that order, into one block of the request's own.
       const breakpoints: Header[] = [];
-      // A tool's breakpoint is named for the tool, as its block is.
-      const tools = toolBlocks(lift(body.value("tools"), (_index, tool) => `tools.${toolName(tool)}`, breakpoints));
+      // A tool's breakpoint is named by its block's key, as every other block's is.
+      const tools = toolBlocks(lift(body.value("tools"), (index, list) => toolKeys(list)[index]!, breakpoints));
       const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
       const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them.
@@ -196,12 +196,12 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
 
 // A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A
 // value that is not a list, or a block that is not an object, holds no breakpoint, and is left for its reader to show.
-function lift(list: unknown, at: (index: number, block: unknown) => string, breakpoints: Header[]): unknown {
+function lift(list: unknown, at: (index: number, list: unknown[]) => string, breakpoints: Header[]): unknown {
   if (!Array.isArray(list)) return list;
   return list.map((block: unknown, index) => {
     if (typeof block !== "object" || block === null || !("cache_control" in block)) return block;
     const { cache_control: breakpoint, ...rest } = block;
-    breakpoints.push([at(index, block), JSON.stringify(breakpoint)]);
+    breakpoints.push([at(index, list), JSON.stringify(breakpoint)]);
     return rest;
   });
 }
@@ -242,16 +242,22 @@ function systemBlocks(system: unknown): Block[] {
 // Each tool definition as a block of its own, named for its tool, its description read first and its schema after.
 // [LAW:types-are-the-program] Keyed by its name, `tools.<name>.<n>`, `n` its occurrence among tools of that name, so a
 // tool is the same item in every request that offers it wherever it stands in the list (view/history.ts), and the key
-// is unique and has no `/` (view/position.ts) whatever a recorded request holds: its `%` and `/` escaped as a URI's are. A tool that does not fit is shown raw.
+// is unique and has no `/` (view/position.ts) whatever a recorded request holds. A tool that does not fit is shown raw.
 function toolBlocks(tools: unknown): KeyedBlock[] {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
+  const keys = toolKeys(tools);
+  return tools.map((tool, index) => ({ ...toolBlock(tool, toolName(tool)), key: keys[index]! }));
+}
+
+// Each tool's key, its name's `%` and `/` escaped as a URI's are.
+function toolKeys(tools: unknown[]): string[] {
   const seen = new Map<string, number>();
   return tools.map((tool) => {
     const name = toolName(tool);
     const occurrence = seen.get(name) ?? 0;
     seen.set(name, occurrence + 1);
-    return { ...toolBlock(tool, name), key: `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${occurrence}` };
+    return `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${occurrence}`;
   });
 }
 
@@ -259,8 +265,8 @@ function toolBlock(tool: unknown, name: string): Block {
   return fitting(
     (): Block => {
       const fields = readObject(tool, "tool definition");
-      // Read so the name the block is named for is not shown again among the rest.
-      fields.optionalString("name");
+      // Read so the field the block is named for is not shown again among the rest.
+      void (fields.optionalString("name") ?? fields.optionalString("type"));
       const description = fields.optionalString("description");
       return {
         category: "tools",
