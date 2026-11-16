@@ -253,12 +253,12 @@ describe("format", () => {
     expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition's description is not a string, if present"));
   });
 
-  it("shows a reply's usage as it was received when it holds no fields, and the reply's content beside it", () => {
-    for (const usage of [null, {}, undefined]) {
+  it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
+    for (const usage of [null, {}, undefined, "[]"]) {
       const message = { type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage };
       const blocks = group(one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]), "response");
       expect(blocks.find(({ name }) => name === "assistant")!.parts).toEqual([{ kind: "text", form: "markdown", text: "hi" }]);
-      expect(blocks.find(({ name }) => name === "usage")!.parts).toEqual([{ kind: "json", value: usage }]);
+      expect(blocks.find(({ name }) => name === "usage")!.parts).toEqual([{ kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
     }
   });
 

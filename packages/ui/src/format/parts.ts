@@ -52,10 +52,10 @@ function heldJson(text: string): unknown {
   }
 }
 
-// A value as the part showing it: its fields when it holds any, else its JSON.
-export function valuePart(value: unknown, labelled: { label?: string } = {}): Part {
+// A value as the part showing it: its fields when it holds any, else the JSON text a field would show it as.
+export function valuePart(value: unknown): Part {
   const shown = fieldValue(value);
-  return typeof shown === "string" ? { kind: "json", ...labelled, value } : { kind: "fields", ...labelled, fields: shown };
+  return typeof shown === "string" ? { kind: "text", form: "verbatim", text: shown } : { kind: "fields", fields: shown };
 }
 
 // An object's fields as a part, when it has any.

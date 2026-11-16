@@ -7,7 +7,7 @@ import { fitting, readObject, type Fields } from "./read.ts";
 // input, it never rewrites it.
 
 // [LAW:one-type-per-behavior] The parts a tool's input shows, by the tool's name, a tool one entry. Each reads the fields
-// it arranges; the fields it does not read follow (`unreadParts`). An input all of whose fields read as fields has an entry
+// it arranges; the fields it does not read follow (`unreadInputParts`). An input all of whose fields read as fields has an entry
 // that reads none of them.
 const entries = new Map<string, (input: Fields) => Part[]>([
   ["Bash", (input) => [{ kind: "text", form: "verbatim", label: "command", text: input.string("command") }]],
@@ -39,7 +39,7 @@ export function inputParts(name: string, input: unknown): Part[] {
   return fitting(
     () => {
       const fields = readObject(input, "input");
-      return [...entry(fields), ...unreadParts(fields)];
+      return [...entry(fields), ...unreadInputParts(fields)];
     },
     (reason) => [doesNotFit(reason), ...jsonInput(input)],
   );
@@ -50,7 +50,7 @@ export const jsonInput = (input: unknown): Part[] => [{ kind: "json", label: "in
 
 // The fields of an input its entry did not read: the ones a line holds, a string, a number or a boolean, as fields, in
 // the order they were sent, and the others together as the input's JSON.
-function unreadParts(input: Fields): Part[] {
+function unreadInputParts(input: Fields): Part[] {
   const rest = Object.entries(input.rest());
   const fields: Header[] = rest.filter(([, value]) => isScalar(value)).map(([name, value]) => [name, String(value)]);
   const values = rest.filter(([, value]) => !isScalar(value));
