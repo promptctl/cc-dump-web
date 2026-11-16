@@ -1,11 +1,11 @@
-import { useContext, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Part } from "../format/parts.ts";
 import { Highlighted } from "./Highlighted.tsx";
-import { Hold, useWhere, type Where } from "./painting.ts";
+import { useFlip, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
 import { renderingOf, type Block, type Fold, type Inline, type Leaf, type Run } from "./rendering.ts";
 import { partKey } from "./search.ts";
-import { useView, view } from "./state.ts";
+import { useView } from "./state.ts";
 
 // A text part as its rendering shows it (view/rendering.ts): the one view of every text, whoever's it is. It knows
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
@@ -49,16 +49,13 @@ function leafView(leaf: Leaf, where: Where, key?: number): ReactNode {
 function RegionView({ fold, where, children }: { fold: Fold; where: Where; children: ReactNode }) {
   const key = regionKey(partKey(where.blockKey, where.at), fold.line);
   const open = useView((state) => state.flipped[key] === true);
-  const hold = useContext(Hold);
+  const flip = useFlip(key);
   return (
     <div>
       <button
         type="button"
         className="font-mono text-foreground-muted hover:bg-hover"
-        onClick={() => {
-          hold();
-          view.toggle(key);
-        }}
+        onClick={flip}
       >
         {open ? "▾" : "▸"} {fold.label} · {fold.lines} lines
       </button>

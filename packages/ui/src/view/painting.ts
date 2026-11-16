@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from "react";
 import type { Range } from "./range.ts";
 import { find, nothing, type Searched } from "./search.ts";
-import { useView } from "./state.ts";
+import { useView, view } from "./state.ts";
 
 // How a text shown in the conversation paints the search's matches (docs/design/01-mvp.md, F6), and what a block or a
 // region calls when clicked. The Conversation provides both.
@@ -38,3 +38,13 @@ export function useWhereOn(side: "right" | "left", blockKey: string, at: string,
 export const Hold = createContext<() => void>(() => {
   throw new Error("A block is shown outside a Conversation");
 });
+
+// [LAW:one-source-of-truth] A click's flip of what is kept at `key`, a block, a region or a fold: the view holds where
+// it is, then the flip turns.
+export function useFlip(key: string): () => void {
+  const hold = useContext(Hold);
+  return () => {
+    hold();
+    view.toggle(key);
+  };
+}

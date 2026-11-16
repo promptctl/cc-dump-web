@@ -1,10 +1,9 @@
 import type { Block, Category } from "../format/blocks.ts";
-import { context, diffOf } from "../format/diff.ts";
+import { beyondContext, diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import type { Branch, History, Item, Segment } from "./history.ts";
-import { blockDiff } from "./change.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, so only the rows on screen are
@@ -180,13 +179,8 @@ function fold(
     (row) => branchOf(row),
   );
   const rows = branches.rows;
-  const changed = (row: Row) => row.kind !== "fold" && row.change !== "same";
-  // How far each row is from the nearest change above it and below it.
-  const above: number[] = [];
-  rows.forEach((row, index) => (above[index] = changed(row) ? 0 : (above[index - 1] ?? Infinity) + 1));
-  const below: number[] = [];
-  for (let index = rows.length - 1; index >= 0; index--) below[index] = changed(rows[index]!) ? 0 : (below[index + 1] ?? Infinity) + 1;
-  const folds = (index: number) => unchanged === "fold" && above[index]! > context && below[index]! > context && rows[index]!.key !== revealed && branchOf(rows[index]!) === undefined;
+  const far = beyondContext(rows.map((row) => row.kind !== "fold" && row.change !== "same"));
+  const folds = (index: number) => unchanged === "fold" && far[index]! && rows[index]!.key !== revealed && branchOf(rows[index]!) === undefined;
   const unchangedRuns = foldRuns(rows, folds, isOpened, () => undefined);
   const placeOf = new Map(listed.map(({ key }) => [key, unchangedRuns.placeOf.get(rows[branches.placeOf.get(key)!]!.key)!]));
   return { rows: unchangedRuns.rows, placeOf };
@@ -343,9 +337,9 @@ export function isExpanded(flipped: Record<string, true>, key: string, block: Bl
 const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
-// block's line and its content: a changed block's diff, a line a pair or a fold, and any other's parts at about 100
-// characters a line, on its taller side. Only rows not yet on screen use it, so it decides how the scrollbar reads, not
-// where anything lands.
+// block's line and its content at about 100 characters a line, on its taller side; for a changed block, whose diff folds
+// what it kept, an upper bound, since diffing a row to estimate it would diff rows never shown. Only rows not yet on
+// screen use it, so it decides how the scrollbar reads, not where anything lands.
 export function estimateHeight(row: Row, flipped: Record<string, true>): number {
   const line = 20;
   const parts = (block: Block | undefined) => (block === undefined ? 0 : Math.ceil(sizeOf(block) / 100) * 16);
@@ -357,6 +351,6 @@ export function estimateHeight(row: Row, flipped: Record<string, true>): number 
       return line;
     case "block":
       if (!isExpanded(flipped, row.key, row.block ?? row.before)) return line;
-      return line + (row.change === "changed" ? blockDiff(row.before, row.block).entries.length * line : Math.max(parts(row.block), parts(row.before)));
+      return line + Math.max(parts(row.block), parts(row.before));
   }
 }

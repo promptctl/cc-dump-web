@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { context, diffOf, marks, type Edit } from "../format/diff.ts";
@@ -16,7 +16,7 @@ import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Side, unpainted, useWhere, useWhereOn, type Where } from "./painting.ts";
+import { Hold, Painted, Side, unpainted, useFlip, useWhere, useWhereOn, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
 import { TextView } from "./Text.tsx";
 import { address, adjacent, createSearch, ordinal, partKey, patternOf, type Direction } from "./search.ts";
@@ -354,15 +354,12 @@ function sameFields(a: Row, b: Row): boolean {
 // A run of unchanged rows, or of a branch's, folded: one line saying how many, across both columns, which opens it on a
 // click.
 function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
-  const hold = useContext(Hold);
+  const flip = useFlip(foldKey(fold.key));
   return (
     <button
       type="button"
       className="flex w-full items-center gap-3 py-0.5 pl-7 text-left font-sans text-foreground-muted hover:bg-hover"
-      onClick={() => {
-        hold();
-        view.toggle(foldKey(fold.key));
-      }}
+      onClick={flip}
     >
       <span className="w-3">▸</span>
       {fold.branch === undefined ? `${fold.count} unchanged` : `branch off ${fold.branch.from} · ${fold.count} rows`}
@@ -472,15 +469,12 @@ function Gutter({ block, children }: { block: KeyedBlock; children: ReactNode })
 // A block's line: its name, a preview of its content while collapsed, and its size.
 function BlockLine({ rowKey: key, block, open }: { rowKey: string; block: KeyedBlock; open: boolean }) {
   const size = sizeOf(block);
-  const hold = useContext(Hold);
+  const flip = useFlip(key);
   return (
     <button
       type="button"
       className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
-      onClick={() => {
-        hold();
-        view.toggle(key);
-      }}
+      onClick={flip}
     >
       <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
       <span className="min-w-0 truncate" title={block.name}>
@@ -561,16 +555,13 @@ function DiffLineView({ line, ground, from, where }: { line: SideLine; ground: s
 function DiffFold({ row, inset, fold, lines }: { row: ChangedRow; inset: string | undefined; fold: LineFold; lines: () => ReactNode }) {
   const key = regionKey(partKey(row.key, address.change), fold.line);
   const open = useView((state) => state.flipped[key] === true);
-  const hold = useContext(Hold);
+  const flip = useFlip(key);
   const line = (block: KeyedBlock) => (
     <Gutter block={block}>
       <button
         type="button"
         className="flex w-full items-center gap-3 pl-6 text-left font-sans text-foreground-muted hover:bg-hover"
-        onClick={() => {
-          hold();
-          view.toggle(key);
-        }}
+        onClick={flip}
       >
         <span className="w-3">{open ? "▾" : "▸"}</span>
         {fold.pairs.length} unchanged lines

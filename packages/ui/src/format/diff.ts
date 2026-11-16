@@ -38,6 +38,21 @@ export function joined(lines: string[]): Joined {
 // rows beside a changed one in the conversation.
 export const context = 3;
 
+// [LAW:one-source-of-truth] Whether each item, of items each changed or not, is further than `context` items from every
+// change, above it and below it: what a diff folds, its lines or the conversation's rows.
+export function beyondContext(changed: boolean[]): boolean[] {
+  const distances = (order: number[]) => {
+    const distance: number[] = [];
+    let since = Infinity;
+    for (const index of order) distance[index] = since = changed[index] ? 0 : since + 1;
+    return distance;
+  };
+  const places = changed.map((_, index) => index);
+  const above = distances(places);
+  const below = distances(places.toReversed());
+  return places.map((index) => above[index]! > context && below[index]! > context);
+}
+
 // [LAW:one-source-of-truth] How a unified diff marks a line, by what the change did to it.
 export const marks: Record<Change, string> = { same: " ", removed: "-", added: "+" };
 
@@ -49,7 +64,8 @@ const linesOf = (text: string) => (text === "" ? [] : text.split("\n"));
 
 // The words a line `before` became `after` by, each run of what the change did to them joined into one edit. A word is
 // a segment between Unicode word boundaries (UAX #29): a word, a run of spaces, or a punctuation mark, so a changed word
-// is marked without the spaces and punctuation around it, and no character a reader sees as one is cut.
+// is marked without the spaces and punctuation around it, and no character a reader sees as one is cut. The boundaries
+// are the root locale's, so a line splits the same on every machine.
 export function wordDiff(before: string, after: string): Edit[] {
   return diff(wordsOf(before), wordsOf(after)).reduce<Edit[]>((joined, edit) => {
     const last = joined.at(-1);
@@ -58,7 +74,7 @@ export function wordDiff(before: string, after: string): Edit[] {
     return joined;
   }, []);
 }
-const words = new Intl.Segmenter(undefined, { granularity: "word" });
+const words = new Intl.Segmenter("und", { granularity: "word" });
 const wordsOf = (text: string) => Array.from(words.segment(text), ({ segment }) => segment);
 
 // The items `a` became `b` by, in order: the items both start and end with kept, and between them a shortest edit

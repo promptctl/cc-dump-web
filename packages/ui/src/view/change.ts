@@ -1,5 +1,5 @@
 import type { Block } from "../format/blocks.ts";
-import { context, diffOf, joined, lineDiff, marks, wordDiff, type Edit, type Joined } from "../format/diff.ts";
+import { beyondContext, diffOf, joined, lineDiff, marks, wordDiff, type Edit, type Joined } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { Folded } from "./rendering.ts";
 
@@ -126,23 +126,11 @@ function pairsOf(edits: Edit[]): Pair[] {
 // The pairs with each run of unchanged ones folded, beyond `context` pairs beside a change, as the conversation folds
 // its unchanged rows; a run of one is listed, since its fold would take the line it saves.
 function folded(pairs: Pair[]): (Pair | LineFold)[] {
-  const distance = (order: number[]) => {
-    const distances: number[] = [];
-    let since = Infinity;
-    for (const index of order) {
-      since = pairs[index]!.kind === "same" ? since + 1 : 0;
-      distances[index] = since;
-    }
-    return distances;
-  };
-  const places = pairs.map((_, index) => index);
-  const above = distance(places);
-  const below = distance(places.toReversed());
-  const folds = (index: number) => above[index]! > context && below[index]! > context;
+  const far = beyondContext(pairs.map(({ kind }) => kind !== "same"));
   const entries: (Pair | LineFold)[] = [];
   for (let at = 0; at < pairs.length; ) {
     let end = at;
-    while (end < pairs.length && folds(end)) end++;
+    while (end < pairs.length && far[end]) end++;
     if (end - at > 1) {
       entries.push({ kind: "fold", line: pairs[at]!.right!.line, pairs: pairs.slice(at, end) });
       at = end;

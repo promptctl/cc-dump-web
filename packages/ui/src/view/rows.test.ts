@@ -197,8 +197,7 @@ describe("layout", () => {
     expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
     expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
     const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
-    // Expanded, a changed row shows its diff: here one line, the text the version before did not have.
-    expect(estimateHeight(row, {})).toBe(20 + 20);
+    expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
     expect(estimateHeight(row, { k: true })).toBe(20);
   });
 });
