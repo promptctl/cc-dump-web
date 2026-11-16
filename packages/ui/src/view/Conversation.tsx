@@ -274,11 +274,13 @@ function stepShown(moment: Moment, { segments, stepOf }: History): number {
   return moment.at === "now" ? segments.length : (stepOf(moment.trace) ?? segments.length);
 }
 
-// The place `context` rows above the first change of a layout, so what the step did is in view with what it follows.
+// The place `context` rows above the first row a layout's step brought, so what the step did is in view with what it
+// follows. A row a branch placement removed is not the step's, and its own exchange is always one it brought.
 function beforeChange({ rows, keys }: Layout): Position {
-  const first = rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
+  const first = rows.findIndex((row) => row.kind !== "fold" && brought[row.change]);
   return { at: "row", key: keys.at(Math.max(0, first - context)), offset: 0 };
 }
+const brought: Record<Change, boolean> = { added: true, changed: true, removed: false, same: false };
 
 // The keys that move in time, and whether an element takes them for its own: a field typed or chosen in.
 const arrows: Partial<Record<string, -1 | 1>> = { ArrowLeft: -1, ArrowRight: 1 };

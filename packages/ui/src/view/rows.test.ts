@@ -213,6 +213,12 @@ describe("branches", () => {
     expect(unchanged.rows.filter(({ kind }) => kind === "fold").map(({ key, branch }) => [key, branch?.key])).toContainEqual(["side", "branch:side"]);
   });
 
+  it("counts a folded branch as the one row it is listed as, so the context beside a change past it stays listed", () => {
+    const { rows } = layouts(branched, shown, "fold", "fold")(4);
+    const change = rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
+    expect(rows.slice(change - context, change).map((row) => (row.kind === "fold" ? `fold ${row.branch?.key}` : row.kind))).toEqual(["group", "block", "fold branch:side"]);
+  });
+
   it("lists a branch only while its requests are: the step after its last shows it removed, on the left alone, and later steps not at all", () => {
     const at = layouts(branched, shown, "show", "step");
     expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");

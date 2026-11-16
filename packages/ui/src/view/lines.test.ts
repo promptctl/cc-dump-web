@@ -29,6 +29,26 @@ describe("linesOf", () => {
     expect(lines([...facts, whole(5, 3, 7), whole(6, 4, 7)])).toEqual(["thread:t1", "thread:t1", "thread:t1", "branch:t4 off 3", "thread:t1", "branch:t4 off 3"]);
   });
 
+  it("names the line a continued branch takes over by its first request, when its sibling began that line", () => {
+    expect(lines([first(1), inside(2, 1, 1), whole(3, 1, 3), inside(4, 2, 1), whole(5, 4, 3)])).toEqual([
+      "thread:t1",
+      "branch:t2 off 1",
+      "thread:t1",
+      "branch:t4 off 1",
+      "branch:t4 off 1",
+    ]);
+  });
+
+  it("leaves the requests of a continued branch after the one continued, which the request does not resend, a branch", () => {
+    expect(lines([first(1), whole(2, 1, 3), inside(3, 2, 3), inside(4, 3, 5), whole(5, 3, 5)])).toEqual([
+      "thread:t1",
+      "branch:t2 off 1",
+      "thread:t1",
+      "branch:t4 off 3",
+      "thread:t1",
+    ]);
+  });
+
   it("makes turns a rewind leaves behind a branch off the step it resends", () => {
     expect(lines([first(1), whole(2, 1, 3), whole(3, 2, 5), whole(4, 1, 3), whole(5, 4, 5)])).toEqual(["thread:t1", "branch:t2 off 1", "branch:t2 off 1", "thread:t1", "thread:t1"]);
   });

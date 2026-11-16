@@ -25,7 +25,7 @@ export function FilterBar() {
 // Where a branch is listed once its last request is behind the step shown: one of the placements, the one chosen pressed.
 function BranchesChoice({ branches }: { branches: Branches }) {
   return (
-    <div role="radiogroup" aria-label="Branches" className="flex items-center gap-1 font-sans text-foreground-muted">
+    <div role="group" aria-label="Branches" className="flex items-center gap-1 font-sans text-foreground-muted">
       branches:
       {branchPlacements.map((placement) => (
         <Toggle

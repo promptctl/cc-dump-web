@@ -141,11 +141,10 @@ function versionAt(item: Item, step: number) {
 
 const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
 
-// The listed rows with each run of unchanged ones folded, beyond `context` rows beside a change, unless the run is opened
-// in `opened` or the reader shows every unchanged row; `revealed` is never folded. Each run of a branch's rows
-// `collapsed` folds too, apart from any unchanged run, and opens as one does, or when the block revealed is in it. A run
-// of one row is listed as itself, which is what its fold would take the room of. `placeOf`: each listed row's place
-// among the rows.
+// The listed rows with each run of a branch's rows `collapsed` folded, unless opened in `opened` or the block revealed is
+// in it; then each run of unchanged rows folded, beyond `context` rows beside a change, unless opened or the reader shows
+// every unchanged row, `revealed` never among them, and no branch's row. A branch's fold is one row, so it is as far from
+// a change as the row it is listed as. `placeOf`: each listed row's place among the rows.
 function fold(
   listed: Row[],
   revealed: string | undefined,
@@ -153,35 +152,51 @@ function fold(
   unchanged: Unchanged,
   collapsed: ReadonlyMap<string, Branch>,
 ): { rows: Row[]; placeOf: Map<string, number> } {
+  const isOpened = (run: Row[]) => opened[foldKey(run[0]!.key)] === true;
+  const branchOf = (row: Row) => collapsed.get(row.key);
+  const branches = foldRuns(
+    listed,
+    (at, first) => branchOf(listed[first]!) !== undefined && branchOf(listed[at]!)?.key === branchOf(listed[first]!)!.key,
+    (run) => isOpened(run) || run.some(({ key }) => key === revealed),
+    (row) => branchOf(row),
+  );
+  const rows = branches.rows;
   const changed = (row: Row) => row.kind !== "fold" && row.change !== "same";
   // How far each row is from the nearest change above it and below it.
   const above: number[] = [];
-  listed.forEach((row, index) => (above[index] = changed(row) ? 0 : (above[index - 1] ?? Infinity) + 1));
+  rows.forEach((row, index) => (above[index] = changed(row) ? 0 : (above[index - 1] ?? Infinity) + 1));
   const below: number[] = [];
-  for (let index = listed.length - 1; index >= 0; index--) below[index] = changed(listed[index]!) ? 0 : (below[index + 1] ?? Infinity) + 1;
-  const branchAt = (index: number) => collapsed.get(listed[index]!.key);
-  const folds = (index: number) => unchanged === "fold" && above[index]! > context && below[index]! > context && listed[index]!.key !== revealed && branchAt(index) === undefined;
-  const rows: Row[] = [];
+  for (let index = rows.length - 1; index >= 0; index--) below[index] = changed(rows[index]!) ? 0 : (below[index + 1] ?? Infinity) + 1;
+  const folds = (index: number) => unchanged === "fold" && above[index]! > context && below[index]! > context && rows[index]!.key !== revealed && branchOf(rows[index]!) === undefined;
+  const unchangedRuns = foldRuns(rows, folds, isOpened, () => undefined);
+  const placeOf = new Map(listed.map(({ key }) => [key, unchangedRuns.placeOf.get(rows[branches.placeOf.get(key)!]!.key)!]));
+  return { rows: unchangedRuns.rows, placeOf };
+}
+
+// The rows with each run of them `inRun` takes from its first row, at `first`, folded into one row of `branch`, unless
+// `open` keeps it listed. A row in no run is a run of its own, and a run of one row is listed as itself, which is what its
+// fold would take the room of. `placeOf`: each row's place among those listed, a folded row's its fold's.
+function foldRuns(
+  rows: Row[],
+  inRun: (at: number, first: number) => boolean,
+  open: (run: Row[]) => boolean,
+  branch: (first: Row) => Branch | undefined,
+): { rows: Row[]; placeOf: Map<string, number> } {
+  const listed: Row[] = [];
   const placeOf = new Map<string, number>();
-  const list = (row: Row) => {
-    placeOf.set(row.key, rows.length);
-    rows.push(row);
-  };
-  for (let index = 0; index < listed.length; ) {
-    const branch = branchAt(index);
-    const inRun = branch === undefined ? folds : (at: number) => branchAt(at)?.key === branch.key;
+  for (let index = 0; index < rows.length; ) {
     let end = index;
-    while (end < listed.length && inRun(end)) end++;
-    // A row that folds in no run is a run of its own, listed.
-    const run = listed.slice(index, Math.max(end, index + 1));
-    const open = opened[foldKey(run[0]!.key)] === true || (branch !== undefined && run.some(({ key }) => key === revealed));
-    if (run.length > 1 && !open) {
-      for (const row of run) placeOf.set(row.key, rows.length);
-      rows.push({ kind: "fold", key: run[0]!.key, count: run.length, branch });
-    } else run.forEach(list);
+    while (end < rows.length && inRun(end, index)) end++;
+    const run = rows.slice(index, Math.max(end, index + 1));
+    const folded = run.length > 1 && !open(run);
+    for (const row of run) {
+      placeOf.set(row.key, listed.length);
+      if (!folded) listed.push(row);
+    }
+    if (folded) listed.push({ kind: "fold", key: run[0]!.key, count: run.length, branch: branch(run[0]!) });
     index += run.length;
   }
-  return { rows, placeOf };
+  return { rows: listed, placeOf };
 }
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((key, at) => key === b[at]);
