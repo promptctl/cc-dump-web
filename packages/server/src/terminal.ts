@@ -112,8 +112,8 @@ function verdict(event: Exclude<BridgeObservabilityEvent, { kind: "event-out" }>
     // reports. Any other code names a fault of the connection's.
     case "connection-closed":
       return said(event.errorCode === undefined || event.errorCode === "BRIDGE_CLOSED" ? undefined : new Error(`${event.errorCode}: ${event.reason}`));
-    // A client tmux ends is an exit: the window's session gone, or a server other than the one at the window's start
-    // time, which the attach detaches at once.
+    // A client tmux ends is an exit: the window's session gone while the page was there. One gone before is the attach's
+    // failure, which the bridge closes the connection on as BRIDGE_INTERNAL.
     case "upstream-closed":
       return said(event.reason === "transport-error" ? new Error("the page's tmux client failed") : undefined);
     case "protocol-error":

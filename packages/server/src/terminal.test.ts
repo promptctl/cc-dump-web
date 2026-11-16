@@ -7,7 +7,7 @@ import { WebSocketTmuxClient, type BrowserWebSocketLike } from "@promptctl/tmux-
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { WebSocket } from "ws";
 import { tmuxPath } from "./address.ts";
-import type { TmuxWindow } from "./format.ts";
+import { sessionId, type TmuxWindow } from "./format.ts";
 import { createTerminal } from "./terminal.ts";
 import { terminal, tmuxServer } from "./testing.ts";
 
@@ -67,27 +67,36 @@ describe("createTerminal", () => {
     expect(await untilClosed(bridge)).toContainEqual(expect.objectContaining({ kind: "result", outcome: "error" }));
   });
 
-  it.each([
-    ["whose session ends", (tmux: (...args: string[]) => string) => void tmux("kill-session", "-t", "=agent's")],
-    ["of a tmux server since restarted, whose ids name other windows now", undefined],
-  ])("closes a page of a window %s, as tmux ends its client, and records the connection as ok", async (_, end) => {
+  it("closes a page of a window whose session ends, as tmux ends its client, and records the connection as ok", async () => {
     const { port, next, bridge, windowOf, tmux, clients } = await terminal("work", "agent's");
-    const window = windowOf("agent's");
-    if (end === undefined) {
-      // Only the start time tells this server from the one the window was named on.
-      const client = pageClient(port, { ...window, start_time: window.start_time - 1 });
-      await expect(client.execute("display-message -p ok")).rejects.toThrow();
-    } else {
-      const client = pageClient(port, window);
-      await client.execute("display-message -p ok");
-      end(tmux);
-    }
+    const client = pageClient(port, windowOf("agent's"));
+    await client.execute("display-message -p ok");
+    tmux("kill-session", "-t", "=agent's");
 
     const seen = await untilClosed(bridge);
     expect(seen).toContainEqual(expect.objectContaining({ kind: "upstream-closed", reason: "exit", outcome: "ok" }));
     expect(seen.at(-1)).toMatchObject({ errorCode: "BRIDGE_CLOSED", outcome: "ok" });
     expect(await next()).toMatchObject({ event: "upgrade", outcome: "ok" });
     expect(clients()).toEqual([]);
+  });
+
+  it.each([
+    ["whose session has ended", (window: TmuxWindow) => ({ ...window, session_id: sessionId("$999") })],
+    // Only the start time tells this server from the one the window was named on.
+    ["of a tmux server since restarted, whose ids name other sessions now", (window: TmuxWindow) => ({ ...window, start_time: window.start_time - 1 })],
+  ])("never welcomes a page of a window %s, so its reconnects run out, and attaches nothing", async (_, gone) => {
+    const { port, next, bridge, windowOf, tmux } = await terminal("work");
+    const window = windowOf("work");
+    // A hook on the session another server's window would name: it fires if a client ever attaches there.
+    tmux("set-hook", "-t", window.session_id, "client-attached", `set-option -t '${window.session_id}' @touched yes`);
+    const client = new WebSocketTmuxClient({ url: `ws://127.0.0.1:${port}${tmuxPath(gone(window))}`, createWebSocket: pageSocket("http://127.0.0.1:3346"), reconnect: { maxAttempts: 2, initialDelayMs: 1, jitterMs: 0 } });
+    onTestFinished(() => client.close());
+
+    await vi.waitFor(() => expect(client.connectionState).toMatchObject({ status: "closed" }), { timeout: 5000 });
+    const seen = await untilClosed(bridge);
+    expect(seen.at(-1)).toMatchObject({ errorCode: "BRIDGE_INTERNAL", outcome: "error", reason: expect.stringContaining("no session") });
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error" });
+    expect(tmux("show-options", "-v", "-q", "-t", window.session_id, "@touched")).toBe("");
   });
 
   it("gives each page a tmux client of its own, attached while the page is there", async () => {

@@ -47,10 +47,21 @@ function connect(options: SpawnOptions, args: string[]): TmuxClient {
 // A client attached to `window`'s session, as a terminal attached to it is, so the window can be shown through it and
 // sized by it: the window terminal shows only its client's session's windows. `-E` leaves the session's environment as it
 // was. By the session, never the window: tmux makes a window attached by its id the session's current one, in the user's
-// own terminal too. In the same command the client checks its server is the one that started at the window's start
-// time, and on any other detaches at once, so a window named on a server since restarted is never another's.
-export function attach(options: SpawnOptions, { session_id, start_time }: TmuxWindow): TmuxClient {
-  return connect(options, ["-N", "attach-session", "-E", "-t", session_id, ";", "if-shell", "-F", `#{==:#{start_time},${start_time}}`, "", "detach-client"]);
+// own terminal too. The client attaches only on the server that started at the window's start time, so a window named on
+// a server since restarted never touches the session that has its id now; a client left unattached exits.
+// [LAW:no-ambient-temporal-coupling] The client is returned once it is attached, so the bridge welcomes a page only
+// onto a window that is there: tmux runs a command sent after the attach once the attach has run, so its answer says the
+// client is attached, and its failure that the window is gone.
+export async function attach(options: SpawnOptions, { session_id, start_time }: TmuxWindow): Promise<TmuxClient> {
+  const client = connect(options, ["-N", "if-shell", "-F", `#{==:#{start_time},${start_time}}`, `attach-session -E -t '${session_id}'`]);
+  try {
+    await client.execute("display-message -p ''");
+    return client;
+  } catch (error) {
+    client.close();
+    // The bridge tells the page the message alone, so it carries tmux's words.
+    throw new TmuxRefused(`no session ${session_id} on a tmux server started at ${start_time}: ${describe(refused(error))}`);
+  }
 }
 
 export function createTmux(options: SpawnOptions = {}): Tmux {

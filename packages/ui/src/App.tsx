@@ -17,7 +17,7 @@ import { ThemePicker } from "./view/ThemePicker.tsx";
 export function App({ connection }: { connection: Connection }) {
   const theme = useTheme();
   const open = useView((state) => state.open);
-  const window = useView((state) => state.window);
+  const tmuxWindow = useView((state) => state.window);
   const reading = useRecording(connection, open);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
@@ -51,7 +51,7 @@ export function App({ connection }: { connection: Connection }) {
             <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
           )}
         </div>
-        {window === null ? null : <Terminal key={`${window.start_time} ${window.session_id} ${window.window_id}`} connection={connection} window={window} theme={theme} />}
+        {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
       </div>
     </div>
   );
