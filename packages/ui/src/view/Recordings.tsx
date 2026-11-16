@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { onScreen, type OpenRecording, type Reading } from "../reading.ts";
+import { useAnswer } from "./answer.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 import { entriesOf, entryOf, type Entry } from "./listings.ts";
 import { useView, view } from "./state.ts";
@@ -27,31 +28,19 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
   );
 }
 
-// [LAW:types-are-the-program] Where the list stands: being read, read, or failed.
-type Listed = { state: "listing" } | { state: "listed"; entries: Entry[] } | { state: "failed"; error: Error };
-
 // Every recording, newest first. Read as it mounts, which is as the list opens. The one on screen is not opened again:
 // that would read it again from its start, and lose the reader's place in it.
 function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: string) => void }) {
-  const [listed, setListed] = useState<Listed>({ state: "listing" });
-  useEffect(() => {
-    const abort = new AbortController();
-    connection.recordings(abort.signal).then(
-      (listings) => setListed({ state: "listed", entries: entriesOf(listings) }),
-      // An abort rejects what it cut short; that is the list closing, not failing.
-      (error: Error) => abort.signal.aborted || setListed({ state: "failed", error }),
-    );
-    return () => abort.abort();
-  }, [connection]);
+  const listed = useAnswer(connection.recordings);
   switch (listed.state) {
-    case "listing":
+    case "asking":
       return <p className="px-2 py-1 text-foreground-muted">Reading the recordings…</p>;
     case "failed":
       return <p className="px-2 py-1 text-error">{describe(listed.error)}</p>;
-    case "listed":
+    case "answered":
       return (
         <ul>
-          {listed.entries.map(({ listing, parsed }) => (
+          {entriesOf(listed.value).map(({ listing, parsed }) => (
             <li key={listing.name}>
               <button
                 type="button"

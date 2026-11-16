@@ -5,8 +5,8 @@ import { buffer } from "node:stream/consumers";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseListing, parseListings, parseProxyInfo, recordingStart } from "./format.ts";
-import { proxyProcess } from "./testing.ts";
+import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, recordingStart } from "./format.ts";
+import { proxyProcess, subscribe } from "./testing.ts";
 
 describe("the reader port", () => {
   const proxy = async () => {
@@ -56,9 +56,30 @@ describe("the reader port", () => {
     res.destroy();
   });
 
-  it("gives agents the address of the port the proxy bound, and says where it forwards to", async () => {
-    const { proxyPort, readerPort, upstream } = await proxy();
+  it("gives agents the address of the port the proxy bound, and says where it forwards to and where it records", async () => {
+    const { dir, proxyPort, readerPort, upstream } = await proxy();
     const res = await send(readerPort, { path: "/info" });
-    expect(parseProxyInfo((await buffer(res)).toString())).toEqual({ base_url: `http://${LOOPBACK}:${proxyPort}`, upstream: `${upstream}/` });
+    expect(parseProxyInfo((await buffer(res)).toString())).toEqual({ base_url: `http://${LOOPBACK}:${proxyPort}`, upstream: `${upstream}/`, recordings: dir });
+  });
+
+  it("sends the traffic in its status: a request in flight until it ends, and when it arrived", async () => {
+    const held = Promise.withResolvers<void>();
+    const upstream = await serving((_req, res) => void held.promise.then(() => res.end()));
+    const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const { proxyPort, readerPort } = await proxyProcess(upstream.url, dir, "unlimited");
+    const { res, next } = await subscribe(readerPort, "/status");
+    onTestFinished(() => void res.destroy());
+    const traffic = async () => parseProxyStatus((await next()).data).traffic;
+    expect(await traffic()).toEqual({ in_flight: 0, last_request: null });
+
+    const before = Date.now();
+    const answered = send(proxyPort, { path: "/v1/messages" });
+    const arrived = await traffic();
+    expect(arrived.in_flight).toBe(1);
+    expect(Date.parse(arrived.last_request!)).toBeGreaterThanOrEqual(before - 1);
+    held.resolve();
+    (await answered).resume();
+    expect(await traffic()).toEqual({ in_flight: 0, last_request: arrived.last_request });
   });
 });

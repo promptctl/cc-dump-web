@@ -1,7 +1,8 @@
 import { describe } from "@cc-dump/log/describe";
-import type { Launch as LaunchAsked, Launched, Launcher } from "@cc-dump/server/format";
+import { launchSession, type Launch as LaunchAsked, type Launched, type Launcher } from "@cc-dump/server/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
+import { useAnswer } from "./answer.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 import { view } from "./state.ts";
 
@@ -42,37 +43,27 @@ export function Launch({ connection }: { connection: Launching }) {
 
 type Started = { launch: LaunchState; start: (asked: LaunchAsked) => void };
 
-// [LAW:types-are-the-program] Where reading what a launch starts from stands, and where the launch stands.
-type Read = { state: "reading" } | { state: "read"; launcher: Launcher } | { state: "failed"; error: Error };
+// [LAW:types-are-the-program] Where the launch stands.
 type LaunchState = { state: "idle" } | { state: "launching" } | { state: "launched"; launched: Launched } | { state: "failed"; error: Error };
 
-// Read as it mounts, which is as the control opens; a read still under way when it closes is aborted.
+// Read as it mounts, which is as the control opens.
 function LaunchForm({ connection, ...started }: { connection: Launching } & Started) {
-  const [read, setRead] = useState<Read>({ state: "reading" });
-  useEffect(() => {
-    const abort = new AbortController();
-    connection.launcher(abort.signal).then(
-      (launcher) => setRead({ state: "read", launcher }),
-      // An abort rejects what it cut short; that is the control closing, not failing.
-      (error: Error) => abort.signal.aborted || setRead({ state: "failed", error }),
-    );
-    return () => abort.abort();
-  }, [connection]);
+  const read = useAnswer(connection.launcher);
   switch (read.state) {
-    case "reading":
+    case "asking":
       return <p className="text-foreground-muted">Reading the tmux sessions…</p>;
     case "failed":
       // tmux's own words when it has no server or no sessions.
       return <p data-launch-unavailable className="text-error">{describe(read.error)}</p>;
-    case "read":
-      return <Choice launcher={read.launcher} {...started} />;
+    case "answered":
+      return <Choice launcher={read.value} {...started} />;
   }
 }
 
-// The session and the command, starting from the settings the last launch asked for: its session while tmux still has
-// it.
-function Choice({ launcher: { settings, sessions }, launch, start }: { launcher: Launcher } & Started) {
-  const [session, setSession] = useState(settings.session !== null && sessions.includes(settings.session) ? settings.session : sessions[0]);
+// The session and the command, starting from the settings the last launch asked for.
+function Choice({ launcher, launch, start }: { launcher: Launcher } & Started) {
+  const { settings, sessions } = launcher;
+  const [session, setSession] = useState(() => launchSession(launcher));
   const [command, setCommand] = useState(settings.command);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();

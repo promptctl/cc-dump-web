@@ -7,6 +7,7 @@ describe("settings", () => {
     search: { caseSensitive: false, wholeWord: false, regex: true },
     unchanged: "fold",
     branches: "stay",
+    info: false,
   };
 
   it("reads nothing stored as every setting's default", () => {
@@ -16,7 +17,7 @@ describe("settings", () => {
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
     expect(
-      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", metadata: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, unchanged: "show", branches: "fold" }),
+      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", metadata: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, unchanged: "show", branches: "fold", info: true }),
     ).toEqual({
       follow: false,
       // A level the last build stored, "shown", is not one this build has.
@@ -25,7 +26,8 @@ describe("settings", () => {
       search: { caseSensitive: true, wholeWord: false, regex: false },
       unchanged: "show",
       branches: "fold",
+      info: true,
     });
-    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], unchanged: "hide", branches: "everywhere" })).toEqual(defaults);
+    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], unchanged: "hide", branches: "everywhere", info: "open" })).toEqual(defaults);
   });
 });

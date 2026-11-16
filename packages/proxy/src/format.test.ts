@@ -7,6 +7,7 @@ import {
   agentOf,
   parseListing,
   parseListings,
+  parseProxyInfo,
   parseProxyStatus,
   parseReadFailure,
   parseRecordedEvent,
@@ -88,16 +89,28 @@ describe("the reader's messages", () => {
 
   it("reads back each state of the proxy's status", () => {
     const statuses: ProxyStatus[] = [
-      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
-      { state: "failed", message: "EMFILE: too many open files, watch" },
+      { source: { state: "watching", changed_source: ["/proxy/src/proxy.ts"] }, traffic: { in_flight: 0, last_request: null } },
+      { source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 2, last_request: "2026-11-16T10:00:00.000Z" } },
     ];
     expect(statuses.map((status) => parseProxyStatus(JSON.stringify(status)))).toEqual(statuses);
   });
 
-  it("refuses a status of another shape", () => {
-    expect(() => parseProxyStatus('{"changed_source":[]}')).toThrow("proxy status: state is not one of watching, failed");
-    expect(() => parseProxyStatus('{"state":"watching","changed_source":[1]}')).toThrow("proxy status: changed_source is not a list of strings");
-    expect(() => parseProxyStatus('{"state":"failed","error":"EMFILE"}')).toThrow("proxy status: message is not a string");
+  it("refuses a status of another shape, the shape before its traffic was sent included", () => {
+    const traffic = '"traffic":{"in_flight":0,"last_request":null}';
+    expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is not an object");
+    expect(() => parseProxyStatus(`{"source":{"changed_source":[]},${traffic}}`)).toThrow("proxy status: source: state is not one of watching, failed");
+    expect(() => parseProxyStatus(`{"source":{"state":"watching","changed_source":[1]},${traffic}}`)).toThrow("proxy status: source: changed_source is not a list of strings");
+    expect(() => parseProxyStatus(`{"source":{"state":"failed","error":"EMFILE"},${traffic}}`)).toThrow("proxy status: source: message is not a string");
+    const source = '"source":{"state":"watching","changed_source":[]}';
+    expect(() => parseProxyStatus(`{${source}}`)).toThrow("proxy status: traffic: is not an object");
+    expect(() => parseProxyStatus(`{${source},"traffic":{"in_flight":0.5,"last_request":null}}`)).toThrow("proxy status: traffic: in_flight is not an integer");
+    expect(() => parseProxyStatus(`{${source},"traffic":{"in_flight":0,"last_request":"yesterday"}}`)).toThrow("proxy status: traffic: last_request is not an ISO time or null");
+  });
+
+  it("reads back the proxy's info, and refuses info without the recordings' directory", () => {
+    const info = { base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/home/me/.local/share/cc-dump/recordings" };
+    expect(parseProxyInfo(JSON.stringify(info))).toEqual(info);
+    expect(() => parseProxyInfo('{"base_url":"http://127.0.0.1:3344","upstream":"https://api.anthropic.com/"}')).toThrow("proxy info: recordings is not a string");
   });
 });
 

@@ -88,14 +88,22 @@ export type RecordingEnd = { unterminated_bytes: number };
 // The whole error, stack and all, is the request's log event's.
 export type ReadFailure = { message: string };
 
-// Each message of `GET /status`: whether the proxy runs the source on disk. `changed_source`: the files whose text on
-// disk differs from the text the proxy runs, or that are gone; a restart of the proxy is pending while there is one.
-// A watch that failed says so, and is never an empty `changed_source`: a dead watch must not read as nothing pending.
-export type ProxyStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
+// Each message of `GET /status`: the proxy's state now, whole (docs/design/01-mvp.md, F8, F12).
+export type ProxyStatus = { source: SourceStatus; traffic: Traffic };
+
+// Whether the proxy runs the source on disk. `changed_source`: the files whose text on disk differs from the text the
+// proxy runs, or that are gone; a restart of the proxy is pending while there is one. A watch that failed says so, and
+// is never an empty `changed_source`: a dead watch must not read as nothing pending.
+export type SourceStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
+
+// The requests this run of the proxy serves, on any path. `in_flight`: those that arrived and have not ended.
+// `last_request`: when the latest arrived, as an ISO time; null until the run's first.
+export type Traffic = { in_flight: number; last_request: string | null };
 
 // `GET /info`: what the running proxy is, for as long as it runs. `base_url`: the address agents are pointed at, the
 // `ANTHROPIC_BASE_URL` they are given, on the port the proxy bound. `upstream`: where it forwards what they send.
-export type ProxyInfo = { base_url: string; upstream: string };
+// `recordings`: the directory its recordings are in, each the file there its name names.
+export type ProxyInfo = { base_url: string; upstream: string; recordings: string };
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
@@ -122,14 +130,19 @@ export function parseReadFailure(json: string): ReadFailure {
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {
-  const f = fields(parseJson(json, "proxy status"), "proxy status");
-  const state = f.oneOf("state", statusStates);
-  return state === "watching" ? { state, changed_source: f.strings("changed_source") } : { state, message: f.string("message") };
+  const status = fields(parseJson(json, "proxy status"), "proxy status");
+  const source = fields(status.object("source"), "proxy status: source");
+  const traffic = fields(status.object("traffic"), "proxy status: traffic");
+  const state = source.oneOf("state", sourceStates);
+  return {
+    source: state === "watching" ? { state, changed_source: source.strings("changed_source") } : { state, message: source.string("message") },
+    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, "an ISO time or null") },
+  };
 }
 
 export function parseProxyInfo(json: string): ProxyInfo {
   const f = fields(parseJson(json, "proxy info"), "proxy info");
-  return { base_url: f.string("base_url"), upstream: f.string("upstream") };
+  return { base_url: f.string("base_url"), upstream: f.string("upstream"), recordings: f.string("recordings") };
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {
@@ -167,7 +180,8 @@ const recordedTypes: Record<Recorded["type"], true> = {
   end: true,
 };
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const statusStates: Record<ProxyStatus["state"], true> = { watching: true, failed: true };
+const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
+const isTimeOrNull = (value: unknown): value is string | null => value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
 
 // The fields of `what`, with the recording format's headers beside the JSON types.
 function fields(json: unknown, what: string) {
