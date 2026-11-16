@@ -65,28 +65,10 @@ function partTexts(part: Part, index: number): Shown[] {
         { at: address.field(index, field, "value"), searched: whole(value), in: "content" as const },
       ]);
     case "diff":
-      return [{ at: address.part(index), searched: diffText(part), in: "content" }];
+      return [{ at: address.part(index), searched: diffOf(part), in: "content" }];
     case "media":
       return [];
   }
-}
-
-// The text a diff shows, its lines in order, each line a passage, so a match is within one line, as it is shown.
-// [LAW:one-source-of-truth] Made once per part, for the search and the view, which places each line by its passage.
-const diffTexts = new WeakMap<Extract<Part, { kind: "diff" }>, Searched>();
-export function diffText(part: Extract<Part, { kind: "diff" }>): Searched {
-  const made = diffTexts.get(part);
-  if (made !== undefined) return made;
-  let start = 0;
-  const { lines, text } = diffOf(part);
-  const passages = lines.map(({ text }) => {
-    const passage = { start, end: start + text.length };
-    start = passage.end + 1;
-    return passage;
-  });
-  const searched = { text, passages };
-  diffTexts.set(part, searched);
-  return searched;
 }
 
 // A query as read under the search's options: the `pattern` its matches are found with, and `error`, why it is not one,

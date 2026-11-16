@@ -19,3 +19,6 @@ export type Part =
   // A change of one text into another, shown line by line: what it removed and what it added, among the lines it kept
   // (format/diff.ts).
   | { kind: "diff"; label?: string; before: string; after: string };
+
+// Why a value is not shown as what it was read as, set before the value as it was received.
+export const doesNotFit = (reason: string): Part => ({ kind: "text", form: "verbatim", label: "does not fit", text: reason });

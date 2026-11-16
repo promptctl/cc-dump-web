@@ -5,8 +5,9 @@ import type { Part } from "./parts.ts";
 export type Change = "same" | "removed" | "added";
 export type DiffLine = { change: Change; text: string };
 
-// A diff as the view shows it: its lines, and their text in order, joined by newlines.
-export type Diff = { lines: DiffLine[]; text: string };
+// A diff as the view shows and searches it: its lines; their text in order, joined by newlines; and each line's passage
+// of that text, its start and end, so a match is found within one line and painted where that line is.
+export type Diff = { lines: DiffLine[]; text: string; passages: { start: number; end: number }[] };
 
 // [LAW:one-source-of-truth] A diff part holds the two texts; its lines are derived from them, made once per part, and
 // only for a part that is shown or searched, so a session's Edits are not diffed again by every request that resends them.
@@ -15,7 +16,13 @@ export function diffOf(part: Extract<Part, { kind: "diff" }>): Diff {
   const made = diffs.get(part);
   if (made !== undefined) return made;
   const lines = lineDiff(part.before, part.after);
-  const diff = { lines, text: lines.map((line) => line.text).join("\n") };
+  let start = 0;
+  const passages = lines.map(({ text }) => {
+    const passage = { start, end: start + text.length };
+    start = passage.end + 1;
+    return passage;
+  });
+  const diff = { lines, text: lines.map((line) => line.text).join("\n"), passages };
   diffs.set(part, diff);
   return diff;
 }

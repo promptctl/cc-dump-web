@@ -17,7 +17,7 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Side, unpainted, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, diffText, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -528,17 +528,17 @@ const diffMarks: Record<DiffLine["change"], { mark: string; ground: string; colo
   added: { mark: "+", ground: "bg-added", color: "text-success" },
 };
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
-  const searched = diffText(part);
-  const where = useWhere(blockKey, at, searched);
+  const diff = diffOf(part);
+  const where = useWhere(blockKey, at, diff);
   return (
     <div className="font-mono break-words whitespace-pre-wrap">
-      {diffOf(part).lines.map((line, index) => {
+      {diff.lines.map((line, index) => {
         const { mark, ground, color } = diffMarks[line.change];
         return (
           <div key={index} className={`flex ${ground}`}>
             <span className={`w-3 shrink-0 select-none ${color}`}>{mark}</span>
             <span className="min-w-0">
-              <Highlighted slice={line.text} from={searched.passages[index]!.start} where={where} />
+              <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
             </span>
           </div>
         );

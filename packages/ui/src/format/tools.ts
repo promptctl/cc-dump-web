@@ -1,5 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
-import type { Part } from "./parts.ts";
+import { doesNotFit, type Part } from "./parts.ts";
 import { fitting, readObject, type Fields } from "./read.ts";
 
 // A tool call's input, shown as the tool's work: a command as the shell line it is, an edit as the change it makes, a
@@ -41,7 +41,7 @@ export function inputParts(name: string, input: unknown): Part[] {
       const fields = readObject(input, "input");
       return [...entry(fields), ...unreadParts(fields)];
     },
-    (reason) => [{ kind: "text", form: "verbatim", label: "does not fit", text: reason }, ...jsonInput(input)],
+    (reason) => [doesNotFit(reason), ...jsonInput(input)],
   );
 }
 

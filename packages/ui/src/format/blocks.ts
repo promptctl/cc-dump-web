@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import type { Form, Medium, Part } from "./parts.ts";
+import { doesNotFit, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 
@@ -37,7 +37,7 @@ export const unreadLabel = "fields";
 
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
 export function raw(category: Category, name: string, reason: string, received: Part): Block {
-  return { category, name, parts: [{ kind: "text", form: "verbatim", label: "does not fit", text: reason }, received] };
+  return { category, name, parts: [doesNotFit(reason), received] };
 }
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
