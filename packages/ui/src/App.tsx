@@ -29,7 +29,7 @@ export function App({ connection }: { connection: Connection }) {
   // Fast Refresh keeps state but re-runs memos, so an edit to the formatter takes effect.
   const format = useMemo(() => createFormatter(), []);
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
-  const session = shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session;
+  const session = useMemo(() => shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session, [shown]);
   const info = useSettings((state) => state.info);
   return (
     <div className="flex h-screen flex-col">
@@ -103,7 +103,10 @@ function ProxyState({ status }: { status: StatusReading }) {
           <p data-connection="connected">
             <span className="text-success">●</span> connected
           </p>
-          <p data-in-flight={traffic.in_flight}>{traffic.in_flight} in flight</p>
+          {/* The traffic changes with every request and its age every second: shown, never announced. */}
+          <p data-in-flight={traffic.in_flight} aria-live="off">
+            {traffic.in_flight} in flight
+          </p>
           {traffic.last_request === null ? <p className="text-foreground-muted">no requests yet</p> : <LastRequest at={Date.parse(traffic.last_request)} />}
           <SourceState source={source} />
         </>
@@ -117,7 +120,11 @@ function ProxyState({ status }: { status: StatusReading }) {
 // How long ago the proxy's latest request arrived, read again each second.
 function LastRequest({ at }: { at: number }) {
   const now = useNow(1000);
-  return <p title={new Date(at).toLocaleString()}>last {ago(at, now)}</p>;
+  return (
+    <p title={new Date(at).toLocaleString()} aria-live="off">
+      last {ago(at, now)}
+    </p>
+  );
 }
 
 // A change to the proxy's source takes effect only when the proxy restarts (docs/design/01-mvp.md, F12).

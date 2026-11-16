@@ -26,15 +26,13 @@ export function watchable<T>(initial: T): Watched<T> & { become: (next: T) => vo
   };
 }
 
-export type SourceWatch = Watched<SourceStatus>;
-
 // Watches the directory of each file of `source`. Every event in one checks every file against the text the proxy
 // runs (fs.watch does not always name the file), synchronously, so no two checks interleave. The watchers are not
 // persistent: they never hold the process open past its shutdown. A watch fails once and stays failed, its
 // watchers closed: watching again takes a restart of the proxy.
 // [LAW:nothing-unseen] Starting the watch is a `watch_source` event, each check a `source_check` event, and a
 // watcher's error a `source_watch` event: the failed state carries the error's message, and its event the whole error.
-export function watchSource(log: Log, source: Source): SourceWatch {
+export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   const { become, ...watched } = watchable<SourceStatus>({ state: "watching", changed_source: [] });
   const watchers: FSWatcher[] = [];
   const failWith = (error: unknown) => {
