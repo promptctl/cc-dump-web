@@ -216,25 +216,25 @@ describe("layout", () => {
     expect(keys({ ...shown, tools: "hidden" }, "thread:t1/request/tools.Read.0")).toContain("thread:t1/request/tools.Read.0 added");
   });
 
-  // The virtualizer keeps a row's measured height by this key, so a height measured at one level is not read at another.
-  it("measures a block's row by its key and how its level starts it, and keeps the keys while neither changes", () => {
-    const at = (visibility: Record<Category, Visibility>) => {
+  // The virtualizer keeps a row's measured height by this key, so a height measured open is not read for the row closed.
+  it("measures a block's row by its key and whether it shows open, and keeps the keys while neither changes", () => {
+    const system = "thread:t1/request/system.0";
+    const at = (visibility: Record<Category, Visibility>, opened: Opened = {}) => {
       const layOut = layouts(turns(2), visibility);
-      const { keys, rows } = layOut(2);
-      return { keys, again: layOut(2).keys, measured: rows.map((_, index) => keys.measuredBy(index)) };
+      const { keys, rows } = layOut(2, undefined, opened);
+      return { keys, again: layOut(2, undefined, opened).keys, measured: rows.map((_, index) => keys.measuredBy(index)) };
     };
     const compact = at(shown);
     const expanded = at({ ...shown, system: "expanded" });
     expect(compact.again).toBe(compact.keys);
-    const system = "thread:t1/request/system.0";
-    expect(compact.measured).toContain(`${system}#collapsed`);
-    expect(expanded.measured).toContain(`${system}#expanded`);
+    expect(compact.measured).toContain(`${system}#closed`);
+    expect(expanded.measured).toContain(`${system}#open`);
     // Rows that are not a block's, and blocks the level does not start differently, are measured by the same key at both.
     expect(expanded.measured.filter((key) => !key.startsWith(system))).toEqual(compact.measured.filter((key) => !key.startsWith(system)));
-    // An opened block is measured as its level starts it: the reader's choice changes its height only on screen.
-    const layOut = layouts(turns(2));
-    const index = layOut(2).rows.findIndex(({ key }) => key === system);
-    expect(layOut(2, undefined, { [system]: true }).keys.measuredBy(index)).toBe(`${system}#collapsed`);
+    // A choice decides as the level does: a block opened at compact is measured as the one expanded starts open, and one
+    // closed at expanded as the one compact starts closed.
+    expect(at(shown, { [system]: true }).measured).toEqual(expanded.measured);
+    expect(at({ ...shown, system: "expanded" }, { [system]: false }).measured).toEqual(compact.measured);
   });
 });
 

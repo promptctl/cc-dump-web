@@ -101,7 +101,7 @@ export function createLayout(
       else places.set(row.key, before);
     });
     const listedKeys = folding.rows.map(({ key }) => key);
-    const listedMeasured = folding.rows.map((row) => measuredBy(row, visibility));
+    const listedMeasured = folding.rows.map((row) => measuredBy(row, visibility, opened));
     const everyKeys = every.map(({ key }) => key);
     const sameKeys = same(everyKeys, last.every.rows.map(({ key }) => key));
     const sameEvery = sameKeys && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
@@ -358,11 +358,10 @@ export function startsExpanded(row: Extract<Row, { kind: "block" }>, visibility:
 }
 
 // The key the virtualizer keeps a row's measured height by: what decides that height, the row's key and, for a block's
-// row, how its level starts it. A height measured at one level is never read at another, and a row a change of levels
-// starts the other way is a new item, measured as it mounts. A choice of the reader's changes a row's height only while
-// the row is on screen, where the change is measured as it happens.
-export const measuredBy = (row: Row, visibility: Record<Category, Visibility>): string =>
-  row.kind === "block" ? `${row.key}#${startsExpanded(row, visibility) ? "expanded" : "collapsed"}` : row.key;
+// row, whether it shows open, as its level starts it or as the reader chose. A height measured open is never read for
+// the row closed, whichever level or choice closes it.
+export const measuredBy = (row: Row, visibility: Record<Category, Visibility>, opened: Opened): string =>
+  row.kind === "block" ? `${row.key}#${isOpen(opened, row.key, startsExpanded(row, visibility)) ? "open" : "closed"}` : row.key;
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
 // block's line and its content at about 100 characters a line, on its taller side, a changed block's too, whose diff is

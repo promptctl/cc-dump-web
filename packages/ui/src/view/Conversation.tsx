@@ -162,10 +162,10 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
 
   // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
   // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
-  const hold = useCallback(() => {
+  const hold = () => {
     view.place(positionAt(scroller.current!.scrollTop, (offset) => placedAt(virtualizer.getVirtualItemForOffset(offset))), "reader", now);
     latest.current("choose");
-  }, [virtualizer, placedAt, now]);
+  };
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
   // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
@@ -190,12 +190,14 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     });
   };
   const goBy = (by: -1 | 1) => go(Math.min(steps, Math.max(1, (aimed.current ?? shown) + by)));
-  // The moves, through the render last committed, so the strip's marks, memoized, render only as what they show changes.
-  const moves = useRef({ go, goBy, toStep });
+  // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
+  // as what they show changes.
+  const moves = useRef({ go, goBy, toStep, hold });
   useLayoutEffect(() => {
-    moves.current = { go, goBy, toStep };
+    moves.current = { go, goBy, toStep, hold };
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
+  const onHold = useCallback(() => moves.current.hold(), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
   // ← and → move one step, unless a field takes the keys or what they were pressed in handled them.
   useEffect(() => {
@@ -223,12 +225,13 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         {rows.length === 0 ? (
           <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
         ) : (
-          <Hold.Provider value={hold}>
+          <Hold.Provider value={onHold}>
             <Painted.Provider value={painted}>
               <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => (
+                  // A row is the same element whatever its height is measured by, so a click that opens it keeps focus.
                   <div
-                    key={item.key}
+                    key={keys.at(item.index)}
                     data-index={item.index}
                     ref={virtualizer.measureElement}
                     className="absolute top-0 left-0 w-full"
