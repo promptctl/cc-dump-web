@@ -383,8 +383,12 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       {exchange.request.head === undefined ? (
         <span className="text-foreground-muted">request not recorded</span>
       ) : (
-        <span className="font-mono" title={branch === undefined ? facts.model : `${facts.model}, on a branch off step ${branch.from}: its blocks are its own, not the thread's`}>
-          {branch === undefined ? null : <span className="font-sans text-foreground-muted">↳ off {branch.from} </span>}
+        <span className="font-mono" title={facts.model}>
+          {branch === undefined ? null : (
+            <span className="font-sans text-foreground-muted" title={`On a branch off step ${branch.from}: its blocks are its own, not the thread's`}>
+              ↳ off {branch.from}{" "}
+            </span>
+          )}
           {facts.model === undefined ? null : modelName(facts.model)}
         </span>
       )}
@@ -393,12 +397,13 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
         {facts.status}
       </span>
-      {/* How it ended: why the model stopped, and a response that began can still be cut, and one streaming has not ended. */}
+      {/* How it ended: a response that began can still be cut, and one streaming has not ended, which leads, so an
+          ellipsis never takes it; then why the model stopped. */}
       <span>
-        <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>{" "}
         <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
           {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
-        </span>
+        </span>{" "}
+        <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
       </span>
       <div className="col-[1/-1] grid grid-cols-[9ch_12ch_14ch_10ch] gap-x-3 *:truncate">
         <Fact label="in" count={facts.input} />
