@@ -545,7 +545,7 @@ describe("format", () => {
     expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
   });
 
-  it("shows a tool result with no content, as a failed tool may return, named for its tool's failure", () => {
+  it("shows a tool result with no content, as a failed tool may return, named for its tool's failure and marked failed", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] }] }));
     expect(group(formatted, "user")).toEqual([
       {
@@ -554,8 +554,14 @@ describe("format", () => {
         category: "tools",
         name: "tool_result: error",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
+        failed: true,
       },
     ]);
+  });
+
+  it("marks no tool result failed whose is_error is not true", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: false, content: "ok" }] }] }));
+    expect(group(formatted, "user")[0]).not.toHaveProperty("failed");
   });
 
   it("decodes a body whose trailers were not recorded once its exchange has ended", () => {

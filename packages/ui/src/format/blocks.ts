@@ -14,7 +14,8 @@ export type Category = (typeof categories)[number];
 // reminder, hook output or a CLAUDE.md, which the view never mistakes for what they said, whatever its category.
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[] };
+// `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -60,7 +61,12 @@ export function restBlock(fields: Fields, name: string): BlockOrNone {
 // How one content block type is shown. `category` from the role of the message holding it; `name` and `parts` from
 // its fields. Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text
 // block's text reads where the block is: Markdown in a message, verbatim in what a tool or a document returned.
-type Entry = { category: (role: Role) => Category; name?: (fields: Fields, role: Role) => string; parts: (fields: Fields, role: Role, form: Form) => Part[] };
+type Entry = {
+  category: (role: Role) => Category;
+  name?: (fields: Fields, role: Role) => string;
+  parts: (fields: Fields, role: Role, form: Form) => Part[];
+  failed?: (fields: Fields) => boolean;
+};
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
@@ -81,9 +87,11 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
 // what it holds: it is how the two refer to each other, not what either says. A result is named for whether its tool
 // failed, as its is_error says, which follows the id where it was sent.
+const toolFailed = (fields: Fields) => fields.value("is_error") === true;
 const toolResult: Entry = {
   category: tools,
-  name: (fields) => `${fields.string("type")}${fields.value("is_error") === true ? ": error" : ""}`,
+  name: (fields) => `${fields.string("type")}${toolFailed(fields) ? ": error" : ""}`,
+  failed: toolFailed,
   parts: (fields, role) => {
     const content = fields.value("content");
     const failed = fields.value("is_error");
@@ -159,7 +167,8 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
       const fields = readObject(block, type);
       fields.value("type");
       const parts = entry.parts(fields, role, form);
-      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
+      const shown: Block = { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
+      return entry.failed?.(fields) ? { ...shown, failed: true } : shown;
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );

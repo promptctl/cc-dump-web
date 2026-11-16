@@ -6,7 +6,8 @@ import { context, diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, wordsOf, type LineFold, type Pair } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
-import { categoryVars } from "../theme/theme.ts";
+import { categoryVars, type Theme } from "../theme/theme.ts";
+import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
@@ -28,8 +29,8 @@ import { TurnStrip } from "./TurnStrip.tsx";
 // The conversation side by side in time (docs/design/02-design.md, "Two axes"): two columns over one scroll, the
 // conversation at the moment shown on the right and a step before on the left, aligned, as rows of which only those on
 // screen are mounted (docs/design/01-mvp.md, F4); a window too narrow for two shows the right alone. `reading`: whether
-// the read can still bring an exchange its end.
-export function Conversation({ formatted, reading }: { formatted: FormattedExchange[]; reading: boolean }) {
+// the read can still bring an exchange its end. `theme`: what the minimap's canvas is painted in.
+export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
   const conversation = useMemo(() => history(formatted), [history, formatted]);
@@ -160,12 +161,14 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     latest.current("choose");
   };
 
-  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
-  // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
-  const hold = () => {
-    view.place(positionAt(scroller.current!.scrollTop, (offset) => placedAt(virtualizer.getVirtualItemForOffset(offset))), "reader", now);
+  // The reader putting the view at `offset`: the position becomes the place there, so following pauses.
+  const placeAt = (offset: number) => {
+    view.place(positionAt(offset, (at) => placedAt(virtualizer.getVirtualItemForOffset(at))), "reader", now);
     latest.current("choose");
   };
+  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, and
+  // the line clicked stays where it is as what it opens grows or shrinks below it.
+  const hold = () => placeAt(scroller.current!.scrollTop);
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
   // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
@@ -192,12 +195,13 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const goBy = (by: -1 | 1) => go(Math.min(steps, Math.max(1, (aimed.current ?? shown) + by)));
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
   // as what they show changes.
-  const moves = useRef({ go, goBy, toStep, hold });
+  const moves = useRef({ go, goBy, toStep, hold, placeAt });
   useLayoutEffect(() => {
-    moves.current = { go, goBy, toStep, hold };
+    moves.current = { go, goBy, toStep, hold, placeAt };
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
   const onHold = useCallback(() => moves.current.hold(), []);
+  const onPlace = useCallback((offset: number) => moves.current.placeAt(offset), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
   // ← and → move one step, unless a field takes the keys or what they were pressed in handled them.
   useEffect(() => {
@@ -219,38 +223,41 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
         <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} />
       </div>
       <TurnStrip segments={conversation.segments} shown={shown} onGo={onGo} onStep={onStep} />
-      {/* The browser's own scroll anchoring would be a second writer of the offset. The area is what a move in time
-          slides (index.css). */}
-      <main ref={scroller} className="flex flex-1 flex-col overflow-y-auto [overflow-anchor:none] [view-transition-name:conversation]">
-        {rows.length === 0 ? (
-          <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
-        ) : (
-          <Hold.Provider value={onHold}>
-            <Painted.Provider value={painted}>
-              <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
-                {virtualizer.getVirtualItems().map((item) => (
-                  <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
-                    <RowView row={rows[item.index]!} reading={reading} />
-                  </ListedRow>
-                ))}
-              </div>
-            </Painted.Provider>
-          </Hold.Provider>
-        )}
-        {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
-            rather than over it. */}
-        <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
-          <Toggle
-            data-follow={following}
-            pressed={control.pressed}
-            title={control.title}
-            className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-raised-hover"
-            onClick={toggleFollow}
-          >
-            <span aria-hidden>{control.glyph}</span> {control.label}
-          </Toggle>
-        </div>
-      </main>
+      <div className="flex min-h-0 flex-1">
+        {/* The browser's own scroll anchoring would be a second writer of the offset. The area is what a move in time
+            slides (index.css). */}
+        <main ref={scroller} className="flex min-w-0 flex-1 flex-col overflow-y-auto [overflow-anchor:none] [view-transition-name:conversation]">
+          {rows.length === 0 ? (
+            <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
+          ) : (
+            <Hold.Provider value={onHold}>
+              <Painted.Provider value={painted}>
+                <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
+                  {virtualizer.getVirtualItems().map((item) => (
+                    <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
+                      <RowView row={rows[item.index]!} reading={reading} />
+                    </ListedRow>
+                  ))}
+                </div>
+              </Painted.Provider>
+            </Hold.Provider>
+          )}
+          {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
+              rather than over it. */}
+          <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
+            <Toggle
+              data-follow={following}
+              pressed={control.pressed}
+              title={control.title}
+              className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-raised-hover"
+              onClick={toggleFollow}
+            >
+              <span aria-hidden>{control.glyph}</span> {control.label}
+            </Toggle>
+          </div>
+        </main>
+        <Minimap rows={rows} extents={virtualizer.measurementsCache} total={virtualizer.getTotalSize()} scroller={scroller} theme={theme} onPlace={onPlace} />
+      </div>
     </>
   );
 }
