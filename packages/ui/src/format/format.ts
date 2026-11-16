@@ -172,7 +172,8 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       // newest blocks on every request, so a block left holding one would differ each time it is resent. They are
       // lifted out of the blocks in that order, into one block of the request's own.
       const breakpoints: Header[] = [];
-      const tools = toolBlocks(lift(body.value("tools"), (index) => `tools.${index}`, breakpoints));
+      // A tool's breakpoint is named for the tool, as its block is.
+      const tools = toolBlocks(lift(body.value("tools"), (_index, tool) => `tools.${toolName(tool)}`, breakpoints));
       const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
       const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them.
@@ -195,12 +196,12 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
 
 // A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A
 // value that is not a list, or a block that is not an object, holds no breakpoint, and is left for its reader to show.
-function lift(list: unknown, at: (index: number) => string, breakpoints: Header[]): unknown {
+function lift(list: unknown, at: (index: number, block: unknown) => string, breakpoints: Header[]): unknown {
   if (!Array.isArray(list)) return list;
   return list.map((block: unknown, index) => {
     if (typeof block !== "object" || block === null || !("cache_control" in block)) return block;
     const { cache_control: breakpoint, ...rest } = block;
-    breakpoints.push([at(index), JSON.stringify(breakpoint)]);
+    breakpoints.push([at(index, block), JSON.stringify(breakpoint)]);
     return rest;
   });
 }
@@ -241,7 +242,7 @@ function systemBlocks(system: unknown): Block[] {
 // Each tool definition as a block of its own, named for its tool, its description read first and its schema after.
 // [LAW:types-are-the-program] Keyed by its name, `tools.<name>.<n>`, `n` its occurrence among tools of that name, so a
 // tool is the same item in every request that offers it wherever it stands in the list (view/history.ts), and the key
-// is unique and has no `/` (view/position.ts) whatever a recorded request holds. A tool that does not fit is shown raw.
+// is unique and has no `/` (view/position.ts) whatever a recorded request holds: its `%` and `/` escaped as a URI's are. A tool that does not fit is shown raw.
 function toolBlocks(tools: unknown): KeyedBlock[] {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
@@ -250,7 +251,7 @@ function toolBlocks(tools: unknown): KeyedBlock[] {
     const name = toolName(tool);
     const occurrence = seen.get(name) ?? 0;
     seen.set(name, occurrence + 1);
-    return { ...toolBlock(tool, name), key: `tools.${encodeURIComponent(name)}.${occurrence}` };
+    return { ...toolBlock(tool, name), key: `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${occurrence}` };
   });
 }
 

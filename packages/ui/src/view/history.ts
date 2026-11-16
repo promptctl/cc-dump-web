@@ -9,9 +9,10 @@ import { linesOf, type Fact, type Role } from "./lines.ts";
 // request's block but a block at its place in a thread: it enters with the exchange it first arrives with and stays
 // there, resending it adds nothing, and different content at its place is a new version of it.
 
-// A version of an item: the block at its place from `step` on, none once a request no longer sends it, and whether it
-// arrived as a reply, which is compared with the block the next request resends as that block is.
-export type Version = Sent | { step: number; block: undefined; reply: false };
+// A version of an item: the block at its place from `step` on, or none once a request no longer sends it, `was` the
+// block it stopped sending; and whether it arrived as a reply, which is compared with the block the next request resends
+// as that block is.
+export type Version = Sent | { step: number; block: undefined; was: KeyedBlock; reply: false };
 type Sent = { step: number; block: KeyedBlock; reply: boolean };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
@@ -131,16 +132,26 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       }
       return { key: group.key, title: group.title, items };
     });
-    // A request sends its line's prompt and parameters whole, so an item of the line's own among them that it did not
-    // send is gone from the step on; the messages are the line's history, which a request sending fewer leaves as a
-    // branch (view/lines.ts).
-    for (const [at, location] of line?.places ?? []) {
+    // A request sends its line's prompt and parameters whole, so one the line resends that it did not send is gone from
+    // the step on: an item of the line's own, its next version; one its base sent, an item of the line's, gone as it
+    // arrives. The messages are the line's history, which a request sending fewer leaves as a branch (view/lines.ts).
+    for (const { line: holder, at, location, upTo } of line === undefined ? [] : resent(line)) {
       if (sent.has(at)) continue;
+      sent.add(at);
       const item = itemAt(location);
-      const now = item.versions.at(-1)!;
-      if (now.block === undefined || now.block.place?.in !== "request") continue;
-      replace(location, { ...item, versions: [...item.versions, { step, block: undefined, reply: false }] });
-      undo.push(() => replace(location, item));
+      const was = item.versions.findLast(({ step }) => step <= upTo)!.block;
+      if (was?.place?.in !== "request") continue;
+      const gone: Version = { step, block: undefined, was, reply: false };
+      if (holder === line) {
+        replace(location, { ...item, versions: [...item.versions, gone] });
+        undo.push(() => replace(location, item));
+        continue;
+      }
+      const key = folded[location.step - 1]!.segment.groups[location.group]!.key;
+      const group = groups.findIndex((group) => group.key === key);
+      line!.places.set(at, { step, group, index: groups[group]!.items.length });
+      undo.push(() => line!.places.delete(at));
+      groups[group]!.items.push({ key: `thread:${trace}/${at}`, versions: [gone] });
     }
     const branch = role?.branch === undefined ? undefined : { key: role.line, from: role.branch.from };
     return { segment: { formatted, groups, branch }, role, undo };
@@ -186,6 +197,13 @@ function find(line: Line, at: string, upTo = Infinity): { line: Line; location: 
   const location = line.places.get(at);
   if (location !== undefined && location.step <= upTo) return { line, location, upTo };
   return line.base === undefined ? undefined : find(line.base.line, at, Math.min(upTo, line.base.from));
+}
+
+// Each place a line resends, with where its item is and the last step whose version of it counts, as `find` reads them:
+// the line's own, then its base's that arrived by the step it left from, and so on.
+function* resent(line: Line, upTo = Infinity): Generator<{ line: Line; at: string; location: Location; upTo: number }> {
+  for (const [at, location] of line.places) if (location.step <= upTo) yield { line, at, location, upTo };
+  if (line.base !== undefined) yield* resent(line.base.line, Math.min(upTo, line.base.from));
 }
 
 const sameRole = (a: Role | undefined, b: Role | undefined) => a?.line === b?.line && a?.branch?.base === b?.branch?.base && a?.branch?.from === b?.branch?.from;

@@ -29,8 +29,9 @@ export type Row =
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
 // category, the group titles over none left, and the runs of unchanged rows folded, the block revealed always among them;
 // and `every` row, listed or not, which the search reads, since a hidden category's blocks are searched
-// (docs/design/01-mvp.md, F6).
-export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys } };
+// (docs/design/01-mvp.md, F6). `brought`: the key of the first row listed that the step shown brought, added, changed or
+// removed, of its segments' own rows, not those a branch's placement took away; none for a step that brought none.
+export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys }; brought: string | undefined };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
 // fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
@@ -55,17 +56,19 @@ export function createLayout(
   unchanged: Unchanged,
   branches: Branches,
 ): (history: History, step: number, revealed: string | undefined, opened: Record<string, true>) => Layout {
-  let last: Layout = { rows: [], keys: keysOf([], new Map()), every: { rows: [], keys: keysOf([], new Map()) } };
+  let last: Layout = { rows: [], keys: keysOf([], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, brought: undefined };
   const place = placements[branches];
   return (history, step, revealed, opened) => {
     // The keys of the branches folded into one row each.
     const collapsed = new Set<string>();
-    const every = history.segments.slice(0, step).flatMap((segment, index) => {
+    const placed = history.segments.slice(0, step).map((segment, index) => {
       const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
-      const { rows, collapses } = place(() => segmentRows(segment, index + 1, step), () => removed(segmentRows(segment, index + 1, step - 1)), past);
-      if (collapses) collapsed.add(segment.branch!.key);
-      return rows;
+      const shown = place(() => segmentRows(segment, index + 1, step), () => removed(segmentRows(segment, index + 1, step - 1)), past);
+      if (shown.collapses) collapsed.add(segment.branch!.key);
+      return shown;
     });
+    const every = placed.flatMap(({ rows }) => rows);
+    const taken = placed.flatMap(({ rows, taken }) => rows.map(() => taken));
     const isShown = every.map((row) => row.kind !== "block" || isListed[visibility[(row.change === "removed" ? row.before : row.block).category]] || row.key === revealed);
     // A group's title is listed over a block of it listed: read from the end, whether one follows before the next title.
     let blockListed = false;
@@ -75,6 +78,7 @@ export function createLayout(
       blockListed = kind === "block" ? blockListed || isShown[index]! : false;
     }
     const listed = every.filter((_, index) => isShown[index]);
+    const brought = every.find((row, index) => isShown[index] && !taken[index] && row.kind !== "fold" && row.change !== "same")?.key;
     const folding = fold(listed, revealed, opened, unchanged, collapsed);
     // Each row's place among those listed: its own, the fold it is in, or the place of the row listed before it.
     const places = folding.placeOf;
@@ -94,19 +98,20 @@ export function createLayout(
       // [LAW:one-source-of-truth] The search reads every row's block alone, so the same blocks are the same `every`, and
       // what memoizes on it is not run again by a step of the search or of time that changed none.
       every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
+      brought,
     };
     return last;
   };
 }
 
 // [LAW:dataflow-not-control-flow] What each placement lists of a branch's segment `past` steps after the branch's last
-// request, 0 while it is not behind the step shown, from its rows at the step shown and its rows removed; and whether
-// they fold into one.
-type Placement = (rows: () => Row[], removed: () => Row[], past: number) => { rows: Row[]; collapses: boolean };
+// request, 0 while it is not behind the step shown, from its rows at the step shown and its rows removed; whether they
+// fold into one; and whether they are rows the placement took away, which are not the step's change.
+type Placement = (rows: () => Row[], removed: () => Row[], past: number) => { rows: Row[]; collapses: boolean; taken: boolean };
 const placements: Record<Branches, Placement> = {
-  stay: (rows) => ({ rows: rows(), collapses: false }),
-  fold: (rows, _removed, past) => ({ rows: rows(), collapses: past > 0 }),
-  step: (rows, removed, past) => ({ rows: past === 0 ? rows() : past === 1 ? removed() : [], collapses: false }),
+  stay: (rows) => ({ rows: rows(), collapses: false, taken: false }),
+  fold: (rows, _removed, past) => ({ rows: rows(), collapses: past > 0, taken: false }),
+  step: (rows, removed, past) => ({ rows: past === 0 ? rows() : past === 1 ? removed() : [], collapses: false, taken: past === 1 }),
 };
 
 // A row a segment lists while it is shown: any but a fold.
@@ -125,12 +130,13 @@ function segmentRows({ formatted, groups, branch }: Segment, own: number, step: 
 }
 
 // An item's row at step `step`, from its version then and the one before, unless step `own`, the step it arrived at, is
-// it: a block on the right, added against none on the left; on the left alone, removed, the step it went; none once gone.
+// it: a block on the right, added against none on the left; gone, on the left alone, removed, the step it went, and
+// none after.
 function itemRow(item: Item, own: number, step: number, branch: Branch | undefined): Shown[] {
   const now = versionAt(item, step);
+  if (now.block === undefined) return now.step === step ? [{ kind: "block", key: item.key, block: undefined, before: now.was, change: "removed", branch }] : [];
   const before = own === step ? undefined : versionAt(item, step - 1).block;
-  if (now.block !== undefined) return [{ kind: "block", key: item.key, block: now.block, before, change: before === undefined ? "added" : before === now.block ? "same" : "changed", branch }];
-  return before === undefined ? [] : [{ kind: "block", key: item.key, block: undefined, before, change: "removed", branch }];
+  return [{ kind: "block", key: item.key, block: now.block, before, change: before === undefined ? "added" : before === now.block ? "same" : "changed", branch }];
 }
 
 // The rows the step shown took away: what the step before showed, on the left alone.

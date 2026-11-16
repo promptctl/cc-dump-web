@@ -85,6 +85,8 @@ describe("layout", () => {
       "thread:t2/request/tools.Grep.0 added",
     ]);
     expect(at(2).rows.find(({ key }) => key === "thread:t1/request/tools.Edit.0")).toMatchObject({ block: undefined, before: { name: "Edit" } });
+    // A removal is the step's change, so moving to the step brings it into view.
+    expect(at(2).brought).toBe("thread:t1/request/tools.Edit.0");
     // Gone, it has no row; resent as it was, nothing is marked.
     expect(prompt(3)).toEqual(["thread:t1/request/tools.Read.0 same", "thread:t1/request/tools.Bash.0 same", "thread:t1/request/system.0 same", "thread:t2/request/tools.Grep.0 same"]);
     // Offered again, it comes back where it stood, as added.
@@ -255,12 +257,30 @@ describe("branches", () => {
     expect(rows.slice(change - context, change).map((row) => (row.kind === "fold" ? `fold ${row.branch?.key}` : row.kind))).toEqual(["group", "block", "fold branch:side"]);
   });
 
+  it("marks a prompt block a branch stops sending, which the line it left still sends, removed on the branch the step it goes", () => {
+    const ask = (trace: string, messages: unknown[], tools: string[]) => request(trace, { model: "m", system: [text("Be brief.")], tools: tools.map((name) => ({ name })), messages });
+    const aside = [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }];
+    const events = [...ask("t1", say(1), ["Read", "Edit"]), ...ask("t2", say(2), ["Read", "Edit"]), ...ask("side", aside, ["Read"]), ...ask("t3", say(3), ["Read", "Edit"])];
+    const at = layouts(events, shown, "show", "stay");
+    expect(at(3).rows.find(({ key }) => key === "thread:side/request/tools.Edit.0")).toMatchObject({ change: "removed", block: undefined, before: { name: "Edit" }, branch: { key: "branch:side" } });
+    // It stands in the branch's own segment, under the exchange line the step brought first.
+    expect(at(3).brought).toBe("side");
+    // The line it left sends it still, and gives it no version.
+    expect(listed(at(3))).toContain("thread:t1/request/tools.Edit.0 same");
+    expect(listed(at(4))).toContain("thread:t1/request/tools.Edit.0 same");
+    // Gone, it has no row after, whether the branch stays or is taken away.
+    expect(listed(at(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual([]);
+    expect(listed(layouts(events, shown, "show", "step")(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual([]);
+  });
+
   it("lists a branch only while its requests are: the step after its last shows it removed, on the left alone, and later steps not at all", () => {
     const at = layouts(branched, shown, "show", "step");
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const removed = at(4).rows.filter((row) => row.kind !== "fold" && row.change === "removed");
     expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "thread:side/message.1/content.1"]);
     expect(removed.at(-1)).toMatchObject({ block: undefined, before: { key: "content.1" } });
+    // What the placement took away is not the step's change: the step brought its own exchange.
+    expect(at(4).brought).toBe("t3");
     // What is removed is not the moment shown's, so the search does not count it.
     expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(0);
     expect(at(5).every.rows.map(({ key }) => key)).not.toContain("side");

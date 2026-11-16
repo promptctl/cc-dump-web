@@ -179,7 +179,7 @@ describe("format", () => {
       key: "cache",
       category: "metadata",
       name: "cache breakpoints: 3",
-      parts: [{ kind: "fields", fields: [["tools.1", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
+      parts: [{ kind: "fields", fields: [["tools.Bash", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
     expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([
@@ -195,16 +195,19 @@ describe("format", () => {
 
   it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
     const blocks = group(
-      one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }] })),
+      one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }, { name: "a%2Fb" }, { name: "x\ud800" }] })),
       "request",
     ).filter(({ category }) => category === "tools");
-    // Two of one name, which the API refuses but a recording may hold, are two items; a key never nests at a `/`.
+    // Two of one name, which the API refuses but a recording may hold, are two items; a key never nests at a `/`, is
+    // another name's key never, and is made of any string, a lone surrogate's too.
     expect(blocks.map(({ key, name }) => [key, name])).toEqual([
       ["tools.Read.0", "Read"],
       ["tools.Read.1", "Read"],
       ["tools.a%2Fb.0", "a/b"],
       ["tools.tool.0", "tool"],
       ["tools.Grep.0", "Grep"],
+      ["tools.a%252Fb.0", "a%2Fb"],
+      ["tools.x\ud800.0", "x\ud800"],
     ]);
     expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition is not an object"), { kind: "json", value: "Bash" }]);
     expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition's description is not a string, if present"));
