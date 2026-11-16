@@ -167,7 +167,7 @@ describe("a block's line", () => {
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
 
-  it("previews a block by the start of its first text or JSON, on one line, and prints an exchange line's time, duration and model", () => {
+  it("previews a block by the start of its first text or JSON, on one line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "fields", fields: [["id", "t1"]] }, { kind: "json", label: "input", value: { command: "ls -la" } }] })).toBe('{ "command": "ls -la" }');
     expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
@@ -179,6 +179,11 @@ describe("a block's line", () => {
     // Deep JSON's indentation does not use up the line.
     const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };
     expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
+  });
+});
+
+describe("an exchange's line", () => {
+  it("prints its time, its duration, and its model without the prefix every Anthropic model id has", () => {
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
     expect(["claude-opus-5-5", "claude-haiku-5-5-20261001", "m", "my-claude-x"].map(modelName)).toEqual(["opus-5-5", "haiku-5-5-20261001", "m", "my-claude-x"]);

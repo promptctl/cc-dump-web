@@ -281,8 +281,8 @@ export function clockTime(timestamp: string): string {
 }
 const clock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
-// A model as the exchange line names it: without the "claude-" every model's name starts with, which never varies
-// (docs/design/02-design.md, "Print what varies").
+// A model as the exchange line names it: without the "claude-" every Anthropic model id starts with, which never varies
+// (docs/design/02-design.md, "Print what varies"). An id in another scheme is named whole.
 export const modelName = (model: string): string => model.replace(/^claude-/, "");
 
 // A duration in milliseconds as seconds to one decimal.
