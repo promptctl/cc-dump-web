@@ -1,0 +1,53 @@
+import type { RecordedEvent } from "@cc-dump/proxy/format";
+import { describe, expect, it } from "vitest";
+import { exchanges } from "../exchanges.ts";
+import { createFormatter } from "../format/format.ts";
+import { createHistory } from "./history.ts";
+import { failureOf, mostOf, shapeOf, titleOf } from "./strip.ts";
+
+const timestamp = "2026-11-16T16:00:00.000Z";
+const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
+const request = (trace_id: string, messages: unknown[]): RecordedEvent[] => [
+  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
+  { timestamp, trace_id, type: "request_body", base64: base64({ model: "claude-opus-5-5", messages }) },
+  { timestamp, trace_id, type: "request_trailers", headers: [] },
+];
+const ask = { role: "user", content: [{ type: "text", text: "Read it." }] };
+const call = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] };
+const result = (fields: object) => ({ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", ...fields }] });
+const segmentsOf = (events: RecordedEvent[]) => createHistory()(createFormatter()(exchanges(events))).segments;
+
+describe("failureOf", () => {
+  it("marks the step that brought a tool's failed result, and not the steps that resend it", () => {
+    const segments = segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ is_error: true, content: "ENOENT" })]), ...request("t3", [ask, call, result({ is_error: true, content: "ENOENT" }), ask])]);
+    expect(segments.map((segment) => failureOf(segment).tool)).toEqual([false, true, false]);
+  });
+
+  it("marks no step whose tool's result did not fail", () => {
+    const [, second] = segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ content: "ok" })])]);
+    expect(failureOf(second!)).toEqual({ exchange: false, tool: false });
+  });
+});
+
+describe("a mark's shape", () => {
+  const most = mostOf([]);
+  it("is the least while nothing is known, so every mark can still be seen and pressed", () => {
+    expect([most, shapeOf({ output: undefined, duration: undefined }, most)]).toEqual([{ output: 0, duration: 0 }, { height: 0.25, opacity: 0.4 }]);
+  });
+
+  it("grows with its output and strengthens with its duration, against the most of any step", () => {
+    const of = { output: 1000, duration: 20_000 };
+    expect([shapeOf({ output: 1000, duration: 20_000 }, of), shapeOf({ output: 500, duration: 5000 }, of)]).toEqual([
+      { height: 1, opacity: 1 },
+      { height: 0.625, opacity: 0.55 },
+    ]);
+  });
+});
+
+describe("titleOf", () => {
+  it("says the exchange line's facts known, the branch it is on, and what failed", () => {
+    const [segment] = segmentsOf(request("t1", [ask]));
+    const title = titleOf(3, segment!.formatted, 2, { exchange: false, tool: true });
+    expect(title.split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5", "branch off 2", "a tool failed"]);
+  });
+});

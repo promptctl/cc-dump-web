@@ -63,7 +63,7 @@ export function App({ connection }: { connection: Connection }) {
           {open === null ? (
             <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
           ) : (
-            <Conversation key={read} formatted={shown} reading={reading.state === "reading"} />
+            <Conversation key={read} formatted={shown} reading={reading.state === "reading"} theme={theme} />
           )}
         </div>
         {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
