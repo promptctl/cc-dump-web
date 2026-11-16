@@ -333,6 +333,19 @@ describe("a part's log", () => {
     expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "unread: log line: service is not a string" }, { line: "next" }]);
   });
 
+  it("ends a log whose message, given no id, takes the last line's position, reporting it as failed", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`id: ab:0\ndata: ${JSON.stringify({ service: "proxy", ...event("first") })}\n\ndata: ${JSON.stringify({ service: "proxy", ...event("again") })}\n\n`);
+    });
+    const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
+    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual([
+      "opened",
+      { line: "first" },
+      { failed: expect.objectContaining({ message: `GET ${reader.url}/logs`, cause: expect.objectContaining({ message: "log line: ab:0 is not after ab:0" }) }) },
+    ]);
+  });
+
   it("ends a log whose message has no line's position, reporting it as failed", async () => {
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });

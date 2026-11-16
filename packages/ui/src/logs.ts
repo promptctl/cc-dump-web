@@ -8,7 +8,7 @@ export type LogConnection = { state: "connecting" } | { state: "connected" } | {
 
 // A line as the panel lists it: its part, the line, when its work ended, which orders it among the other part's, and
 // whether it is the first read of its part's process after another's, whose lines written once the panel's connection
-// to it was cut (its shutdown's, which come after) are on its stdout alone.
+// to it was cut (its shutdown's, which come after) the panel never reads.
 export type Listed = { part: Part; line: LogLine; ended: number; restarted: boolean };
 
 // The logs panel's state (docs/design/01-mvp.md, F9). `lines`: both parts' lines, in the order their work ended, the
@@ -33,7 +33,8 @@ export function logsChanged(logs: Logs, change: LogsChange): Logs {
   if ("connection" in change) return { ...logs, connections: { ...logs.connections, [change.part]: change.connection } };
   const { part, line } = change;
   const before = logs.last[part];
-  // The line after the last one read of the same process, or a process's first, which is line 0.
+  // The line after the last one read of the same process, or a process's first, which is line 0. A line comes after the
+  // last one of its process (Connection.logs), so the gap is never negative.
   const expected = before?.run === line.run ? before.seq + 1 : 0;
   // A line not read has no time of its own, so it is listed where it arrived, last.
   const ended = "event" in line ? Date.parse(line.event.started_at) + line.event.duration_ms : (logs.lines.at(-1)?.ended ?? -Infinity);

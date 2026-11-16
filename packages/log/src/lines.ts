@@ -8,7 +8,8 @@ import { positionOf } from "./line.ts";
 // which `logs` serves. The lines are numbered from 0 under `run`, an id of this process, so a reader that reconnects to
 // the same process resumes after the last line it read, and one that reaches a process restarted since reads it anew.
 // [LAW:no-silent-failure] `out` failing, as stdout does once the process reading it is gone (EPIPE), is no crash: the
-// lines stop going to it, and its `stdout` event says why, in the lines kept, which the panel shows.
+// lines stop going to it, and its `stdout` event says why, in the lines kept, which the panel shows. The event spans
+// stdout's life, from the process's start to its failure, as a connection's `client_error` spans the connection.
 export function processLog(service: string, out: Writable = process.stdout, keep = 1000): { log: Log; logs: Handler } {
   const run = randomBytes(8).toString("hex");
   // A ring buffer: line `seq` is at `seq % keep` until `keep` more are written over it.
