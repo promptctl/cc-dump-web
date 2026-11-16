@@ -94,7 +94,7 @@ describe("createTerminal", () => {
 
     await vi.waitFor(() => expect(client.connectionState).toMatchObject({ status: "closed" }), { timeout: 5000 });
     const seen = await untilClosed(bridge);
-    expect(seen.at(-1)).toMatchObject({ errorCode: "BRIDGE_INTERNAL", outcome: "error", reason: expect.stringContaining("no session") });
+    expect(seen.at(-1)).toMatchObject({ errorCode: "BRIDGE_INTERNAL", outcome: "error", reason: expect.stringMatching(/attaching to session \$\d+ of the tmux server started at \d+: transport closed before command completed$/) });
     expect(await next()).toMatchObject({ event: "upgrade", outcome: "error" });
     expect(tmux("show-options", "-v", "-q", "-t", window.session_id, "@touched")).toBe("");
   });

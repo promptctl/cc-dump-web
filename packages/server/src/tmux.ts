@@ -59,8 +59,10 @@ export async function attach(options: SpawnOptions, { session_id, start_time }: 
     return client;
   } catch (error) {
     client.close();
-    // The bridge tells the page the message alone, so it carries tmux's words.
-    throw new TmuxRefused(`no session ${session_id} on a tmux server started at ${start_time}: ${describe(refused(error))}`);
+    // The bridge tells the page the message alone, so it carries the failure's own words: tmux's, a refusal's message
+    // alone, as the app server answers one, or the app server's own, with its causes.
+    const failure = refused(error);
+    throw new Error(`attaching to session ${session_id} of the tmux server started at ${start_time}: ${failure instanceof TmuxRefused ? failure.message : describe(failure)}`, { cause: error });
   }
 }
 
