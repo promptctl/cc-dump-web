@@ -40,8 +40,10 @@ export function fieldValue(value: unknown): string | Field[] {
     : (JSON.stringify(value) ?? "undefined");
 }
 
-// The value a string is the JSON of, when showing that value shows every byte of the string; otherwise the string.
+// The value a string is the JSON of, when showing that value shows every byte of the string; otherwise the string. Only
+// an object's or a list's JSON shows as fields, and it begins with its bracket, so no other string is parsed.
 function heldJson(text: string): unknown {
+  if (!/^[[{]/.test(text)) return text;
   try {
     const value: unknown = JSON.parse(text);
     return JSON.stringify(value) === text ? value : text;
@@ -57,8 +59,9 @@ export function valuePart(value: unknown, labelled: { label?: string } = {}): Pa
 }
 
 // An object's fields as a part, when it has any.
-export function fieldsParts(object: Record<string, unknown>, labelled: { label?: string } = {}): Part[] {
-  return Object.keys(object).length === 0 ? [] : [valuePart(object, labelled)];
+export function fieldsParts(object: Record<string, unknown>, labelled: { label?: string } = {}): Extract<Part, { kind: "fields" }>[] {
+  const fields = Object.entries(object).map(([name, value]): Field => [name, fieldValue(value)]);
+  return fields.length === 0 ? [] : [{ kind: "fields", ...labelled, fields }];
 }
 
 // Why a value is not shown as what it was read as, set before the value as it was received.

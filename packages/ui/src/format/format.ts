@@ -2,8 +2,8 @@ import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadLabel, type Block, type BlockOrNone, type Role } from "./blocks.ts";
-import { fieldsParts, fieldValue, valuePart, type Field } from "./parts.ts";
+import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { fieldValue, valuePart, type Field } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
@@ -272,7 +272,7 @@ function toolBlock(tool: unknown, name: string): Block {
       return {
         category: "tools",
         name,
-        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...fieldsParts(fields.rest(), { label: unreadLabel })],
+        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
       };
     },
     (reason) => raw("tools", name, reason, { kind: "json", value: tool }),

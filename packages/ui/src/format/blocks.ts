@@ -42,13 +42,16 @@ export function raw(category: Category, name: string, reason: string, received: 
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
 export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...fieldsParts(fields.rest(), { label: unreadLabel })] };
+  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...unreadParts(fields)] };
 }
 
 
+// The fields of an object no read asked for, as a part, when there are any.
+export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), { label: unreadLabel });
+
 // The fields of an object no read asked for, as a metadata block of their own, when there are any.
 export function restBlock(fields: Fields, name: string): BlockOrNone {
-  const parts = fieldsParts(fields.rest(), { label: unreadLabel });
+  const parts = unreadParts(fields);
   return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
 }
 
@@ -150,7 +153,7 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
       const fields = readObject(block, type);
       fields.value("type");
       const parts = entry.parts(fields, role, form);
-      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...fieldsParts(fields.rest(), { label: unreadLabel })] };
+      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
