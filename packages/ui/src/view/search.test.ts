@@ -47,7 +47,7 @@ describe("search", () => {
         parts: [
           { kind: "text", form: "verbatim", text: "t" },
           { kind: "json", value: { a: 1 } },
-          { kind: "fields", fields: [["id", "1"]] },
+          { kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
           { kind: "media", of: "image", source: { type: "url", url: "u" } },
         ],
       }),
@@ -57,6 +57,10 @@ describe("search", () => {
       { at: "1", searched: whole('{\n  "a": 1\n}'), in: "content" },
       { at: "2/0/name", searched: whole("id"), in: "content" },
       { at: "2/0/value", searched: whole("1"), in: "content" },
+      // A field that holds fields is its name alone, and the fields it holds are lines of their own after it.
+      { at: "2/1/name", searched: whole("thinking"), in: "content" },
+      { at: "2/2/name", searched: whole("type"), in: "content" },
+      { at: "2/2/value", searched: whole("adaptive"), in: "content" },
     ]);
   });
 

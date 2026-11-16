@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { doesNotFit, type Form, type Medium, type Part } from "./parts.ts";
+import { doesNotFit, fieldsParts, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 
@@ -42,19 +42,13 @@ export function raw(category: Category, name: string, reason: string, received: 
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
 export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...restParts(fields, unreadLabel)] };
+  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...fieldsParts(fields.rest(), { label: unreadLabel })] };
 }
 
-
-// The fields of an object no read asked for, as a part, when there are any.
-export function restParts(fields: Fields, label: string): Part[] {
-  const rest = fields.rest();
-  return Object.keys(rest).length === 0 ? [] : [{ kind: "json", label, value: rest }];
-}
 
 // The fields of an object no read asked for, as a metadata block of their own, when there are any.
 export function restBlock(fields: Fields, name: string): BlockOrNone {
-  const parts = restParts(fields, unreadLabel);
+  const parts = fieldsParts(fields.rest(), { label: unreadLabel });
   return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
 }
 
@@ -156,7 +150,7 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
       const fields = readObject(block, type);
       fields.value("type");
       const parts = entry.parts(fields, role, form);
-      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...restParts(fields, unreadLabel)] };
+      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...fieldsParts(fields.rest(), { label: unreadLabel })] };
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
@@ -230,5 +224,5 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
         return [{ kind: "fields", label: "source", fields: [["type", type]] }];
     }
   })();
-  return [...parts, ...restParts(fields, "source fields")];
+  return [...parts, ...fieldsParts(fields.rest(), { label: "source fields" })];
 }

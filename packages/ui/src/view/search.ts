@@ -1,6 +1,6 @@
 import type { Block } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
-import type { Part } from "../format/parts.ts";
+import { fieldLines, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
@@ -60,9 +60,9 @@ function partTexts(part: Part, index: number): Shown[] {
     case "json":
       return [{ at: address.part(index), searched: whole(jsonText(part)), in: "content" }];
     case "fields":
-      return part.fields.flatMap(([name, value], field) => [
-        { at: address.field(index, field, "name"), searched: whole(name), in: "content" as const },
-        { at: address.field(index, field, "value"), searched: whole(value), in: "content" as const },
+      return fieldLines(part.fields).flatMap(({ name, value }, field): Shown[] => [
+        { at: address.field(index, field, "name"), searched: whole(name), in: "content" },
+        ...(value === undefined ? [] : [{ at: address.field(index, field, "value"), searched: whole(value), in: "content" } as const]),
       ]);
     case "diff":
       return [{ at: address.part(index), searched: diffOf(part), in: "content" }];

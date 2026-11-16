@@ -3,7 +3,7 @@ import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, use
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { diffOf, type DiffLine } from "../format/diff.ts";
-import type { Part } from "../format/parts.ts";
+import { fieldLines, type Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
@@ -484,14 +484,16 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
       return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
     case "fields":
       return (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3">
-          {part.fields.map(([name, value], field) => (
+        // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
+        // field a field holds is indented under it.
+        <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
+          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
             <div key={field} className="contents">
-              <dt className="text-foreground-muted">
+              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
                 <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />
+                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
               </dd>
             </div>
           ))}

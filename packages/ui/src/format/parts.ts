@@ -1,5 +1,3 @@
-import type { Header } from "@cc-dump/proxy/format";
-
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
 export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
@@ -14,11 +12,54 @@ export type Form = "markdown" | "verbatim";
 export type Part =
   | { kind: "text"; form: Form; label?: string; text: string }
   | { kind: "json"; label?: string; value: unknown }
-  | { kind: "fields"; label?: string; fields: Header[] }
+  | { kind: "fields"; label?: string; fields: Field[] }
   | { kind: "media"; label?: string; of: Medium; source: Source }
   // A change of one text into another, shown line by line: what it removed and what it added, among the lines it kept
   // (format/diff.ts).
   | { kind: "diff"; label?: string; before: string; after: string };
+
+// A field: a name and its value, a text, or the fields it holds, shown under it. A header is one, its value a text.
+export type Field = [name: string, value: string | Field[]];
+
+// A field as the line it shows: its name at its depth among the fields holding it, and its value, none for a field that
+// holds fields, whose lines follow it a depth deeper.
+export type FieldLine = { name: string; value: string | undefined; depth: number };
+export function fieldLines(fields: Field[], depth = 0): FieldLine[] {
+  return fields.flatMap(([name, value]) =>
+    typeof value === "string" ? [{ name, value, depth }] : [{ name, value: undefined, depth }, ...fieldLines(value, depth + 1)],
+  );
+}
+
+// What a field shows a value as: an object or a list with members, or a string that is the JSON of one to the byte, as
+// metadata.user_id is, as its members' fields, a list's named by index; any other value as its JSON, so a string reads
+// quoted and no value reads as one of another type.
+export function fieldValue(value: unknown): string | Field[] {
+  const held = typeof value === "string" ? heldJson(value) : value;
+  return typeof held === "object" && held !== null && Object.keys(held).length > 0
+    ? Object.entries(held).map(([name, member]): Field => [name, fieldValue(member)])
+    : (JSON.stringify(value) ?? "undefined");
+}
+
+// The value a string is the JSON of, when showing that value shows every byte of the string; otherwise the string.
+function heldJson(text: string): unknown {
+  try {
+    const value: unknown = JSON.parse(text);
+    return JSON.stringify(value) === text ? value : text;
+  } catch {
+    return text;
+  }
+}
+
+// A value as the part showing it: its fields when it holds any, else its JSON.
+export function valuePart(value: unknown, labelled: { label?: string } = {}): Part {
+  const shown = fieldValue(value);
+  return typeof shown === "string" ? { kind: "json", ...labelled, value } : { kind: "fields", ...labelled, fields: shown };
+}
+
+// An object's fields as a part, when it has any.
+export function fieldsParts(object: Record<string, unknown>, labelled: { label?: string } = {}): Part[] {
+  return Object.keys(object).length === 0 ? [] : [valuePart(object, labelled)];
+}
 
 // Why a value is not shown as what it was read as, set before the value as it was received.
 export const doesNotFit = (reason: string): Part => ({ kind: "text", form: "verbatim", label: "does not fit", text: reason });

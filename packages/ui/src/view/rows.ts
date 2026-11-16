@@ -1,6 +1,6 @@
 import type { Block, Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
-import type { Part } from "../format/parts.ts";
+import { fieldLines, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import type { Branch, History, Item, Segment } from "./history.ts";
@@ -249,7 +249,7 @@ function partSize(part: Part): number {
     case "json":
       return typeof part.value === "string" ? part.value.length : jsonText(part).length;
     case "fields":
-      return part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
+      return fieldLines(part.fields).reduce((length, { name, value }) => length + name.length + (value?.length ?? 0), 0);
     case "media":
       return part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length;
     // An edit holds its two texts; its lines are not diffed to count them.
@@ -294,7 +294,9 @@ function partText(part: Exclude<Part, { kind: "media" }>): string {
     case "json":
       return typeof part.value === "string" ? part.value : jsonText(part);
     case "fields":
-      return part.fields.map(([name, value]) => `${name} ${value}`).join("  ");
+      return fieldLines(part.fields)
+        .map(({ name, value }) => (value === undefined ? name : `${name} ${value}`))
+        .join("  ");
     case "diff":
       return diffOf(part).text;
   }

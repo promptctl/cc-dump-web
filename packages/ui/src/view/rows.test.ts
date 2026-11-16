@@ -218,6 +218,8 @@ describe("a block's line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
+    // A field that holds fields reads its name, then theirs.
+    expect(preview({ category: "metadata", name: "parameters", parts: [{ kind: "fields", fields: [["model", '"m"'], ["thinking", [["type", '"adaptive"']]]] }] })).toBe('model "m" thinking type "adaptive"');
     // Deep JSON's indentation does not use up the line.
     const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };
     expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);

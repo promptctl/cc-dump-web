@@ -282,19 +282,18 @@ function content({ category, name, parts, injected }: Block): unknown {
 
 // A reply's block with, of its fields no read asked for, only those `resent` has.
 function asResent(reply: Block, resent: Block): Block {
-  const kept = resent.parts.find(isUnread)?.value;
-  const keeps = (name: string) => typeof kept === "object" && kept !== null && Object.hasOwn(kept, name);
+  const kept = new Set(resent.parts.find(isUnread)?.fields.map(([name]) => name));
   return {
     ...reply,
     parts: reply.parts.flatMap((part): Part[] => {
       if (!isUnread(part)) return [part];
-      const fields = Object.entries(part.value as Record<string, unknown>).filter(([name]) => keeps(name));
-      return fields.length === 0 ? [] : [{ ...part, value: Object.fromEntries(fields) }];
+      const fields = part.fields.filter(([name]) => kept.has(name));
+      return fields.length === 0 ? [] : [{ ...part, fields }];
     }),
   };
 }
 
-const isUnread = (part: Part): part is Extract<Part, { kind: "json" }> => part.kind === "json" && part.label === unreadLabel;
+const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.label === unreadLabel;
 
 // Whether two JSON values are the same value: an object's fields in any order, an undefined field as none.
 function equal(a: unknown, b: unknown): boolean {

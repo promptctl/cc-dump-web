@@ -2,7 +2,8 @@ import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { formatBlock, formatContent, formatError, raw, restBlock, restParts, roleCategory, unreadLabel, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadLabel, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { fieldsParts, fieldValue, valuePart, type Field } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
@@ -171,14 +172,14 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       // built from the tools, then the system prompt, then the messages, and Claude Code moves the breakpoints to the
       // newest blocks on every request, so a block left holding one would differ each time it is resent. They are
       // lifted out of the blocks in that order, into one block of the request's own.
-      const breakpoints: Header[] = [];
+      const breakpoints: Field[] = [];
       // A tool's breakpoint is named by its block's key, as every other block's is.
       const tools = toolBlocks(lift(body.value("tools"), (index, list) => toolKeys(list)[index]!, breakpoints));
       const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
       const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them.
       const rest = body.rest();
-      const parameters: Block = { category: "metadata", name: "parameters", parts: [{ kind: "json", value: rest }] };
+      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)] };
       const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }] }];
       return {
         blocks: [
@@ -196,7 +197,7 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
 
 // A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A
 // value that is not a list, or a block that is not an object, holds no breakpoint, and is left for its reader to show.
-function lift(list: unknown, at: (index: number, list: unknown[]) => string, breakpoints: Header[]): unknown {
+function lift(list: unknown, at: (index: number, list: unknown[]) => string, breakpoints: Field[]): unknown {
   if (!Array.isArray(list)) return list;
   return list.map((block: unknown, index) => {
     if (typeof block !== "object" || block === null || !("cache_control" in block)) return block;
@@ -205,7 +206,7 @@ function lift(list: unknown, at: (index: number, list: unknown[]) => string, bre
     return rest;
   });
 }
-function liftContent(message: unknown, at: string, breakpoints: Header[]): unknown {
+function liftContent(message: unknown, at: string, breakpoints: Field[]): unknown {
   if (typeof message !== "object" || message === null || !("content" in message)) return message;
   return { ...message, content: lift(message.content, (index) => `${at}/content.${index}`, breakpoints) };
 }
@@ -271,7 +272,7 @@ function toolBlock(tool: unknown, name: string): Block {
       return {
         category: "tools",
         name,
-        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...restParts(fields, unreadLabel)],
+        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...fieldsParts(fields.rest(), { label: unreadLabel })],
       };
     },
     (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
@@ -337,7 +338,6 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const fields = readObject(message, "message");
       const content = messageContent(fields.array("content"), "assistant", { in: "reply" });
       const stopReason = fields.value("stop_reason");
-      const stopSequence = show(fields.value("stop_sequence"));
       const usage = fields.value("usage");
       const uncached = tokens(usage, "input_tokens");
       const cacheRead = tokens(usage, "cache_read_input_tokens");
@@ -346,9 +346,9 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
         blocks: [
           ...content,
           ...one("stop reason", [
-            { category: "metadata", name: `stop reason: ${show(stopReason)}`, parts: [{ kind: "fields", fields: [["stop_reason", show(stopReason)], ["stop_sequence", stopSequence]] }] },
+            { category: "metadata", name: `stop reason: ${show(stopReason)}`, parts: [{ kind: "fields", fields: [["stop_reason", fieldValue(stopReason)], ["stop_sequence", fieldValue(fields.value("stop_sequence"))]] }] },
           ]),
-          ...one("usage", [{ category: "metadata", name: "usage", parts: [{ kind: "json", value: usage }] }]),
+          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)] }]),
           ...one("fields", restBlock(fields, "message")),
         ],
         message: {
