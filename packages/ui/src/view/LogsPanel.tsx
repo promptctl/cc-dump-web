@@ -14,13 +14,13 @@ export function LogsPanel({ connection }: { connection: Pick<Connection, "logs">
   const least = useSettings((state) => state.logLevel);
   const shown = logs.lines.filter(({ line }) => levels.indexOf(lineLevel(line)) <= levels.indexOf(least));
   // The list follows the latest line while it is scrolled to the bottom, and stays where the reader put it otherwise.
-  // The latest is followed by itself, not by how many are listed, which stays the same once old lines are let go.
+  // Followed on every change to the list, wherever a line went in: not by how many are listed, which stays the same once
+  // old lines are let go, nor by the last, before which a line whose work ended earlier goes.
   const list = useRef<HTMLOListElement>(null);
   const atBottom = useRef(true);
-  const latest = shown.at(-1);
   useLayoutEffect(() => {
     if (atBottom.current && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [latest]);
+  }, [logs.lines, least]);
   return (
     <aside aria-label="Logs" data-logs className="flex w-[32rem] shrink-0 flex-col border-l bg-surface text-xs">
       <div className="flex items-center gap-3 border-b p-3">
@@ -86,7 +86,7 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended, restarted } }
       : { service: named[part], event: "unread", said: line.error, error: line.error, opened: line.unread };
   return (
     <li data-log-level={level}>
-      {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote after its last line here is in its terminal</p> : null}
+      {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote after its last line here did not reach the panel</p> : null}
       <details>
         <summary className="flex cursor-pointer gap-2 whitespace-nowrap hover:bg-hover">
           <span className="text-foreground-muted">{"event" in line ? time.format(ended) : "—"}</span>
