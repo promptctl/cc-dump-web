@@ -1,18 +1,22 @@
+import type { SourceStatus } from "@cc-dump/proxy/format";
 import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { exchanges } from "./exchanges.ts";
 import { createFormatter } from "./format/format.ts";
 import { useRecording, type Reading } from "./reading.ts";
-import { useProxyStatus, type StatusReading } from "./status.ts";
+import { settings, useSettings } from "./settings.ts";
+import { ago, useNow, useProxyStatus, type StatusReading } from "./status.ts";
 import { useEvents } from "./store.ts";
 import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
+import { InfoPanel } from "./view/InfoPanel.tsx";
 import { Launch } from "./view/Launch.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { Terminal } from "./view/Terminal.tsx";
 import { useView } from "./view/state.ts";
 import { ThemePicker } from "./view/ThemePicker.tsx";
+import { Toggle } from "./view/Toggle.tsx";
 
 export function App({ connection }: { connection: Connection }) {
   const theme = useTheme();
@@ -25,11 +29,14 @@ export function App({ connection }: { connection: Connection }) {
   // Fast Refresh keeps state but re-runs memos, so an edit to the formatter takes effect.
   const format = useMemo(() => createFormatter(), []);
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
+  const session = shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session;
+  const info = useSettings((state) => state.info);
   return (
     <div className="flex h-screen flex-col">
       <header className="flex h-12 items-center gap-6 border-b bg-surface px-4 text-xs">
         <h1 className="text-sm font-semibold">cc-dump</h1>
-        {/* What stands now, beside the name: the proxy and the read, where the connection's status (F8) goes too. */}
+        {/* What stands now, beside the name: the connection to the proxy and its traffic (F8), then the proxy's source
+            and the read. */}
         <div role="status" className="flex min-w-0 flex-1 items-center gap-4 *:min-w-0 *:truncate">
           <ProxyState status={status} />
           <ReadingState reading={reading} />
@@ -38,6 +45,9 @@ export function App({ connection }: { connection: Connection }) {
           <Recordings connection={connection} reading={reading} />
           <Launch connection={connection} />
           <ThemePicker />
+          <Toggle pressed={info} data-info-toggle className="control aria-pressed:font-semibold" onClick={() => settings.setInfo(!info)}>
+            Info
+          </Toggle>
         </div>
       </header>
       {/* The conversation, and the launched agent's window beside it, each half the width (F13). */}
@@ -52,6 +62,8 @@ export function App({ connection }: { connection: Connection }) {
           )}
         </div>
         {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
+        {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
+        {info ? <InfoPanel connection={connection} open={open} session={session} /> : null}
       </div>
     </div>
   );
@@ -73,25 +85,52 @@ function ReadingState({ reading }: { reading: Reading }) {
   }
 }
 
-// A change to the proxy's source takes effect only when the proxy restarts (docs/design/01-mvp.md, F12).
+// Whether the UI reaches the proxy, and while it does, the proxy's traffic and its source (docs/design/01-mvp.md, F8).
 function ProxyState({ status }: { status: StatusReading }) {
   switch (status.state) {
     case "connecting":
-      return null;
-    case "status": {
-      if (status.status.state === "failed") {
-        return <p className="text-error" title={status.status.message}>Proxy source not watched, a restart watches it again: {status.status.message}</p>;
-      }
-      const changed = status.status.changed_source;
-      return changed.length === 0 ? null : (
-        <p className="font-medium" title={changed.join("\n")}>
-          Proxy restart pending: {changed.length === 1 ? "1 source file" : `${changed.length} source files`} changed
+      return <p className="text-foreground-muted">○ Connecting to the proxy…</p>;
+    case "dropped":
+      return (
+        <p data-connection="dropped" className="text-error" title="The proxy is not answering; the connection is tried again until it does">
+          ○ Proxy not reached, retrying
         </p>
+      );
+    case "connected": {
+      const { source, traffic } = status.status;
+      return (
+        <>
+          <p data-connection="connected">
+            <span className="text-success">●</span> connected
+          </p>
+          <p data-in-flight={traffic.in_flight}>{traffic.in_flight} in flight</p>
+          {traffic.last_request === null ? <p className="text-foreground-muted">no requests yet</p> : <LastRequest at={Date.parse(traffic.last_request)} />}
+          <SourceState source={source} />
+        </>
       );
     }
     case "failed":
       return <p className="text-error" title={describe(status.error)}>{describe(status.error)}</p>;
   }
+}
+
+// How long ago the proxy's latest request arrived, read again each second.
+function LastRequest({ at }: { at: number }) {
+  const now = useNow(1000);
+  return <p title={new Date(at).toLocaleString()}>last {ago(at, now)}</p>;
+}
+
+// A change to the proxy's source takes effect only when the proxy restarts (docs/design/01-mvp.md, F12).
+function SourceState({ source }: { source: SourceStatus }) {
+  if (source.state === "failed") {
+    return <p className="text-error" title={source.message}>Proxy source not watched, a restart watches it again: {source.message}</p>;
+  }
+  const changed = source.changed_source;
+  return changed.length === 0 ? null : (
+    <p className="font-medium" title={changed.join("\n")}>
+      Proxy restart pending: {changed.length === 1 ? "1 source file" : `${changed.length} source files`} changed
+    </p>
+  );
 }
 
 // The end of a recording read to its end, and what of its last event was cut off.

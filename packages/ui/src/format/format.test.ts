@@ -277,13 +277,25 @@ describe("format", () => {
       ...streamed("c", [messageStart, messageDelta], false),
     ]);
     const [a, b, c] = formatted.map(({ facts }) => facts);
-    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", input: 46100, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
+    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, input: 46100, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
     // The model stays among the parameters the request sent.
     expect(group(formatted[0]!, "request")[1]!.parts).toEqual([{ kind: "fields", fields: [["model", '"claude-fable-5-2"']] }]);
     // One in flight: what is not known yet is undefined.
-    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", input: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
+    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, input: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
     // A stream's message as far as it has arrived: a count the API did not give is undefined.
     expect(c).toMatchObject({ ordinal: 3, status: 200, input: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
+  });
+
+  it("reads the agent's session from the request's metadata, as Claude Code sends it, and none from metadata of another shape", () => {
+    const session = (metadata: unknown) => one(request("a", { model: "m", messages: [], metadata })).facts.session;
+    expect(session({ user_id: '{"device_id":"d1","account_uuid":"u1","session_id":"049eb6bc-c30d-493a-b3e7-411df8c2a02e"}' })).toBe("049eb6bc-c30d-493a-b3e7-411df8c2a02e");
+    expect([session(undefined), session({ user_id: "user_abc" }), session({ user_id: '{"session_id":7}' }), session({ user_id: { session_id: "s1" } }), session("s1")]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 
   it("totals the input: the uncached, the cache read and the cache written together, each beside it as the API reported it", () => {

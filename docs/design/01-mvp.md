@@ -151,5 +151,5 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 | The recording holds what was on the wire, every event as it arrived, so a reopened recording is read by the same path as live traffic and reaches the same state. The original's HAR files hold a non-streaming summary of each exchange, so they will not open here. | question |
 | Whether launching again resumes the session the recording holds, as the original's `auto_resume` does. Open until the basics of how the app works are settled. | question |
 | Re-deriving a very long conversation on every reload may be slow. Not measured. | risk |
-| The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial. Not checked against the current Claude Code. | risk |
+| The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial: the JSON text of an object holding `session_id`, as Claude Code sent it on 2026-11-16. | risk |
 | A restart of the proxy ends the live view of an agent launched before it, since the proxy cannot know whether the agent's process is still running. The recording is followed again once the agent's next request reaches the new proxy and it is reopened. | risk |

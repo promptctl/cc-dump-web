@@ -41,8 +41,9 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
-// whether unchanged rows fold. `branches`: where a branch is listed after its last request.
-export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions; unchanged: Unchanged; branches: Branches };
+// whether unchanged rows fold. `branches`: where a branch is listed after its last request. `info`: whether the info
+// panel is open (F8).
+export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions; unchanged: Unchanged; branches: Branches; info: boolean };
 
 const name = "cc-dump.settings";
 
@@ -53,6 +54,7 @@ export function parseSettings(stored: unknown): Settings {
   const theme = fieldOf(stored, "theme");
   const unchanged = fieldOf(stored, "unchanged");
   const branches = fieldOf(stored, "branches");
+  const info = fieldOf(stored, "info");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
     return isOneOf(visibilities)(value) ? value : defaultVisibility[category];
@@ -69,6 +71,7 @@ export function parseSettings(stored: unknown): Settings {
     search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
     unchanged: isOneOf(unchangedRows)(unchanged) ? unchanged : "fold",
     branches: isOneOf(branchPlacements)(branches) ? branches : "stay",
+    info: typeof info === "boolean" ? info : false,
   };
 }
 
@@ -85,6 +88,7 @@ export const settings = {
   setTheme: (theme: ThemeChoice) => useSettings.setState({ theme }),
   setUnchanged: (unchanged: Unchanged) => useSettings.setState({ unchanged }),
   setBranches: (branches: Branches) => useSettings.setState({ branches }),
+  setInfo: (info: boolean) => useSettings.setState({ info }),
   setVisibility: (category: Category, visibility: Visibility) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: visibility } })),
   // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
   // so every tab holds the settings the reader chose last.

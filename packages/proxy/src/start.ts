@@ -5,7 +5,7 @@ import { createProxy, type Upstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import type { Recordings } from "./recordings.ts";
 import type { Source } from "./source.ts";
-import { createStatus, watchSource } from "./status.ts";
+import { countTraffic, createStatus, watchSource } from "./status.ts";
 
 export type Proxying = { upstream: Upstream; recordings: Recordings; source: Source; proxyPort: number; readerPort: number };
 
@@ -13,12 +13,13 @@ export type Proxying = { upstream: Upstream; recordings: Recordings; source: Sou
 // run-cc-dump skill run as its own process: the proxy on its port, and on the reader port the proxy's status and info beside the recording's read side
 // and the way to make a recording.
 export async function startProxy(log: Log, { upstream, recordings, source, proxyPort, readerPort }: Proxying) {
-  const status = createStatus(watchSource(log, source));
+  const traffic = countTraffic();
+  const status = createStatus(watchSource(log, source), traffic);
   const reader = createReader(log, recordings);
-  const proxy = await serve(log, createProxy(upstream, recordings), proxyPort);
+  const proxy = await serve(log, traffic.counted(createProxy(upstream, recordings)), proxyPort);
   const routes: Record<string, Handler> = {
     "/status": status,
-    "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}`, upstream }),
+    "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}`, upstream, recordings: recordings.dir }),
     "/recordings": byMethod({ GET: reader, POST: createRecording(recordings) }),
   };
   const readers: Handler = (req, res, work) => {

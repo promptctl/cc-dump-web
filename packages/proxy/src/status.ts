@@ -1,12 +1,32 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { describeError, startSpan, type Handler, type Log } from "@cc-dump/log";
-import type { ProxyStatus } from "./format.ts";
+import type { ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
-// [LAW:one-source-of-truth] The watch's state is the status `GET /status` sends (format.ts): the state now, and a
-// listener called after each change of it, until the function it returned is called.
-export type SourceWatch = { state: () => ProxyStatus; onChanged: (listener: () => void) => () => void };
+// [LAW:one-source-of-truth] A part of the proxy's state, held by one owner: the state now, and a listener called after
+// each change of it, until the function it returned is called. Each is a part of what `GET /status` sends (format.ts).
+export type Watched<T> = { state: () => T; onChanged: (listener: () => void) => () => void };
+
+// A state its owner changes by `become`, which tells the listeners; a state equal to the one now is no change.
+export function watchable<T>(initial: T): Watched<T> & { become: (next: T) => void } {
+  let state = initial;
+  const listeners = new Set<() => void>();
+  return {
+    state: () => state,
+    onChanged: (listener) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    become: (next) => {
+      if (JSON.stringify(next) === JSON.stringify(state)) return;
+      state = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+export type SourceWatch = Watched<SourceStatus>;
 
 // Watches the directory of each file of `source`. Every event in one checks every file against the text the proxy
 // runs (fs.watch does not always name the file), synchronously, so no two checks interleave. The watchers are not
@@ -15,14 +35,8 @@ export type SourceWatch = { state: () => ProxyStatus; onChanged: (listener: () =
 // [LAW:nothing-unseen] Starting the watch is a `watch_source` event, each check a `source_check` event, and a
 // watcher's error a `source_watch` event: the failed state carries the error's message, and its event the whole error.
 export function watchSource(log: Log, source: Source): SourceWatch {
-  let state: ProxyStatus = { state: "watching", changed_source: [] };
-  const listeners = new Set<() => void>();
+  const { become, ...watched } = watchable<SourceStatus>({ state: "watching", changed_source: [] });
   const watchers: FSWatcher[] = [];
-  const become = (next: ProxyStatus) => {
-    if (JSON.stringify(next) === JSON.stringify(state)) return;
-    state = next;
-    for (const listener of listeners) listener();
-  };
   const failWith = (error: unknown) => {
     for (const watcher of watchers) watcher.close();
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
@@ -58,11 +72,20 @@ export function watchSource(log: Log, source: Source): SourceWatch {
     failWith(error);
   }
 
+  return watched;
+}
+
+// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy serves passes: `counted`
+// wraps the proxy's handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends,
+// however it ends.
+export function countTraffic(now: () => Date = () => new Date()): Watched<Traffic> & { counted: (handler: Handler) => Handler } {
+  const { become, ...traffic } = watchable<Traffic>({ in_flight: 0, last_request: null });
   return {
-    state: () => state,
-    onChanged: (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
+    ...traffic,
+    counted: (handler) => (req, res, work) => {
+      become({ in_flight: traffic.state().in_flight + 1, last_request: now().toISOString() });
+      void work.ended.then(() => become({ ...traffic.state(), in_flight: traffic.state().in_flight - 1 }));
+      handler(req, res, work);
     },
   };
 }
@@ -77,15 +100,18 @@ function onDisk(path: string) {
   }
 }
 
-// `GET /status` on the reader port: Server-Sent Events, one per state of the watch, the state now first, until the
-// reader leaves or the server closes. A failed watch is one more state, not the stream's end: the stream stays open,
-// so a reader's EventSource sees the proxy's restart as a dropped connection and reconnects to the restarted proxy.
-export function createStatus(watch: SourceWatch): Handler {
+// `GET /status` on the reader port: Server-Sent Events, one per state of the proxy, the source watch's and the
+// traffic's together, the state now first and then one at each change of either, until the reader leaves or the server
+// closes. A failed watch is one more state, not the stream's end: the stream stays open, so a reader's EventSource sees
+// the proxy's restart as a dropped connection and reconnects to the restarted proxy. That open stream is the browser's
+// connection to the proxy (F8).
+export function createStatus(source: Watched<SourceStatus>, traffic: Watched<Traffic>): Handler {
   return (req, res) => {
     if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    const send = () => void res.write(`data: ${JSON.stringify(watch.state())}\n\n`);
-    res.on("close", watch.onChanged(send));
+    const send = () => void res.write(`data: ${JSON.stringify({ source: source.state(), traffic: traffic.state() } satisfies ProxyStatus)}\n\n`);
+    const unwatched = [source.onChanged(send), traffic.onChanged(send)];
+    res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
     send();
   };
 }

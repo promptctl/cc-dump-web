@@ -21,6 +21,12 @@ export type Sessions = [string, ...string[]];
 // `GET /launch`: the settings, and the sessions on the user's tmux server.
 export type Launcher = { settings: LaunchSettings; sessions: Sessions };
 
+// [LAW:single-enforcer] The session a launch starts in unless the user picks another: the one the last launch asked for,
+// while tmux still has it, and otherwise tmux's first.
+export function launchSession({ settings, sessions }: Launcher): string {
+  return settings.session !== null && sessions.includes(settings.session) ? settings.session : sessions[0];
+}
+
 // `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line.
 export type Launch = { session: string; command: string };
 

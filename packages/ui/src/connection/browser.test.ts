@@ -46,16 +46,19 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
   return { abort, next, queued };
 }
 
-type StatusArrival = { status: ProxyStatus } | { failed: Error };
+type StatusArrival = { status: ProxyStatus } | "dropped" | { failed: Error };
 
 // The proxy's status, whose arrivals the test waits on, as `reading` does a read's.
 function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
   const { arrive, next } = arrivals<StatusArrival>();
-  connection.status({ status: (status) => arrive({ status }), failed: (failed) => arrive({ failed }) }, abort.signal);
+  connection.status({ status: (status) => arrive({ status }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) }, abort.signal);
   return { abort, next };
 }
+
+// A status of the proxy watching its source, with `changed_source` changed, and no traffic.
+const watching = (...changed_source: string[]): ProxyStatus => ({ source: { state: "watching", changed_source }, traffic: { in_flight: 0, last_request: null } });
 
 // Each EventSource opened while the test runs.
 function watchEventSources() {
@@ -182,15 +185,25 @@ describe("the browser connection", () => {
   it("follows the running proxy's status", async () => {
     const { connection } = await proxyAndConnection();
     // The proxy watches the repo's own source, which a save while the test runs changes.
-    expect(await statusing(connection).next()).toEqual({ status: { state: "watching", changed_source: expect.any(Array) } });
+    expect(await statusing(connection).next()).toEqual({
+      status: { source: { state: "watching", changed_source: expect.any(Array) }, traffic: { in_flight: 0, last_request: null } },
+    });
+  });
+
+  it("says what the running proxy is, and makes a recording for an agent started by hand, one each time", async () => {
+    const { dir, proxy, connection } = await proxyAndConnection();
+    expect(await connection.info(new AbortController().signal)).toEqual({ base_url: `http://${LOOPBACK}:${proxy.proxyPort}`, upstream: expect.any(String), recordings: dir });
+    const [first, second] = [await connection.agentRecording(new AbortController().signal), await connection.agentRecording(new AbortController().signal)];
+    expect(first.name).not.toBe(second.name);
+    expect(readFileSync(join(dir, first.name), "utf8")).toBe("");
   });
 
   it("delivers each status as it changes, a failed watch's too, and goes on following", async () => {
     const sources = watchEventSources();
     const statuses: ProxyStatus[] = [
-      { state: "watching", changed_source: [] },
-      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
-      { state: "failed", message: "EMFILE: too many open files, watch" },
+      watching(),
+      watching("/proxy/src/proxy.ts"),
+      { source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } },
     ];
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -204,25 +217,22 @@ describe("the browser connection", () => {
   it("reports a status that does not parse as failed, and goes on to the statuses after it", async () => {
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"state":"watching","changed_source":"proxy.ts"}\n\ndata: {"state":"watching","changed_source":[]}\n\n`);
+      res.write(`data: {"state":"watching","changed_source":[]}\n\ndata: ${JSON.stringify(watching())}\n\n`);
     });
     const status = statusing(createBrowserConnection({ readerPort: reader.port }));
     expect([await status.next(), await status.next()]).toEqual([
       {
         failed: expect.objectContaining({
           message: `GET ${reader.url}/status`,
-          cause: expect.objectContaining({ message: "proxy status: changed_source is not a list of strings" }),
+          cause: expect.objectContaining({ message: "proxy status: source: is not an object" }),
         }),
       },
-      { status: { state: "watching", changed_source: [] } },
+      { status: watching() },
     ]);
   });
 
-  it("follows the proxy across a restart: the dropped connection reconnects to the restarted proxy's status", async () => {
-    const statuses: ProxyStatus[] = [
-      { state: "watching", changed_source: ["/proxy/src/proxy.ts"] },
-      { state: "watching", changed_source: [] },
-    ];
+  it("follows the proxy across a restart: the connection, dropped, reconnects to the restarted proxy's status", async () => {
+    const statuses: ProxyStatus[] = [watching("/proxy/src/proxy.ts"), watching()];
     let connections = 0;
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -232,7 +242,25 @@ describe("the browser connection", () => {
       else res.write(status);
     });
     const status = statusing(createBrowserConnection({ readerPort: reader.port }));
-    expect([await status.next(), await status.next()]).toEqual(statuses.map((status) => ({ status })));
+    expect([await status.next(), await status.next(), await status.next()]).toEqual([{ status: statuses[0] }, "dropped", { status: statuses[1] }]);
+  });
+
+  it("reports a proxy not reached as dropped, and its status once it is", async () => {
+    // A port nothing listens on yet: the first connection is refused, and the browser tries again.
+    const { port, close } = await serve(() => {}, (_req, res) => res.end(), 0);
+    await close();
+    const status = statusing(createBrowserConnection({ readerPort: port }));
+    expect(await status.next()).toBe("dropped");
+    const reader = serve(
+      () => {},
+      (_req, res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`data: ${JSON.stringify(watching())}\n\n`);
+      },
+      port,
+    );
+    onTestFinished(async () => (await reader).close());
+    for (let arrival = await status.next(); arrival === "dropped"; arrival = await status.next()) continue;
   });
 
   it("reports a status not served as failed", async () => {

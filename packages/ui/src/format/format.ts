@@ -27,7 +27,8 @@ export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Grou
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
 // milliseconds from then to its end, once it has ended. `status`: the response's, once its head is recorded. `model`:
-// the one the request asks for, once its body is whole. The message's facts, once the response's message is read:
+// the one the request asks for, once its body is whole. `session`: the agent's session the request says it is part of,
+// as Claude Code says it, the `session_id` in the JSON text of `metadata.user_id`; undefined where it does not. The message's facts, once the response's message is read:
 // `input` is the total of its usage's input tokens, the uncached, the cache read and the cache written together (the API
 // reports the uncached alone as input_tokens), `cacheRead` and `cacheWritten` the cache's share of them, `output` the
 // output tokens, and `stopReason` why it stopped, each undefined where the API did not say; so is the total where the
@@ -39,6 +40,7 @@ export type Facts = {
   duration: number | undefined;
   status: number | undefined;
   model: string | undefined;
+  session: string | undefined;
 } & MessageFacts;
 export type MessageFacts = {
   input: number | undefined;
@@ -85,6 +87,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
           duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(opened.timestamp),
           status: exchange.response.head?.status,
           model: request.model,
+          session: request.session,
           ...response.message,
         },
         groups: [...request.groups, { key: "response", title: "response", blocks: [...response.blocks, ...one("end", ending(end))] }],
@@ -98,9 +101,12 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.
 type Sides = { decode: (side: RequestSide | ResponseSide) => { body: Body; whole: boolean }; reassemble: (side: ResponseSide, body: Body) => Stream };
 
-// A request formatted: its groups, the model it asks for and how many messages it sends. A response formatted: its
-// blocks and its message's facts.
-type RequestShown = { groups: Group[]; model: string | undefined; messages: number };
+// A request formatted: its groups, the model it asks for, the session it is part of and how many messages it sends. A
+// response formatted: its blocks and its message's facts.
+type RequestShown = { groups: Group[]; messages: number } & Said;
+// What a request's body says of it beside its blocks, once the body is whole.
+type Said = { model: string | undefined; session: string | undefined };
+const unsaid: Said = { model: undefined, session: undefined };
 type ResponseShown = { blocks: KeyedBlock[]; message: MessageFacts };
 
 function first(side: RequestSide | ResponseSide): object | undefined {
@@ -157,14 +163,14 @@ function requestGroups(sides: Sides, side: RequestSide): RequestShown {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
-  const { blocks, messages, model } = requestBody(body.text, whole);
-  return { groups: [{ key: "request", title: "request", blocks: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...blocks] }, ...messages], model, messages: messages.length };
+  const { blocks, messages, said } = requestBody(body.text, whole);
+  return { groups: [{ key: "request", title: "request", blocks: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...blocks] }, ...messages], ...said, messages: messages.length };
 }
 
 // The request body: its parameters, tool definitions and system prompt, then its cache breakpoints, then each message it
-// sends; and the model among its parameters.
-function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; messages: Group[]; model: string | undefined } {
-  if (!whole) return { blocks: one("body", leftover("request body so far", text)), messages: [], model: undefined };
+// sends; and the model and the session among its parameters.
+function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; messages: Group[]; said: Said } {
+  if (!whole) return { blocks: one("body", leftover("request body so far", text)), messages: [], said: unsaid };
   return fitting(
     () => {
       const body = readObject(parseJson(text, "request body"), "request body");
@@ -191,11 +197,24 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
           ...one("cache", cache),
         ],
         messages,
-        model: typeof rest.model === "string" ? rest.model : undefined,
+        said: { model: typeof rest.model === "string" ? rest.model : undefined, session: sessionOf(rest.metadata) },
       };
     },
-    (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], model: undefined }),
+    (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], said: unsaid }),
   );
+}
+
+// The session a request's metadata names: Claude Code's `user_id` is the JSON text of an object holding `session_id`
+// (seen on Claude Code's traffic, 2026-11-16; the format is not documented). Metadata of any other shape names none.
+function sessionOf(metadata: unknown): string | undefined {
+  const userId = fieldOf(metadata, "user_id");
+  if (typeof userId !== "string") return undefined;
+  try {
+    const session = fieldOf(JSON.parse(userId), "session_id");
+    return typeof session === "string" ? session : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A

@@ -4,6 +4,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
+    "resolveJsonModule": true,
     "lib": ["es2025", "esnext.typedarrays", "dom", "dom.iterable"],
     "types": ["vite/client"]
   },

@@ -4,8 +4,8 @@ import { expect, it } from "vitest";
 import { fetchProxyInfo, requestRecording } from "./proxy.ts";
 
 it("reads what the proxy says it is", async () => {
-  const { port } = await serving((_req, res) => res.end('{"base_url":"http://127.0.0.1:3344","upstream":"https://api.anthropic.com/"}'));
-  expect(await fetchProxyInfo(port)).toEqual({ base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/" });
+  const { port } = await serving((_req, res) => res.end('{"base_url":"http://127.0.0.1:3344","upstream":"https://api.anthropic.com/","recordings":"/recordings"}'));
+  expect(await fetchProxyInfo(port)).toEqual({ base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/recordings" });
 });
 
 it("fails, naming what it asked, when nothing answers in time", async () => {

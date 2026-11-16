@@ -1,12 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Event } from "@cc-dump/log";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Ending, Event } from "@cc-dump/log";
 import { arrivals, eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { parseProxyStatus, type ProxyStatus } from "./format.ts";
+import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
-import { createStatus, watchSource, type SourceWatch } from "./status.ts";
+import { countTraffic, createStatus, watchable, watchSource } from "./status.ts";
 import { subscribe } from "./testing.ts";
 
 // Two source files in a directory of their own, recorded as they are now.
@@ -25,7 +26,7 @@ function sourceFiles() {
 async function watching(source: Map<string, string>, dir: string) {
   const { log, next: nextEvent } = eventLog();
   const watch = watchSource(log, source);
-  const { arrive, next } = arrivals<ProxyStatus>();
+  const { arrive, next } = arrivals<SourceStatus>();
   onTestFinished(watch.onChanged(() => arrive(watch.state())));
   expect([await nextEvent(), await nextEvent()]).toMatchObject([{ event: "watch_source" }, { event: "source_check" }]);
   const checked = nextEvent();
@@ -71,31 +72,65 @@ describe("watchSource", () => {
   });
 });
 
-// A watch the test sets the state of.
-function fakeWatch(initial: ProxyStatus) {
-  let state = initial;
-  const listeners = new Set<() => void>();
-  const watch: SourceWatch = {
-    state: () => state,
-    onChanged: (listener) => {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
-    },
+// A part of the proxy's state the test sets, and how many listen to it.
+function watched<T>(initial: T) {
+  const watch = watchable(initial);
+  let listening = 0;
+  const onChanged = (listener: () => void) => {
+    listening++;
+    const unwatch = watch.onChanged(listener);
+    return () => {
+      listening--;
+      unwatch();
+    };
   };
-  return {
-    watch,
-    listeners,
-    become: (next: ProxyStatus) => {
-      state = next;
-      for (const listener of listeners) listener();
-    },
-  };
+  return { ...watch, onChanged, listening: () => listening };
 }
 
+const quiet: Traffic = { in_flight: 0, last_request: null };
+
+describe("countTraffic", () => {
+  // A request the test ends: `end()` ends it as its response closing would.
+  const request = (traffic: ReturnType<typeof countTraffic>) => {
+    const { promise: ended, resolve } = Promise.withResolvers<Ending>();
+    const handled: unknown[] = [];
+    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: "t", fail: () => {}, ended });
+    return { handled, end: () => resolve({ outcome: "ok" }) };
+  };
+
+  it("counts each request in flight from its arrival to its end, and when the latest arrived", async () => {
+    const times = ["2026-11-16T10:00:00.000Z", "2026-11-16T10:00:05.000Z"];
+    const traffic = countTraffic(() => new Date(times.shift()!));
+    expect(traffic.state()).toEqual(quiet);
+
+    const first = request(traffic);
+    expect(first.handled).toHaveLength(1);
+    expect(traffic.state()).toEqual({ in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" });
+    const second = request(traffic);
+    expect(traffic.state()).toEqual({ in_flight: 2, last_request: "2026-11-16T10:00:05.000Z" });
+
+    first.end();
+    await Promise.resolve();
+    expect(traffic.state()).toEqual({ in_flight: 1, last_request: "2026-11-16T10:00:05.000Z" });
+    second.end();
+    await Promise.resolve();
+    expect(traffic.state()).toEqual({ in_flight: 0, last_request: "2026-11-16T10:00:05.000Z" });
+  });
+
+  it("tells its listeners of each change", () => {
+    const traffic = countTraffic(() => new Date("2026-11-16T10:00:00.000Z"));
+    const seen: Traffic[] = [];
+    traffic.onChanged(() => seen.push(traffic.state()));
+    request(traffic);
+    expect(seen).toEqual([{ in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" }]);
+  });
+});
+
 describe("GET /status", () => {
-  it("sends the status now, then at each change, a failed watch's too, until the reader leaves", async () => {
-    const { watch, become, listeners } = fakeWatch({ state: "watching", changed_source: [] });
-    const { port, next } = await serving(createStatus(watch));
+  it("sends the source's and the traffic's state now, then at each change of either, a failed watch's too, until the reader leaves", async () => {
+    const source = watched<SourceStatus>({ state: "watching", changed_source: [] });
+    const traffic = watched<Traffic>(quiet);
+    const { port, next } = await serving(createStatus(source, traffic));
     const { res, next: nextEvent } = await subscribe(port, "/status");
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("text/event-stream");
@@ -104,20 +139,21 @@ describe("GET /status", () => {
       expect(event.event).toBeUndefined();
       return parseProxyStatus(event.data);
     };
-    expect(await status()).toEqual({ state: "watching", changed_source: [] });
-    become({ state: "watching", changed_source: ["/src/proxy.ts"] });
-    expect(await status()).toEqual({ state: "watching", changed_source: ["/src/proxy.ts"] });
-    become({ state: "failed", message: "EMFILE: too many open files, watch" });
-    expect(await status()).toEqual({ state: "failed", message: "EMFILE: too many open files, watch" });
+    expect(await status()).toEqual({ source: { state: "watching", changed_source: [] }, traffic: quiet });
+    source.become({ state: "watching", changed_source: ["/src/proxy.ts"] });
+    expect(await status()).toEqual({ source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: quiet });
+    traffic.become({ in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" });
+    expect(await status()).toEqual({ source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
+    source.become({ state: "failed", message: "EMFILE: too many open files, watch" });
+    expect(await status()).toEqual({ source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
     expect(res.complete).toBe(false);
     res.destroy();
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", url: "/status", status: 200 });
-    expect(listeners.size).toBe(0);
+    expect([source.listening(), traffic.listening()]).toEqual([0, 0]);
   });
 
   it("refuses a method other than GET", async () => {
-    const { watch } = fakeWatch({ state: "watching", changed_source: [] });
-    const { port } = await serving(createStatus(watch));
+    const { port } = await serving(createStatus(watched<SourceStatus>({ state: "watching", changed_source: [] }), watched(quiet)));
     const res = await send(port, { method: "POST", path: "/status", headers: { "content-length": "0" } });
     expect(res.statusCode).toBe(405);
     expect(res.headers.allow).toBe("GET");

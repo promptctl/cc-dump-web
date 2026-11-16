@@ -1,6 +1,6 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
@@ -13,16 +13,10 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
   const origin = `http://${LOOPBACK}:${readerPort}`;
   const server = `http://${LOOPBACK}:${serverPort}`;
   return {
-    recordings: async (signal) => {
-      const url = `${origin}/recordings`;
-      try {
-        const res = await fetch(url, { signal });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        return parseListings(await res.text());
-      } catch (error) {
-        throw new Error(`GET ${url}`, { cause: error });
-      }
-    },
+    recordings: (signal) => fetched(`${origin}/recordings`, { signal }, parseListings),
+    info: (signal) => fetched(`${origin}/info`, { signal }, parseProxyInfo),
+    // A POST with no body is a simple request, so the browser sends it without a preflight, which the reader does not answer.
+    agentRecording: (signal) => fetched(`${origin}/recordings`, { method: "POST", signal }, parseListing),
     read: (name, reader, signal) => {
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
@@ -45,7 +39,11 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported,
     // and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
     // proxy's status once it reconnects.
-    status: (watcher, signal) => eventStream(`${origin}/status`, signal, watcher.failed).on("message", parseProxyStatus, watcher.status, watcher.failed),
+    status: (watcher, signal) => {
+      const stream = eventStream(`${origin}/status`, signal, watcher.failed);
+      stream.on("message", parseProxyStatus, watcher.status, watcher.failed);
+      stream.dropped(watcher.dropped);
+    },
     launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
     launch: (launch, signal) =>
       answer(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
@@ -53,6 +51,17 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     // source; a window that is gone is then no longer retried.
     tmux: (window) => new WebSocketTmuxClient({ url: `ws://${LOOPBACK}:${serverPort}${tmuxPath(window)}`, autoConnect: false, reconnect: { maxAttempts: 10 } }),
   };
+}
+
+// The reader's answer to one request, parsed, or a failure naming the request.
+async function fetched<T>(url: string, init: RequestInit, parse: (json: string) => T): Promise<T> {
+  try {
+    const res = await fetch(url, init);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return parse(await res.text());
+  } catch (error) {
+    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
+  }
 }
 
 // The app server's answer to one request, parsed. A refusal it answers fails in its own words, which are the user's to
@@ -72,7 +81,8 @@ async function answer<T>(url: string, init: RequestInit, parse: (json: string) =
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported
 // to `failed`: the request not being served, or one its user reports with `fail`. `on` delivers each message of a
-// type, parsed, and reports one that does not parse to `refused`.
+// type, parsed, and reports one that does not parse to `refused`. `dropped` is told each time the connection is lost,
+// or not made, and the browser is to try it again.
 function eventStream(url: string, signal: AbortSignal, failed: (error: Error) => void) {
   signal.throwIfAborted();
   const source = new EventSource(url);
@@ -103,16 +113,19 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
       },
       listening,
     );
-  // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection. One that
-  // leaves it CLOSED is a request the reader did not serve (a name not listed, a position that is no event's, a server
-  // error), and the EventSource does not say which: the reader's request event in the proxy's log does.
+  // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection, or after a
+  // first one it could not make. One that leaves it CLOSED is a request the reader did not serve (a name not listed, a
+  // position that is no event's, a server error), and the EventSource does not say which: the reader's request event
+  // in the proxy's log does.
+  const drops = new Set<() => void>();
   source.addEventListener(
     "error",
     () => {
-      if (source.readyState !== EventSource.CLOSED) return;
-      fail(new Error(`GET ${url}: not served; its status is on the reader's request event in the proxy's log`));
+      if (source.readyState === EventSource.CLOSED) fail(new Error(`GET ${url}: not served; its status is on the reader's request event in the proxy's log`));
+      else for (const dropped of drops) dropped();
     },
     listening,
   );
-  return { on, close, fail };
+  const dropped = (listener: () => void) => void drops.add(listener);
+  return { on, dropped, close, fail };
 }
