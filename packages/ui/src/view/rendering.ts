@@ -58,14 +58,27 @@ export type Rendering = { text: string; passages: Range[]; folds: (Range & { lin
 
 type TextPart = Extract<Part, { kind: "text" }>;
 
-// [LAW:no-shared-mutable-globals] Each part's rendering as the search reads it, kept under the part, which the formatter
-// returns as the same object while its side of the exchange is unchanged; this function is the cache's one reader and
-// writer.
-const renderings = new WeakMap<TextPart, Rendering>();
+// [LAW:one-source-of-truth] One rendering of a text in a form, however many parts hold it: Claude Code resends the
+// prompt and every message with each request, and a streamed reply's parts are made again with each event, so a text is
+// rendered when it is first seen. A part holding a text keeps its rendering; a text no part holds any longer is
+// forgotten with it. [LAW:no-shared-mutable-globals] `renderingOf` is the caches' one reader and writer.
+const byPart = new WeakMap<TextPart, Rendering>();
+const byText: Record<Form, Map<string, WeakRef<Rendering>>> = { markdown: new Map(), verbatim: new Map() };
+// A text's entry goes once its rendering is collected, unless the text has been rendered again since.
+const forgotten = new FinalizationRegistry<{ text: string; form: Form }>(({ text, form }) => {
+  if (byText[form].get(text)?.deref() === undefined) byText[form].delete(text);
+});
 
 export function renderingOf(part: TextPart): Rendering {
-  const rendering = renderings.get(part) ?? render(part.text, part.form);
-  renderings.set(part, rendering);
+  const rendering = byPart.get(part) ?? byText[part.form].get(part.text)?.deref() ?? remembered(part);
+  byPart.set(part, rendering);
+  return rendering;
+}
+
+function remembered({ text, form }: TextPart): Rendering {
+  const rendering = render(text, form);
+  byText[form].set(text, new WeakRef(rendering));
+  forgotten.register(rendering, { text, form });
   return rendering;
 }
 
@@ -167,7 +180,7 @@ function tasks(state: StateCore): void {
   });
 }
 
-// GitHub's flavor, as markdown-it reads it: tables, strikethrough, a bare URL as a link, and inline HTML drawn as the
+// GitHub's flavor, as markdown-it reads it: tables, strikethrough, a URL written with its scheme as a link, and inline HTML drawn as the
 // tags it is, never as HTML; a tag line a block of its own, not the start of an HTML block, which would hold the
 // headings and paragraphs it wraps raw up to the next blank line. markdown-it is pinned (package.json), so the tokens its
 // rules give are the ones read below; one a new version adds throws there, in the tests, not in a reader's view.
@@ -240,7 +253,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
       // A region of more than LONG lines folds, its fences among them, as one cut from a verbatim text does.
       const [first, last] = token.map!;
       const leaf = writer.leaf(token.content.replace(/\n$/, ""));
-      const fold = { line: first, label: `${token.markup}${token.info}`, lines: last - first };
+      const fold = { line: first, label: `${token.markup}${token.info.trim()}`, lines: last - first };
       const code: Block = { kind: "code", leaf };
       return last - first > LONG ? region(code, fold, { start: leaf.start, end: leaf.start + leaf.text.length }, writer) : code;
     }
@@ -331,7 +344,7 @@ function inline(token: Token, reader: Reader, writer: Writer): Inline[] {
     case "image": {
       const src = String(token.attrGet("src"));
       const description = inlines((token.children ?? []).values(), writer, undefined);
-      return linked(src, description.length === 0 ? [{ kind: "text", leaf: writer.leaf(src) }] : description);
+      return linked(src, description.length === 0 ? [{ kind: "text", leaf: writer.leaf(parser.normalizeLinkText(src)) }] : description);
     }
     case "hardbreak":
       writer.cut();

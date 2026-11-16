@@ -20,8 +20,9 @@ export const LONG = 12;
 // backtick fence's info string holds no backtick, so a line like ```js``` is code inline, not a fence).
 const fence = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 // [LAW:one-source-of-truth] A line holding only a tag, opening or closing (`/`), its whitespace aside, as Claude Code
-// writes a prompt's sections: the one definition of a section's edge, in a verbatim text and in Markdown alike.
-export const tagLine = /^<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>$/;
+// writes a prompt's sections: the one definition of a section's edge, in a verbatim text and in Markdown alike. A
+// self-closing tag wraps nothing, so it is no edge.
+export const tagLine = /^<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?(?<!\/)>$/;
 
 export function segments(text: string): Segment[] {
   // Each line keeps its line end, so the segments join back into the text.

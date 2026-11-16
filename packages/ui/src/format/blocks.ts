@@ -36,7 +36,7 @@ export type BlockOrNone = [] | [Block];
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
 // What a sender's own text is named: who said it.
-const said: Record<Role, string> = { user: "user", assistant: "assistant", system: "system prompt" };
+const speakers: Record<Role, string> = { user: "user", assistant: "assistant", system: "system prompt" };
 // The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
 // where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
 // (docs/design/01-mvp.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
@@ -158,7 +158,7 @@ const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, rol
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
-  ["text", { category: byRole, name: (_, role) => said[role], parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }] }],
+  ["text", { category: byRole, name: (_, role) => speakers[role], parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }] }],
   // Claude Code asks for thinking with display omitted: the text is empty and the signature is the whole block. A
   // streamed thinking block has no signature until its signature delta, just before its stop.
   [

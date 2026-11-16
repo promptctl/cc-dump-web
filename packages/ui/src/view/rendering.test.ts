@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LONG } from "./regions.ts";
-import { regionsAround, render, type Block, type Inline, type Leaf, type Rendering, type Run } from "./rendering.ts";
+import { regionsAround, render, renderingOf, type Block, type Inline, type Leaf, type Rendering, type Run } from "./rendering.ts";
 import { find } from "./search.ts";
 
 // Every leaf a rendering draws, in order.
@@ -116,7 +116,7 @@ describe("render", () => {
   });
 
   it("shows an image as a link to it, by its description read as Markdown, or its URL when it has none", () => {
-    expect(render("![**b**](https://x/y.png) ![](https://x/z.png)\n", "markdown").text).toBe("b https://x/z.png");
+    expect(render("![**b**](https://x/y.png) ![](https://x/café.png)\n", "markdown").text).toBe("b https://x/café.png");
     expect(blocksOf("![**b**](https://x/y.png)\n")).toMatchObject([{ kind: "paragraph", children: [{ kind: "link", url: "https://x/y.png", children: [{ kind: "strong" }] }] }]);
   });
 
@@ -132,6 +132,7 @@ describe("render", () => {
     const rendering = render(corpus[8]!, "markdown");
     expect(blocksOf(corpus[8]!)).toMatchObject([{ kind: "paragraph" }, { kind: "region", line: 1, label: "```py", lines: LONG + 2, body: { kind: "code" } }, { kind: "paragraph" }]);
     expect(render(corpus[8]!, "verbatim").runs.find((run) => run.kind === "region")).toMatchObject({ line: 1, lines: LONG + 2 });
+    expect(blocksOf(corpus[8]!.replace("```py", "```  py ")).find((block) => block.kind === "region")).toMatchObject({ label: "```py" });
     expect(regionsAround(rendering, rendering.text.indexOf("line 3"))).toEqual([1]);
     expect(regionsAround(rendering, rendering.text.indexOf("after"))).toEqual([]);
   });
@@ -156,10 +157,17 @@ describe("render", () => {
     expect(blocksOf("```xml\n<a>\n```\n</a>\n")).toMatchObject([{ kind: "code", leaf: { text: "<a>" } }, { kind: "tag" }]);
   });
 
-  it("opens a section only at a line holding its tag alone, in either form", () => {
-    const text = `<example>Some text\n${lines(LONG + 1)}</example>\n`;
-    expect(render(text, "verbatim").folds).toEqual([]);
-    expect(render(text, "markdown").folds).toEqual([]);
+  it("renders a text once in a form, whichever part holds it, as a resent prompt or a reply's text remade by each event is", () => {
+    const part = (form: "markdown" | "verbatim") => ({ kind: "text" as const, form, text: "# Rules\n**be brief**\n" });
+    expect(renderingOf(part("markdown"))).toBe(renderingOf(part("markdown")));
+    expect(renderingOf(part("verbatim")).text).toBe("# Rules\n**be brief**\n");
+  });
+
+  it("opens a section only at a line holding its tag alone, never a self-closing one, in either form", () => {
+    for (const text of [`<example>Some text\n${lines(LONG + 1)}</example>\n`, `<item />\n${lines(LONG + 1)}</item>\n`]) {
+      expect(render(text, "verbatim").folds).toEqual([]);
+      expect(render(text, "markdown").folds).toEqual([]);
+    }
     expect(render(`  <example>  \n${lines(LONG + 1)}</example>\n`, "verbatim").folds).toMatchObject([{ line: 0 }]);
   });
 
