@@ -1,13 +1,14 @@
 import type { Part } from "./parts.ts";
 
-// A line diff of two texts: what a change kept, removed and added, line by line.
+// A diff of two texts: what a change kept, removed and added, line by line, or within a line word by word.
 
 export type Change = "same" | "removed" | "added";
-export type DiffLine = { change: Change; text: string };
+// An edit: one line, or one word, and what the change did to it.
+export type Edit = { change: Change; text: string };
 
 // A diff as the view shows and searches it: its lines; their text in order, joined by newlines; and each line's passage
 // of that text, its start and end, so a match is found within one line and painted where that line is.
-export type Diff = { lines: DiffLine[]; text: string; passages: { start: number; end: number }[] };
+export type Diff = { lines: Edit[]; text: string; passages: { start: number; end: number }[] };
 
 // [LAW:one-source-of-truth] A diff part holds the two texts; its lines are derived from them, made once per part, and
 // only for a part that is shown or searched, so a session's Edits are not diffed again by every request that resends them.
@@ -22,32 +23,47 @@ export function diffOf(part: Extract<Part, { kind: "diff" }>): Diff {
     start = passage.end + 1;
     return passage;
   });
-  const diff = { lines, text: lines.map((line) => line.text).join("\n"), passages };
-  diffs.set(part, diff);
-  return diff;
+  const shown = { lines, text: lines.map((line) => line.text).join("\n"), passages };
+  diffs.set(part, shown);
+  return shown;
 }
 
-// The lines `before` became `after` by, in order: the lines both start and end with kept, and between them a shortest
-// edit script, by Myers' O(ND) greedy algorithm ("An O(ND) Difference Algorithm and Its Variations", 1986), so a change
-// of a few lines in a long text costs those few. Where a line was removed and another added, the removal comes first. A
-// line is the text between newlines, verbatim; an empty text has none.
-export function lineDiff(before: string, after: string): DiffLine[] {
-  const a = linesOf(before);
-  const b = linesOf(after);
+// The lines `before` became `after` by. A line is the text between newlines, verbatim; an empty text has none.
+export function lineDiff(before: string, after: string): Edit[] {
+  return diff(linesOf(before), linesOf(after));
+}
+const linesOf = (text: string) => (text === "" ? [] : text.split("\n"));
+
+// The words a line `before` became `after` by, each run of what the change did to them joined into one edit. A word is
+// a run of letters, digits and underscores, a run of whitespace, or any other one character, so a changed word is
+// marked without the spaces and punctuation around it.
+export function wordDiff(before: string, after: string): Edit[] {
+  return diff(wordsOf(before), wordsOf(after)).reduce<Edit[]>((joined, edit) => {
+    const last = joined.at(-1);
+    if (last?.change === edit.change) joined[joined.length - 1] = { change: edit.change, text: last.text + edit.text };
+    else joined.push(edit);
+    return joined;
+  }, []);
+}
+const wordsOf = (text: string) => text.match(/[\p{L}\p{N}_]+|\s+|./gsu) ?? [];
+
+// The items `a` became `b` by, in order: the items both start and end with kept, and between them a shortest edit
+// script, by Myers' O(ND) greedy algorithm ("An O(ND) Difference Algorithm and Its Variations", 1986), so a change of a
+// few items in a long sequence costs those few. Where an item was removed and another added, the removal comes first.
+function diff(a: string[], b: string[]): Edit[] {
   let start = 0;
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let end = 0;
   while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
-  const same = (text: string): DiffLine => ({ change: "same", text });
+  const same = (text: string): Edit => ({ change: "same", text });
   return [...a.slice(0, start).map(same), ...middle(a.slice(start, a.length - end), b.slice(start, b.length - end)), ...a.slice(a.length - end).map(same)];
 }
-const linesOf = (text: string) => (text === "" ? [] : text.split("\n"));
 
 // The most edits a shortest script is searched to: its trace holds about this many squared positions. A change of more
-// is shown as every line of the one text removed and every line of the other added, a script still, only not the shortest.
+// is shown as every item of the one sequence removed and every item of the other added, a script still, only not the shortest.
 const editLimit = 1000;
 
-function middle(a: string[], b: string[]): DiffLine[] {
+function middle(a: string[], b: string[]): Edit[] {
   // `v[k + offset]`: the furthest x reached on diagonal k = x - y; `trace[d]`: v's diagonals -d..d before edit d.
   const offset = a.length + b.length;
   const v = new Int32Array(2 * offset + 2);
@@ -63,12 +79,12 @@ function middle(a: string[], b: string[]): DiffLine[] {
       if (x >= a.length && y >= b.length) return script(trace, a, b);
     }
   }
-  return [...a.map((text): DiffLine => ({ change: "removed", text })), ...b.map((text): DiffLine => ({ change: "added", text }))];
+  return [...a.map((text): Edit => ({ change: "removed", text })), ...b.map((text): Edit => ({ change: "added", text }))];
 }
 
 // The edit script the trace holds, walked back from the end to the start.
-function script(trace: Int32Array[], a: string[], b: string[]): DiffLine[] {
-  const lines: DiffLine[] = [];
+function script(trace: Int32Array[], a: string[], b: string[]): Edit[] {
+  const lines: Edit[] = [];
   let [x, y] = [a.length, b.length];
   for (let d = trace.length - 1; d >= 0; d--) {
     const v = trace[d]!;

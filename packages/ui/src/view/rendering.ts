@@ -51,10 +51,14 @@ export type Fold = { line: number; label: string; lines: number };
 // and its body runs of its own.
 export type Run = { kind: "verbatim"; leaf: Leaf } | { kind: "markdown"; blocks: Block[] } | ({ kind: "region"; open: Leaf; body: Run[]; close: Leaf } & Fold);
 
+// A text that folds: its characters, the passages of them a query matches within, and each fold's characters, named by
+// a line, outermost first.
+export type Folded = { text: string; passages: Range[]; folds: (Range & { line: number })[] };
+
 // `passages`: the stretches of `text` a query matches within, in order, each leaves drawn one after another; a block,
 // a cell, the lines either side of a hard break and a region each end one, so a match runs across no two things a
 // reader sees apart, and into no region from outside it. `folds`: each region's line and characters, outermost first.
-export type Rendering = { text: string; passages: Range[]; folds: (Range & { line: number })[]; runs: Run[] };
+export type Rendering = Folded & { runs: Run[] };
 
 type TextPart = Extract<Part, { kind: "text" }>;
 
@@ -89,8 +93,8 @@ export function render(text: string, form: Form): Rendering {
   return { ...writer.done(), runs };
 }
 
-// The lines of the regions holding offset `at` of a rendering's text, outermost first.
-export function regionsAround({ folds }: Rendering, at: number): number[] {
+// The lines of the folds holding offset `at` of a text, outermost first.
+export function regionsAround({ folds }: Folded, at: number): number[] {
   return folds.filter(({ start, end }) => start <= at && at < end).map(({ line }) => line);
 }
 

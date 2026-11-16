@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { lineDiff, type DiffLine } from "./diff.ts";
+import { lineDiff, wordDiff, type Edit } from "./diff.ts";
 
-const same = (text: string): DiffLine => ({ change: "same", text });
-const removed = (text: string): DiffLine => ({ change: "removed", text });
-const added = (text: string): DiffLine => ({ change: "added", text });
+const same = (text: string): Edit => ({ change: "same", text });
+const removed = (text: string): Edit => ({ change: "removed", text });
+const added = (text: string): Edit => ({ change: "added", text });
 
 // The text a side of the diff holds: its lines, kept and its own, rejoined.
-const side = (lines: DiffLine[], dropped: "removed" | "added") =>
+const side = (lines: Edit[], dropped: "removed" | "added") =>
   lines
     .filter((line) => line.change !== dropped)
     .map((line) => line.text)
@@ -59,5 +59,23 @@ describe("lineDiff", () => {
     const diff = lineDiff(before, after);
     expect(side(diff, "added")).toBe(before);
     expect(side(diff, "removed")).toBe(after);
+  });
+});
+
+describe("wordDiff", () => {
+  it("marks the words a line changed, apart from the spaces and punctuation around them, each run joined", () => {
+    expect(wordDiff("max_tokens: 32000, effort high", "max_tokens: 64000, effort high")).toEqual([same("max_tokens: "), removed("32000"), added("64000"), same(", effort high")]);
+    expect(wordDiff("a b", "a new b")).toEqual([same("a "), added("new "), same("b")]);
+  });
+
+  it("reads a word in any script whole", () => {
+    expect(wordDiff("le café noir", "le thé noir")).toEqual([same("le "), removed("café"), added("thé"), same(" noir")]);
+  });
+
+  it("holds each line whole, verbatim, in its kept and its own words", () => {
+    const [before, after] = ["  call(x, 'one')  ", "  call(y, 'one', 2)"];
+    const words = wordDiff(before, after);
+    expect(words.filter(({ change }) => change !== "added").map(({ text }) => text).join("")).toBe(before);
+    expect(words.filter(({ change }) => change !== "removed").map(({ text }) => text).join("")).toBe(after);
   });
 });

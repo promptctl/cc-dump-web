@@ -23,9 +23,14 @@ export type Change = "added" | "same" | "changed" | "removed";
 export type Row =
   | { kind: "exchange"; key: string; exchange: FormattedExchange; change: Change; branch: Branch | undefined }
   | { kind: "group"; key: string; title: Group["title"]; change: Change; branch: Branch | undefined }
-  | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock | undefined; change: Exclude<Change, "removed">; branch: Branch | undefined }
+  | { kind: "block"; key: string; block: KeyedBlock; before: undefined; change: "added"; branch: Branch | undefined }
+  | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock; change: "same"; branch: Branch | undefined }
+  | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock; change: "changed"; branch: Branch | undefined }
   | { kind: "block"; key: string; block: undefined; before: KeyedBlock; change: "removed"; branch: Branch | undefined }
   | { kind: "fold"; key: string; count: number; branch: Branch | undefined };
+
+// A block's row whose step changed it: both versions, the one before and the one shown.
+export type ChangedRow = Extract<Row, { kind: "block"; change: "changed" }>;
 
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
 // category, the group titles over none left, and the runs of unchanged rows folded, the block revealed always among them;
@@ -139,7 +144,8 @@ function itemRow(item: Item, own: number, step: number, branch: Branch | undefin
   const now = versionAt(item, step);
   if (now.block === undefined) return now.step === step ? [{ kind: "block", key: item.key, block: undefined, before: now.was, change: "removed", branch }] : [];
   const before = own === step ? undefined : versionAt(item, step - 1).block;
-  return [{ kind: "block", key: item.key, block: now.block, before, change: before === undefined ? "added" : before === now.block ? "same" : "changed", branch }];
+  const shown = { kind: "block", key: item.key, block: now.block, branch } as const;
+  return [before === undefined ? { ...shown, before, change: "added" } : { ...shown, before, change: before === now.block ? "same" : "changed" }];
 }
 
 // The rows the step shown took away: what the step before showed, on the left alone.
@@ -341,8 +347,8 @@ export function seconds(milliseconds: number): string {
 
 // Whether a block at `key` shows expanded: as its category starts, the user's and the assistant's expanded and the rest
 // collapsed, and what the harness injected into their messages collapsed with the rest, since it is not what they said
-// (docs/design/01-mvp.md, F4), unless the reader flipped it. One flip turns both sides of a row, and each side starts as
-// its own version does.
+// (docs/design/01-mvp.md, F4), unless the reader flipped it. A row starts as the version it shows does, the one on the
+// right, or the one on the left where the step removed it, and one flip turns both its sides.
 export function isExpanded(flipped: Record<string, true>, key: string, block: Block): boolean {
   return (flipped[key] === true) !== startsExpanded(block);
 }
@@ -353,7 +359,7 @@ const startsExpanded = ({ category, injected }: Block): boolean => injected === 
 // scrollbar reads, not where anything lands.
 export function estimateHeight(row: Row, flipped: Record<string, true>): number {
   const line = 20;
-  const side = (block: Block | undefined) => (block !== undefined && isExpanded(flipped, row.key, block) ? line + Math.ceil(sizeOf(block) / 100) * 16 : line);
+  const side = (block: Block | undefined) => (block !== undefined ? line + Math.ceil(sizeOf(block) / 100) * 16 : line);
   switch (row.kind) {
     case "exchange":
       return 52;
@@ -361,6 +367,6 @@ export function estimateHeight(row: Row, flipped: Record<string, true>): number 
     case "fold":
       return line;
     case "block":
-      return Math.max(side(row.block), side(row.before));
+      return isExpanded(flipped, row.key, row.block ?? row.before) ? Math.max(side(row.block), side(row.before)) : line;
   }
 }

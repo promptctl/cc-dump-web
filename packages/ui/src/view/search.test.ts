@@ -1,14 +1,14 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
-import type { Category } from "../format/blocks.ts";
-import { createFormatter } from "../format/format.ts";
+import type { Block, Category } from "../format/blocks.ts";
+import { createFormatter, type KeyedBlock } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { createLayout, type Layout } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type BlockRow, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -37,20 +37,24 @@ const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(
 const { pattern } = read("needle");
 // The view at its start, where a step with no current match goes on from.
 const top = { at: "start" } as const;
+// A row the step shown added, of `block` alone.
+const added = (block: Block): BlockRow => ({ kind: "block", key: "k", block: { ...block, key: "k" }, before: undefined, change: "added", branch: undefined });
 
 describe("search", () => {
   it("names each text a block shows by its address, and where it shows", () => {
     expect(
-      shownTexts({
-        category: "tools",
-        name: "tool_use: X",
-        parts: [
-          { kind: "text", form: "verbatim", text: "t" },
-          { kind: "json", value: { a: 1 } },
-          { kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
-          { kind: "media", of: "image", source: { type: "url", url: "u" } },
-        ],
-      }),
+      shownTexts(
+        added({
+          category: "tools",
+          name: "tool_use: X",
+          parts: [
+            { kind: "text", form: "verbatim", text: "t" },
+            { kind: "json", value: { a: 1 } },
+            { kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
+            { kind: "media", of: "image", source: { type: "url", url: "u" } },
+          ],
+        }),
+      ),
     ).toEqual([
       { at: address.name, searched: whole("tool_use: X"), in: "line" },
       { at: "0", searched: render("t", "verbatim"), in: "regions" },
@@ -111,10 +115,25 @@ describe("search", () => {
   });
 
   it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
-    const [, shown] = shownTexts({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] });
+    const [, shown] = shownTexts(added({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] }));
     expect(shown).toMatchObject({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
     expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
+  });
+
+  it("reads a changed block as its diff shows it on the right, and steps into the fold of unchanged lines holding a match", () => {
+    const text = (first: string) => [first, ...lines(19, 14, "the needle")].join("\n");
+    const version = (first: string): KeyedBlock => ({ key: "k", category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text: text(first) }] });
+    const row: BlockRow = { kind: "block", key: "k", block: version("needle, now"), before: version("then"), change: "changed", branch: undefined };
+    expect(shownTexts(row)[1]).toMatchObject({ at: address.change, searched: { text: text("needle, now") }, in: "regions" });
+    const found = createSearch()([row], pattern);
+    // The needle the later version added, and the one both versions hold, but not what only the earlier one held.
+    expect(found.count).toBe(2);
+    const keys = { at: () => "k", indexOf: (key: string) => (key === "k" ? 0 : undefined) };
+    const first = adjacent(found, undefined, top, "next", pattern, keys)!;
+    expect(first).toMatchObject({ match: { at: address.change, start: 0 }, regions: [] });
+    // The unchanged lines after the three beside the change fold, from the fifth on, the needle's among them.
+    expect(adjacent(found, first.match, top, "next", pattern, keys)!.regions).toEqual([regionKey(partKey("k", address.change), 4)]);
   });
 
   it("finds no match where an expression matches nothing", () => {

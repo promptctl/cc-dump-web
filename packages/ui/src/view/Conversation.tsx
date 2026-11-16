@@ -2,22 +2,24 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import { diffOf, type DiffLine } from "../format/diff.ts";
+import { diffOf, type Edit } from "../format/diff.ts";
+import { blockDiff, type LineFold, type Pair, type SideLine } from "./change.ts";
 import { fieldLines, type Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, modelName, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
+import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, modelName, preview, seconds, sizeOf, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Side, unpainted, useWhere } from "./painting.ts";
+import { Hold, Painted, Side, unpainted, useWhere, useWhereOn, type Where } from "./painting.ts";
+import { regionKey } from "./regions.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, ordinal, partKey, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -295,45 +297,49 @@ function largest(element: HTMLElement): number {
   return element.scrollHeight - element.clientHeight;
 }
 
-// A row: a fold across both columns; anything else its two sides, aligned, with a band between them in the color of
-// what the step did, none where it left the row as it was. Below `lg` only the right side shows. The band stands where
-// a ground would: the theme's text is promised legible on its muted grounds only in their own `text-` color, and the
-// foreground fails on them in most themes. Memoized on what it shows, every field of the row, so a row the layout makes
-// again as it was does not render again.
+// A row: a fold across both columns; anything else its lines, each its two sides aligned in one grid, with a band
+// between them in the color of what the step did, none where it left the row as it was, so a line wrapping on one side
+// keeps the next level on both. Below `lg` only the right side shows. The band stands where a ground would: the theme's
+// text is promised legible on its muted grounds only in their own `text-` color, and the foreground fails on them in
+// most themes. Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not
+// render again.
 const RowView = memo(
   function RowView({ row, reading }: { row: Row; reading: boolean }) {
     if (row.kind === "fold") return <FoldLine fold={row} />;
-    const sides = sidesOf(row, reading);
     // A branch's rows stand one step in, under the thread they left (docs/design/02-design.md, "Two axes").
     const inset = row.branch === undefined ? undefined : "pl-6";
     return (
       <div className="grid grid-cols-[4px_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_4px_minmax(0,1fr)]">
-        <div className={`hidden lg:block ${inset ?? ""}`}>
-          <Side.Provider value="left">{sides.left}</Side.Provider>
-        </div>
-        <div className={bands[row.change]} />
-        <div className={inset}>{sides.right}</div>
+        {row.kind === "block" ? <BlockLines row={row} inset={inset} /> : <Sides change={row.change} inset={inset} {...sidesOf(row, reading)} />}
       </div>
     );
   },
   (before, after) => before.reading === after.reading && sameFields(before.row, after.row),
 );
 
-// What each side of a row shows: the right, the moment shown; the left, the step before, nothing where the step added
-// the row, and the right nothing where it removed it.
-function sidesOf(row: Exclude<Row, { kind: "fold" }>, reading: boolean): { left: ReactNode; right: ReactNode } {
-  const sides = (line: ReactNode) => ({ left: row.change === "added" ? null : line, right: row.change === "removed" ? null : line });
-  switch (row.kind) {
-    case "exchange":
-      return sides(<ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />);
-    case "group":
-      return sides(<h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>);
-    case "block":
-      return {
-        left: row.before === undefined ? null : <BlockView rowKey={row.key} block={row.before} />,
-        right: row.block === undefined ? null : <BlockView rowKey={row.key} block={row.block} />,
-      };
-  }
+// One line of a row: what each side shows, and the band between them.
+function Sides({ left, right, change, inset }: { left: ReactNode; right: ReactNode; change: Change; inset: string | undefined }) {
+  return (
+    <>
+      <div className={`hidden lg:block ${inset ?? ""}`}>
+        <Side.Provider value="left">{left}</Side.Provider>
+      </div>
+      <div className={bands[change]} />
+      <div className={inset}>{right}</div>
+    </>
+  );
+}
+
+// What each side of an exchange's or a group's row shows: the right, the moment shown; the left, the step before,
+// nothing where the step added the row, and the right nothing where it removed it.
+function sidesOf(row: Extract<Row, { kind: "exchange" | "group" }>, reading: boolean): { left: ReactNode; right: ReactNode } {
+  const line =
+    row.kind === "exchange" ? (
+      <ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />
+    ) : (
+      <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>
+    );
+  return { left: row.change === "added" ? null : line, right: row.change === "removed" ? null : line };
 }
 
 // [LAW:dataflow-not-control-flow] The band between a row's sides, by what the step did to it.
@@ -428,42 +434,156 @@ function Fact({ label, count }: { label: string; count: number | undefined }) {
 // since its status says so, and of one still in flight; a word for the rest.
 const endings = { ok: "", pending: "", unread: "no end read", error: "error", aborted: "aborted", stopped: "stopped" } as const;
 
-// A block, one side's version of the row at `rowKey`: collapsed, one line naming it, a preview of its content and its
-// size; expanded, that line and all its parts. Clicking the line switches between them, on both sides. The gutter bar
-// in its category's color runs its whole height (docs/design/02-design.md, "One bold element").
-function BlockView({ rowKey: key, block }: { rowKey: string; block: KeyedBlock }) {
+// A block's row: on each side, a line naming that side's version, a preview of its content and its size; expanded, its
+// content below: a changed block's diff with the version before, line against line, and any other block's parts on each
+// side. Clicking a line switches between them, on both sides, from how the version shown starts.
+function BlockLines({ row, inset }: { row: Extract<Row, { kind: "block" }>; inset: string | undefined }) {
+  const open = useView((state) => isExpanded(state.flipped, row.key, row.block ?? row.before));
+  // [LAW:dataflow-not-control-flow] Each line of the row is its two sides' versions, each in its gutter, through the
+  // same cells; a side without a version, the left where the step added the row and the right where it removed it, is
+  // empty.
+  const cells = (content: (block: KeyedBlock) => ReactNode) => ({
+    left: row.before === undefined ? null : <Gutter block={row.before}>{content(row.before)}</Gutter>,
+    right: row.block === undefined ? null : <Gutter block={row.block}>{content(row.block)}</Gutter>,
+  });
+  return (
+    <>
+      <Sides change={row.change} inset={inset} {...cells((block) => <BlockLine rowKey={row.key} block={block} open={open} />)} />
+      {open &&
+        (row.change === "changed" ? (
+          <ChangeLines row={row} inset={inset} />
+        ) : (
+          <Sides change={row.change} inset={inset} {...cells((block) => <Parts rowKey={row.key} block={block} />)} />
+        ))}
+    </>
+  );
+}
+
+// A side's version of a block, at the depth of a block, beside the bar in its category's color, which, a cell of it on
+// each of the row's lines, runs the block's whole height (docs/design/02-design.md, "One bold element").
+function Gutter({ block, children }: { block: KeyedBlock; children: ReactNode }) {
+  return (
+    <div className="ml-4 h-full border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
+      {children}
+    </div>
+  );
+}
+
+// A block's line: its name, a preview of its content while collapsed, and its size.
+function BlockLine({ rowKey: key, block, open }: { rowKey: string; block: KeyedBlock; open: boolean }) {
   const size = sizeOf(block);
-  const open = useView((state) => isExpanded(state.flipped, key, block));
   const hold = useContext(Hold);
   return (
-    <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
+    <button
+      type="button"
+      className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
+      onClick={() => {
+        hold();
+        view.toggle(key);
+      }}
+    >
+      <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
+      <span className="min-w-0 truncate" title={block.name}>
+        <HighlightedText blockKey={key} at={address.name} text={block.name} />
+      </span>
+      {/* Expanded, the content itself is below, so the line does not say it twice. */}
+      <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
+      <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
+        {compact(size)}
+      </span>
+    </button>
+  );
+}
+
+function Parts({ rowKey, block }: { rowKey: string; block: KeyedBlock }) {
+  return (
+    <div className="max-w-[110ch] pb-1 pl-6">
+      {block.parts.map((part, index) => (
+        <PartView key={index} part={part} blockKey={rowKey} index={index} />
+      ))}
+    </div>
+  );
+}
+
+// A changed block's content: its diff with the version before, a line of the row for each pair of lines, and a line
+// saying how many for each run of unchanged pairs folded, which opens it on a click, on either side. The right is painted
+// as the search reads it (search.ts, shownTexts), the left not at all.
+function ChangeLines({ row, inset }: { row: ChangedRow; inset: string | undefined }) {
+  const diff = blockDiff(row.before, row.block);
+  const where = { left: useWhereOn("left", row.key, address.change, diff.right), right: useWhereOn("right", row.key, address.change, diff.right) };
+  const pairLines = (pair: Pair, key: number) => (
+    <Sides
+      key={key}
+      change={row.change}
+      inset={inset}
+      left={<Gutter block={row.before}>{pair.left !== undefined && <DiffLineView line={pair.left} ground={grounds[pair.kind].left} from={0} where={where.left} />}</Gutter>}
+      right={
+        <Gutter block={row.block}>
+          {pair.right !== undefined && <DiffLineView line={pair.right} ground={grounds[pair.kind].right} from={diff.right.passages[pair.right.line]!.start} where={where.right} />}
+        </Gutter>
+      }
+    />
+  );
+  return diff.entries.map((entry, index) =>
+    entry.kind === "fold" ? (
+      <DiffFold key={`fold:${entry.at}`} row={row} inset={inset} fold={entry}>
+        {entry.pairs.map((pair, offset) => pairLines(pair, entry.at + offset))}
+      </DiffFold>
+    ) : (
+      pairLines(entry, index)
+    ),
+  );
+}
+
+// [LAW:dataflow-not-control-flow] The ground of each side of a pair of lines, by what the change did to them.
+const grounds: Record<Pair["kind"], { left: string; right: string }> = {
+  same: { left: "", right: "" },
+  replaced: { left: "bg-removed", right: "bg-added" },
+  removed: { left: "bg-removed", right: "" },
+  added: { left: "", right: "bg-added" },
+};
+// The color of a word, by what the change did to it: what it removed or added in that color's text, on its line's ground.
+const wordColors: Record<Edit["change"], string> = { same: "", removed: "font-semibold text-error", added: "font-semibold text-success" };
+
+// A line of a diff, `from` its place in its side's text, each word in the color of what the change did to it. An empty
+// line still takes a line's height, as it does in the text.
+function DiffLineView({ line, ground, from, where }: { line: SideLine; ground: string; from: number; where: Where }) {
+  // Where each word starts: after the words before it.
+  const starts = line.words.reduce<number[]>((starts, { text }) => [...starts, starts.at(-1)! + text.length], [from]);
+  return (
+    <div className={`min-h-lh max-w-[110ch] pl-6 font-mono break-words whitespace-pre-wrap ${ground}`}>
+      {line.words.map(({ change, text }, index) => (
+        <span key={index} className={wordColors[change]}>
+          <Highlighted slice={text} from={starts[index]!} where={where} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// A run of a diff's unchanged lines, folded: a line saying how many, on both sides, which opens it on a click; opened,
+// the lines themselves.
+function DiffFold({ row, inset, fold, children }: { row: ChangedRow; inset: string | undefined; fold: LineFold; children: ReactNode }) {
+  const key = regionKey(partKey(row.key, address.change), fold.at);
+  const opened = useView((state) => state.flipped[key] === true);
+  const hold = useContext(Hold);
+  if (opened) return children;
+  const line = (block: KeyedBlock) => (
+    <Gutter block={block}>
       <button
         type="button"
-        className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
+        className="flex w-full items-center gap-3 pl-6 text-left font-sans text-foreground-muted hover:bg-hover"
         onClick={() => {
           hold();
           view.toggle(key);
         }}
       >
-        <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
-        <span className="min-w-0 truncate" title={block.name}>
-          <HighlightedText blockKey={key} at={address.name} text={block.name} />
-        </span>
-        {/* Expanded, the content itself is below, so the line does not say it twice. */}
-        <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
-        <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
-          {compact(size)}
-        </span>
+        <span className="w-3">▸</span>
+        {fold.pairs.length} unchanged lines
       </button>
-      {open && (
-        <div className="max-w-[110ch] pb-1 pl-6">
-          {block.parts.map((part, index) => (
-            <PartView key={index} part={part} blockKey={key} index={index} />
-          ))}
-        </div>
-      )}
-    </div>
+    </Gutter>
   );
+  return <Sides change={row.change} inset={inset} left={line(row.before)} right={line(row.block)} />;
 }
 
 // `index`: the part's place among its block's parts.
@@ -523,7 +643,7 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
 
 // A change as a unified diff: each line marked for what the change did to it and set on that mark's ground, verbatim,
 // placed in the diff's text at its passage so the search's matches paint where they are.
-const diffMarks: Record<DiffLine["change"], { mark: string; ground: string; color: string }> = {
+const diffMarks: Record<Edit["change"], { mark: string; ground: string; color: string }> = {
   same: { mark: " ", ground: "", color: "" },
   removed: { mark: "-", ground: "bg-removed", color: "text-error" },
   added: { mark: "+", ground: "bg-added", color: "text-success" },

@@ -21,9 +21,14 @@ export type Where = { blockKey: string; at: string; ranges: Range[]; current: nu
 // A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
 // current match leaves and enters.
 export function useWhere(blockKey: string, at: string, searched: Searched): Where {
+  return useWhereOn(useContext(Side), blockKey, at, searched);
+}
+
+// A text's matches as `side` paints them: for what shows a line of both sides at once, a changed block's diff.
+export function useWhereOn(side: "right" | "left", blockKey: string, at: string, searched: Searched): Where {
   const painted = useContext(Painted);
   if (painted === undefined) throw new Error("A text is shown outside a Conversation");
-  const { pattern, current: paintsCurrent } = painted[useContext(Side)];
+  const { pattern, current: paintsCurrent } = painted[side];
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);
   const current = useView(({ search: { current } }) => (paintsCurrent && current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
   return { blockKey, at, ranges, current };
