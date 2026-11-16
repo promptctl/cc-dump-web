@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import type { Segment } from "./history.ts";
 import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
 
@@ -19,8 +19,9 @@ export const TurnStrip = memo(function TurnStrip({
   onGo: (step: number) => void;
   onStep: (by: -1 | 1) => void;
 }) {
-  const most = mostOf(segments);
-  const failures = failuresOf(segments);
+  // Of the history, not the step shown, so a move in time walks none of it.
+  const most = useMemo(() => mostOf(segments), [segments]);
+  const failures = useMemo(() => failuresOf(segments), [segments]);
   return (
     <nav aria-label="Steps" className="flex h-7 items-center gap-2 bg-surface px-4 font-sans text-xs">
       <button type="button" className="control" disabled={shown <= 1} title="The step before (←)" onClick={() => onStep(-1)}>

@@ -11,7 +11,7 @@ import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, statusFailed, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
+import { changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, statusFailed, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -340,7 +340,7 @@ function Sides({ left, right, change, inset }: { left: ReactNode; right: ReactNo
       <div className={`hidden lg:block ${inset ?? ""}`}>
         <Side.Provider value="left">{left}</Side.Provider>
       </div>
-      <div className={bands[change]} />
+      <div style={{ background: colorOf(changeColors[change]) }} />
       <div className={inset}>{right}</div>
     </>
   );
@@ -358,8 +358,8 @@ function sidesOf(row: Extract<Row, { kind: "exchange" | "group" }>, reading: boo
   return { left: row.change === "added" ? null : line, right: row.change === "removed" ? null : line };
 }
 
-// [LAW:dataflow-not-control-flow] The band between a row's sides, by what the step did to it.
-const bands: Record<Change, string> = { added: "bg-(--success)", changed: "bg-(--warning)", removed: "bg-(--error)", same: "" };
+// The band between a row's sides, in the theme's color of what the step did to it, or none.
+const colorOf = (variable: `--${string}` | undefined) => (variable === undefined ? undefined : `var(${variable})`);
 
 // Whether two rows show the same: every field the same value.
 function sameFields(a: Row, b: Row): boolean {
