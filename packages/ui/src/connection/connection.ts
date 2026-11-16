@@ -20,11 +20,10 @@ export type Connection = {
   // already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
   // The log lines of `part` (F9): the ones it kept, then each as it is written, across its restarts (the restarted
-  // process's lines follow), until `signal` aborts it, which reports nothing. Each line of a process comes after the last
-  // one delivered of it; a line whose event it cannot read is delivered unread, and the lines after it still arrive. A
-  // log that sends what is no log's line (no position, or one not after the last) is reported as failed, and ends. A
-  // connection lost, or not made, is reported as dropped while it is tried again, and as opened once it is made. A
-  // signal already aborted throws its reason.
+  // process's lines follow), until `signal` aborts it, which reports nothing. A line whose event it cannot read is
+  // delivered unread, and the lines after it still arrive; a log that sends a message with no line's position is
+  // reported as failed, and ends. A connection lost, or not made, is reported as dropped while it is tried again, and as
+  // opened once it is made. A signal already aborted throws its reason.
   logs: (part: Part, watcher: LogWatcher, signal: AbortSignal) => void;
   // Makes a new recording for an agent started by hand, which the proxy follows from its first event (F8). Made once
   // asked, so it is asked only for an agent about to be started.

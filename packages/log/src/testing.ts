@@ -55,6 +55,9 @@ export async function serving(handler: Handler, upgrade?: Upgrade) {
   return { port, url: `http://${LOOPBACK}:${port}`, next };
 }
 
+// The event of a unit of work `name` as a test logs it: started at a fixed time, ended as it should.
+export const workEvent = (name: string) => ({ event: name, trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok" as const });
+
 export type ServerSentEvent = { id?: string; event?: string; data: string };
 
 // A Server-Sent Events client of a server on `port`: `next()` resolves with each event as it arrives.

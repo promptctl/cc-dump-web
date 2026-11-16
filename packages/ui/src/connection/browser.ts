@@ -1,5 +1,5 @@
 import { LOOPBACK } from "@cc-dump/log/address";
-import { parseLogLine, type LinePosition } from "@cc-dump/log/line";
+import { parseLogLine } from "@cc-dump/log/line";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { ask } from "@cc-dump/proxy/ask";
 import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
@@ -46,19 +46,11 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       stream.dropped(watcher.dropped);
     },
     // A line's id is its position, which the EventSource sends back when it reconnects, so the same process resumes
-    // after the last line read (processLog). A line whose event does not parse is delivered unread (parseLogLine).
-    // [LAW:single-enforcer] A message with no position, or one not after the last line read of its process, is no
-    // log's, and ends it: the EventSource gives a message with no id the last one's, so that is how a missing id shows.
+    // after the last line read (processLog). A line whose event does not parse is delivered unread (parseLogLine); a
+    // message with no position is no log's, and ends it.
     logs: (part, watcher, signal) => {
       const stream = eventStream(`${part === "proxy" ? origin : server}/logs`, signal, watcher.failed);
-      let last: LinePosition | undefined;
-      const next = (data: string, id: string) => {
-        const line = parseLogLine(data, id);
-        if (last?.run === line.run && line.seq <= last.seq) throw new Error(`log line: ${id} is not after ${last.run}:${last.seq}`);
-        last = line;
-        return line;
-      };
-      stream.on("message", next, watcher.line, stream.fail);
+      stream.on("message", parseLogLine, watcher.line, stream.fail);
       stream.opened(watcher.opened);
       stream.dropped(watcher.dropped);
     },

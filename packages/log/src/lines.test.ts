@@ -2,9 +2,7 @@ import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { parseLogLine, type LinePosition, type LoggedEvent } from "./line.ts";
 import { processLog } from "./lines.ts";
-import { serving, subscribe } from "./testing.ts";
-
-const event = (name: string) => ({ event: name, trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok" as const });
+import { serving, subscribe, workEvent as event } from "./testing.ts";
 
 // A stdout of the test's own: what was written to it, and the error a reader leaving it would raise.
 function output() {

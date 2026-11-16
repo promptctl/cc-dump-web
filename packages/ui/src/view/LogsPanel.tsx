@@ -14,13 +14,14 @@ export function LogsPanel({ connection }: { connection: Pick<Connection, "logs">
   const least = useSettings((state) => state.logLevel);
   const shown = logs.lines.filter(({ line }) => levels.indexOf(lineLevel(line)) <= levels.indexOf(least));
   // The list follows the latest line while it is scrolled to the bottom, and stays where the reader put it otherwise.
-  // Followed on every change to the list, wherever a line went in: not by how many are listed, which stays the same once
-  // old lines are let go, nor by the last, before which a line whose work ended earlier goes.
+  // Followed on every render, whatever changed: a line going in anywhere, or a part's state above the list shortening it.
   const list = useRef<HTMLOListElement>(null);
   const atBottom = useRef(true);
   useLayoutEffect(() => {
     if (atBottom.current && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [logs.lines, least]);
+  });
+  // The run of each part's line listed last, so a line of another run says its part restarted between them.
+  const runs = new Map<Part, string>();
   return (
     <aside aria-label="Logs" data-logs className="flex w-[32rem] shrink-0 flex-col border-l bg-surface text-xs">
       <div className="flex items-center gap-3 border-b p-3">
@@ -43,9 +44,11 @@ export function LogsPanel({ connection }: { connection: Pick<Connection, "logs">
         className="min-h-0 flex-1 overflow-y-auto p-3 font-mono"
         onScroll={({ currentTarget: { scrollTop, scrollHeight, clientHeight } }) => (atBottom.current = scrollHeight - scrollTop - clientHeight < 2)}
       >
-        {shown.map((listed) => (
-          <LogRow key={`${listed.part} ${listed.line.run} ${listed.line.seq}`} listed={listed} />
-        ))}
+        {shown.map((listed) => {
+          const before = runs.get(listed.part);
+          runs.set(listed.part, listed.line.run);
+          return <LogRow key={`${listed.part} ${listed.line.run} ${listed.line.seq}`} listed={listed} restarted={before !== undefined && before !== listed.line.run} />;
+        })}
       </ol>
     </aside>
   );
@@ -76,9 +79,10 @@ function PartState({ part, connection }: { part: Part; connection: LogConnection
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23" });
 
 // A line: when its work ended, its part, its level, its unit of work and what it says, the error first; opened, the
-// whole of its event, or, for a line not read, why and its text. A line is never changed once listed, so a row renders
-// once, not again for each line after it.
-const LogRow = memo(function LogRow({ listed: { part, line, ended, restarted } }: { listed: Listed }) {
+// whole of its event, or, for a line not read, why and its text; first, when its part restarted since the line of it
+// listed before, that its last process's last lines, written once the panel's connection to it was cut, did not reach
+// the panel. A line is never changed once listed, so a row renders once, not again for each line after it.
+const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }: { listed: Listed; restarted: boolean }) {
   const level = lineLevel(line);
   const { service, event, said, error, opened } =
     "event" in line
@@ -86,7 +90,7 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended, restarted } }
       : { service: named[part], event: "unread", said: line.error, error: line.error, opened: line.unread };
   return (
     <li data-log-level={level}>
-      {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote after its last line here did not reach the panel</p> : null}
+      {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote last, its shutdown's, did not reach the panel</p> : null}
       <details>
         <summary className="flex cursor-pointer gap-2 whitespace-nowrap hover:bg-hover">
           <span className="text-foreground-muted">{"event" in line ? time.format(ended) : "—"}</span>
