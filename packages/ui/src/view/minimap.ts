@@ -7,7 +7,8 @@ import type { Change, Row } from "./rows.ts";
 // a place in the conversation.
 
 // [LAW:types-are-the-program] What a row's sliver is painted: a block in its category's color, or the theme's error for a
-// tool's result that says its tool failed; an exchange's line and a fold muted; a group's title not at all.
+// tool's result that says its tool failed, and a fold that holds one; an exchange's line and any other fold muted; a
+// group's title not at all.
 export type Paint = Category | "failed" | "exchange" | "fold" | "none";
 
 // A row as the minimap draws it: from `y`, `height` minimap pixels tall, painted `paint`, beside the mark of what the
@@ -26,7 +27,7 @@ export function paintOf(row: Row): Paint {
     case "exchange":
       return "exchange";
     case "fold":
-      return "fold";
+      return row.rows.some((held) => paintOf(held) === "failed") ? "failed" : "fold";
     case "group":
       return "none";
   }
@@ -38,13 +39,16 @@ export function scaleOf(total: number, height: number): number {
   return height / Math.max(total, height);
 }
 
-// Each row's sliver, at least a pixel tall so a short row in a long conversation is still seen. `extents`: each row's,
-// in the order of `rows`.
+// Each row's sliver, at least a pixel tall so a short row in a long conversation is still seen, in the order they are
+// drawn: the failed last, so the rows sharing their pixels never paint over them. `extents`: each row's, in the order of
+// `rows`.
 export function slivers(rows: readonly Row[], extents: readonly Extent[], scale: number): Sliver[] {
-  return rows.map((row, index) => {
-    const { start, size } = extents[index]!;
-    return { y: start * scale, height: Math.max(1, size * scale), paint: paintOf(row), change: row.kind === "fold" ? "same" : row.change };
-  });
+  return rows
+    .map((row, index): Sliver => {
+      const { start, size } = extents[index]!;
+      return { y: start * scale, height: Math.max(1, size * scale), paint: paintOf(row), change: row.kind === "fold" ? "same" : row.change };
+    })
+    .sort((a, b) => Number(a.paint === "failed") - Number(b.paint === "failed"));
 }
 
 // The view's box on the minimap: the scroller's offset and height, scaled.

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
 import { createHistory } from "./history.ts";
-import { failureOf, mostOf, shapeOf, titleOf } from "./strip.ts";
+import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
 
 const timestamp = "2026-11-16T16:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -17,15 +17,20 @@ const call = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", n
 const result = (fields: object) => ({ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", ...fields }] });
 const segmentsOf = (events: RecordedEvent[]) => createHistory()(createFormatter()(exchanges(events))).segments;
 
-describe("failureOf", () => {
+describe("failuresOf", () => {
   it("marks the step that brought a tool's failed result, and not the steps that resend it", () => {
     const segments = segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ is_error: true, content: "ENOENT" })]), ...request("t3", [ask, call, result({ is_error: true, content: "ENOENT" }), ask])]);
-    expect(segments.map((segment) => failureOf(segment).tool)).toEqual([false, true, false]);
+    expect(failuresOf(segments).map(({ tool }) => tool)).toEqual([false, true, false]);
   });
 
   it("marks no step whose tool's result did not fail", () => {
-    const [, second] = segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ content: "ok" })])]);
-    expect(failureOf(second!)).toEqual({ exchange: false, tool: false });
+    const failures = failuresOf(segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ content: "ok" })])]));
+    expect(failures[1]).toEqual({ exchange: false, tool: false });
+  });
+
+  it("marks the step that brought a failed result as the next version of one its line already holds", () => {
+    const segments = segmentsOf([...request("t1", [ask, call, result({ content: "ok" })]), ...request("t2", [ask, call, result({ is_error: true, content: "ENOENT" })])]);
+    expect(failuresOf(segments).map(({ tool }) => tool)).toEqual([false, true]);
   });
 });
 

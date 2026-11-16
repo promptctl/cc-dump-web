@@ -11,8 +11,8 @@ import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
-import { step, type Cause } from "./scroll.ts";
+import { clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, statusFailed, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
+import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
@@ -74,9 +74,15 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     scrollToFn: () => {},
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  // [LAW:no-ambient-temporal-coupling] The rows' height measures this render's rows, and only then does the virtualizer
+  // hold each one's extent, which the minimap draws.
+  const total = virtualizer.getTotalSize();
+  const extents = virtualizer.measurementsCache;
   // [LAW:locality-or-seam] A placed item as the position code reads it, by its row's key: the virtualizer keeps an item
   // by the key its height is measured by (ListedKeys), not the row's.
   const placedAt = (item: VirtualItem | undefined): Placed | undefined => item && { key: keys.at(item.index), start: item.start, size: item.size };
+  // The placed row at an offset.
+  const rowAt = (offset: number) => placedAt(virtualizer.getVirtualItemForOffset(offset));
 
   // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to, or at a step
   // they chose in time.
@@ -95,7 +101,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const rowsNow = {
       indexOf: keys.indexOf,
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
-      rowAt: (offset: number) => placedAt(virtualizer.getVirtualItemForOffset(offset)),
+      rowAt,
     };
     const kept = { position, written: written.current };
     const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
@@ -161,14 +167,18 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     latest.current("choose");
   };
 
-  // The reader putting the view at `offset`: the position becomes the place there, so following pauses.
-  const placeAt = (offset: number) => {
-    view.place(positionAt(offset, (at) => placedAt(virtualizer.getVirtualItemForOffset(at))), "reader", now);
+  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
+  // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
+  const hold = () => {
+    view.place(positionAt(scroller.current!.scrollTop, rowAt), "reader", now);
     latest.current("choose");
   };
-  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, and
-  // the line clicked stays where it is as what it opens grows or shrinks below it.
-  const hold = () => placeAt(scroller.current!.scrollTop);
+  // The reader moving the view to `offset` from the minimap, as a scroll there would: the place there, so following
+  // pauses, or the end, where following resumes.
+  const placeAt = (offset: number) => {
+    view.place(readAt(offset, largest(scroller.current!), useSettings.getState().follow, useView.getState().moment.at !== "chosen", rowAt), "reader", now);
+    latest.current("choose");
+  };
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
   // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
@@ -232,7 +242,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           ) : (
             <Hold.Provider value={onHold}>
               <Painted.Provider value={painted}>
-                <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
+                <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
                   {virtualizer.getVirtualItems().map((item) => (
                     <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
                       <RowView row={rows[item.index]!} reading={reading} />
@@ -256,7 +266,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
             </Toggle>
           </div>
         </main>
-        <Minimap rows={rows} extents={virtualizer.measurementsCache} total={virtualizer.getTotalSize()} scroller={scroller} theme={theme} onPlace={onPlace} />
+        <Minimap rows={rows} extents={extents} scroller={scroller} theme={theme} onPlace={onPlace} />
       </div>
     </>
   );
@@ -368,7 +378,7 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
       onClick={toggle}
     >
       <span className="w-3">▸</span>
-      {fold.branch === undefined ? `${fold.count} unchanged` : `branch off ${fold.branch.from} · ${fold.count} rows`}
+      {fold.branch === undefined ? `${fold.rows.length} unchanged` : `branch off ${fold.branch.from} · ${fold.rows.length} rows`}
     </button>
   );
 }
@@ -403,7 +413,7 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       )}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
       {/* An HTTP error reads as one, its reason phrase on hover. */}
-      <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
+      <span className={statusFailed(facts.status) ? "text-error" : undefined} title={reason}>
         {facts.status}
       </span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended, which leads, so an
@@ -415,10 +425,9 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
         <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
       </span>
       <div className="col-[1/-1] grid grid-cols-[9ch_12ch_14ch_10ch] gap-x-3 *:truncate">
-        <Fact label="in" count={facts.input} />
-        <Fact label="cache" count={facts.cacheRead} />
-        <Fact label="written" count={facts.cacheWritten} />
-        <Fact label="out" count={facts.output} />
+        {countsOf(facts).map(([label, count]) => (
+          <Fact key={label} label={label} count={count} />
+        ))}
       </div>
     </div>
   );

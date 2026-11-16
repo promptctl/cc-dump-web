@@ -8,7 +8,7 @@ import type { Row } from "./rows.ts";
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
 const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
 const group: Row = { kind: "group", key: "t1/request", title: "request", change: "same", branch: undefined };
-const fold: Row = { kind: "fold", key: "t1/a", count: 12, branch: undefined };
+const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: undefined });
 const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", block: shown, before: undefined, change: "added", branch: undefined });
 const removed = (was: KeyedBlock): Row => ({ kind: "block", key: "t1/c", block: undefined, before: was, change: "removed", branch: undefined });
 
@@ -18,7 +18,11 @@ describe("paintOf", () => {
   });
 
   it("paints an exchange's line and a fold muted, and a group's title not at all", () => {
-    expect([exchange, fold, group].map(paintOf)).toEqual(["exchange", "fold", "none"]);
+    expect([exchange, fold([exchange, added(block())]), group].map(paintOf)).toEqual(["exchange", "fold", "none"]);
+  });
+
+  it("paints a fold that holds a failed tool's result the error, so folding unchanged rows never hides a failure", () => {
+    expect(paintOf(fold([exchange, added(block({ failed: true }))]))).toBe("failed");
   });
 });
 
@@ -30,7 +34,7 @@ describe("scaleOf", () => {
 
 describe("slivers", () => {
   it("places each row by its extent, scaled, at least a pixel tall, beside what the step did to it", () => {
-    const rows = [exchange, added(block()), fold];
+    const rows = [exchange, added(block()), fold()];
     const extents = [
       { start: 0, size: 40 },
       { start: 40, size: 10 },
@@ -40,6 +44,16 @@ describe("slivers", () => {
       { y: 0, height: 2, paint: "exchange", change: "added" },
       { y: 2, height: 1, paint: "tools", change: "added" },
       { y: 2.5, height: 47.5, paint: "fold", change: "same" },
+    ]);
+  });
+
+  it("draws a failed row over the rows that share its pixels", () => {
+    const rows = [added(block({ failed: true })), added(block()), added(block())];
+    const extents = [0, 40, 80].map((start) => ({ start, size: 40 }));
+    expect(slivers(rows, extents, 0.01).map(({ y, paint }) => [y, paint])).toEqual([
+      [0.4, "tools"],
+      [0.8, "tools"],
+      [0, "failed"],
     ]);
   });
 });

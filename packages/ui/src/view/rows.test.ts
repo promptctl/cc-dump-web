@@ -33,7 +33,7 @@ function layouts(events: RecordedEvent[], visibility: Record<Category, Visibilit
   const layOut = createLayout(visibility, unchanged, branches);
   return (step: number, revealed?: string, opened: Opened = {}) => layOut(history, step, revealed, opened);
 }
-const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.count}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
+const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.rows.length}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
 
 describe("layout", () => {
   it("lays out the conversation at a step: each step's exchange, then what first arrived with it, the step shown's added", () => {
@@ -115,7 +115,7 @@ describe("layout", () => {
     // Every row of the steps before but the context above the change.
     const unfolded = layouts(turns(4))(4);
     const firstChange = unfolded.rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
-    expect(fold.kind === "fold" && fold.count).toBe(firstChange - context);
+    expect(fold.kind === "fold" && fold.rows.length).toBe(firstChange - context);
     expect(step.rows.slice(1, 1 + context)).toEqual(unfolded.rows.slice(firstChange - context, firstChange));
     // A folded row is at its fold.
     expect(step.keys.indexOf("thread:t1/request/system.0")).toBe(0);
@@ -312,7 +312,8 @@ describe("branches", () => {
     const at = layouts(branched, shown, "show", "fold");
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const folded = at(4).rows.filter(({ kind }) => kind === "fold");
-    expect(folded).toEqual([{ kind: "fold", key: "side", count: 5, branch: { key: "branch:side", from: 2 } }]);
+    expect(folded).toMatchObject([{ kind: "fold", key: "side", branch: { key: "branch:side", from: 2 } }]);
+    expect(folded[0]!.kind === "fold" && folded[0]!.rows.length).toBe(5);
     // Its rows are still the search's, and stand where the fold does.
     expect(at(4).every.rows.map(({ key }) => key)).toContain("thread:side/message.1/content.1");
     expect(at(4).keys.indexOf("thread:side/message.1/content.1")).toBe(at(4).keys.indexOf("side"));
