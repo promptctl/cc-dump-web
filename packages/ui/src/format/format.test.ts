@@ -198,11 +198,12 @@ describe("format", () => {
     expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "fields", label: "fields", fields: [["max_uses", "2"]] }]);
     // The cache breakpoint is the request's, out of the block it was set on.
     expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
-    expect(group(formatted, "request")[5]!.parts).toEqual([{ kind: "fields", fields: [["system.0", '{"type":"ephemeral"}']] }]);
+    expect(group(formatted, "request")[5]!.parts).toEqual([{ kind: "fields", fields: [["system.0", [["type", '"ephemeral"']]]] }]);
   });
 
   it("lifts the cache breakpoints out of the blocks into the request's, in the order the cache's prefix is built", () => {
     const breakpoint = { type: "ephemeral", ttl: "1h" };
+    const shown = fieldValue(breakpoint);
     const formatted = one(
       request("a", {
         model: "m",
@@ -219,7 +220,9 @@ describe("format", () => {
       key: "cache",
       category: "metadata",
       name: "cache breakpoints: 3",
-      parts: [{ kind: "fields", fields: [["tools.Bash.0", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
+      parts: [{ kind: "fields", fields: [["tools.Bash.0", shown], ["system.0", shown], ["message.0/content.1", shown]] }],
+      // Its line previews where they are.
+      preview: { kind: "text", form: "verbatim", text: "tools.Bash.0  system.0  message.0/content.1" },
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
     expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([
@@ -530,18 +533,15 @@ describe("format", () => {
     expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
   });
 
-  it("shows a tool result with no content, as a failed tool may return", () => {
+  it("shows a tool result with no content, as a failed tool may return, named for its tool's failure", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] }] }));
     expect(group(formatted, "user")).toEqual([
       {
         key: "content.0",
         place: firstMessage,
         category: "tools",
-        name: "tool_result",
-        parts: [
-          { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
-          { kind: "fields", label: "fields", fields: [["is_error", "true"]] },
-        ],
+        name: "tool_result: error",
+        parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
       },
     ]);
   });

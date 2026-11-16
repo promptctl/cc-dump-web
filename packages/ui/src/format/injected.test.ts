@@ -10,12 +10,35 @@ const memory = instructions("/home/ann/.claude/projects/app/memory/MEMORY.md", "
 const preamble = "Codebase and user instructions are shown below.";
 const withInstructions = reminder(`${preamble}\n\n${global}\n\n${project}`);
 
-// A message's text as a person typed it, and as the harness sent it in a system-role message.
-const typed = (text: string) => split(text, "said");
-const sent = (text: string) => split(text, "harness");
-const kinds = (pieces: Piece[]) => pieces.map((piece) => piece.kind);
+// A message's text as a person typed it, and as the harness sent it in a system-role message, cut into pieces: each
+// piece's content is the "content" test's.
+const cut = (pieces: Piece[]) =>
+  pieces.map((piece) => {
+    const { content, ...rest } = piece;
+    void content;
+    return rest;
+  });
+const typed = (text: string) => cut(split(text, "said"));
+const sent = (text: string) => cut(split(text, "harness"));
+const kinds = (pieces: { kind: Piece["kind"] }[]) => pieces.map((piece) => piece.kind);
 
 describe("split", () => {
+  it("gives each piece's content as its text without what marks it, which its name says", () => {
+    const contents = (text: string, own: "said" | "harness") => split(text, own).map(({ kind, content }) => [kind, content]);
+    expect(contents(withInstructions, "said")).toEqual([
+      ["reminder", `\n${preamble}\n\n`],
+      ["claude_md", "\n\n# Style\nBe brief.\n\n"],
+      ["claude_md", "\n\n## Build\nRun make.\n"],
+    ]);
+    expect(contents("Say hello.", "said")).toEqual([["said", "Say hello."]]);
+    expect(contents("SessionStart hook additional context: Be explanatory.\n\n# Environment\ncwd: /work", "harness")).toEqual([
+      ["hook", " Be explanatory.\n\n"],
+      ["section", "\ncwd: /work"],
+    ]);
+    expect(contents(reminder("PostToolUse:Read hook additional context: Mind the size."), "said")).toEqual([["hook", " Mind the size.\n"]]);
+    expect(contents("<user-prompt-submit-hook>\nLoad it.\n</user-prompt-submit-hook>", "said")).toEqual([["hook", "\nLoad it.\n"]]);
+  });
+
   it("gives a reminder holding two CLAUDE.md files as the reminder, then each file by its path", () => {
     expect(typed(withInstructions)).toEqual([
       { kind: "reminder", text: `<system-reminder>\n${preamble}\n\n` },

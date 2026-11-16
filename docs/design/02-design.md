@@ -70,4 +70,4 @@ Left-aligned throughout. The exchange line's facts sit in aligned columns, not j
 
 ## Not decided here
 
-The exact block preview for each block type, the fold's context size, and the minimap's marks for changes are the implementing tickets' to settle against real recordings.
+The fold's context size and the minimap's marks for changes are the implementing tickets' to settle against real recordings.

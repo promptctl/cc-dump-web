@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { doesNotFit, fieldsParts, type Form, type Medium, type Part } from "./parts.ts";
+import { doesNotFit, fieldsParts, fieldValue, type Field, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 
@@ -12,7 +12,9 @@ export type Category = (typeof categories)[number];
 
 // [LAW:types-are-the-program] `injected`: the harness's own content in a message the user or the assistant sent, a system
 // reminder, hook output or a CLAUDE.md, which the view never mistakes for what they said, whatever its category.
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true };
+// `preview`: what the block's collapsed line previews (docs/design/02-design.md, "Print what varies"), for a block whose
+// first part with content is not what tells it from its kind's others; none previews that part (view/rows.ts, preview).
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -27,7 +29,7 @@ const speakers: Record<Role, string> = { user: "user", assistant: "assistant", s
 // (docs/design/01-mvp.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
 const pieces: Record<Role, (text: string) => Piece[]> = {
   user: (text) => split(text, "said"),
-  assistant: (text) => [{ kind: "said", text }],
+  assistant: (text) => [{ kind: "said", text, content: text }],
   system: (text) => split(text, "harness"),
 };
 
@@ -77,12 +79,16 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   },
 });
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
-// what it holds: it is how the two refer to each other, not what either says.
+// what it holds: it is how the two refer to each other, not what either says. A result is named for whether its tool
+// failed, as its is_error says, which follows the id where it was sent.
 const toolResult: Entry = {
   category: tools,
+  name: (fields) => `${fields.string("type")}${fields.value("is_error") === true ? ": error" : ""}`,
   parts: (fields, role) => {
     const content = fields.value("content");
-    return [...(content === undefined ? [] : contentParts(content, role)), { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }];
+    const failed = fields.value("is_error");
+    const id: Field[] = [["tool_use_id", fields.string("tool_use_id")], ...(failed === undefined ? [] : [["is_error", fieldValue(failed)] satisfies Field])];
+    return [...(content === undefined ? [] : contentParts(content, role)), { kind: "fields", fields: id }];
   },
 };
 const serverToolResult: Entry = {
@@ -168,8 +174,10 @@ export function formatContent(block: unknown, role: Role): Block[] {
   const [, ...fields] = formatted.parts;
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
-    const parts: Part[] = [{ kind: "text", form: pieceForm[piece.kind], text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
-    return pieceBlock(piece, formatted.category, formatted.name, parts);
+    const form = pieceForm[piece.kind];
+    const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
+    // Its line previews what it holds, not the tag or line that marks it as what its name says.
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: { kind: "text", form, text: piece.content } };
   });
 }
 

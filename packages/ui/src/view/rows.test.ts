@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block, Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
+import type { Part } from "../format/parts.ts";
 import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
@@ -207,9 +208,16 @@ describe("a block's line", () => {
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
 
-  it("previews a block by the start of its first part that is text, on one line", () => {
+  it("previews a block by the start of its first part with anything to read, on one line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
-    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: { command: "ls -la" } }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe('{ "command": "ls -la" }');
+    // A Markdown text reads as it is rendered, its syntax gone and each block apart from the next.
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "## Plan\n**first** `x`\n- one\n- two" }] })).toBe("Plan first x one two");
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "verbatim", text: "## Plan **first**" }] })).toBe("## Plan **first**");
+    // A JSON object reads as the fields it holds.
+    expect(preview({ category: "tools", name: "tool_use: Skill", parts: [{ kind: "json", label: "input", value: { skill: "laws:code" } }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe('skill "laws:code"');
+    // A part with nothing to read, as a thinking block's omitted text is, is passed over.
+    const thinking: Block = { category: "thinking", name: "thinking", parts: [{ kind: "text", form: "markdown", text: "" }, { kind: "fields", fields: [["signature", "924 characters"]] }] };
+    expect(preview(thinking)).toBe("signature 924 characters");
     expect(preview({ category: "tools", name: "tool_use: Read", parts: [{ kind: "fields", fields: [["file_path", "/a.ts"], ["limit", "5"]] }] })).toBe("file_path /a.ts limit 5");
     expect(preview({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "old", after: "new" }] })).toBe("old new");
     expect(preview({ category: "user", name: "image", parts: [{ kind: "media", of: "image", source: { type: "url", url: "u" } }] })).toBe("");
@@ -218,11 +226,21 @@ describe("a block's line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
-    // A field that holds fields reads its name, then theirs.
-    expect(preview({ category: "metadata", name: "parameters", parts: [{ kind: "fields", fields: [["model", '"m"'], ["thinking", [["type", '"adaptive"']]]] }] })).toBe('model "m" thinking type "adaptive"');
-    // Deep JSON's indentation does not use up the line.
+    // A field that holds fields reads as theirs, each by its path; a null holds nothing to read.
+    const nested: Block = { category: "metadata", name: "parameters", parts: [{ kind: "fields", fields: [["model", '"m"'], ["stop", "null"], ["thinking", [["type", '"adaptive"'], ["list", [["0", "1"]]]]]] }] };
+    expect(preview(nested)).toBe('model "m" thinking.type "adaptive" thinking.list.0 1');
+    // Deep JSON reads as its leaves, cut where the line ends.
     const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };
-    expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
+    const line = preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] });
+    expect(line).toMatch(/^a\.b\.c\.d\.0 0 a\.b\.c\.d\.1 1 /);
+    expect(line).toMatch(/^.{198,200}…$/u);
+  });
+
+  it("previews a block by its own preview when it has one, nothing when that holds nothing", () => {
+    const reminder = "<system-reminder>\nContext left: 80%.\n</system-reminder>";
+    const parts: Part[] = [{ kind: "text", form: "markdown", text: reminder }];
+    expect(preview({ category: "user", name: "system reminder", parts, preview: { kind: "text", form: "markdown", text: "\nContext left: 80%.\n" } })).toBe("Context left: 80%.");
+    expect(preview({ category: "metadata", name: "stop reason: end_turn", parts, preview: { kind: "fields", fields: [["stop_sequence", "null"]] } })).toBe("");
   });
 });
 

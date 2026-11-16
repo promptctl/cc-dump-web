@@ -1,9 +1,10 @@
 import type { Block, Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
-import { fieldLines, type Part } from "../format/parts.ts";
+import { fieldLines, fieldValue, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import type { Branch, History, Item, Segment } from "./history.ts";
+import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, so only the rows on screen are
 // mounted. Each row is two sides (docs/design/02-design.md, "Two axes"): the right the conversation at the step shown,
@@ -268,12 +269,18 @@ export function compact(count: number): string {
 // A size in characters.
 export const describeSize = (size: number): string => `${compact(size)} chars`;
 
-// What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of its first part
-// that is text, on one line, as much as a line could hold, and an ellipsis where it was cut. A block of media alone
-// shows nothing.
+// What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of what its
+// `preview` reads as, or, for a block with none, of its first part with anything to read, on one line, as much as a line
+// could hold, and an ellipsis where it was cut. A block of media alone shows nothing. Read once per block, which the
+// formatter keeps the same object while its side of the exchange is unchanged.
+const previews = new WeakMap<Block, string>();
 export function preview(block: Block): string {
-  const part = block.parts.find((part): part is Exclude<Part, { kind: "media" }> => part.kind !== "media");
-  const text = part === undefined ? "" : partText(part);
+  const line = previews.get(block) ?? previewLine(block);
+  previews.set(block, line);
+  return line;
+}
+function previewLine(block: Block): string {
+  const text = (block.preview === undefined ? block.parts : [block.preview]).values().map(partText).find((text) => /\S/.test(text)) ?? "";
   // A long text is read only a few lines' worth ahead, enough to fill the line once its whitespace, JSON's indentation
   // included, is collapsed; each cut is at a whole character, not between a surrogate pair's halves, and the ellipsis
   // says something visible was cut.
@@ -284,22 +291,32 @@ export function preview(block: Block): string {
 }
 const previewLength = 200;
 
-// A part's text, as its preview reads it: a field as its name and value. A JSON string, as a tool's input is while it
-// streams, is its own text, so it is never serialized for a line; any other value's serialization is jsonText's, which
-// the block's size has already made.
-function partText(part: Exclude<Part, { kind: "media" }>): string {
+// A part's text, as its line reads it. A text reads as its rendering shows it (view/rendering.ts), so a Markdown text's
+// syntax is not read, each passage apart from the next. A JSON string, as a tool's input is while it streams, is its own
+// text; any other value reads as a field would show it (format/parts.ts, fieldValue).
+function partText(part: Part): string {
   switch (part.kind) {
-    case "text":
-      return part.text;
-    case "json":
-      return typeof part.value === "string" ? part.value : jsonText(part);
+    case "text": {
+      const { text, passages } = renderingOf(part);
+      return passages.map(({ start, end }) => text.slice(start, end)).join(" ");
+    }
+    case "json": {
+      const shown = typeof part.value === "string" ? part.value : fieldValue(part.value);
+      return typeof shown === "string" ? shown : leafText(shown);
+    }
     case "fields":
-      return fieldLines(part.fields)
-        .map(({ name, value }) => (value === undefined ? name : `${name} ${value}`))
-        .join("  ");
+      return leafText(part.fields);
+    case "media":
+      return "";
     case "diff":
       return diffOf(part).text;
   }
+}
+
+// Fields as one run of their leaves: each by its path, the names holding it joined by dots, and its value. A null holds
+// nothing to read, so it is left out.
+function leafText(fields: Field[], path = ""): string {
+  return fields.map(([name, value]) => (typeof value !== "string" ? leafText(value, `${path}${name}.`) : value === "null" ? "" : `${path}${name} ${value}`)).join("  ");
 }
 
 // The first `length` code units of `text`, one fewer where the last would be the first half of a surrogate pair.

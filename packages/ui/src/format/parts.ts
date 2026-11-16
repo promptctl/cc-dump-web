@@ -1,3 +1,5 @@
+import { fieldOf } from "@cc-dump/log/json";
+
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
 export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
@@ -56,6 +58,13 @@ function heldJson(text: string): unknown {
 export function valuePart(value: unknown): Part {
   const shown = fieldValue(value);
   return typeof shown === "string" ? { kind: "text", form: "verbatim", text: shown } : { kind: "fields", fields: shown };
+}
+
+// The fields of `value` at each of `paths`, a path its field names joined by dots, named by it, those it holds, as a part:
+// what a block's line previews of a value that holds more than a line would.
+export function pickedPart(value: unknown, paths: string[]): Extract<Part, { kind: "fields" }> {
+  const held = paths.map((path): [string, unknown] => [path, path.split(".").reduce(fieldOf, value)]);
+  return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
 // An object's fields as a part, when it has any.

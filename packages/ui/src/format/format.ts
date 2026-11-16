@@ -3,7 +3,7 @@ import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
-import { fieldValue, valuePart, type Field } from "./parts.ts";
+import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
@@ -177,10 +177,13 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       const tools = toolBlocks(lift(body.value("tools"), (index, list) => toolKeys(list)[index]!, breakpoints));
       const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
       const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
-      // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them.
+      // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
+      // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)] };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }] }];
+      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)], preview: pickedPart(rest, varied) };
+      // Its line previews where they are.
+      const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: places }];
       return {
         blocks: [
           ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
@@ -202,7 +205,7 @@ function lift(list: unknown, at: (index: number, list: unknown[]) => string, bre
   return list.map((block: unknown, index) => {
     if (typeof block !== "object" || block === null || !("cache_control" in block)) return block;
     const { cache_control: breakpoint, ...rest } = block;
-    breakpoints.push([at(index, list), JSON.stringify(breakpoint)]);
+    breakpoints.push([at(index, list), fieldValue(breakpoint)]);
     return rest;
   });
 }
@@ -210,6 +213,10 @@ function liftContent(message: unknown, at: string, breakpoints: Field[]): unknow
   if (typeof message !== "object" || message === null || !("content" in message)) return message;
   return { ...message, content: lift(message.content, (index) => `${at}/content.${index}`, breakpoints) };
 }
+
+// The parameters a client varies from one request to the next, which a request's parameters line previews: the model,
+// how many tokens it may write, how it thinks and with what effort, and how it samples.
+const varied = ["model", "max_tokens", "thinking", "output_config.effort", "temperature"];
 
 function messageGroup(message: unknown, index: number): Group {
   const key = `message.${index}`;
@@ -338,6 +345,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const fields = readObject(message, "message");
       const content = messageContent(fields.array("content"), "assistant", { in: "reply" });
       const stopReason = fields.value("stop_reason");
+      const stopSequence = fields.value("stop_sequence");
       const usage = fields.value("usage");
       const uncached = tokens(usage, "input_tokens");
       const cacheRead = tokens(usage, "cache_read_input_tokens");
@@ -345,11 +353,18 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       return {
         blocks: [
           ...content,
+          // The stop reason is the line's name; the stop sequence, when one stopped it, is its preview.
           ...one("stop reason", [
-            { category: "metadata", name: `stop reason: ${show(stopReason)}`, parts: [{ kind: "fields", fields: [["stop_reason", fieldValue(stopReason)], ["stop_sequence", fieldValue(fields.value("stop_sequence"))]] }] },
+            {
+              category: "metadata",
+              name: `stop reason: ${show(stopReason)}`,
+              parts: [{ kind: "fields", fields: [["stop_reason", fieldValue(stopReason)], ["stop_sequence", fieldValue(stopSequence)]] }],
+              preview: { kind: "fields", fields: [["stop_sequence", fieldValue(stopSequence)]] },
+            },
           ]),
-          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)] }]),
-          ...one("fields", restBlock(fields, "message")),
+          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)], preview: pickedPart(usage, counted) }]),
+          // Of what else the API reported, the line previews the message's id, which is all of it that varies.
+          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: pickedPart(message, ["id"]) })),
         ],
         message: {
           input: uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0),
@@ -363,6 +378,10 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
     (reason) => none(one("message", [raw("metadata", "message", reason, { kind: "json", value: message })])),
   );
 }
+
+// The counts a usage line previews: the tokens read, uncached, from the cache and written to it, and written out, of which
+// the thinking's.
+const counted = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens", "output_tokens_details.thinking_tokens"];
 
 // A count in a message's usage, where the API gave one: a count it gave as null, or not at all, is none.
 function tokens(usage: unknown, name: string): number | undefined {
