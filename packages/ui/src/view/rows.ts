@@ -1,9 +1,10 @@
 import type { Block, Category } from "../format/blocks.ts";
-import { diffOf } from "../format/diff.ts";
-import { fieldLines, fieldValue, type Field, type Part } from "../format/parts.ts";
+import { context, diffOf } from "../format/diff.ts";
+import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import type { Branch, History, Item, Segment } from "./history.ts";
+import { blockDiff } from "./change.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, so only the rows on screen are
@@ -44,9 +45,6 @@ export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys
 // object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
 // row) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
-
-// How many unchanged rows stay listed beside a change, above and below it, as a diff's context lines do.
-export const context = 3;
 
 // The key a fold is opened by, among the flips, by its first row's key: a flip of its own, apart from that row's.
 export const foldKey = (first: string) => `fold:${first}`;
@@ -230,16 +228,6 @@ function keysOf(keys: string[], places: Map<string, number>): Keys {
 // [LAW:types-are-the-program] Whether a block of each visibility is listed: the compiler asks for an entry for each.
 const isListed: Record<Visibility, boolean> = { shown: true, hidden: false };
 
-// The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
-// object while its side of the exchange is unchanged, for the block's size, its view and the search; the cache is this
-// function's own.
-const jsonTexts = new WeakMap<Extract<Part, { kind: "json" }>, string>();
-export function jsonText(part: Extract<Part, { kind: "json" }>): string {
-  const text = jsonTexts.get(part) ?? JSON.stringify(part.value, null, 2) ?? "undefined";
-  jsonTexts.set(part, text);
-  return text;
-}
-
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is
 // estimated from. A JSON string is counted by its length, so a tool's input still streaming is not serialized each time.
 // Counted once per block, which the formatter keeps the same object while its side of the exchange is unchanged.
@@ -354,12 +342,13 @@ export function isExpanded(flipped: Record<string, true>, key: string, block: Bl
 }
 const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
 
-// A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or a block's
-// content at about 100 characters a line, on its taller side. Only rows not yet on screen use it, so it decides how the
-// scrollbar reads, not where anything lands.
+// A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
+// block's line and its content: a changed block's diff, a line a pair or a fold, and any other's parts at about 100
+// characters a line, on its taller side. Only rows not yet on screen use it, so it decides how the scrollbar reads, not
+// where anything lands.
 export function estimateHeight(row: Row, flipped: Record<string, true>): number {
   const line = 20;
-  const side = (block: Block | undefined) => (block !== undefined ? line + Math.ceil(sizeOf(block) / 100) * 16 : line);
+  const parts = (block: Block | undefined) => (block === undefined ? 0 : Math.ceil(sizeOf(block) / 100) * 16);
   switch (row.kind) {
     case "exchange":
       return 52;
@@ -367,6 +356,7 @@ export function estimateHeight(row: Row, flipped: Record<string, true>): number 
     case "fold":
       return line;
     case "block":
-      return isExpanded(flipped, row.key, row.block ?? row.before) ? Math.max(side(row.block), side(row.before)) : line;
+      if (!isExpanded(flipped, row.key, row.block ?? row.before)) return line;
+      return line + (row.change === "changed" ? blockDiff(row.before, row.block).entries.length * line : Math.max(parts(row.block), parts(row.before)));
   }
 }

@@ -68,8 +68,11 @@ describe("wordDiff", () => {
     expect(wordDiff("a b", "a new b")).toEqual([same("a "), added("new "), same("b")]);
   });
 
-  it("reads a word in any script whole", () => {
+  it("reads a word in any script whole, and never cuts a character a reader sees as one", () => {
     expect(wordDiff("le café noir", "le thé noir")).toEqual([same("le "), removed("café"), added("thé"), same(" noir")]);
+    expect(wordDiff("नमस्ते जी", "नमस्कार जी")).toEqual([removed("नमस्ते"), added("नमस्कार"), same(" जी")]);
+    expect(wordDiff("cafe\u0301 x", "cafe y")).toEqual([removed("cafe\u0301"), added("cafe"), same(" "), removed("x"), added("y")]);
+    expect(wordDiff("👨‍👩‍👧 a", "👨‍👩‍👦 a")).toEqual([removed("👨‍👩‍👧"), added("👨‍👩‍👦"), same(" a")]);
   });
 
   it("holds each line whole, verbatim, in its kept and its own words", () => {

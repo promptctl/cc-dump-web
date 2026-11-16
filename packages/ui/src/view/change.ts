@@ -1,8 +1,7 @@
 import type { Block } from "../format/blocks.ts";
-import { diffOf, lineDiff, wordDiff, type Edit } from "../format/diff.ts";
-import { fieldLines, type Part } from "../format/parts.ts";
+import { context, diffOf, joined, lineDiff, marks, wordDiff, type Edit, type Joined } from "../format/diff.ts";
+import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { Folded } from "./rendering.ts";
-import { context, jsonText } from "./rows.ts";
 
 // What changed in a block between two moments (docs/design/02-design.md, "Two axes"): the two versions as a side-by-side
 // diff, line against line, unchanged lines level, changed lines marked word by word, a line only one side has against an
@@ -18,17 +17,18 @@ export type Pair =
   | { kind: "removed"; left: SideLine; right: undefined }
   | { kind: "added"; left: undefined; right: SideLine };
 
-// A run of unchanged pairs folded into one line, named by the place of its first among the pairs.
-export type LineFold = { kind: "fold"; at: number; pairs: Pair[] };
+// A run of unchanged pairs folded into one line, named, as a text's region is, by the line it opens on in the version
+// shown, the right.
+export type LineFold = { kind: "fold"; line: number; pairs: Pair[] };
 
-// A block's diff: its pairs in order with the unchanged runs folded; and the right side's text, the later version's, as
-// the search reads it: each line a passage, and the characters of each fold.
-export type BlockDiff = { entries: (Pair | LineFold)[]; right: Folded };
+// A block's diff: its pairs in order with the unchanged runs folded; and each side's text, each line a passage, the
+// right's, the later version's, as the search reads it, with the characters of each fold.
+export type BlockDiff = { entries: (Pair | LineFold)[]; left: Joined; right: Folded };
 
 // [LAW:one-source-of-truth] A block as one text, so every kind of block is compared one way: its parts in order, a blank
 // line between them; a text as written, JSON as formatted, a field a line of its own, `name: value`, indented under the
-// field holding it, a diff its lines as a unified diff writes them, and media what it is. Labels are the view's words,
-// not the block's.
+// field holding it, a diff its lines as a unified diff writes them, and media what it is, its base64 by a digest, so two
+// images differ in the diff when they do. Labels are the view's words, not the block's.
 export function blockText(block: Block): string {
   return block.parts.map(partText).join("\n\n");
 }
@@ -51,7 +51,7 @@ function partText(part: Part): string {
       const { of, source } = part;
       switch (source.type) {
         case "base64":
-          return `[${of}: ${source.media_type}, ${source.data.length} characters of base64]`;
+          return `[${of}: ${source.media_type}, ${source.data.length} characters of base64, FNV-1a ${fnv1a(source.data)}]`;
         case "url":
           return `[${of}: ${source.url}]`;
         case "file":
@@ -60,7 +60,13 @@ function partText(part: Part): string {
     }
   }
 }
-const marks: Record<Edit["change"], string> = { same: " ", removed: "-", added: "+" };
+
+// The 32-bit FNV-1a hash of a text's UTF-16 code units, in hex: a digest of a medium's content short enough for its line.
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let at = 0; at < text.length; at++) hash = Math.imul(hash ^ text.charCodeAt(at), 0x01000193);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
 
 // [LAW:one-source-of-truth] Each pair of versions is diffed once, when it is first shown or searched, so neither a frame
 // nor a search that reads it again pays for it again.
@@ -76,21 +82,12 @@ export function blockDiff(before: Block, after: Block): BlockDiff {
 function diffOfTexts(before: string, after: string): BlockDiff {
   const pairs = pairsOf(lineDiff(before, after));
   const entries = folded(pairs);
-  const lines = pairs.flatMap(({ right }) => (right === undefined ? [] : [right]));
-  let start = 0;
-  const passages = lines.map(({ words }) => {
-    const length = words.reduce((sum, { text }) => sum + text.length, 0);
-    const passage = { start, end: start + length };
-    start = passage.end + 1;
-    return passage;
-  });
-  const folds = entries.flatMap((entry) => {
-    if (entry.kind !== "fold") return [];
-    const first = passages[entry.pairs[0]!.right!.line]!;
-    const last = passages[entry.pairs.at(-1)!.right!.line]!;
-    return [{ start: first.start, end: last.end, line: entry.at }];
-  });
-  return { entries, right: { text: lines.map(({ words }) => words.map(({ text }) => text).join("")).join("\n"), passages, folds } };
+  const side = (lines: (SideLine | undefined)[]) => joined(lines.flatMap((line) => (line === undefined ? [] : [line.words.map(({ text }) => text).join("")])));
+  const right = side(pairs.map(({ right }) => right));
+  const folds = entries.flatMap((entry) =>
+    entry.kind === "fold" ? [{ start: right.passages[entry.line]!.start, end: right.passages[entry.line + entry.pairs.length - 1]!.end, line: entry.line }] : [],
+  );
+  return { entries, left: side(pairs.map(({ left }) => left)), right: { ...right, folds } };
 }
 
 // The lines side by side: a kept line against itself; and in each run of changes, the lines removed against the lines
@@ -147,7 +144,7 @@ function folded(pairs: Pair[]): (Pair | LineFold)[] {
     let end = at;
     while (end < pairs.length && folds(end)) end++;
     if (end - at > 1) {
-      entries.push({ kind: "fold", at, pairs: pairs.slice(at, end) });
+      entries.push({ kind: "fold", line: pairs[at]!.right!.line, pairs: pairs.slice(at, end) });
       at = end;
     } else {
       entries.push(pairs[at]!);

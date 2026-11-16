@@ -1,5 +1,5 @@
 import { diffOf } from "../format/diff.ts";
-import { fieldLines, type Part } from "../format/parts.ts";
+import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { blockDiff, type BlockDiff } from "./change.ts";
@@ -7,7 +7,7 @@ import { rowIndex, type Position } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import { jsonText, type Keys, type Row } from "./rows.ts";
+import { type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.

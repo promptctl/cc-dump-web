@@ -8,7 +8,8 @@ export type Edit = { change: Change; text: string };
 
 // A diff as the view shows and searches it: its lines; their text in order, joined by newlines; and each line's passage
 // of that text, its start and end, so a match is found within one line and painted where that line is.
-export type Diff = { lines: Edit[]; text: string; passages: { start: number; end: number }[] };
+export type Diff = { lines: Edit[] } & Joined;
+export type Joined = { text: string; passages: { start: number; end: number }[] };
 
 // [LAW:one-source-of-truth] A diff part holds the two texts; its lines are derived from them, made once per part, and
 // only for a part that is shown or searched, so a session's Edits are not diffed again by every request that resends them.
@@ -17,16 +18,28 @@ export function diffOf(part: Extract<Part, { kind: "diff" }>): Diff {
   const made = diffs.get(part);
   if (made !== undefined) return made;
   const lines = lineDiff(part.before, part.after);
-  let start = 0;
-  const passages = lines.map(({ text }) => {
-    const passage = { start, end: start + text.length };
-    start = passage.end + 1;
-    return passage;
-  });
-  const shown = { lines, text: lines.map((line) => line.text).join("\n"), passages };
+  const shown = { lines, ...joined(lines.map(({ text }) => text)) };
   diffs.set(part, shown);
   return shown;
 }
+
+// Lines as one text, joined by newlines, and each line's passage of it.
+export function joined(lines: string[]): Joined {
+  let start = 0;
+  const passages = lines.map((line) => {
+    const passage = { start, end: start + line.length };
+    start = passage.end + 1;
+    return passage;
+  });
+  return { text: lines.join("\n"), passages };
+}
+
+// How many unchanged lines a diff lists beside a change, above and below it: its context lines; and as many unchanged
+// rows beside a changed one in the conversation.
+export const context = 3;
+
+// [LAW:one-source-of-truth] How a unified diff marks a line, by what the change did to it.
+export const marks: Record<Change, string> = { same: " ", removed: "-", added: "+" };
 
 // The lines `before` became `after` by. A line is the text between newlines, verbatim; an empty text has none.
 export function lineDiff(before: string, after: string): Edit[] {
@@ -35,8 +48,8 @@ export function lineDiff(before: string, after: string): Edit[] {
 const linesOf = (text: string) => (text === "" ? [] : text.split("\n"));
 
 // The words a line `before` became `after` by, each run of what the change did to them joined into one edit. A word is
-// a run of letters, digits and underscores, a run of whitespace, or any other one character, so a changed word is
-// marked without the spaces and punctuation around it.
+// a segment between Unicode word boundaries (UAX #29): a word, a run of spaces, or a punctuation mark, so a changed word
+// is marked without the spaces and punctuation around it, and no character a reader sees as one is cut.
 export function wordDiff(before: string, after: string): Edit[] {
   return diff(wordsOf(before), wordsOf(after)).reduce<Edit[]>((joined, edit) => {
     const last = joined.at(-1);
@@ -45,7 +58,8 @@ export function wordDiff(before: string, after: string): Edit[] {
     return joined;
   }, []);
 }
-const wordsOf = (text: string) => text.match(/[\p{L}\p{N}_]+|\s+|./gsu) ?? [];
+const words = new Intl.Segmenter(undefined, { granularity: "word" });
+const wordsOf = (text: string) => Array.from(words.segment(text), ({ segment }) => segment);
 
 // The items `a` became `b` by, in order: the items both start and end with kept, and between them a shortest edit
 // script, by Myers' O(ND) greedy algorithm ("An O(ND) Difference Algorithm and Its Variations", 1986), so a change of a

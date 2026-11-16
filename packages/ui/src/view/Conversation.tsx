@@ -2,15 +2,15 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import { diffOf, type Edit } from "../format/diff.ts";
+import { context, diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type LineFold, type Pair, type SideLine } from "./change.ts";
-import { fieldLines, type Part } from "../format/parts.ts";
+import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, modelName, preview, seconds, sizeOf, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
+import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -506,29 +506,23 @@ function Parts({ rowKey, block }: { rowKey: string; block: KeyedBlock }) {
 }
 
 // A changed block's content: its diff with the version before, a line of the row for each pair of lines, and a line
-// saying how many for each run of unchanged pairs folded, which opens it on a click, on either side. The right is painted
-// as the search reads it (search.ts, shownTexts), the left not at all.
+// saying how many for each run of unchanged pairs folded, which opens it on a click, on either side. Each side is painted
+// as its side paints, the right as the search reads it (search.ts, shownTexts).
 function ChangeLines({ row, inset }: { row: ChangedRow; inset: string | undefined }) {
   const diff = blockDiff(row.before, row.block);
-  const where = { left: useWhereOn("left", row.key, address.change, diff.right), right: useWhereOn("right", row.key, address.change, diff.right) };
-  const pairLines = (pair: Pair, key: number) => (
-    <Sides
-      key={key}
-      change={row.change}
-      inset={inset}
-      left={<Gutter block={row.before}>{pair.left !== undefined && <DiffLineView line={pair.left} ground={grounds[pair.kind].left} from={0} where={where.left} />}</Gutter>}
-      right={
-        <Gutter block={row.block}>
-          {pair.right !== undefined && <DiffLineView line={pair.right} ground={grounds[pair.kind].right} from={diff.right.passages[pair.right.line]!.start} where={where.right} />}
-        </Gutter>
-      }
-    />
-  );
+  const where = { left: useWhereOn("left", row.key, address.change, diff.left), right: useWhereOn("right", row.key, address.change, diff.right) };
+  const cell = (side: "left" | "right", block: KeyedBlock, pair: Pair) => {
+    const line = pair[side];
+    return (
+      <Gutter block={block}>
+        {line !== undefined && <DiffLineView line={line} ground={grounds[pair.kind][side]} from={diff[side].passages[line.line]!.start} where={where[side]} />}
+      </Gutter>
+    );
+  };
+  const pairLines = (pair: Pair, key: number) => <Sides key={key} change={row.change} inset={inset} left={cell("left", row.before, pair)} right={cell("right", row.block, pair)} />;
   return diff.entries.map((entry, index) =>
     entry.kind === "fold" ? (
-      <DiffFold key={`fold:${entry.at}`} row={row} inset={inset} fold={entry}>
-        {entry.pairs.map((pair, offset) => pairLines(pair, entry.at + offset))}
-      </DiffFold>
+      <DiffFold key={`fold:${entry.line}`} row={row} inset={inset} fold={entry} lines={() => entry.pairs.map((pair, offset) => pairLines(pair, entry.line + offset))} />
     ) : (
       pairLines(entry, index)
     ),
@@ -549,7 +543,8 @@ const wordColors: Record<Edit["change"], string> = { same: "", removed: "font-se
 // line still takes a line's height, as it does in the text.
 function DiffLineView({ line, ground, from, where }: { line: SideLine; ground: string; from: number; where: Where }) {
   // Where each word starts: after the words before it.
-  const starts = line.words.reduce<number[]>((starts, { text }) => [...starts, starts.at(-1)! + text.length], [from]);
+  const starts = [from];
+  for (const { text } of line.words) starts.push(starts.at(-1)! + text.length);
   return (
     <div className={`min-h-lh max-w-[110ch] pl-6 font-mono break-words whitespace-pre-wrap ${ground}`}>
       {line.words.map(({ change, text }, index) => (
@@ -561,13 +556,12 @@ function DiffLineView({ line, ground, from, where }: { line: SideLine; ground: s
   );
 }
 
-// A run of a diff's unchanged lines, folded: a line saying how many, on both sides, which opens it on a click; opened,
-// the lines themselves.
-function DiffFold({ row, inset, fold, children }: { row: ChangedRow; inset: string | undefined; fold: LineFold; children: ReactNode }) {
-  const key = regionKey(partKey(row.key, address.change), fold.at);
-  const opened = useView((state) => state.flipped[key] === true);
+// A run of a diff's unchanged lines, folded: a line saying how many, on both sides, which opens and closes it on a click;
+// opened, below it, the lines themselves, made only then. It is kept, as a text's region is, by the line it opens on.
+function DiffFold({ row, inset, fold, lines }: { row: ChangedRow; inset: string | undefined; fold: LineFold; lines: () => ReactNode }) {
+  const key = regionKey(partKey(row.key, address.change), fold.line);
+  const open = useView((state) => state.flipped[key] === true);
   const hold = useContext(Hold);
-  if (opened) return children;
   const line = (block: KeyedBlock) => (
     <Gutter block={block}>
       <button
@@ -578,12 +572,17 @@ function DiffFold({ row, inset, fold, children }: { row: ChangedRow; inset: stri
           view.toggle(key);
         }}
       >
-        <span className="w-3">▸</span>
+        <span className="w-3">{open ? "▾" : "▸"}</span>
         {fold.pairs.length} unchanged lines
       </button>
     </Gutter>
   );
-  return <Sides change={row.change} inset={inset} left={line(row.before)} right={line(row.block)} />;
+  return (
+    <>
+      <Sides change={row.change} inset={inset} left={line(row.before)} right={line(row.block)} />
+      {open && lines()}
+    </>
+  );
 }
 
 // `index`: the part's place among its block's parts.
@@ -643,10 +642,10 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
 
 // A change as a unified diff: each line marked for what the change did to it and set on that mark's ground, verbatim,
 // placed in the diff's text at its passage so the search's matches paint where they are.
-const diffMarks: Record<Edit["change"], { mark: string; ground: string; color: string }> = {
-  same: { mark: " ", ground: "", color: "" },
-  removed: { mark: "-", ground: "bg-removed", color: "text-error" },
-  added: { mark: "+", ground: "bg-added", color: "text-success" },
+const diffMarks: Record<Edit["change"], { ground: string; color: string }> = {
+  same: { ground: "", color: "" },
+  removed: { ground: "bg-removed", color: "text-error" },
+  added: { ground: "bg-added", color: "text-success" },
 };
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
   const diff = diffOf(part);
@@ -654,10 +653,10 @@ function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }
   return (
     <div className="font-mono break-words whitespace-pre-wrap">
       {diff.lines.map((line, index) => {
-        const { mark, ground, color } = diffMarks[line.change];
+        const { ground, color } = diffMarks[line.change];
         return (
           <div key={index} className={`flex ${ground}`}>
-            <span className={`w-3 shrink-0 select-none ${color}`}>{mark}</span>
+            <span className={`w-3 shrink-0 select-none ${color}`}>{marks[line.change]}</span>
             <span className="min-w-0">
               <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
             </span>

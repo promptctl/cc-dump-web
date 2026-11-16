@@ -75,3 +75,13 @@ export function fieldsParts(object: Record<string, unknown>, labelled: { label?:
 
 // Why a value is not shown as what it was read as, set before the value as it was received.
 export const doesNotFit = (reason: string): Part => ({ kind: "text", form: "verbatim", label: "does not fit", text: reason });
+
+// The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
+// object while its side of the exchange is unchanged, for the block's size, its view and the search; the cache is this
+// function's own.
+const jsonTexts = new WeakMap<Extract<Part, { kind: "json" }>, string>();
+export function jsonText(part: Extract<Part, { kind: "json" }>): string {
+  const text = jsonTexts.get(part) ?? JSON.stringify(part.value, null, 2) ?? "undefined";
+  jsonTexts.set(part, text);
+  return text;
+}

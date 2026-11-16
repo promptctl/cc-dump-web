@@ -4,7 +4,7 @@ import { blockDiff, blockText, type LineFold, type Pair } from "./change.ts";
 
 const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text }] });
 const numbered = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}`);
-const kinds = (entries: (Pair | LineFold)[]) => entries.map((entry) => (entry.kind === "fold" ? `fold ${entry.at}+${entry.pairs.length}` : entry.kind));
+const kinds = (entries: (Pair | LineFold)[]) => entries.map((entry) => (entry.kind === "fold" ? `fold ${entry.line}+${entry.pairs.length}` : entry.kind));
 
 describe("blockText", () => {
   it("writes each part as the diff compares it, a blank line between them, and no labels", () => {
@@ -21,6 +21,11 @@ describe("blockText", () => {
         ],
       }),
     ).toBe(["ls", '{\n  "a": 1\n}', "id: 1\nthinking:\n  type: adaptive", "-old\n+new", "[image: u]"].join("\n\n"));
+  });
+
+  it("tells two images of one size apart", () => {
+    const image = (data: string): Block => ({ category: "user", name: "image", parts: [{ kind: "media", of: "image", source: { type: "base64", media_type: "image/png", data } }] });
+    expect(blockText(image("AAAA"))).not.toBe(blockText(image("AAAB")));
   });
 });
 
@@ -61,6 +66,14 @@ describe("blockDiff", () => {
     expect(right.passages.map(({ start, end }) => right.text.slice(start, end))).toEqual(after.split("\n"));
     // Lines 4 to 9 of the right, after the change and the three beside it, are folded.
     expect(right.folds).toEqual([{ start: after.indexOf("line 3"), end: after.length, line: 4 }]);
+  });
+
+  it("names a fold by the line it opens on in the version shown, and gives the left side's text a passage a line", () => {
+    // Two lines removed above the run shift its place among the pairs, not its line on the right.
+    const after = ["new", ...numbered(9)];
+    const { entries, left } = blockDiff(block(["old", "gone", "gone too", ...numbered(9)].join("\n")), block(after.join("\n")));
+    expect(kinds(entries).at(-1)).toBe("fold 4+6");
+    expect(left.passages.map(({ start, end }) => left.text.slice(start, end))).toEqual(["old", "gone", "gone too", ...numbered(9)]);
   });
 
   it("diffs each pair of versions once", () => {

@@ -1,3 +1,4 @@
+import { context } from "../format/diff.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -7,7 +8,7 @@ import type { Part } from "../format/parts.ts";
 import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Row } from "./rows.ts";
+import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -196,7 +197,8 @@ describe("layout", () => {
     expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
     expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
     const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
-    expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
+    // Expanded, a changed row shows its diff: here one line, the text the version before did not have.
+    expect(estimateHeight(row, {})).toBe(20 + 20);
     expect(estimateHeight(row, { k: true })).toBe(20);
   });
 });
