@@ -1,4 +1,5 @@
 import type { Block } from "../format/blocks.ts";
+import { diffOf } from "../format/diff.ts";
 import type { Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
@@ -77,12 +78,13 @@ export function diffText(part: Extract<Part, { kind: "diff" }>): Searched {
   const made = diffTexts.get(part);
   if (made !== undefined) return made;
   let start = 0;
-  const passages = part.lines.map(({ text }) => {
+  const { lines, text } = diffOf(part);
+  const passages = lines.map(({ text }) => {
     const passage = { start, end: start + text.length };
     start = passage.end + 1;
     return passage;
   });
-  const searched = { text: part.lines.map((line) => line.text).join("\n"), passages };
+  const searched = { text, passages };
   diffTexts.set(part, searched);
   return searched;
 }

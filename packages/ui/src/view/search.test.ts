@@ -2,7 +2,6 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Category } from "../format/blocks.ts";
-import { lineDiff } from "../format/diff.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
@@ -108,7 +107,7 @@ describe("search", () => {
   });
 
   it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
-    const [, shown] = shownTexts({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", lines: lineDiff("keep\nold end", "keep\nnew") }] });
+    const [, shown] = shownTexts({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] });
     expect(shown).toEqual({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
     expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);

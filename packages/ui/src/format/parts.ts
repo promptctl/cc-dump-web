@@ -1,5 +1,4 @@
 import type { Header } from "@cc-dump/proxy/format";
-import type { DiffLine } from "./diff.ts";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -17,5 +16,6 @@ export type Part =
   | { kind: "json"; label?: string; value: unknown }
   | { kind: "fields"; label?: string; fields: Header[] }
   | { kind: "media"; label?: string; of: Medium; source: Source }
-  // A change, line by line: what an edit removed and what it added, among the lines it kept.
-  | { kind: "diff"; label?: string; lines: DiffLine[] };
+  // A change of one text into another, shown line by line: what it removed and what it added, among the lines it kept
+  // (format/diff.ts).
+  | { kind: "diff"; label?: string; before: string; after: string };

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatBlock } from "./blocks.ts";
 import { inputParts } from "./tools.ts";
 
 // Inputs as Claude Code sent them, taken from recordings.
@@ -29,11 +30,8 @@ describe("inputParts", () => {
       {
         kind: "diff",
         label: "old_string → new_string",
-        lines: [
-          { change: "same", text: "const a = 1;" },
-          { change: "removed", text: "const b = 2;" },
-          { change: "added", text: "const b = 3;" },
-        ],
+        before: "const a = 1;\nconst b = 2;",
+        after: "const a = 1;\nconst b = 3;",
       },
       { kind: "fields", fields: [["replace_all", "false"]] },
     ]);
@@ -71,10 +69,11 @@ describe("inputParts", () => {
     expect(inputParts("Glob", { pattern: "**/*.ts" })).toEqual([{ kind: "fields", fields: [["pattern", "**/*.ts"]] }]);
   });
 
-  it("shows a field that is not a line of text as its JSON, under its name", () => {
-    expect(inputParts("Bash", { command: "ls", env: { CI: "1" } })).toEqual([
+  it("shows the fields that are not a line of text together as the input's JSON, whatever their names", () => {
+    expect(inputParts("Bash", { command: "ls", env: { CI: "1" }, timeout: 5, fields: ["a"] })).toEqual([
       { kind: "text", form: "verbatim", label: "command", text: "ls" },
-      { kind: "json", label: "env", value: { CI: "1" } },
+      { kind: "fields", fields: [["timeout", "5"]] },
+      { kind: "json", label: "input", value: { env: { CI: "1" }, fields: ["a"] } },
     ]);
   });
 
@@ -93,5 +92,15 @@ describe("inputParts", () => {
       { kind: "text", form: "verbatim", label: "does not fit", text: "input is not an object" },
       { kind: "json", label: "input", value: ["/tmp/x"] },
     ]);
+  });
+});
+
+describe("a tool use", () => {
+  it("reads a client tool's input by the tool's shape, and a server's or an MCP server's tool's as its JSON, whatever its name", () => {
+    const use = (type: string, input: unknown) => formatBlock({ type, id: "t1", name: "Bash", input }, "assistant", "markdown").parts;
+    expect(use("tool_use", { command: "ls" })).toEqual([{ kind: "text", form: "verbatim", label: "command", text: "ls" }, { kind: "fields", fields: [["id", "t1"]] }]);
+    for (const type of ["server_tool_use", "mcp_tool_use"]) {
+      expect(use(type, { cmd: "ls" })).toEqual([{ kind: "json", label: "input", value: { cmd: "ls" } }, { kind: "fields", fields: [["id", "t1"]] }]);
+    }
   });
 });

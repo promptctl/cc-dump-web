@@ -1,4 +1,5 @@
 import type { Block, Category } from "../format/blocks.ts";
+import { diffOf } from "../format/diff.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
@@ -239,8 +240,9 @@ function partSize(part: Part): number {
       return part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
     case "media":
       return part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length;
+    // An edit holds its two texts; its lines are not diffed to count them.
     case "diff":
-      return part.lines.reduce((length, line) => length + line.text.length, 0);
+      return part.before.length + part.after.length;
   }
 }
 
@@ -282,7 +284,7 @@ function partText(part: Exclude<Part, { kind: "media" }>): string {
     case "fields":
       return part.fields.map(([name, value]) => `${name} ${value}`).join("  ");
     case "diff":
-      return part.lines.map((line) => line.text).join("\n");
+      return diffOf(part).text;
   }
 }
 

@@ -2,7 +2,7 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import type { DiffLine } from "../format/diff.ts";
+import { diffOf, type DiffLine } from "../format/diff.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
@@ -531,8 +531,8 @@ function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }
   const searched = diffText(part);
   const where = useWhere(blockKey, at, searched);
   return (
-    <pre className="font-mono break-words whitespace-pre-wrap">
-      {part.lines.map((line, index) => {
+    <div className="font-mono break-words whitespace-pre-wrap">
+      {diffOf(part).lines.map((line, index) => {
         const { mark, ground, color } = diffMarks[line.change];
         return (
           <div key={index} className={`flex ${ground}`}>
@@ -543,7 +543,7 @@ function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }
           </div>
         );
       })}
-    </pre>
+    </div>
   );
 }
 

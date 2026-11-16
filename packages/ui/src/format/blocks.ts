@@ -1,7 +1,7 @@
 import { split, type Piece } from "./injected.ts";
 import type { Form, Medium, Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
-import { inputParts } from "./tools.ts";
+import { inputParts, jsonInput } from "./tools.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -67,16 +67,18 @@ const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
 const thinking = () => "thinking" as const;
 
-const toolUse: Entry = {
+// A tool use, its input read by `read`: a client tool's by the tool's own shape (format/tools.ts), a server tool's or
+// an MCP server's, whose names are their own and may be any, as its JSON.
+const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   category: tools,
   name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
-  parts: (fields) => [...toolInput(fields.string("name"), fields.value("input")), { kind: "fields", fields: [["id", fields.string("id")]] }],
-};
-// A tool's input: the API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as
-// the text it is.
-function toolInput(name: string, input: unknown): Part[] {
-  return typeof input === "string" ? [{ kind: "text", form: "verbatim", label: "input so far", text: input }] : inputParts(name, input);
-}
+  parts: (fields) => {
+    const input = fields.value("input");
+    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is.
+    const parts: Part[] = typeof input === "string" ? [{ kind: "text", form: "verbatim", label: "input so far", text: input }] : read(fields.string("name"), input);
+    return [...parts, { kind: "fields", fields: [["id", fields.string("id")]] }];
+  },
+});
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
 // what it holds: it is how the two refer to each other, not what either says.
 const toolResult: Entry = {
@@ -116,9 +118,9 @@ const entries = new Map<string, Entry>([
     },
   ],
   ["redacted_thinking", { category: thinking, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
-  ["tool_use", toolUse],
-  ["server_tool_use", toolUse],
-  ["mcp_tool_use", toolUse],
+  ["tool_use", toolUse(inputParts)],
+  ["server_tool_use", toolUse((_, input) => jsonInput(input))],
+  ["mcp_tool_use", toolUse((_, input) => jsonInput(input))],
   ["tool_result", toolResult],
   ["mcp_tool_result", toolResult],
   ["web_search_tool_result", serverToolResult],

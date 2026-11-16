@@ -26,9 +26,10 @@ describe("lineDiff", () => {
     expect(lineDiff("a\nb\nc", "a\nc")).toEqual([same("a"), removed("b"), same("c")]);
   });
 
-  it("marks an emptied text's lines removed and a new text's lines added", () => {
-    expect(lineDiff("x\ny", "")).toEqual([removed("x"), removed("y"), added("")]);
-    expect(lineDiff("", "x")).toEqual([removed(""), added("x")]);
+  it("marks an emptied text's lines removed and a new text's lines added, an empty text having none", () => {
+    expect(lineDiff("x\ny", "")).toEqual([removed("x"), removed("y")]);
+    expect(lineDiff("", "x")).toEqual([added("x")]);
+    expect(lineDiff("", "")).toEqual([]);
   });
 
   it("keeps a trailing newline as the empty line after it", () => {
@@ -40,6 +41,16 @@ describe("lineDiff", () => {
     const changed = lines.map((line, index) => (index === 250 ? "changed" : line));
     const diff = lineDiff(lines.join("\n"), changed.join("\n"));
     expect(diff.filter((line) => line.change !== "same")).toEqual([removed("line 250"), added("changed")]);
+  });
+
+  it("shows a change of more edits than it searches as one text's lines removed and the other's added, between the lines both keep", () => {
+    const text = (prefix: string) => Array.from({ length: 3000 }, (_, index) => `${prefix} ${index}`).join("\n");
+    const before = `head\n${text("old")}\ntail`;
+    const after = `head\n${text("new")}\ntail`;
+    const diff = lineDiff(before, after);
+    expect(side(diff, "added")).toBe(before);
+    expect(side(diff, "removed")).toBe(after);
+    expect(diff.map((line) => line.change)).toEqual(["same", ...Array<string>(3000).fill("removed"), ...Array<string>(3000).fill("added"), "same"]);
   });
 
   it("holds each side whole, verbatim, in its kept and its own lines", () => {
