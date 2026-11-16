@@ -94,6 +94,16 @@ describe("layout", () => {
     expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual(["thread:t1/request/tools.Edit.0 added"]);
   });
 
+  it("marks a block a request stops sending inside a message it resends removed, the step it goes", () => {
+    const at = layouts([
+      ...request("t1", { model: "m", messages: [...say(1), { role: "user", content: [text("Say 1."), text("Mind it.")] }] }),
+      ...request("t2", { model: "m", messages: [...say(3)] }),
+    ]);
+    expect(at(2).rows.find(({ key }) => key === "thread:t1/message.1/content.1")).toMatchObject({ change: "removed", block: undefined, before: { parts: [{ text: "Mind it." }] } });
+    expect(listed(at(2))).toContain("thread:t1/message.1/content.0 same");
+    expect(listed(at(2))).toContain("thread:t2/message.2/content.0 added");
+  });
+
   it("folds each run of unchanged rows beyond the context beside a change into one row, and lists an opened one", () => {
     const at = layouts(turns(4), shown, "fold");
     const step = at(4);

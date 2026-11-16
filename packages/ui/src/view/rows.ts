@@ -78,7 +78,7 @@ export function createLayout(
       blockListed = kind === "block" ? blockListed || isShown[index]! : false;
     }
     const listed = every.filter((_, index) => isShown[index]);
-    const brought = every.find((row, index) => isShown[index] && !taken[index] && row.kind !== "fold" && row.change !== "same")?.key;
+    const brought = every.find((row, index) => isShown[index] && !taken[index] && row.change !== "same")?.key;
     const folding = fold(listed, revealed, opened, unchanged, collapsed);
     // Each row's place among those listed: its own, the fold it is in, or the place of the row listed before it.
     const places = folding.placeOf;
@@ -107,7 +107,7 @@ export function createLayout(
 // [LAW:dataflow-not-control-flow] What each placement lists of a branch's segment `past` steps after the branch's last
 // request, 0 while it is not behind the step shown, from its rows at the step shown and its rows removed; whether they
 // fold into one; and whether they are rows the placement took away, which are not the step's change.
-type Placement = (rows: () => Row[], removed: () => Row[], past: number) => { rows: Row[]; collapses: boolean; taken: boolean };
+type Placement = (rows: () => Shown[], removed: () => Shown[], past: number) => { rows: Shown[]; collapses: boolean; taken: boolean };
 const placements: Record<Branches, Placement> = {
   stay: (rows) => ({ rows: rows(), collapses: false, taken: false }),
   fold: (rows, _removed, past) => ({ rows: rows(), collapses: past > 0, taken: false }),
@@ -140,8 +140,8 @@ function itemRow(item: Item, own: number, step: number, branch: Branch | undefin
 }
 
 // The rows the step shown took away: what the step before showed, on the left alone.
-function removed(rows: Shown[]): Row[] {
-  return rows.flatMap((row): Row[] =>
+function removed(rows: Shown[]): Shown[] {
+  return rows.flatMap((row): Shown[] =>
     row.kind !== "block" ? [{ ...row, change: "removed" }] : row.block === undefined ? [] : [{ kind: "block", key: row.key, block: undefined, before: row.block, change: "removed", branch: row.branch }],
   );
 }

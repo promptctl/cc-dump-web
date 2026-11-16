@@ -132,23 +132,24 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       }
       return { key: group.key, title: group.title, items };
     });
-    // A request sends its line's prompt and parameters whole, so one the line resends that it did not send is gone from
-    // the step on: an item of the line's own, its next version; one its base sent, an item of the line's, gone as it
-    // arrives. The messages are the line's history, which a request sending fewer leaves as a branch (view/lines.ts).
+    // A request resends what its line holds at each place it sends, its prompt, parameters and messages, so one there it
+    // did not send is gone from the step on: an item of the line's own, its next version; one its base sent, an item of
+    // the line's, gone as it arrives. A place is named for the group a request sends it in (format.ts), so the request
+    // sends a place when it has that group; a message past its last is the line's after it, which it leaves as a branch.
     for (const { line: holder, at, location, upTo } of line === undefined ? [] : resent(line)) {
       if (sent.has(at)) continue;
       sent.add(at);
       const item = itemAt(location);
       const was = item.versions.findLast(({ step }) => step <= upTo)!.block;
-      if (was?.place?.in !== "request") continue;
+      if (was === undefined) continue;
+      const group = groups.findIndex(({ key }) => key === placeName(was.place!, folded[location.step - 1]!.segment.formatted.messages));
+      if (group === -1) continue;
       const gone: Version = { step, block: undefined, was, reply: false };
       if (holder === line) {
         replace(location, { ...item, versions: [...item.versions, gone] });
         undo.push(() => replace(location, item));
         continue;
       }
-      const key = folded[location.step - 1]!.segment.groups[location.group]!.key;
-      const group = groups.findIndex((group) => group.key === key);
       line!.places.set(at, { step, group, index: groups[group]!.items.length });
       undo.push(() => line!.places.delete(at));
       groups[group]!.items.push({ key: `thread:${trace}/${at}`, versions: [gone] });
