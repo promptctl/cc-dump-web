@@ -5,8 +5,7 @@ import type { WindowTerminalError, WindowTerminalState, XtermAddons } from "@pro
 import { WindowTerminal } from "@promptctl/tmux-control-mode-js/window-terminal/react";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
-import type { ITerminalAddon, Terminal as Xterm } from "@xterm/xterm";
+import type { Terminal as Xterm } from "@xterm/xterm";
 import { useLayoutEffect, useMemo, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { terminalTheme } from "../theme/terminal.ts";
@@ -66,44 +65,26 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
         </button>
       </header>
       <WindowTerminal className="min-h-0 flex-1 bg-background" connection={tmux} window={window.window_id} xterm={xterm} addons={addons} onState={changed} onError={setError} />
-      <iframe name={LINK_FRAME} title="Links opened by their app" hidden />
+      <iframe name={LINK_FRAME} title="Links opened by their app" sandbox="allow-top-navigation-to-custom-protocols" hidden />
     </section>
   );
 }
 
-// What each pane draws with, as iTerm draws a terminal program's output:
-// - WebGL, whose renderer draws powerline separators and box drawing itself, edge to edge of the cell, where a font's
-//   glyph is shorter than the row. A pane whose context is lost goes on in xterm.js's DOM renderer.
-// - Unicode 11's widths, as tmux counts them: an emoji is two cells, so what follows it is where tmux put it
-//   (xterm.js's own table, Unicode 6's, counts one).
-// - The URLs a program prints as text, as links, opened as those it writes as links are.
-// - The faces as they arrive: a glyph is drawn once in whatever face has loaded and kept, so a face arriving later (the
-//   icons', or a weight or script of the mono's) has the pane draw its glyphs again.
-const addons: XtermAddons = () => {
-  const webgl = new WebglAddon();
-  webgl.onContextLoss(() => webgl.dispose());
-  return [webgl, cellWidths(), new WebLinksAddon((_event, uri) => openLink(uri), { hover: showTarget, leave: hideTarget }), fontsArriving()];
-};
-
-function cellWidths(): ITerminalAddon {
-  return {
+// What each pane draws with, in xterm.js's DOM renderer, the one whose cell the library lays panes out in (a renderer
+// addon draws a narrower one): Unicode 11's widths, as tmux counts them, so an emoji is two cells and what follows it is
+// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the URLs a program prints as text, as links,
+// opened as those it writes as links are. A face that arrives after a pane drew, the icons' among them, the library has
+// xterm.js measure again (sizing/cell-metrics.js).
+const addons: XtermAddons = () => [
+  {
     activate(terminal: Xterm) {
       terminal.loadAddon(new Unicode11Addon());
       terminal.unicode.activeVersion = "11";
     },
     dispose() {},
-  };
-}
-
-function fontsArriving(): ITerminalAddon {
-  const controller = new AbortController();
-  return {
-    activate(terminal: Xterm) {
-      document.fonts.addEventListener("loadingdone", () => terminal.clearTextureAtlas(), { signal: controller.signal });
-    },
-    dispose: () => controller.abort(),
-  };
-}
+  },
+  new WebLinksAddon((_event, uri) => openLink(uri), { hover: showTarget, leave: hideTarget }),
+];
 
 // Where the terminal's connection to its window stands, in words.
 function phaseText(state: WindowTerminalState): string {

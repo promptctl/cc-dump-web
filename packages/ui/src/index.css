@@ -39,7 +39,7 @@
 :root {
   color-scheme: light dark;
   /* The terminal's face (view/Terminal.tsx): the mono, then the icons a terminal program draws. */
-  --font-terminal: "IBM Plex Mono", "Symbols Nerd Font Mono", monospace;
+  --font-terminal: var(--font-mono), "Symbols Nerd Font Mono";
 }
 
 /* Depth is told by Textual's grounds, not lines: the app's chrome is on `surface`, the conversation on `background`, and
