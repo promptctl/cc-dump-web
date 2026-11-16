@@ -8,7 +8,9 @@
     "./ending": "./src/ending.ts",
     "./describe": "./src/describe.ts",
     "./json": "./src/json.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./line": "./src/line.ts",
+    "./lines": "./src/lines.ts"
   },
   "scripts": {
     "typecheck": "tsc"

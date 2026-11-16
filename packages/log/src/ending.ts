@@ -2,3 +2,6 @@
 // "error". "aborted" is work its client left; "stopped" is work cut because its server was closed.
 // Its own module, importing nothing, so code that runs without node (the UI) can name it.
 export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
+
+// Every outcome, for a parser to read one by.
+export const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };

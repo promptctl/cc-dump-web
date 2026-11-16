@@ -1,4 +1,5 @@
 import { fieldOf } from "@cc-dump/log/json";
+import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
@@ -42,8 +43,18 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
 // whether unchanged rows fold. `branches`: where a branch is listed after its last request. `info`: whether the info
-// panel is open (F8).
-export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions; unchanged: Unchanged; branches: Branches; info: boolean };
+// panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a line it lists asks (F9).
+export type Settings = {
+  follow: boolean;
+  visibility: Record<Category, Visibility>;
+  theme: ThemeChoice;
+  search: SearchOptions;
+  unchanged: Unchanged;
+  branches: Branches;
+  info: boolean;
+  logs: boolean;
+  logLevel: Level;
+};
 
 const name = "cc-dump.settings";
 
@@ -55,6 +66,8 @@ export function parseSettings(stored: unknown): Settings {
   const unchanged = fieldOf(stored, "unchanged");
   const branches = fieldOf(stored, "branches");
   const info = fieldOf(stored, "info");
+  const logs = fieldOf(stored, "logs");
+  const logLevel = fieldOf(stored, "logLevel");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
     return isOneOf(visibilities)(value) ? value : defaultVisibility[category];
@@ -72,6 +85,8 @@ export function parseSettings(stored: unknown): Settings {
     unchanged: isOneOf(unchangedRows)(unchanged) ? unchanged : "fold",
     branches: isOneOf(branchPlacements)(branches) ? branches : "stay",
     info: typeof info === "boolean" ? info : false,
+    logs: typeof logs === "boolean" ? logs : false,
+    logLevel: isOneOf(levels)(logLevel) ? logLevel : "info",
   };
 }
 
@@ -89,6 +104,8 @@ export const settings = {
   setUnchanged: (unchanged: Unchanged) => useSettings.setState({ unchanged }),
   setBranches: (branches: Branches) => useSettings.setState({ branches }),
   setInfo: (info: boolean) => useSettings.setState({ info }),
+  setLogs: (logs: boolean) => useSettings.setState({ logs }),
+  setLogLevel: (logLevel: Level) => useSettings.setState({ logLevel }),
   setVisibility: (category: Category, visibility: Visibility) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: visibility } })),
   // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
   // so every tab holds the settings the reader chose last.
