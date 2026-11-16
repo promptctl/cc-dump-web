@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useRef } from "react";
 import type { Segment } from "./history.ts";
-import { failureOf, mostOf, shapeOf, titleOf } from "./strip.ts";
+import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
 
 // The conversation's steps, above the columns (docs/design/02-design.md, "Two axes"): one mark per step, in the order
 // they began, as tall as what it wrote and as strong as how long it took (strip.ts), the step shown marked in the theme's
@@ -20,6 +20,7 @@ export const TurnStrip = memo(function TurnStrip({
   onStep: (by: -1 | 1) => void;
 }) {
   const most = mostOf(segments);
+  const failures = failuresOf(segments);
   return (
     <nav aria-label="Steps" className="flex h-7 items-center gap-2 bg-surface px-4 font-sans text-xs">
       <button type="button" className="control" disabled={shown <= 1} title="The step before (←)" onClick={() => onStep(-1)}>
@@ -34,7 +35,7 @@ export const TurnStrip = memo(function TurnStrip({
       <ol className="flex h-4 min-w-0 flex-1 items-end gap-px overflow-x-auto [scrollbar-width:none]">
         {segments.map((segment, index) => {
           const { formatted, branch } = segment;
-          const failure = failureOf(segment);
+          const failure = failures[index]!;
           const { height, opacity } = shapeOf(formatted.facts, most);
           return (
             <Mark

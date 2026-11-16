@@ -43,15 +43,20 @@ export function step(
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   const by: By = own ? "view" : "reader";
   if (!own && cause === "change") return { position, written, write: undefined, by };
-  // A reader's offset becomes the position. Following, an offset within a pixel of the end is the end, for a moment that
-  // resumes there: a scroll to the end stays there and a scroll back to it resumes, and a gesture the browser stopped at
-  // an end that grew while it ran stays paused. The end while follow is off, or of a step chosen in time, is a place like
-  // any other, the one under the view: the view stays.
-  const read = follow && resumable && end - offset < 1 ? ({ at: "end" } as const) : positionAt(offset, rows.rowAt);
+  // A reader's offset becomes the position.
+  const read = readAt(offset, end, follow, resumable, rows.rowAt);
   const next = own && (position.at !== "end" || follow) ? position : read;
   // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
   // arrived, as after a reload, writes nothing until it does.
   const resolved = resolve(next, rows.indexOf, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
   return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
+}
+
+// The position a reader's offset reads as, by a scroll or a press on the minimap. Following, an offset within a pixel of
+// the end is the end, for a moment that resumes there: a scroll to the end stays there and a scroll back to it resumes,
+// and a gesture the browser stopped at an end that grew while it ran stays paused. The end while follow is off, or of a
+// step chosen in time, is a place like any other, the one under the view: the view stays.
+export function readAt(offset: number, end: number, follow: boolean, resumable: boolean, rowAt: Rows["rowAt"]): Position {
+  return follow && resumable && end - offset < 1 ? { at: "end" } : positionAt(offset, rowAt);
 }

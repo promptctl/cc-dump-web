@@ -564,6 +564,29 @@ describe("format", () => {
     expect(group(formatted, "user")[0]).not.toHaveProperty("failed");
   });
 
+  it("marks failed a failed tool's result its entry cannot read, and a server tool's result of its error type", () => {
+    const formatted = one(
+      request("a", {
+        model: "m",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: 1, is_error: true },
+              { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+              { type: "web_search_tool_result", tool_use_id: "srvtoolu_2", content: [] },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(group(formatted, "user").map(({ name, failed }) => [name, failed])).toEqual([
+      ["tool_result: error", true],
+      ["web_search_tool_result: error", true],
+      ["web_search_tool_result", undefined],
+    ]);
+  });
+
   it("decodes a body whose trailers were not recorded once its exchange has ended", () => {
     const message = { ...messageStart.message, stop_reason: "end_turn" };
     const formatted = one([

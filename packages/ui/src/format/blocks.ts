@@ -61,12 +61,17 @@ export function restBlock(fields: Fields, name: string): BlockOrNone {
 // How one content block type is shown. `category` from the role of the message holding it; `name` and `parts` from
 // its fields. Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text
 // block's text reads where the block is: Markdown in a message, verbatim in what a tool or a document returned.
+// `failed`: whether a tool's result says its tool failed, read off the block as sent, so one its entry cannot read says
+// so too.
 type Entry = {
   category: (role: Role) => Category;
   name?: (fields: Fields, role: Role) => string;
   parts: (fields: Fields, role: Role, form: Form) => Part[];
-  failed?: (fields: Fields) => boolean;
+  failed?: (block: unknown) => boolean;
 };
+
+// A field of what was sent, if it is an object that has it.
+const sentField = (value: unknown, name: string): unknown => (typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined);
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
@@ -85,13 +90,11 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   },
 });
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
-// what it holds: it is how the two refer to each other, not what either says. A result is named for whether its tool
-// failed, as its is_error says, which follows the id where it was sent.
-const toolFailed = (fields: Fields) => fields.value("is_error") === true;
+// what it holds: it is how the two refer to each other, not what either says. Its tool failed as its is_error says,
+// which follows the id where it was sent.
 const toolResult: Entry = {
   category: tools,
-  name: (fields) => `${fields.string("type")}${toolFailed(fields) ? ": error" : ""}`,
-  failed: toolFailed,
+  failed: (block) => sentField(block, "is_error") === true,
   parts: (fields, role) => {
     const content = fields.value("content");
     const failed = fields.value("is_error");
@@ -99,8 +102,11 @@ const toolResult: Entry = {
     return [...(content === undefined ? [] : contentParts(content, role)), { kind: "fields", fields: id }];
   },
 };
+// A server tool's result says its tool failed by its content's type, the tool's error type (`web_search_tool_result_error`,
+// `code_execution_tool_result_error`, ...), as the Messages API names each.
 const serverToolResult: Entry = {
   category: tools,
+  failed: (block) => String(sentField(sentField(block, "content"), "type")).endsWith("_error"),
   parts: (fields) => [
     { kind: "json", label: "content", value: fields.value("content") },
     { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
@@ -162,16 +168,17 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
   const type = typeof block === "object" && block !== null && "type" in block && typeof block.type === "string" ? block.type : "block";
   const entry = entries.get(type);
   if (entry === undefined) return { category: byRole(role), name: type, parts: [{ kind: "json", value: block }] };
-  return fitting(
-    () => {
+  const shown = fitting(
+    (): Block => {
       const fields = readObject(block, type);
       fields.value("type");
       const parts = entry.parts(fields, role, form);
-      const shown: Block = { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
-      return entry.failed?.(fields) ? { ...shown, failed: true } : shown;
+      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
+  // A tool's result that says its tool failed is named for it.
+  return entry.failed?.(block) ? { ...shown, name: `${shown.name}: error`, failed: true } : shown;
 }
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text

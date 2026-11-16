@@ -7,18 +7,17 @@ import type { Row } from "./rows.ts";
 // height, each a sliver in its category's color with the mark of what the step did to it at its right edge, and the
 // view's box over them. A press or a drag on it puts the view there, through `onPlace`, the view's own placing, so the
 // view stays the scroll offset's one writer. `extents`: each row's start and height, measured or estimated, as the
-// virtualizer holds them; `total`: the conversation's height; `scroller`: what the view's box is read from.
+// virtualizer holds them; `scroller`: the view, whose content, the rows and what follows them, is the conversation's
+// height, and what the view's box is read from.
 export function Minimap({
   rows,
   extents,
-  total,
   scroller,
   theme,
   onPlace,
 }: {
   rows: readonly Row[];
   extents: readonly Extent[];
-  total: number;
   scroller: RefObject<HTMLElement | null>;
   theme: Theme;
   onPlace: (offset: number) => void;
@@ -36,7 +35,7 @@ export function Minimap({
     element.height = Math.round(height * ratio);
     const context = element.getContext("2d")!;
     context.scale(ratio, ratio);
-    const scale = scaleOf(total, height);
+    const scale = scaleOf(view.scrollHeight, height);
     for (const { y, height: tall, paint, change } of slivers(rows, extents, scale)) {
       context.fillStyle = colors.paint[paint];
       context.fillRect(0, y, width - markWidth - 1, tall);
@@ -51,25 +50,26 @@ export function Minimap({
     context.strokeStyle = colors.view;
     context.strokeRect(0.5, box.y + 0.5, width - 1, Math.max(0, box.height - 1));
   };
-  // [LAW:no-ambient-temporal-coupling] Drawn after every render, with what it rendered, and, at most once a frame, when
-  // the view scrolls or the minimap is resized, with the render last committed.
+  // [LAW:no-ambient-temporal-coupling] Drawn at most once a frame, in the frame after a render, a scroll of the view or a
+  // resize of the minimap, with the render last committed: after the view's own effects have placed it, which run after
+  // the minimap's.
   const latest = useRef(draw);
+  const frame = useRef(0);
+  const schedule = () => {
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => latest.current());
+  };
   useLayoutEffect(() => {
     latest.current = draw;
-    draw();
+    schedule();
   });
   useLayoutEffect(() => {
     const view = scroller.current!;
-    let frame = 0;
-    const schedule = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => latest.current());
-    };
     const resized = new ResizeObserver(schedule);
     resized.observe(canvas.current!);
     view.addEventListener("scroll", schedule, { passive: true });
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(frame.current);
       resized.disconnect();
       view.removeEventListener("scroll", schedule);
     };
@@ -77,7 +77,8 @@ export function Minimap({
   // The point pressed, or dragged to while the press holds, is where the view goes.
   const place = (event: PointerEvent<HTMLCanvasElement>) => {
     const { top, height } = event.currentTarget.getBoundingClientRect();
-    onPlace(offsetAt(event.clientY - top, scaleOf(total, height), scroller.current!.clientHeight, total));
+    const { scrollHeight: total, clientHeight: viewport } = scroller.current!;
+    onPlace(offsetAt(event.clientY - top, scaleOf(total, height), viewport, total));
   };
   return (
     // The canvas fills a box of its own: its size set to draw it is not a size the layout reads.

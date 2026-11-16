@@ -18,8 +18,9 @@ export type Change = "added" | "same" | "changed" | "removed";
 // `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment and however
 // many rows arrive around it. A block row shows the item's version at the step shown, `block`, and the one before,
 // `before`, which is none for a block the step added, and a block the step removed shows only the one before. A fold
-// stands for a run of unchanged rows, or of a branch's, keyed by the first: that row is listed exactly when the fold is
-// not, so a place held at it holds whether the fold is closed, opened, or gone. `branch`: the branch a row is part of.
+// stands for a run of unchanged rows, or of a branch's, the `rows` it holds, keyed by the first: that row is listed exactly
+// when the fold is not, so a place held at it holds whether the fold is closed, opened, or gone. `branch`: the branch a
+// row is part of.
 export type Row =
   | { kind: "exchange"; key: string; exchange: FormattedExchange; change: Change; branch: Branch | undefined }
   | { kind: "group"; key: string; title: Group["title"]; change: Change; branch: Branch | undefined }
@@ -27,7 +28,7 @@ export type Row =
   | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock; change: "same"; branch: Branch | undefined }
   | { kind: "block"; key: string; block: KeyedBlock; before: KeyedBlock; change: "changed"; branch: Branch | undefined }
   | { kind: "block"; key: string; block: undefined; before: KeyedBlock; change: "removed"; branch: Branch | undefined }
-  | { kind: "fold"; key: string; count: number; branch: Branch | undefined };
+  | { kind: "fold"; key: string; rows: Row[]; branch: Branch | undefined };
 
 // A block's row whose step changed it: both versions, the one before and the one shown.
 export type ChangedRow = Extract<Row, { kind: "block"; change: "changed" }>;
@@ -220,7 +221,7 @@ function foldRuns(
       placeOf.set(row.key, listed.length);
       if (!folded) listed.push(row);
     }
-    if (folded) listed.push({ kind: "fold", key: run[0]!.key, count: run.length, branch: branch(run[0]!) });
+    if (folded) listed.push({ kind: "fold", key: run[0]!.key, rows: run, branch: branch(run[0]!) });
     index += run.length;
   }
   return { rows: listed, placeOf };
@@ -346,6 +347,16 @@ export const modelName = (model: string): string => model.replace(/^claude-/, ""
 export function seconds(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }
+
+// [LAW:one-source-of-truth] The exchange line's facts that the turn strip's marks say too (view/strip.ts): an HTTP
+// status that is an error's, and the token counts, by label.
+export const statusFailed = (status: number | undefined): boolean => status !== undefined && status >= 400;
+export const countsOf = (facts: FormattedExchange["facts"]): [label: string, count: number | undefined][] => [
+  ["in", facts.input],
+  ["cache", facts.cacheRead],
+  ["written", facts.cacheWritten],
+  ["out", facts.output],
+];
 
 // [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen): as the
 // version it shows does, the one on the right, or the one on the left where the step removed it, so one choice holds
