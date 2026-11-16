@@ -31,7 +31,9 @@ export function createTerminal(log: Log, options: SpawnOptions = {}): Upgrade {
     const sockets = new WebSocketServer({ noServer: true, clientTracking: false });
     return new Promise<void>((done) => {
       // A socket ws finds no longer open it destroys and says nothing of: until ws takes the socket, its close ends the
-      // connection, and once ws has, the bridge's handling does, whatever the socket does after.
+      // connection, and once ws has, the bridge's handling does, whatever the socket does after. The first call to
+      // `done` decides: ws calls back as it takes the socket, in handleUpgrade itself, so the bridge's handling is the
+      // promise's before any close of the socket it took, and that close's `done()` changes nothing.
       socket.once("close", () => done());
       // With a listener on wsClientError ws neither answers nor closes a handshake it cannot take (a malformed one), so
       // the refusal does both.
