@@ -75,7 +75,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
   // [LAW:locality-or-seam] A placed item as the position code reads it, by its row's key: the virtualizer keeps an item
   // by the key its height is measured by (ListedKeys), not the row's.
-  const placedAt = useCallback((item: VirtualItem | undefined): Placed | undefined => item && { key: keys.at(item.index), start: item.start, size: item.size }, [keys]);
+  const placedAt = (item: VirtualItem | undefined): Placed | undefined => item && { key: keys.at(item.index), start: item.start, size: item.size };
 
   // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to, or at a step
   // they chose in time.
