@@ -6,6 +6,7 @@ import { version } from "../../../../package.json";
 import type { Connection } from "../connection/connection.ts";
 import type { StatusReading } from "../status.ts";
 import { useAnswer } from "./answer.ts";
+import { useView } from "./state.ts";
 
 type Informing = Pick<Connection, "agentRecording" | "launcher">;
 
@@ -14,7 +15,7 @@ type Informing = Pick<Connection, "agentRecording" | "launcher">;
 // says what the proxy is, so the panel follows the proxy across its restarts. `open`: the recording open, by name.
 // `session`: the agent's session, as the latest request that names one says it.
 export function InfoPanel({ connection, status, open, session }: { connection: Informing; status: StatusReading; open: string | null; session: string | undefined }) {
-  const launcher = useAnswer(connection.launcher);
+  const launched = useView((state) => state.window);
   return (
     <aside aria-label="Info" data-info className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l bg-surface p-3 text-xs">
       <h2 className="font-semibold">Info</h2>
@@ -32,24 +33,33 @@ export function InfoPanel({ connection, status, open, session }: { connection: I
           </Row>
         </>
       ) : (
-        <p className="text-foreground-muted">The proxy's address and recordings show once the UI reaches it.</p>
+        <p className="text-foreground-muted">The proxy's address and recordings show once its status is read; the header says where that stands.</p>
       )}
       <Row label="Session" id="session">
         {session === undefined ? <Absent>None in the traffic</Absent> : <Value text={session} />}
       </Row>
-      <Row label="tmux session for launching" id="tmux-session">
-        {launcher.state === "answered" ? (
-          <Value text={launchSession(launcher.value)} />
-        ) : launcher.state === "failed" ? (
-          <p className="text-error">{describe(launcher.error)}</p>
-        ) : (
-          <Absent>Asking…</Absent>
-        )}
-      </Row>
+      {/* A launch stores the session it used as the next launch's, so each one shown is read again. */}
+      <LaunchSession key={launched === null ? "" : `${launched.start_time} ${launched.session_id} ${launched.window_id}`} connection={connection} />
       <Row label="Version" id="version">
         <Value text={version} />
       </Row>
     </aside>
+  );
+}
+
+// The tmux session the next launch uses, read as it mounts.
+function LaunchSession({ connection }: { connection: Pick<Connection, "launcher"> }) {
+  const launcher = useAnswer(connection.launcher);
+  return (
+    <Row label="tmux session for launching" id="tmux-session">
+      {launcher.state === "answered" ? (
+        <Value text={launchSession(launcher.value)} />
+      ) : launcher.state === "failed" ? (
+        <p className="text-error">{describe(launcher.error)}</p>
+      ) : (
+        <Absent>Asking…</Absent>
+      )}
+    </Row>
   );
 }
 
@@ -106,8 +116,8 @@ function Value({ text }: { text: string }) {
 type Copying = { state: "idle" } | { state: "copied" } | { state: "failed"; error: Error };
 
 // Copies the text `text` gives to the clipboard with one click, saying that it did, or why it could not: the text not
-// made, or the browser refusing the clipboard, or having none (a page not opened at a secure origin). The clipboard is
-// given the text's promise, so text made after the click is still written in that click's name.
+// made, or the browser refusing the clipboard. The clipboard is given the text's promise, so text made after the click
+// is still written in that click's name.
 function Copy({ text, onCopied }: { text: () => Promise<string>; onCopied?: (copied: string) => void }) {
   const [copying, setCopying] = useState<Copying>({ state: "idle" });
   const copy = async () => {
