@@ -13,6 +13,9 @@ import { renderingOf } from "./rendering.ts";
 // What the step shown did to a row: brought it (`added`, against an empty slot on the left), left it as it was
 // (`same`), gave its item a new version (`changed`), or took it away (`removed`, against an empty slot on the right).
 export type Change = "added" | "same" | "changed" | "removed";
+// [LAW:one-source-of-truth] The theme's variable for what the step did to a row, which colors the band between its sides
+// and its mark on the minimap; none for a row it left as it was.
+export const changeColors: Record<Change, `--${string}` | undefined> = { added: "--success", changed: "--warning", removed: "--error", same: undefined };
 
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title
 // `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment and however

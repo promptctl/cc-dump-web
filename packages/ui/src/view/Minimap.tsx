@@ -89,6 +89,8 @@ export function Minimap({
         aria-hidden
         className="absolute inset-0 h-full w-full cursor-pointer touch-none"
         onPointerDown={(event) => {
+          // A press of the main button, as a click is; another is the browser's, a context menu's or a paste's.
+          if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           place(event);
         }}

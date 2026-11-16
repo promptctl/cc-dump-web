@@ -1,6 +1,6 @@
 import { categories, type Category } from "../format/blocks.ts";
 import { cssVariables, type Theme } from "../theme/theme.ts";
-import type { Change, Row } from "./rows.ts";
+import { changeColors, type Change, type Row } from "./rows.ts";
 
 // The minimap (docs/design/02-design.md, "Layout"): the conversation's rows drawn top to bottom at the minimap's height,
 // the vertical navigator. Its geometry, pure: what each row is drawn as and where, and the way back from a point on it to
@@ -58,7 +58,7 @@ export function viewBox(offset: number, viewport: number, scale: number): { y: n
 
 // [LAW:one-source-of-truth] The minimap's colors, the theme's variables the rows are painted in: each category its
 // gutter's, a failed tool's result the error, the exchange's line and a fold muted, as the rows' text is; what the step
-// did in the colors of the bands between the rows' sides; the view's box in the foreground. Read from the theme, not
+// did as the bands between the rows' sides are (changeColors); the view's box in the foreground. Read from the theme, not
 // the document, as the terminal's canvas reads it.
 export function colorsOf(theme: Theme): { paint: Record<Paint, string>; change: Record<Change, string>; view: string } {
   const vars = cssVariables(theme);
@@ -75,7 +75,7 @@ export function colorsOf(theme: Theme): { paint: Record<Paint, string>; change: 
       fold: variable("--foreground-disabled"),
       none: "transparent",
     },
-    change: { added: variable("--success"), changed: variable("--warning"), removed: variable("--error"), same: "transparent" },
+    change: Object.fromEntries(Object.entries(changeColors).map(([change, name]) => [change, name === undefined ? "transparent" : variable(name)])) as Record<Change, string>,
     view: variable("--foreground"),
   };
 }
