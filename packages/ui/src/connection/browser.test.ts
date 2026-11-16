@@ -7,7 +7,7 @@ import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { processLog } from "@cc-dump/log/lines";
-import { arrivals, send, serving } from "@cc-dump/log/testing";
+import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testing";
 import { PassThrough } from "node:stream";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -297,7 +297,6 @@ function logging(connection: ReturnType<typeof createBrowserConnection>, part: P
 }
 
 describe("a part's log", () => {
-  const event = (name: string) => ({ event: name, trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1, outcome: "ok" as const });
 
   it("reads the app server's lines kept, then each as it is written", async () => {
     const { log, logs } = processLog("server", new PassThrough());
@@ -331,19 +330,6 @@ describe("a part's log", () => {
     });
     const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
     expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "unread: log line: service is not a string" }, { line: "next" }]);
-  });
-
-  it("ends a log whose message, given no id, takes the last line's position, reporting it as failed", async () => {
-    const reader = await serving((_req, res) => {
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`id: ab:0\ndata: ${JSON.stringify({ service: "proxy", ...event("first") })}\n\ndata: ${JSON.stringify({ service: "proxy", ...event("again") })}\n\n`);
-    });
-    const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
-    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual([
-      "opened",
-      { line: "first" },
-      { failed: expect.objectContaining({ message: `GET ${reader.url}/logs`, cause: expect.objectContaining({ message: "log line: ab:0 is not after ab:0" }) }) },
-    ]);
   });
 
   it("ends a log whose message has no line's position, reporting it as failed", async () => {

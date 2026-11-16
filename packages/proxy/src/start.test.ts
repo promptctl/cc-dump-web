@@ -48,8 +48,9 @@ describe("the reader port", () => {
         if ("event" in line && line.event.event === "request") return line.event;
       }
     })();
-    void fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" }).then((res) => res.text());
-    expect(await failed).toMatchObject({ service: "proxy", event: "request", outcome: "error", error: expect.stringContaining("ECONNREFUSED"), facts: { method: "POST", url: "/v1/messages" } });
+    const answered = fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" });
+    expect(await failed).toMatchObject({ service: "proxy", event: "request", outcome: "error", error: expect.stringContaining("ECONNREFUSED"), facts: { method: "POST", url: "/v1/messages", status: 502 } });
+    expect((await answered).status).toBe(502);
   });
 
   it("makes a recording for an agent about to launch, answering its name, and lists none until it holds something", async () => {

@@ -29,9 +29,20 @@ describe("logsChanged", () => {
     expect(after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 4, 2) }).notKept).toBe(3);
   });
 
-  it("reads a restarted process's lines from its first, marking it as the first after a restart", () => {
+  it("reads a restarted process's lines from its first", () => {
     const logs = after({ part: "server", line: line("old", 0, 1) }, { part: "server", line: line("old", 1, 2) }, { part: "server", line: line("new", 0, 3) });
-    expect([names(logs), logs.lines.map(({ restarted }) => restarted), logs.notKept]).toEqual([["old0", "old1", "new0"], [false, false, true], 0]);
+    expect([names(logs), logs.notKept]).toEqual([["old0", "old1", "new0"], 0]);
+  });
+
+  it("lists a line already read once, as a connection made anew is sent the kept lines again", () => {
+    const logs = after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 2) }, { part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 2) }, { part: "proxy", line: line("p", 2, 3) });
+    expect([names(logs), logs.notKept]).toEqual([["p0", "p1", "p2"], 0]);
+  });
+
+  it("lists a part's lines in the order its process wrote them, whatever their times say", () => {
+    // p1's work ended a fraction of a millisecond after p0's, but its start was written to the millisecond.
+    const logs = after({ part: "proxy", line: line("p", 0, 1, 2) }, { part: "proxy", line: line("p", 1, 1, 1) }, { part: "server", line: line("s", 0, 1, 0) });
+    expect(names(logs)).toEqual(["s0", "p0", "p1"]);
   });
 
   it("lists a line it could not read where it arrived, in its place in its process's numbers", () => {
