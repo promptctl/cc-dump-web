@@ -122,8 +122,10 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
   return (rows, pattern) => {
     const counts = counted.get(pattern) ?? new WeakMap<KeyedBlock, number>();
     counted.set(pattern, counts);
+    // The pattern that matches nothing finds nothing in any text, so it reads none: reading a text part renders it, and
+    // with no query that would render every text of the recording as it opens and every event of a streamed reply.
     const countOf = (block: KeyedBlock) => {
-      const count = counts.get(block) ?? shownTexts(block).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
+      const count = counts.get(block) ?? (pattern === nothing ? 0 : shownTexts(block).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0));
       counts.set(block, count);
       return count;
     };

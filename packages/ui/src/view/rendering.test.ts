@@ -120,6 +120,11 @@ describe("render", () => {
     expect(blocksOf("![**b**](https://x/y.png)\n")).toMatchObject([{ kind: "paragraph", children: [{ kind: "link", url: "https://x/y.png", children: [{ kind: "strong" }] }] }]);
   });
 
+  it("draws an image inside a link, a badge, by its description, opening the link around it", () => {
+    expect(blocksOf("[![b](https://x/img.png)](https://y)\n")).toMatchObject([{ kind: "paragraph", children: [{ kind: "link", url: "https://y", children: [{ kind: "text", leaf: { text: "b" } }] }] }]);
+    expect(blocksOf("[*![b](https://x/img.png)*](https://y)\n")).toMatchObject([{ kind: "paragraph", children: [{ kind: "link", children: [{ kind: "emphasis", children: [{ kind: "text" }] }] }] }]);
+  });
+
   it("links only to a web page: a link or an image by any other scheme shows as its text", () => {
     const rendering = render("[docs](ms-msdt:x) [file](file:///etc/passwd) [js](javascript:alert(1)) [here](#top) ![pic](img.png) [web](https://example.com)\n", "markdown");
     expect(rendering.text).toBe("docs file js here pic web");

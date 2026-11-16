@@ -6,12 +6,9 @@
 // `lines`: how many lines it spans, its opening and closing lines among them.
 // [LAW:types-are-the-program] `line`, the index of its opening line in the text, names a region: a text only grows at
 // its end, so it is the same line however much arrives after it, and whatever region comes to enclose it.
-// [LAW:one-source-of-truth] `start` and `end`: the characters of the text a segment holds, collapsed or not, placed
-// once here for the search and the view to read.
-type Placed = { start: number; end: number };
 export type Segment =
-  | ({ kind: "text"; text: string } & Placed)
-  | ({ kind: "region"; line: number; label: string; lines: number; open: string; body: Segment[]; close: string } & Placed);
+  | { kind: "text"; text: string }
+  | { kind: "region"; line: number; label: string; lines: number; open: string; body: Segment[]; close: string };
 
 // A region longer than this many lines collapses; a shorter one stays in its text.
 export const LONG = 12;
@@ -34,8 +31,7 @@ export function segments(text: string): Segment[] {
 // section is a line holding only an opening tag and a later line holding only its closing tag, as Claude Code writes
 // a system reminder; a closing line closes the last section of its name still open, so a section quoting another of
 // its name closes at its own. A tag mentioned within a line, or inside a code block, opens and closes nothing.
-// `starts`: where each line starts in the text, and, last, where the text ends.
-type Scanned = { lines: string[]; starts: number[]; fences: Map<number, Fence>; sections: Map<number, Section> };
+type Scanned = { lines: string[]; fences: Map<number, Fence>; sections: Map<number, Section> };
 // A fenced code block: its label, and its closing line, undefined when the text ends before one.
 type Fence = { label: string; close: number | undefined };
 // An XML-tagged section: its tag's name, and its closing line.
@@ -67,9 +63,7 @@ function scan(lines: string[]): Scanned {
     }
     at++;
   }
-  const starts = [0];
-  for (const line of lines) starts.push(starts.at(-1)! + line.length);
-  return { lines, starts, fences, sections };
+  return { lines, fences, sections };
 }
 
 function segment(scanned: Scanned, from: number, to: number): Segment[] {
@@ -93,14 +87,14 @@ function segment(scanned: Scanned, from: number, to: number): Segment[] {
 }
 
 // The lines from `from` up to `to` as a run of text.
-function text({ lines, starts }: Scanned, from: number, to: number): Segment {
-  return { kind: "text", text: lines.slice(from, to).join(""), start: starts[from]!, end: starts[to]! };
+function text({ lines }: Scanned, from: number, to: number): Segment {
+  return { kind: "text", text: lines.slice(from, to).join("") };
 }
 
 // The region opening at line `at`, ending before `to`, and its segment; a line that opens none is a region of its own
 // line, which no threshold makes long.
 function regionAt(scanned: Scanned, at: number, to: number): { end: number; segment: () => Segment } {
-  const { lines, starts, fences, sections } = scanned;
+  const { lines, fences, sections } = scanned;
   const line = lines[at]!;
   const single = { end: at + 1, segment: () => text(scanned, at, at + 1) };
   const code = fences.get(at);
@@ -118,8 +112,6 @@ function regionAt(scanned: Scanned, at: number, to: number): { end: number; segm
         open: line,
         body: bodyEnd > at + 1 ? [text(scanned, at + 1, bodyEnd)] : [],
         close: code.close === undefined ? "" : lines[code.close]!,
-        start: starts[at]!,
-        end: starts[end]!,
       }),
     };
   }
@@ -137,8 +129,6 @@ function regionAt(scanned: Scanned, at: number, to: number): { end: number; segm
       open: line,
       body: segment(scanned, at + 1, close),
       close: lines[close]!,
-      start: starts[at]!,
-      end: starts[close + 1]!,
     }),
   };
 }

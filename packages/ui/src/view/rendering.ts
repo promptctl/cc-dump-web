@@ -356,6 +356,12 @@ function inline(token: Token, reader: Reader, writer: Writer): Inline[] {
 
 // A link to `url` around `children`, or, when `url` is not a web page's, the children alone. [LAW:single-enforcer] What
 // a web page's URL is, is view/terminalLink.ts's to say: one the terminal opens in a tab.
+// A link holds no link, as HTML's cannot: an image inside one, a badge, shows by its description, and opens the link
+// around it.
 function linked(url: string, children: Inline[]): Inline[] {
-  return linkOpening(url) === "tab" ? [{ kind: "link", url, children }] : children;
+  return linkOpening(url) === "tab" ? [{ kind: "link", url, children: unlinked(children) }] : children;
+}
+
+function unlinked(inlines: Inline[]): Inline[] {
+  return inlines.flatMap((inline) => (inline.kind === "link" ? unlinked(inline.children) : "children" in inline ? [{ ...inline, children: unlinked(inline.children) }] : [inline]));
 }
