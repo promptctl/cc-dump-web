@@ -180,10 +180,10 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)], preview: pickedPart(rest, varied) };
+      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
       // Its line previews where they are.
       const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: places }];
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
         blocks: [
           ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
@@ -345,7 +345,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const fields = readObject(message, "message");
       const content = messageContent(fields.array("content"), "assistant", { in: "reply" });
       const stopReason = fields.value("stop_reason");
-      const stopSequence = fields.value("stop_sequence");
+      const stop = { stop_reason: stopReason, stop_sequence: fields.value("stop_sequence") };
       const usage = fields.value("usage");
       const uncached = tokens(usage, "input_tokens");
       const cacheRead = tokens(usage, "cache_read_input_tokens");
@@ -358,13 +358,13 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
             {
               category: "metadata",
               name: `stop reason: ${show(stopReason)}`,
-              parts: [{ kind: "fields", fields: [["stop_reason", fieldValue(stopReason)], ["stop_sequence", fieldValue(stopSequence)]] }],
-              preview: { kind: "fields", fields: [["stop_sequence", fieldValue(stopSequence)]] },
+              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"])],
+              preview: [pickedPart(stop, ["stop_sequence"])],
             },
           ]),
-          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)], preview: pickedPart(usage, counted) }]),
+          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: pickedPart(message, ["id"]) })),
+          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: [pickedPart(message, ["id"])] })),
         ],
         message: {
           input: uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0),

@@ -42,15 +42,16 @@ const hook: Marker = { pattern: new RegExp(`^${hookLine}`, "gm"), fenced: false,
 
 // A file's contents inside a reminder: Claude Code introduces each with a line `Contents of <path> (<description>):`
 // and the file's text runs to the next file's line or the end. Only a CLAUDE.md is a piece of its own; another file's
-// section is a reminder, which still ends the CLAUDE.md before it, so its text is not shown as that file's. A file's
-// text may hold fences of its own, closed or not, and so never decides where the next file begins.
+// section is a reminder, which still ends the CLAUDE.md before it, so its text is not shown as that file's, and whose
+// line, naming the file, is what it holds, since a reminder's name does not. A file's text may hold fences of its own,
+// closed or not, and so never decides where the next file begins.
 const file: Marker = {
   pattern: /^Contents of (.+) \([^()\n]*\):$/gm,
   fenced: true,
   piece:
     ([, path]) =>
     (text, mark) =>
-      /(^|\/)CLAUDE\.md$/.test(path!) ? { kind: "claude_md", path: path!, text, content: text.slice(mark) } : reminder(text, mark),
+      /(^|\/)CLAUDE\.md$/.test(path!) ? { kind: "claude_md", path: path!, text, content: text.slice(mark) } : reminder(text, 0),
 };
 
 // A section a system-role message holds, which the harness titles with a level-1 heading and which runs to the next
@@ -71,9 +72,8 @@ const heading: Marker = {
 // A tag whose content opens with a hook's line is that hook's output, whole: the tag's edges are known from the wire, so
 // a hook's line later in the content starts nothing. Without one, a user-prompt-submit-hook tag is that hook's, and a
 // system reminder is a reminder, in which only a file opens a piece.
-const wrapped = /\s*^<(system-reminder|user-prompt-submit-hook)>[\s\S]*?^<\/\1>\s*/gm;
-// A tag's text as its opening, what it wraps, and its closing, each tag's line with the whitespace around it.
-const edges = /^(\s*<[^>]+>)([\s\S]*?)(<\/[^>]+>\s*)$/;
+// Its match is the tag's opening, its name, what it wraps, and its closing, each tag's line with the whitespace around it.
+const wrapped = /(\s*^<(system-reminder|user-prompt-submit-hook)>)([\s\S]*?)(^<\/\2>\s*)/gm;
 const opensWithHook = new RegExp(`^\\s*${hookLine}`);
 
 // What differs by whose text it is: the piece for text before any opening, and the markers that open a piece in its top
@@ -92,7 +92,7 @@ export function split(text: string, own: OwnText): Piece[] {
   let end = 0;
   for (const match of text.matchAll(wrapped)) {
     pieces.push(...within(text.slice(end, match.index), rest, topLevel));
-    pieces.push(...tagged(match[0], match[1]!));
+    pieces.push(...tagged(match));
     end = match.index + match[0].length;
   }
   pieces.push(...within(text.slice(end), rest, topLevel));
@@ -101,8 +101,7 @@ export function split(text: string, own: OwnText): Piece[] {
 
 // The pieces of one tag and the whitespace around it: the pieces of what it wraps, which is never empty, since a tag's
 // lines are its own, with the tag's opening the first's text and its closing the last's, never their content.
-function tagged(text: string, tag: string): Piece[] {
-  const [, opening, inner, closing] = edges.exec(text)!;
+function tagged([, opening, tag, inner, closing]: RegExpExecArray): Piece[] {
   const hooked = opensWithHook.exec(inner!);
   const pieces =
     hooked !== null

@@ -12,9 +12,9 @@ export type Category = (typeof categories)[number];
 
 // [LAW:types-are-the-program] `injected`: the harness's own content in a message the user or the assistant sent, a system
 // reminder, hook output or a CLAUDE.md, which the view never mistakes for what they said, whatever its category.
-// `preview`: what the block's collapsed line previews (docs/design/02-design.md, "Print what varies"), for a block whose
-// first part with content is not what tells it from its kind's others; none previews that part (view/rows.ts, preview).
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part };
+// `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
+// varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[] };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -175,9 +175,10 @@ export function formatContent(block: unknown, role: Role): Block[] {
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
     const form = pieceForm[piece.kind];
-    const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
+    const rest = index === textPieces.length - 1 ? fields : [];
+    const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: { kind: "text", form, text: piece.content } };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest] };
   });
 }
 

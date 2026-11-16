@@ -222,7 +222,7 @@ describe("format", () => {
       name: "cache breakpoints: 3",
       parts: [{ kind: "fields", fields: [["tools.Bash.0", shown], ["system.0", shown], ["message.0/content.1", shown]] }],
       // Its line previews where they are.
-      preview: { kind: "text", form: "verbatim", text: "tools.Bash.0  system.0  message.0/content.1" },
+      preview: [{ kind: "text", form: "verbatim", text: "tools.Bash.0  system.0  message.0/content.1" }],
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
     expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([

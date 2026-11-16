@@ -272,7 +272,8 @@ export const describeSize = (size: number): string => `${compact(size)} chars`;
 // What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of what its
 // `preview` reads as, or, for a block with none, of its first part with anything to read, on one line, as much as a line
 // could hold, and an ellipsis where it was cut. A block of media alone shows nothing. Read once per block, which the
-// formatter keeps the same object while its side of the exchange is unchanged.
+// formatter keeps the same object while its side of the exchange is unchanged: a text is read as rendered whole, its
+// rendering the one the body and the search read (view/rendering.ts).
 const previews = new WeakMap<Block, string>();
 export function preview(block: Block): string {
   const line = previews.get(block) ?? previewLine(block);
@@ -280,10 +281,10 @@ export function preview(block: Block): string {
   return line;
 }
 function previewLine(block: Block): string {
-  const text = (block.preview === undefined ? block.parts : [block.preview]).values().map(partText).find((text) => /\S/.test(text)) ?? "";
-  // A long text is read only a few lines' worth ahead, enough to fill the line once its whitespace, JSON's indentation
-  // included, is collapsed; each cut is at a whole character, not between a surrogate pair's halves, and the ellipsis
-  // says something visible was cut.
+  const text = (block.preview ?? block.parts).values().map(partText).find((text) => /\S/.test(text)) ?? "";
+  // What it reads is collapsed only a few lines' worth ahead, enough to fill the line once its whitespace is collapsed;
+  // each cut is at a whole character, not between a surrogate pair's halves, and the ellipsis says something visible was
+  // cut.
   const scanned = wholeCut(text, previewLength * 4);
   const collapsed = scanned.replace(/\s+/g, " ").trim();
   const line = wholeCut(collapsed, previewLength);
@@ -293,17 +294,15 @@ const previewLength = 200;
 
 // A part's text, as its line reads it. A text reads as its rendering shows it (view/rendering.ts), so a Markdown text's
 // syntax is not read, each passage apart from the next. A JSON string, as a tool's input is while it streams, is its own
-// text; any other value reads as a field would show it (format/parts.ts, fieldValue).
+// text; any other value reads as a field would show it (format/parts.ts).
 function partText(part: Part): string {
   switch (part.kind) {
     case "text": {
       const { text, passages } = renderingOf(part);
       return passages.map(({ start, end }) => text.slice(start, end)).join(" ");
     }
-    case "json": {
-      const shown = typeof part.value === "string" ? part.value : fieldValue(part.value);
-      return typeof shown === "string" ? shown : leafText(shown);
-    }
+    case "json":
+      return typeof part.value === "string" ? part.value : leafText(fieldValue(part.value));
     case "fields":
       return leafText(part.fields);
     case "media":
@@ -313,10 +312,10 @@ function partText(part: Part): string {
   }
 }
 
-// Fields as one run of their leaves: each by its path, the names holding it joined by dots, and its value. A null holds
-// nothing to read, so it is left out.
-function leafText(fields: Field[], path = ""): string {
-  return fields.map(([name, value]) => (typeof value !== "string" ? leafText(value, `${path}${name}.`) : value === "null" ? "" : `${path}${name} ${value}`)).join("  ");
+// A value as one run of its leaves: each by its path, the names holding it joined by dots, and its value. A null holds
+// nothing to read, so it is left out, whether a field holds it or it is the whole value.
+function leafText(value: Field[1], path: string[] = []): string {
+  return typeof value !== "string" ? value.map(([name, member]) => leafText(member, [...path, name])).join("  ") : value === "null" ? "" : `${path.join(".")} ${value}`;
 }
 
 // The first `length` code units of `text`, one fewer where the last would be the first half of a surrogate pair.

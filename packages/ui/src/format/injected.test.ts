@@ -37,6 +37,8 @@ describe("split", () => {
     ]);
     expect(contents(reminder("PostToolUse:Read hook additional context: Mind the size."), "said")).toEqual([["hook", " Mind the size.\n"]]);
     expect(contents("<user-prompt-submit-hook>\nLoad it.\n</user-prompt-submit-hook>", "said")).toEqual([["hook", "\nLoad it.\n"]]);
+    // A file that is not a CLAUDE.md is a reminder, whose name does not say the file, so its line is what it holds.
+    expect(contents(reminder(memory), "said")).toEqual([["reminder", "\n"], ["reminder", `${memory}\n`]]);
   });
 
   it("gives a reminder holding two CLAUDE.md files as the reminder, then each file by its path", () => {
@@ -95,6 +97,12 @@ describe("split", () => {
       expect(split(`${inside}\n\nSay hello.`).map(({ kind }) => kind)).toEqual(["reminder", "claude_md", split === typed ? "said" : "reminder"]);
       expect(split(inside)[1]).toEqual({ kind: "claude_md", path: "/work/app/CLAUDE.md", text: `${mentions}\n</system-reminder>` });
     }
+    // Nor does it end what the reminder holds, a mention or a stray `</`.
+    expect(split(inside, "said").map(({ content }) => content)).toEqual([`\n${preamble}\n\n`, `${mentions.slice(mentions.indexOf(":\n") + 1)}\n`]);
+    expect(split(reminder(`Note: a </ b\n${project}`), "said").map(({ kind, content }) => [kind, content])).toEqual([
+      ["reminder", "\nNote: a </ b\n"],
+      ["claude_md", "\n\n## Build\nRun make.\n"],
+    ]);
     // A tag that does not start its line opens nothing.
     expect(typed("Wrote <system-reminder>\nx\n</system-reminder> here.")).toEqual([{ kind: "said", text: "Wrote <system-reminder>\nx\n</system-reminder> here." }]);
   });

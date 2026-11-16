@@ -6,7 +6,7 @@
       "args": [
         "dlx",
         "-y",
-        "chrome-devtools-mcp@latest",
+        "chrome-devtools-mcp@1.13.0",
         "--no-usage-statistics"
       ],
       "env": {}
