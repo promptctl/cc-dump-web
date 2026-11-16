@@ -138,7 +138,7 @@ describe("routes", () => {
     for (const origin of ["https://example.com", "http://127.0.0.1.example.com:3346", "null"]) {
       const res = await fetch(`${url}/launch`, { method: "POST", headers: { origin, "content-type": "text/plain" }, body: JSON.stringify({ session: "work", command: "claude" }) });
       expect(res.status).toBe(403);
-      expect(parseFailure(await res.text())).toEqual({ error: `A page at ${origin} cannot launch agents` });
+      expect(parseFailure(await res.text())).toEqual({ error: `A page at ${origin} is not one this machine serves` });
       expect(await next()).toMatchObject({ event: "request", status: 403, outcome: "error" });
     }
     expect(opened).toEqual([]);

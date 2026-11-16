@@ -10,7 +10,7 @@ const line = (run: string, seq: number, at: number, ms = 0): LogLine => ({
 });
 
 const after = (...changes: LogsChange[]): Logs => changes.reduce(logsChanged, noLogs);
-const names = (logs: Logs) => logs.lines.map(({ line }) => line.event.event);
+const names = (logs: Logs) => logs.lines.map(({ line }) => ("event" in line ? line.event.event : "unread"));
 
 describe("logsChanged", () => {
   it("lists both parts' lines in the order their work ended, and says each part's log is reached", () => {
@@ -29,9 +29,15 @@ describe("logsChanged", () => {
     expect(after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 4, 2) }).notKept).toBe(3);
   });
 
-  it("reads a restarted process's lines from its first, counting none not kept", () => {
+  it("reads a restarted process's lines from its first, marking it as the first after a restart", () => {
     const logs = after({ part: "server", line: line("old", 0, 1) }, { part: "server", line: line("old", 1, 2) }, { part: "server", line: line("new", 0, 3) });
-    expect([names(logs), logs.notKept]).toEqual([["old0", "old1", "new0"], 0]);
+    expect([names(logs), logs.lines.map(({ restarted }) => restarted), logs.notKept]).toEqual([["old0", "old1", "new0"], [false, false, true], 0]);
+  });
+
+  it("lists a line it could not read where it arrived, in its place in its process's numbers", () => {
+    const unread = { run: "p", seq: 1, unread: "{", error: "log line: is not JSON" };
+    const logs = after({ part: "proxy", line: line("p", 0, 5) }, { part: "proxy", line: unread }, { part: "proxy", line: line("p", 2, 6) });
+    expect([logs.lines.map(({ line }) => line.seq), logs.notKept, logs.connections.proxy]).toEqual([[0, 1, 2], 0, { state: "connected" }]);
   });
 
   it("holds the last 2000 lines, counting the ones it let go", () => {
@@ -41,7 +47,7 @@ describe("logsChanged", () => {
   });
 
   it("says a part's log is lost while it is tried again, and why one failed", () => {
-    const error = new Error("log line: event: is not an object");
+    const error = new Error("GET http://127.0.0.1:3346/logs: not served");
     expect(after({ part: "proxy", connection: { state: "dropped" } }).connections.proxy).toEqual({ state: "dropped" });
     expect(after({ part: "server", connection: { state: "failed", error } }).connections).toEqual({ proxy: { state: "connecting" }, server: { state: "failed", error } });
   });

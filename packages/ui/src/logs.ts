@@ -3,11 +3,13 @@ import { useEffect, useReducer } from "react";
 import { parts, type Connection, type Part } from "./connection/connection.ts";
 
 // [LAW:types-are-the-program] Where the UI's connection to a part's log stands: being made, made, lost or not made and
-// being tried again, or with a line it could not read.
+// being tried again, or ended, not served or sending what is no log's.
 export type LogConnection = { state: "connecting" } | { state: "connected" } | { state: "dropped" } | { state: "failed"; error: Error };
 
-// A line as the panel lists it: its part, the line, and when its work ended, which orders it among the other part's.
-export type Listed = { part: Part; line: LogLine; ended: number };
+// A line as the panel lists it: its part, the line, when its work ended, which orders it among the other part's, and
+// whether it is the first read of its part's process after another's, whose lines written once the panel's connection
+// to it was cut (its shutdown's, which come after) are on its stdout alone.
+export type Listed = { part: Part; line: LogLine; ended: number; restarted: boolean };
 
 // The logs panel's state (docs/design/01-mvp.md, F9). `lines`: both parts' lines, in the order their work ended, the
 // last `kept` of them. `notKept`: how many lines either part wrote that are not among them, read off the gaps in the
@@ -33,7 +35,9 @@ export function logsChanged(logs: Logs, change: LogsChange): Logs {
   const before = logs.last[part];
   // The line after the last one read of the same process, or a process's first, which is line 0.
   const expected = before?.run === line.run ? before.seq + 1 : 0;
-  const listed: Listed = { part, line, ended: Date.parse(line.event.started_at) + line.event.duration_ms };
+  // A line not read has no time of its own, so it is listed where it arrived, last.
+  const ended = "event" in line ? Date.parse(line.event.started_at) + line.event.duration_ms : (logs.lines.at(-1)?.ended ?? -Infinity);
+  const listed: Listed = { part, line, ended, restarted: before !== undefined && before.run !== line.run };
   // A process writes its lines in the order their work ends, so a line goes near the end.
   let at = logs.lines.length;
   while (at > 0 && logs.lines[at - 1]!.ended > listed.ended) at--;

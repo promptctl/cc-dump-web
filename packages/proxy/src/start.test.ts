@@ -43,8 +43,9 @@ describe("the reader port", () => {
     // The lines of the proxy's start come first; the request's comes once it has failed.
     const failed = (async () => {
       for (;;) {
-        const { event } = parseLogLine((await next()).data);
-        if (event.event === "request") return event;
+        const { data, id } = await next();
+        const line = parseLogLine(data, id!);
+        if ("event" in line && line.event.event === "request") return line.event;
       }
     })();
     void fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" }).then((res) => res.text());

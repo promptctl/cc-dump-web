@@ -72,22 +72,26 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
     return { session, ...window, recording };
   };
 
-  const routes: Record<string, Partial<Record<string, Answer>>> = { "/launch": { GET: launcher, POST: launch } };
+  const routes: Record<string, Handler> = { "/launch": answering({ GET: launcher, POST: launch }), "/logs": logs };
 
   return (req, res, work) => {
     // [LAW:single-enforcer] Every answer, any route's: the browser's origin is the UI's, and security is a non-goal
     // (docs/design/01-mvp.md).
     res.setHeader("access-control-allow-origin", "*");
-    if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} cannot launch agents`));
-    const pathname = new URL(req.url!, "http://server").pathname;
-    // The log is a stream, not an answer.
-    if (pathname === "/logs") return logs(req, res, work);
-    const route = routes[pathname];
+    if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} is not one this machine serves`));
+    const route = routes[new URL(req.url!, "http://server").pathname];
     if (route === undefined) return void res.writeHead(404).end();
-    const allow = Object.keys(route).join(", ");
-    // The browser's preflight of a JSON POST from the UI's origin.
+    route(req, res, work);
+  };
+}
+
+// A route answered in JSON, an answer per method: the browser's preflight of a JSON POST from the UI's origin is
+// answered, and any other method refused.
+function answering(answers: Partial<Record<string, Answer>>): Handler {
+  const allow = Object.keys(answers).join(", ");
+  return (req, res, work) => {
     if (req.method === "OPTIONS") return void res.writeHead(204, { "access-control-allow-methods": allow, "access-control-allow-headers": "content-type" }).end();
-    const answer = route[req.method!];
+    const answer = answers[req.method!];
     if (answer === undefined) return void res.writeHead(405, { allow }).end();
     answer(req, work).then(
       (body) => json(res, 200, body),
