@@ -406,8 +406,9 @@ describe("format", () => {
       [{ kind: "text", form: "markdown", text: `${notes}\n</system-reminder>` }],
     ]);
     expect(user!.blocks[2]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Say hello." }]);
-    // Whatever the role, and the category stays the role's.
+    // Whatever the role, and the category stays the role's. A hook's output is what a program printed, so it reads verbatim.
     expect(shown(system!)).toEqual([["content.0", "SessionStart hook", "system", true]]);
+    expect(system!.blocks[0]!.parts).toEqual([{ kind: "text", form: "verbatim", text: "SessionStart hook additional context: Be explanatory." }]);
     expect(shown(again!)).toEqual([["content.0", "user", "user", undefined]]);
   });
 

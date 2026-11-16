@@ -19,8 +19,9 @@ export const LONG = 12;
 // A line opening a fenced code block (CommonMark: three or more backticks or tildes, indented at most three spaces; a
 // backtick fence's info string holds no backtick, so a line like ```js``` is code inline, not a fence).
 const fence = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
-// A line that starts with a tag, opening or closing (`/`). An opening tag closed on the same line opens no section.
-const lineTag = /^\s*<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>/;
+// [LAW:one-source-of-truth] A line holding only a tag, opening or closing (`/`), its whitespace aside, as Claude Code
+// writes a prompt's sections: the one definition of a section's edge, in a verbatim text and in Markdown alike.
+export const tagLine = /^<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>$/;
 
 export function segments(text: string): Segment[] {
   // Each line keeps its line end, so the segments join back into the text.
@@ -29,7 +30,7 @@ export function segments(text: string): Segment[] {
 }
 
 // A text's lines, read once in order: each fenced code block and each XML-tagged section, by its opening line. A
-// section is a line starting with an opening tag and a later line starting with its closing tag, as Claude Code writes
+// section is a line holding only an opening tag and a later line holding only its closing tag, as Claude Code writes
 // a system reminder; a closing line closes the last section of its name still open, so a section quoting another of
 // its name closes at its own. A tag mentioned within a line, or inside a code block, opens and closes nothing.
 // `starts`: where each line starts in the text, and, last, where the text ends.
@@ -55,11 +56,11 @@ function scan(lines: string[]): Scanned {
       at = close === undefined ? lines.length : close + 1;
       continue;
     }
-    const [, closing, name] = lineTag.exec(line) ?? [];
+    const [, closing, name] = tagLine.exec(line.trim()) ?? [];
     if (name !== undefined) {
       const stack = open.get(name) ?? [];
       open.set(name, stack);
-      if (closing === undefined && !line.includes(`</${name}>`)) stack.push(at);
+      if (closing === undefined) stack.push(at);
       const opened = closing === undefined ? undefined : stack.pop();
       if (opened !== undefined) sections.set(opened, { name, close: at });
     }

@@ -26,7 +26,12 @@ export function paint(node: Text, from: number, to: number, ranges: Characters[]
   };
 }
 
-// The current match as painted: undefined while no text shown holds it. `paint` adds only Ranges.
+// The current match as painted, from where it starts: undefined while no text shown holds it. A match running across
+// leaves is painted a range in each, in whatever order they painted, so it starts where the first in the document does.
+// `paint` adds only Ranges.
 export function currentMatch(): Range | undefined {
-  return highlights.current.values().next().value as Range | undefined;
+  return ([...highlights.current] as Range[]).reduce<Range | undefined>(
+    (first, range) => (first === undefined || range.compareBoundaryPoints(Range.START_TO_START, first) < 0 ? range : first),
+    undefined,
+  );
 }

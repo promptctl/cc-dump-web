@@ -115,6 +115,11 @@ describe("render", () => {
     expect((table as Extract<Block, { kind: "table" }>).rows.map((row) => row.length)).toEqual([2, 2, 2]);
   });
 
+  it("shows an image as a link to it, by its description read as Markdown, or its URL when it has none", () => {
+    expect(render("![**b**](https://x/y.png) ![](https://x/z.png)\n", "markdown").text).toBe("b https://x/z.png");
+    expect(blocksOf("![**b**](https://x/y.png)\n")).toMatchObject([{ kind: "paragraph", children: [{ kind: "link", url: "https://x/y.png", children: [{ kind: "strong" }] }] }]);
+  });
+
   it("links only to a web page: a link or an image by any other scheme shows as its text", () => {
     const rendering = render("[docs](ms-msdt:x) [file](file:///etc/passwd) [js](javascript:alert(1)) [here](#top) ![pic](img.png) [web](https://example.com)\n", "markdown");
     expect(rendering.text).toBe("docs file js here pic web");
@@ -122,10 +127,11 @@ describe("render", () => {
     expect(paragraph).toMatchObject({ children: [{ kind: "text" }, { kind: "text" }, { kind: "link", url: "https://example.com" }] });
   });
 
-  it("shows a short code block in its text, and folds a long one where it stands, by the lines it shows", () => {
+  it("shows a short code block in its text, and folds a long one where it stands, by the lines it spans, fences and all, as a verbatim text does", () => {
     expect(blocksOf(corpus[7]!)).toMatchObject([{ kind: "code", leaf: { text: "const a = 1;" } }, { kind: "paragraph" }]);
     const rendering = render(corpus[8]!, "markdown");
-    expect(blocksOf(corpus[8]!)).toMatchObject([{ kind: "paragraph" }, { kind: "region", line: 1, label: "```py", lines: LONG, body: { kind: "code" } }, { kind: "paragraph" }]);
+    expect(blocksOf(corpus[8]!)).toMatchObject([{ kind: "paragraph" }, { kind: "region", line: 1, label: "```py", lines: LONG + 2, body: { kind: "code" } }, { kind: "paragraph" }]);
+    expect(render(corpus[8]!, "verbatim").runs.find((run) => run.kind === "region")).toMatchObject({ line: 1, lines: LONG + 2 });
     expect(regionsAround(rendering, rendering.text.indexOf("line 3"))).toEqual([1]);
     expect(regionsAround(rendering, rendering.text.indexOf("after"))).toEqual([]);
   });
@@ -148,6 +154,13 @@ describe("render", () => {
     expect(blocksOf("<a>\n<a>\nx\n</a>\ny\n</a>\n")).toMatchObject([{ kind: "section", body: [{ kind: "section" }, { kind: "paragraph" }] }]);
     expect(blocksOf("<open>\nnever closed\n")).toMatchObject([{ kind: "tag" }, { kind: "paragraph" }]);
     expect(blocksOf("```xml\n<a>\n```\n</a>\n")).toMatchObject([{ kind: "code", leaf: { text: "<a>" } }, { kind: "tag" }]);
+  });
+
+  it("opens a section only at a line holding its tag alone, in either form", () => {
+    const text = `<example>Some text\n${lines(LONG + 1)}</example>\n`;
+    expect(render(text, "verbatim").folds).toEqual([]);
+    expect(render(text, "markdown").folds).toEqual([]);
+    expect(render(`  <example>  \n${lines(LONG + 1)}</example>\n`, "verbatim").folds).toMatchObject([{ line: 0 }]);
   });
 
   it("names the regions around a place in a verbatim text, outermost first, a passage ending at each region's edges", () => {

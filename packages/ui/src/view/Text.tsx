@@ -1,9 +1,9 @@
-import { useContext, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import type { Part } from "../format/blocks.ts";
 import { Highlighted } from "./Highlighted.tsx";
 import { Hold, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
-import { renderingOf, type Block, type Fold, type Inline, type Leaf, type Run } from "./rendering.ts";
+import { render, type Block, type Fold, type Inline, type Leaf, type Run } from "./rendering.ts";
 import { partKey } from "./search.ts";
 import { useView, view } from "./state.ts";
 
@@ -12,8 +12,10 @@ import { useView, view } from "./state.ts";
 // A Markdown text's prose is set in the sans, its code and tags in the mono; a verbatim text is all mono, as it came.
 // Its long regions collapse and expand as a block does (docs/design/01-mvp.md, F4), and every leaf paints the search's
 // matches.
-export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
-  const rendering = renderingOf(part);
+// [LAW:one-source-of-truth] A rendering is a function of the text and its form, so it is kept by them: a streamed reply's
+// parts are made again with every event, its finished texts among them, which are rendered once.
+export function TextView({ part: { text, form }, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
+  const rendering = useMemo(() => render(text, form), [text, form]);
   return <div>{runViews(rendering.runs, useWhere(blockKey, at, rendering))}</div>;
 }
 

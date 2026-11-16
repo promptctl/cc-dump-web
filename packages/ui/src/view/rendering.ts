@@ -1,14 +1,15 @@
 import MarkdownIt, { type StateBlock, type StateCore, type Token } from "markdown-it";
 import type { Form, Part } from "../format/blocks.ts";
 import type { Range } from "./range.ts";
-import { LONG, segments, type Segment } from "./regions.ts";
+import { LONG, segments, tagLine, type Segment } from "./regions.ts";
+import { linkOpening } from "./terminalLink.ts";
 
 // What a text part shows (docs/design/02-design.md, "Two voices"), read as its form says: verbatim, its long regions
 // cut from its lines (view/regions.ts), or as Markdown, rendered as a reader reads it, in GitHub's flavor of CommonMark,
 // which the model writes in. Its long regions fold (docs/design/01-mvp.md, F4).
-// [LAW:one-source-of-truth] One rendering, made once per part, is both what the view draws and what the search reads:
-// `text`, the characters the rendering shows, in order, as the DOM's textContent holds them, and the leaves that draw
-// them, each placed at its offset in `text`. So a match the search counts is one the reader sees, the syntax a Markdown
+// [LAW:one-source-of-truth] One rendering, a function of the text and its form alone, is both what the view draws and
+// what the search reads: `text`, the characters the rendering shows, in order, as the DOM's textContent holds them, and
+// the leaves that draw them, each placed at its offset in `text`. So a match the search counts is one the reader sees, the syntax a Markdown
 // text is written in matches nothing, and a match is painted where it is with no mapping back to the source.
 
 // Characters drawn as one run of one text node, starting at `start` in the rendering's text.
@@ -42,7 +43,8 @@ export type Block =
 // A list item: its blocks, and, in a task list, whether its box is checked.
 export type Item = { checked: boolean | undefined; blocks: Block[] };
 
-// A long region: `line`, the text's line it opens on, which names it, its label, and how many lines it shows.
+// A long region: `line`, the text's line it opens on, which names it, its label, and how many of the text's lines it
+// spans, its opening and closing lines among them, as a verbatim text's region counts them (view/regions.ts).
 export type Fold = { line: number; label: string; lines: number };
 
 // A run of a text: a verbatim leaf, Markdown's blocks, or a verbatim text's long region, its opening and closing lines
@@ -56,8 +58,9 @@ export type Rendering = { text: string; passages: Range[]; folds: (Range & { lin
 
 type TextPart = Extract<Part, { kind: "text" }>;
 
-// [LAW:no-shared-mutable-globals] Each part's rendering, kept under the part, which the formatter returns as the same
-// object while its side of the exchange is unchanged; this function is the cache's one reader and writer.
+// [LAW:no-shared-mutable-globals] Each part's rendering as the search reads it, kept under the part, which the formatter
+// returns as the same object while its side of the exchange is unchanged; this function is the cache's one reader and
+// writer.
 const renderings = new WeakMap<TextPart, Rendering>();
 
 export function renderingOf(part: TextPart): Rendering {
@@ -135,19 +138,16 @@ function verbatim(list: Segment[], writer: Writer): Run[] {
   });
 }
 
-// A line holding only a tag, opening (no `/`) or closing, as Claude Code writes a prompt's sections.
-const tagLine = /^<(\/)?([A-Za-z][\w.:-]*)(?:\s[^>]*)?>\s*$/;
-
 // A tag line as a block of its own, at the start of a block in any container, as a fence is: never inside a code block,
 // and interrupting a paragraph, so what it wraps reads as the Markdown it is.
 function tag(state: StateBlock, line: number, _end: number, silent: boolean): boolean {
   if (state.sCount[line]! - state.blkIndent >= 4) return false;
-  const text = state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]);
+  const text = state.src.slice(state.bMarks[line]! + state.tShift[line]!, state.eMarks[line]).trimEnd();
   const found = tagLine.exec(text);
   if (found === null) return false;
   if (silent) return true;
   const token = state.push("tag", "", 0);
-  token.content = text.trimEnd();
+  token.content = text;
   token.map = [line, line + 1];
   token.meta = { name: found[2], closing: found[1] !== undefined };
   state.line = line + 1;
@@ -169,7 +169,8 @@ function tasks(state: StateCore): void {
 
 // GitHub's flavor, as markdown-it reads it: tables, strikethrough, a bare URL as a link, and inline HTML drawn as the
 // tags it is, never as HTML; a tag line a block of its own, not the start of an HTML block, which would hold the
-// headings and paragraphs it wraps raw up to the next blank line.
+// headings and paragraphs it wraps raw up to the next blank line. markdown-it is pinned (package.json), so the tokens its
+// rules give are the ones read below; one a new version adds throws there, in the tests, not in a reader's view.
 const parser = new MarkdownIt({ html: true, linkify: true }).disable("html_block");
 parser.block.ruler.before("html_block", "tag", tag, { alt: ["paragraph", "reference", "blockquote"] });
 parser.core.ruler.after("text_join", "tasks", tasks);
@@ -179,21 +180,12 @@ parser.validateLink = () => true;
 
 // [LAW:parse-dont-validate] Markdown parsed once into blocks the view draws, each holding its leaves.
 function markdown(text: string, writer: Writer): Block[] {
-  return blocks(new Reader(parser.parse(text, {})), writer, undefined);
+  return blocks(parser.parse(text, {}).values(), writer, undefined);
 }
 
 // A token stream markdown-it gives, read in order: a container is its opening token, what it holds, and its closing
 // token.
-class Reader {
-  private at = 0;
-  private readonly tokens: Token[];
-  constructor(tokens: Token[]) {
-    this.tokens = tokens;
-  }
-  next(): Token | undefined {
-    return this.tokens[this.at++];
-  }
-}
+type Reader = ArrayIterator<Token>;
 
 // A tag line as read, before the sections are found: its name, whether it closes, and its line in the text.
 type TagLine = { kind: "tagLine"; leaf: Leaf; name: string; closing: boolean; line: number };
@@ -201,7 +193,7 @@ type TagLine = { kind: "tagLine"; leaf: Leaf; name: string; closing: boolean; li
 // The blocks of a container, up to the token closing it, `close`, which is read too; the text's end closes the text.
 function blocks(reader: Reader, writer: Writer, close: string | undefined): Block[] {
   const read: (Block | TagLine)[] = [];
-  for (let token = reader.next(); token !== undefined && token.type !== close; token = reader.next()) {
+  for (let token = reader.next().value; token !== undefined && token.type !== close; token = reader.next().value) {
     read.push(block(token, reader, writer));
     // Each block ends a passage, so a query never runs from one into the next.
     writer.cut();
@@ -248,7 +240,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
       // A region of more than LONG lines folds, its fences among them, as one cut from a verbatim text does.
       const [first, last] = token.map!;
       const leaf = writer.leaf(token.content.replace(/\n$/, ""));
-      const fold = { line: first, label: `${token.markup}${token.info}`, lines: leaf.text.split("\n").length };
+      const fold = { line: first, label: `${token.markup}${token.info}`, lines: last - first };
       const code: Block = { kind: "code", leaf };
       return last - first > LONG ? region(code, fold, { start: leaf.start, end: leaf.start + leaf.text.length }, writer) : code;
     }
@@ -263,7 +255,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
       const ordered = token.type === "ordered_list_open";
       const close = ordered ? "ordered_list_close" : "bullet_list_close";
       const items: Item[] = [];
-      for (let item = reader.next()!; item.type !== close; item = reader.next()!) {
+      for (let item = reader.next().value!; item.type !== close; item = reader.next().value!) {
         items.push({ checked: (item.meta as { checked?: boolean } | null)?.checked, blocks: blocks(reader, writer, "list_item_close") });
       }
       return { kind: "list", ordered, start: ordered ? Number(token.attrGet("start") ?? 1) : undefined, items };
@@ -282,7 +274,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
 function table(reader: Reader, writer: Writer): Block {
   const align: Align[] = [];
   const rows: Inline[][][] = [];
-  for (let token = reader.next()!; token.type !== "table_close"; token = reader.next()!) {
+  for (let token = reader.next().value!; token.type !== "table_close"; token = reader.next().value!) {
     if (token.type === "tr_open") rows.push([]);
     if (token.type === "th_open" || token.type === "td_open") {
       if (rows.length === 1) align.push(alignOf(token.attrGet("style") as string | null));
@@ -301,16 +293,16 @@ function alignOf(style: string | null): Align {
 
 // A block's inline content: its one inline token, then the token closing the block.
 function inlineOf(reader: Reader, writer: Writer, close: string): Inline[] {
-  const children = reader.next()!.children ?? [];
-  const closing = reader.next()!;
+  const children = reader.next().value!.children ?? [];
+  const closing = reader.next().value!;
   if (closing.type !== close) throw new Error(`markdown-it closed a block with ${closing.type}, not ${close}`);
-  return inlines(new Reader(children), writer, undefined);
+  return inlines(children.values(), writer, undefined);
 }
 
 // The inline content up to the token closing its span, `close`, which is read too.
 function inlines(reader: Reader, writer: Writer, close: string | undefined): Inline[] {
   const made: Inline[] = [];
-  for (let token = reader.next(); token !== undefined && token.type !== close; token = reader.next()) made.push(...inline(token, reader, writer));
+  for (let token = reader.next().value; token !== undefined && token.type !== close; token = reader.next().value) made.push(...inline(token, reader, writer));
   return made;
 }
 
@@ -335,10 +327,11 @@ function inline(token: Token, reader: Reader, writer: Writer): Inline[] {
     }
     case "link_open":
       return linked(String(token.attrGet("href")), inlines(reader, writer, "link_close"));
-    // An image is never fetched: it shows as a link to it, by its description.
+    // An image is never fetched: it shows as a link to it, by its description, or its URL when it has none.
     case "image": {
       const src = String(token.attrGet("src"));
-      return linked(src, [{ kind: "text", leaf: writer.leaf(token.content || src) }]);
+      const description = inlines((token.children ?? []).values(), writer, undefined);
+      return linked(src, description.length === 0 ? [{ kind: "text", leaf: writer.leaf(src) }] : description);
     }
     case "hardbreak":
       writer.cut();
@@ -348,8 +341,8 @@ function inline(token: Token, reader: Reader, writer: Writer): Inline[] {
   }
 }
 
-// A link to `url` around `children`, or, when `url` is not a web page's, the children alone.
+// A link to `url` around `children`, or, when `url` is not a web page's, the children alone. [LAW:single-enforcer] What
+// a web page's URL is, is view/terminalLink.ts's to say: one the terminal opens in a tab.
 function linked(url: string, children: Inline[]): Inline[] {
-  const protocol = URL.parse(url)?.protocol;
-  return protocol === "http:" || protocol === "https:" ? [{ kind: "link", url, children }] : children;
+  return linkOpening(url) === "tab" ? [{ kind: "link", url, children }] : children;
 }

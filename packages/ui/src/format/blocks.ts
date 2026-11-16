@@ -229,7 +229,7 @@ export function formatContent(block: unknown, role: Role): Block[] {
   const [, ...fields] = formatted.parts;
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
-    const parts: Part[] = [{ kind: "text", form: "markdown", text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
+    const parts: Part[] = [{ kind: "text", form: pieceForm[piece.kind], text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
     return pieceBlock(piece, formatted.category, formatted.name, parts);
   });
 }
@@ -237,6 +237,10 @@ export function formatContent(block: unknown, role: Role): Block[] {
 function isText(block: unknown): block is { type: "text"; text: string } {
   return typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string";
 }
+
+// How a piece's text reads (docs/design/02-design.md, "Two voices"): a hook's output is what a program printed,
+// verbatim; every other piece is prose a sender or the harness wrote, Markdown.
+const pieceForm: Record<Piece["kind"], Form> = { said: "markdown", reminder: "markdown", hook: "verbatim", claude_md: "markdown", section: "markdown" };
 
 // A piece as a block: what was said is named as its text block is, for who said it, and what was injected for what it is.
 function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[]): Block {
