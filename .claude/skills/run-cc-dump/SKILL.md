@@ -41,8 +41,7 @@ up, sometimes observing a live Claude Code. Check before anything else:
 `up` sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME` under `/tmp/cc-dump-run` (override with `CC_DUMP_HOME`) and writes a
 `proxy.json` there pointing upstream at the fake on 3399; each window's log is `<window>.log` there. A start that is
 not up in 60s prints the logs and kills its session.
-Its refusal when ports are held is verified; the start itself has **not** been run yet (ports were held throughout
-the sessions that wrote this) — if it fails, fix the script and this line.
+Verified: `up` from free ports, then `traffic.mjs 3`, the driver flow below, and `down` leaving 3344-3347 free.
 
 ### Put traffic in it
 
@@ -68,6 +67,8 @@ click [title^="system:"]
 fill [aria-label="Search the conversation"] | again
 text [data-tally]
 click [title="The step before (←)"]
+sleep 300
+text [aria-label="Steps"]
 ss after-flow
 errors
 EOF
@@ -125,6 +126,8 @@ pnpm test        # vitest, ~2s; binds port 0, so it runs fine beside a live stac
   match. Use the `data-*` selectors above.
 - `wait [aria-label="Steps"]` resolves before the recording has been read; `text` then says `0 / 0`. Wait on
   `[aria-current=step]`.
+- `click` returns before the UI re-renders, so a `text` or `ss` right after it can show the state before the click
+  (the step counter still `3 / 3` after ←). Put a `sleep 300` or a `wait` on what the click brings between them.
 - Agent traffic is attributed by URL path (`/agent/<stem>`), never by header; a request without it goes to the run's
   `run-<time>.jsonl`. `x-api-key`/`authorization` are never written to a recording.
 - The one console error on every page, `404 (Not Found)`, is `/favicon.ico`. Ignore it.
