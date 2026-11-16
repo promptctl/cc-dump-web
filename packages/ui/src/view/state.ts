@@ -7,7 +7,7 @@ import { settings, type SearchOptions, type Visibility } from "../settings.ts";
 import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
-import { isOpen, startsExpanded, type Opened } from "./rows.ts";
+import { isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
@@ -85,7 +85,7 @@ export const view = {
   // what it changes: a block already open, as the levels `visibility` start it or as the reader chose, is left as it is.
   goTo: ({ match, block, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
     useView.setState(({ opened, moment, search }) => {
-      const shown = block === undefined || isOpen(opened, block.key, startsExpanded(block, visibility)) ? opened : { ...opened, [block.key]: true };
+      const shown = block === undefined || showsOpen(block, visibility, opened) ? opened : { ...opened, [block.key]: true };
       return {
         opened: { ...shown, ...Object.fromEntries(regions.map((key) => [key, true] as const)) },
         position: { at: "row", key: match.key, offset: 0 },

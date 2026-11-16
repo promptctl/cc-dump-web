@@ -229,16 +229,9 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
             <Painted.Provider value={painted}>
               <div className="relative shrink-0 font-mono text-xs" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => (
-                  // A row is the same element whatever its height is measured by, so a click that opens it keeps focus.
-                  <div
-                    key={keys.at(item.index)}
-                    data-index={item.index}
-                    ref={virtualizer.measureElement}
-                    className="absolute top-0 left-0 w-full"
-                    style={{ transform: `translateY(${item.start}px)` }}
-                  >
+                  <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
                     <RowView row={rows[item.index]!} reading={reading} />
-                  </div>
+                  </ListedRow>
                 ))}
               </div>
             </Painted.Provider>
@@ -430,6 +423,23 @@ function Fact({ label, count }: { label: string; count: number | undefined }) {
     <span>
       <span className="text-foreground-muted">{label}</span> {count === undefined ? "" : compact(count)}
     </span>
+  );
+}
+
+// A listed row, where the virtualizer places it. Its element is the row's, whatever key its height is kept by
+// (ListedKeys), so a click that opens it keeps focus; the virtualizer measures an element as it mounts, so the row is
+// measured again whenever that key changes, its height kept by the new key even where it did not change.
+function ListedRow({ item, measure, children }: { item: VirtualItem; measure: (element: HTMLElement | null) => void; children: ReactNode }) {
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    measure(element.current);
+    // As a ref does when its element goes: the virtualizer lets go of the elements no longer in the page.
+    return () => measure(null);
+  }, [measure, item.key]);
+  return (
+    <div ref={element} data-index={item.index} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${item.start}px)` }}>
+      {children}
+    </div>
   );
 }
 

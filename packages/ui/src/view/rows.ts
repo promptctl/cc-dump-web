@@ -41,8 +41,8 @@ export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
 // fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
-// object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
-// row) places them again only when one did.
+// object while no row, listed or not, arrives, goes or moves, so what reads rows by key reads them again only when one
+// did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 // The keys of the rows listed, which the virtualizer places, and the key it keeps each one's measured height by
 // (measuredBy): the same object, too, while no row's height is measured by another key.
@@ -361,7 +361,11 @@ export function startsExpanded(row: Extract<Row, { kind: "block" }>, visibility:
 // row, whether it shows open, as its level starts it or as the reader chose. A height measured open is never read for
 // the row closed, whichever level or choice closes it.
 export const measuredBy = (row: Row, visibility: Record<Category, Visibility>, opened: Opened): string =>
-  row.kind === "block" ? `${row.key}#${isOpen(opened, row.key, startsExpanded(row, visibility)) ? "open" : "closed"}` : row.key;
+  row.kind === "block" ? `${row.key}#${showsOpen(row, visibility, opened) ? "open" : "closed"}` : row.key;
+
+// [LAW:one-source-of-truth] Whether a block's row shows open: as the reader chose, or else as its level starts it.
+export const showsOpen = (row: Extract<Row, { kind: "block" }>, visibility: Record<Category, Visibility>, opened: Opened): boolean =>
+  isOpen(opened, row.key, startsExpanded(row, visibility));
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
 // block's line and its content at about 100 characters a line, on its taller side, a changed block's too, whose diff is
@@ -377,7 +381,7 @@ export function estimateHeight(row: Row, opened: Opened, visibility: Record<Cate
     case "fold":
       return line;
     case "block":
-      if (!isOpen(opened, row.key, startsExpanded(row, visibility))) return line;
+      if (!showsOpen(row, visibility, opened)) return line;
       return line + Math.max(parts(row.block), parts(row.before));
   }
 }
