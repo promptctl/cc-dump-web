@@ -88,8 +88,9 @@ export type RecordingEnd = { unterminated_bytes: number };
 // The whole error, stack and all, is the request's log event's.
 export type ReadFailure = { message: string };
 
-// Each message of `GET /status`: the proxy's state now, whole (docs/design/01-mvp.md, F8, F12).
-export type ProxyStatus = { source: SourceStatus; traffic: Traffic };
+// Each message of `GET /status`: the proxy's state now, whole (docs/design/01-mvp.md, F8, F12): what it is, so a reader
+// following it across a restart knows the restarted proxy, whether it runs its source on disk, and its traffic.
+export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traffic };
 
 // Whether the proxy runs the source on disk. `changed_source`: the files whose text on disk differs from the text the
 // proxy runs, or that are gone; a restart of the proxy is pending while there is one. A watch that failed says so, and
@@ -100,7 +101,7 @@ export type SourceStatus = { state: "watching"; changed_source: string[] } | { s
 // `last_request`: when the latest arrived, as an ISO time; null until the run's first.
 export type Traffic = { in_flight: number; last_request: string | null };
 
-// `GET /info`: what the running proxy is, for as long as it runs. `base_url`: the address agents are pointed at, the
+// `GET /info`, and each status: what the running proxy is, for as long as it runs. `base_url`: the address agents are pointed at, the
 // `ANTHROPIC_BASE_URL` they are given, on the port the proxy bound. `upstream`: where it forwards what they send.
 // `recordings`: the directory its recordings are in, each the file there its name names.
 export type ProxyInfo = { base_url: string; upstream: string; recordings: string };
@@ -135,13 +136,18 @@ export function parseProxyStatus(json: string): ProxyStatus {
   const traffic = fields(status.object("traffic"), "proxy status: traffic");
   const state = source.oneOf("state", sourceStates);
   return {
+    info: infoOf(status.object("info"), "proxy status: info"),
     source: state === "watching" ? { state, changed_source: source.strings("changed_source") } : { state, message: source.string("message") },
-    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, "an ISO time or null") },
+    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, "an ISO 8601 UTC time or null") },
   };
 }
 
 export function parseProxyInfo(json: string): ProxyInfo {
-  const f = fields(parseJson(json, "proxy info"), "proxy info");
+  return infoOf(parseJson(json, "proxy info"), "proxy info");
+}
+
+function infoOf(info: unknown, what: string): ProxyInfo {
+  const f = fields(info, what);
   return { base_url: f.string("base_url"), upstream: f.string("upstream"), recordings: f.string("recordings") };
 }
 
@@ -181,7 +187,9 @@ const recordedTypes: Record<Recorded["type"], true> = {
 };
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
 const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
-const isTimeOrNull = (value: unknown): value is string | null => value === null || (typeof value === "string" && !Number.isNaN(Date.parse(value)));
+// A time exactly as `toISOString` writes it, which is how the proxy writes every time it sends.
+const isTimeOrNull = (value: unknown): value is string | null =>
+  value === null || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value)));
 
 // The fields of `what`, with the recording format's headers beside the JSON types.
 function fields(json: unknown, what: string) {

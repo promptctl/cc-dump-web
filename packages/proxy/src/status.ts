@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { describeError, startSpan, type Handler, type Log } from "@cc-dump/log";
-import type { ProxyStatus, SourceStatus, Traffic } from "./format.ts";
+import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
 // [LAW:one-source-of-truth] A part of the proxy's state, held by one owner: the state now, and a listener called after
@@ -100,16 +100,16 @@ function onDisk(path: string) {
   }
 }
 
-// `GET /status` on the reader port: Server-Sent Events, one per state of the proxy, the source watch's and the
-// traffic's together, the state now first and then one at each change of either, until the reader leaves or the server
+// `GET /status` on the reader port: Server-Sent Events, one per state of the proxy, its info, the source watch's state
+// and the traffic's together, the state now first and then one at each change of either, until the reader leaves or the server
 // closes. A failed watch is one more state, not the stream's end: the stream stays open, so a reader's EventSource sees
 // the proxy's restart as a dropped connection and reconnects to the restarted proxy. That open stream is the browser's
 // connection to the proxy (F8).
-export function createStatus(source: Watched<SourceStatus>, traffic: Watched<Traffic>): Handler {
+export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Handler {
   return (req, res) => {
     if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    const send = () => void res.write(`data: ${JSON.stringify({ source: source.state(), traffic: traffic.state() } satisfies ProxyStatus)}\n\n`);
+    const send = () => void res.write(`data: ${JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus)}\n\n`);
     const unwatched = [source.onChanged(send), traffic.onChanged(send)];
     res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
     send();

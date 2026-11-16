@@ -57,8 +57,10 @@ function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   return { abort, next };
 }
 
+const info = { base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/recordings" };
+
 // A status of the proxy watching its source, with `changed_source` changed, and no traffic.
-const watching = (...changed_source: string[]): ProxyStatus => ({ source: { state: "watching", changed_source }, traffic: { in_flight: 0, last_request: null } });
+const watching = (...changed_source: string[]): ProxyStatus => ({ info, source: { state: "watching", changed_source }, traffic: { in_flight: 0, last_request: null } });
 
 // Each EventSource opened while the test runs.
 function watchEventSources() {
@@ -182,18 +184,21 @@ describe("the browser connection", () => {
     expect(await logged(({ event }) => event === "request")).toMatchObject({ url: `/recordings/${agentName}`, outcome: "aborted" });
   });
 
-  it("follows the running proxy's status", async () => {
-    const { connection } = await proxyAndConnection();
+  it("follows the running proxy's status, which says what the proxy is", async () => {
+    const { dir, proxy, connection } = await proxyAndConnection();
     // The proxy watches the repo's own source, which a save while the test runs changes.
     expect(await statusing(connection).next()).toEqual({
-      status: { source: { state: "watching", changed_source: expect.any(Array) }, traffic: { in_flight: 0, last_request: null } },
+      status: {
+        info: { base_url: `http://${LOOPBACK}:${proxy.proxyPort}`, upstream: expect.any(String), recordings: dir },
+        source: { state: "watching", changed_source: expect.any(Array) },
+        traffic: { in_flight: 0, last_request: null },
+      },
     });
   });
 
-  it("says what the running proxy is, and makes a recording for an agent started by hand, one each time", async () => {
-    const { dir, proxy, connection } = await proxyAndConnection();
-    expect(await connection.info(new AbortController().signal)).toEqual({ base_url: `http://${LOOPBACK}:${proxy.proxyPort}`, upstream: expect.any(String), recordings: dir });
-    const [first, second] = [await connection.agentRecording(new AbortController().signal), await connection.agentRecording(new AbortController().signal)];
+  it("makes a recording for an agent started by hand, one each time", async () => {
+    const { dir, connection } = await proxyAndConnection();
+    const [first, second] = [await connection.agentRecording(), await connection.agentRecording()];
     expect(first.name).not.toBe(second.name);
     expect(readFileSync(join(dir, first.name), "utf8")).toBe("");
   });
@@ -203,7 +208,7 @@ describe("the browser connection", () => {
     const statuses: ProxyStatus[] = [
       watching(),
       watching("/proxy/src/proxy.ts"),
-      { source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } },
+      { info, source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } },
     ];
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -260,7 +265,9 @@ describe("the browser connection", () => {
       port,
     );
     onTestFinished(async () => (await reader).close());
-    for (let arrival = await status.next(); arrival === "dropped"; arrival = await status.next()) continue;
+    let arrival = await status.next();
+    while (arrival === "dropped") arrival = await status.next();
+    expect(arrival).toEqual({ status: watching() });
   });
 
   it("reports a status not served as failed", async () => {

@@ -63,7 +63,7 @@ export function App({ connection }: { connection: Connection }) {
         </div>
         {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
         {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
-        {info ? <InfoPanel connection={connection} open={open} session={session} /> : null}
+        {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
       </div>
     </div>
   );

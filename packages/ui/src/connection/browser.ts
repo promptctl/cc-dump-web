@@ -1,6 +1,7 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { ask } from "@cc-dump/proxy/ask";
+import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
@@ -13,10 +14,9 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
   const origin = `http://${LOOPBACK}:${readerPort}`;
   const server = `http://${LOOPBACK}:${serverPort}`;
   return {
-    recordings: (signal) => fetched(`${origin}/recordings`, { signal }, parseListings),
-    info: (signal) => fetched(`${origin}/info`, { signal }, parseProxyInfo),
+    recordings: (signal) => ask(`${origin}/recordings`, { signal }, parseListings),
     // A POST with no body is a simple request, so the browser sends it without a preflight, which the reader does not answer.
-    agentRecording: (signal) => fetched(`${origin}/recordings`, { method: "POST", signal }, parseListing),
+    agentRecording: () => ask(`${origin}/recordings`, { method: "POST" }, parseListing),
     read: (name, reader, signal) => {
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
@@ -51,17 +51,6 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     // source; a window that is gone is then no longer retried.
     tmux: (window) => new WebSocketTmuxClient({ url: `ws://${LOOPBACK}:${serverPort}${tmuxPath(window)}`, autoConnect: false, reconnect: { maxAttempts: 10 } }),
   };
-}
-
-// The reader's answer to one request, parsed, or a failure naming the request.
-async function fetched<T>(url: string, init: RequestInit, parse: (json: string) => T): Promise<T> {
-  try {
-    const res = await fetch(url, init);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return parse(await res.text());
-  } catch (error) {
-    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
-  }
 }
 
 // The app server's answer to one request, parsed. A refusal it answers fails in its own words, which are the user's to
