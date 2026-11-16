@@ -4,9 +4,11 @@ description: Run, start, drive, and screenshot cc-dump (the proxy + server + web
 ---
 
 cc-dump is three node processes started by `pnpm dev` — proxy (3344, reader on 3347), app server (3345), Vite UI (3346) —
-and a browser UI. Drive the UI with `.claude/skills/run-cc-dump/driver.mjs` (headless Chrome via playwright-core, commands
-on stdin). Generate traffic with `traffic.mjs` against `fake-anthropic.mjs`, so nothing reaches or bills the real API.
-All paths are relative to the repo (or worktree) root.
+and a browser UI. **Asked to run the app, start the real one, `stack.sh up`**: the user's settings and recordings,
+forwarding to the real API, so the user can use it. The mock stack (`stack.sh mock`) is for your own checks — every
+agent in it gets the same scripted reply from [mock-anthropic](https://github.com/promptctl/mock-anthropic), never a real
+answer, so never hand it to the user as "the app". Drive the UI with `.claude/skills/run-cc-dump/driver.mjs` (headless
+Chrome via playwright-core, commands on stdin). All paths are relative to the repo (or worktree) root.
 
 ## Prerequisites (macOS, verified)
 
@@ -25,23 +27,31 @@ up, sometimes observing a live Claude Code. Check before anything else:
 
 - Ports held by another worktree's stack → **do not stop it**; drive it as-is with the driver (read-only flows are
   safe), or `stack.sh proxy` (below) for traffic. It runs *that worktree's* code, not yours. `traffic.mjs` refuses
-  it unless its upstream is the fake.
-- Ports free → `stack.sh up` (next section).
+  it unless its upstream is mock-anthropic.
+- Ports free → `stack.sh up` for the user, `stack.sh mock` for your own checks.
 
-## Run (agent path)
-
-### Start a stack with scratch data and a fake upstream
+## Run the app
 
 ```bash
-.claude/skills/run-cc-dump/stack.sh up      # tmux session run-cc-dump-<worktree>: windows "fake" and "dev"
-.claude/skills/run-cc-dump/stack.sh logs    # the fake's log, and the interleaved proxy/server/ui log
+.claude/skills/run-cc-dump/stack.sh up      # tmux session run-cc-dump-<worktree>, window "dev": pnpm dev
+.claude/skills/run-cc-dump/stack.sh logs    # the interleaved proxy/server/ui log
 .claude/skills/run-cc-dump/stack.sh down    # this worktree's session only
 ```
 
-`up` sets `XDG_CONFIG_HOME`/`XDG_DATA_HOME` under `/tmp/cc-dump-run` (override with `CC_DUMP_HOME`) and writes a
-`proxy.json` there pointing upstream at the fake on 3399; each window's log is `<window>.log` there. A start that is
-not up in 60s prints the logs and kills its session.
-Verified: `up` from free ports, then `traffic.mjs 3`, the driver flow below, and `down` leaving 3344-3347 free.
+The user's `~/.config/cc-dump` and `~/.local/share/cc-dump/recordings`; the upstream is the user's `proxy.json`, the
+real API by default — `up` prints where it forwards. A Claude Code launched from it is billed like any other. Open
+http://127.0.0.1:3346. Logs are `<window>.log` in `/tmp/cc-dump-run` (`CC_DUMP_HOME`); a start that is not up in 60s
+prints them and kills its session.
+
+## Run with a mock upstream (agent checks)
+
+```bash
+.claude/skills/run-cc-dump/stack.sh mock    # windows "mock" and "dev"; logs and down as for up
+```
+
+Needs `mock-anthropic` on the PATH (`go install github.com/promptctl/mock-anthropic@v0.1.0`). Sets
+`XDG_CONFIG_HOME`/`XDG_DATA_HOME` under `/tmp/cc-dump-run` and writes a `proxy.json` there pointing upstream at
+mock-anthropic on 3399, so the user's settings and recordings are untouched and nothing is billed.
 
 ### Put traffic in it
 
@@ -49,10 +59,11 @@ Verified: `up` from free ports, then `traffic.mjs 3`, the driver flow below, and
 node .claude/skills/run-cc-dump/traffic.mjs 3
 ```
 
-Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless `fake-anthropic.mjs`
+Asks the reader (`CC_DUMP_READER_PORT`, default 3347) for the proxy's `/info` and refuses unless mock-anthropic
 answers at its upstream; then creates an agent recording (`POST /recordings`, what Launch does) and plays 3 streaming
 turns through the proxy under `/agent/<recording-stem>/v1/messages`, failing on any non-2xx. Each reply has a thinking block and a
-text block echoing the user turn.
+text block from `scenarios/reply.json`, the same for every request: a Claude Code launched from this stack's UI gets
+that reply too, never a real answer. Add or edit a script there to answer differently (mock-anthropic's README, "Scripts").
 
 ### Drive the UI
 
@@ -94,25 +105,20 @@ Stable selectors (from `packages/ui/src/view/`):
 ### Proxy only, beside a stack that holds the ports
 
 ```bash
-.claude/skills/run-cc-dump/stack.sh proxy   # same session, logs and down as `up`
+.claude/skills/run-cc-dump/stack.sh proxy   # same session, logs and down as `mock`
 CC_DUMP_READER_PORT=3391 node .claude/skills/run-cc-dump/traffic.mjs 2
 ls /tmp/cc-dump-run/proxy-recordings
 .claude/skills/run-cc-dump/stack.sh down
 ```
 
 Runs this worktree's proxy source (`packages/proxy/src/isolated.ts`, what the proxy's tests run) on 3390, its reader
-on 3391, and its fake on 3398, so a stack on the fixed ports and its fake are left alone. A real Claude Code works
+on 3391, and its mock on 3398, so a stack on the fixed ports and its mock are left alone. A real Claude Code works
 against it too, for free (verified):
 
 ```bash
 curl -s -X POST http://127.0.0.1:3391/recordings          # -> {"name":"<stem>.jsonl"}
 ANTHROPIC_BASE_URL=http://127.0.0.1:3390/agent/<stem> ANTHROPIC_API_KEY=fake claude -p "say hi"
 ```
-
-## Run (human path)
-
-`pnpm dev`, open http://127.0.0.1:3346. It uses `~/.config/cc-dump` and `~/.local/share/cc-dump/recordings` and
-forwards to the real Anthropic API.
 
 ## Test
 
@@ -136,6 +142,6 @@ pnpm test        # vitest, ~2s; binds port 0, so it runs fine beside a live stac
 
 ## Troubleshooting
 
-- `stack.sh up` prints holders and exits 1 → another stack (its cwd is printed) or a leftover fake on 3399 is running.
+- `stack.sh up` or `mock` prints holders and exits 1 → another stack (its cwd is printed) or a leftover mock on 3399 is running.
   A cwd in this worktree is yours: `stack.sh down`.
 - `Cannot find package 'playwright-core'` → `pnpm install`.

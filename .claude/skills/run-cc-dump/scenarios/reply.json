@@ -1,0 +1,11 @@
+{
+  "reply": {
+    "kind": "message",
+    "content": [
+      {"type": "thinking", "thinking": "This is mock-anthropic answering, not Claude: the run-cc-dump stack forwards to it so traffic costs nothing."},
+      {"type": "text", "text": "mock-anthropic: a scripted reply (.claude/skills/run-cc-dump/scenarios/reply.json). This stack never reaches the real API; for real answers, `.claude/skills/run-cc-dump/stack.sh up`."}
+    ],
+    "stop_reason": "end_turn",
+    "eventDelayMs": 50
+  }
+}
