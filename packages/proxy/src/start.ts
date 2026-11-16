@@ -14,12 +14,13 @@ export type Proxying = { upstream: Upstream; recordings: Recordings; source: Sou
 // and the way to make a recording.
 export async function startProxy(log: Log, { upstream, recordings, source, proxyPort, readerPort }: Proxying) {
   const traffic = countTraffic();
-  const status = createStatus(watchSource(log, source), traffic);
+  const watch = watchSource(log, source);
   const reader = createReader(log, recordings);
   const proxy = await serve(log, traffic.counted(createProxy(upstream, recordings)), proxyPort);
+  const info: ProxyInfo = { base_url: `http://${LOOPBACK}:${proxy.port}`, upstream, recordings: recordings.dir };
   const routes: Record<string, Handler> = {
-    "/status": status,
-    "/info": createInfo({ base_url: `http://${LOOPBACK}:${proxy.port}`, upstream, recordings: recordings.dir }),
+    "/status": createStatus(info, watch, traffic),
+    "/info": createInfo(info),
     "/recordings": byMethod({ GET: reader, POST: createRecording(recordings) }),
   };
   const readers: Handler = (req, res, work) => {

@@ -127,10 +127,12 @@ describe("countTraffic", () => {
 });
 
 describe("GET /status", () => {
-  it("sends the source's and the traffic's state now, then at each change of either, a failed watch's too, until the reader leaves", async () => {
+  const info = { base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/recordings" };
+
+  it("sends the proxy's info, the source's and the traffic's state now, then at each change of either, a failed watch's too, until the reader leaves", async () => {
     const source = watched<SourceStatus>({ state: "watching", changed_source: [] });
     const traffic = watched<Traffic>(quiet);
-    const { port, next } = await serving(createStatus(source, traffic));
+    const { port, next } = await serving(createStatus(info, source, traffic));
     const { res, next: nextEvent } = await subscribe(port, "/status");
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("text/event-stream");
@@ -139,13 +141,13 @@ describe("GET /status", () => {
       expect(event.event).toBeUndefined();
       return parseProxyStatus(event.data);
     };
-    expect(await status()).toEqual({ source: { state: "watching", changed_source: [] }, traffic: quiet });
+    expect(await status()).toEqual({ info, source: { state: "watching", changed_source: [] }, traffic: quiet });
     source.become({ state: "watching", changed_source: ["/src/proxy.ts"] });
-    expect(await status()).toEqual({ source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: quiet });
+    expect(await status()).toEqual({ info, source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: quiet });
     traffic.become({ in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" });
-    expect(await status()).toEqual({ source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
+    expect(await status()).toEqual({ info, source: { state: "watching", changed_source: ["/src/proxy.ts"] }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
     source.become({ state: "failed", message: "EMFILE: too many open files, watch" });
-    expect(await status()).toEqual({ source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
+    expect(await status()).toEqual({ info, source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } });
     expect(res.complete).toBe(false);
     res.destroy();
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", url: "/status", status: 200 });
@@ -153,7 +155,7 @@ describe("GET /status", () => {
   });
 
   it("refuses a method other than GET", async () => {
-    const { port } = await serving(createStatus(watched<SourceStatus>({ state: "watching", changed_source: [] }), watched(quiet)));
+    const { port } = await serving(createStatus(info, watched<SourceStatus>({ state: "watching", changed_source: [] }), watched(quiet)));
     const res = await send(port, { method: "POST", path: "/status", headers: { "content-length": "0" } });
     expect(res.statusCode).toBe(405);
     expect(res.headers.allow).toBe("GET");

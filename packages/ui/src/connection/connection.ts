@@ -1,4 +1,4 @@
-import type { Listing, ProxyInfo, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
+import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 import type { Launch, Launched, Launcher, TmuxWindow } from "@cc-dump/server/format";
 import type { TerminalConnection } from "@promptctl/tmux-control-mode-js/window-terminal";
 
@@ -12,16 +12,15 @@ export type Connection = {
   // written. A read ends in exactly one way: its recording ends, it fails, or `signal` aborts it, which reports
   // nothing. A signal already aborted throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
-  // The proxy's status now and at each change, across restarts of the proxy (the restarted proxy's status follows),
+  // The proxy's status, what the proxy is among it, now and at each change, across restarts of the proxy (the restarted proxy's status follows),
   // until `signal` aborts it, which reports nothing, or the status is not served, which fails it. A status it cannot
   // read is reported as failed, and the statuses after it still arrive. Its connection is the UI's to the proxy: one
   // lost, or not made, is reported as dropped while it is tried again, and the next status says it is back. A signal
   // already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
-  // What the running proxy is: where agents reach it, where it forwards, where it records.
-  info: (signal: AbortSignal) => Promise<ProxyInfo>;
-  // A new recording for an agent started by hand, which the proxy follows from its first event (F8).
-  agentRecording: (signal: AbortSignal) => Promise<Listing>;
+  // Makes a new recording for an agent started by hand, which the proxy follows from its first event (F8). Made once
+  // asked, so it is asked only for an agent about to be started.
+  agentRecording: () => Promise<Listing>;
   // The launch settings and the sessions on the user's tmux server, read now (docs/design/01-mvp.md, F1). A refusal
   // fails it in the app server's words, tmux's own when tmux refused, as when it has no server or no sessions.
   launcher: (signal: AbortSignal) => Promise<Launcher>;

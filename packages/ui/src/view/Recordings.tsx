@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
 import { onScreen, type OpenRecording, type Reading } from "../reading.ts";
@@ -31,7 +31,8 @@ export function Recordings({ connection, reading }: { connection: Pick<Connectio
 // Every recording, newest first. Read as it mounts, which is as the list opens. The one on screen is not opened again:
 // that would read it again from its start, and lose the reader's place in it.
 function RecordingList({ connection, shown, pick }: { connection: Pick<Connection, "recordings">; shown: string | undefined; pick: (opened: string) => void }) {
-  const listed = useAnswer(connection.recordings);
+  // [LAW:one-source-of-truth] The entries are made as the list arrives, once (listings.ts).
+  const listed = useAnswer(useCallback((signal: AbortSignal) => connection.recordings(signal).then(entriesOf), [connection]));
   switch (listed.state) {
     case "asking":
       return <p className="px-2 py-1 text-foreground-muted">Reading the recordings…</p>;
@@ -40,7 +41,7 @@ function RecordingList({ connection, shown, pick }: { connection: Pick<Connectio
     case "answered":
       return (
         <ul>
-          {entriesOf(listed.value).map(({ listing, parsed }) => (
+          {listed.value.map(({ listing, parsed }) => (
             <li key={listing.name}>
               <button
                 type="button"

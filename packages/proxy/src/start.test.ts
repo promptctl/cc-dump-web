@@ -56,10 +56,13 @@ describe("the reader port", () => {
     res.destroy();
   });
 
-  it("gives agents the address of the port the proxy bound, and says where it forwards to and where it records", async () => {
+  it("gives agents the address of the port the proxy bound, and says where it forwards to and where it records, at /info and in its status", async () => {
     const { dir, proxyPort, readerPort, upstream } = await proxy();
-    const res = await send(readerPort, { path: "/info" });
-    expect(parseProxyInfo((await buffer(res)).toString())).toEqual({ base_url: `http://${LOOPBACK}:${proxyPort}`, upstream: `${upstream}/`, recordings: dir });
+    const info = { base_url: `http://${LOOPBACK}:${proxyPort}`, upstream: `${upstream}/`, recordings: dir };
+    expect(parseProxyInfo((await buffer(await send(readerPort, { path: "/info" }))).toString())).toEqual(info);
+    const { res, next } = await subscribe(readerPort, "/status");
+    onTestFinished(() => void res.destroy());
+    expect(parseProxyStatus((await next()).data).info).toEqual(info);
   });
 
   it("sends the traffic in its status: a request in flight until it ends, and when it arrived", async () => {
