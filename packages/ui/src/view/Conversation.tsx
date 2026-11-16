@@ -1,4 +1,4 @@
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -9,14 +9,14 @@ import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
-import { positionAt, rowIndex, type Position } from "./position.ts";
-import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
+import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
+import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Side, unpainted, useFlip, useWhere, useWhereOn, type Where } from "./painting.ts";
+import { Hold, Painted, Side, unpainted, useToggle, useWhere, useWhereOn, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
 import { TextView } from "./Text.tsx";
 import { address, adjacent, createSearch, ordinal, partKey, patternOf, type Direction } from "./search.ts";
@@ -48,8 +48,8 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   // the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
   const revealed = current?.key;
-  const flipped = useView((state) => state.flipped);
-  const { rows, keys, every } = useMemo(() => layOut(conversation, shown, revealed, flipped), [layOut, conversation, shown, revealed, flipped]);
+  const opened = useView((state) => state.opened);
+  const { rows, keys, every } = useMemo(() => layOut(conversation, shown, revealed, opened), [layOut, conversation, shown, revealed, opened]);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -58,8 +58,8 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
-    getItemKey: keys.at,
-    estimateSize: (index) => estimateHeight(rows[index]!, flipped),
+    getItemKey: keys.measuredBy,
+    estimateSize: (index) => estimateHeight(rows[index]!, opened, visibility),
     overscan: 10,
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
@@ -73,6 +73,9 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     scrollToFn: () => {},
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  // [LAW:locality-or-seam] A placed item as the position code reads it, by its row's key: the virtualizer keeps an item
+  // by the key its height is measured by (ListedKeys), not the row's.
+  const placedAt = useCallback((item: VirtualItem | undefined): Placed | undefined => item && { key: keys.at(item.index), start: item.start, size: item.size }, [keys]);
 
   // Follow mode as the control shows it: off; on, at the end; or paused, at a place the reader scrolled to, or at a step
   // they chose in time.
@@ -90,8 +93,8 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
     const { position, moment } = useView.getState();
     const rowsNow = {
       indexOf: keys.indexOf,
-      placed: (index: number) => virtualizer.measurementsCache[index],
-      rowAt: virtualizer.getVirtualItemForOffset,
+      placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
+      rowAt: (offset: number) => placedAt(virtualizer.getVirtualItemForOffset(offset)),
     };
     const kept = { position, written: written.current };
     const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
@@ -141,7 +144,7 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
-    flushSync(() => view.goTo(next, now));
+    flushSync(() => view.goTo(next, now, visibility));
     const match = currentMatch();
     // [LAW:no-silent-failure] A step goes to a match found in a block, which the step lists if its category is hidden, so
     // it is painted once committed.
@@ -160,16 +163,16 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
   // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
   const hold = useCallback(() => {
-    view.place(positionAt(scroller.current!.scrollTop, virtualizer.getVirtualItemForOffset), "reader", now);
+    view.place(positionAt(scroller.current!.scrollTop, (offset) => placedAt(virtualizer.getVirtualItemForOffset(offset))), "reader", now);
     latest.current("choose");
-  }, [virtualizer, now]);
+  }, [virtualizer, placedAt, now]);
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
   // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
   // step's own rows.
   const toStep = (target: number) => {
     const latestStep = target === steps;
-    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : beforeChange(layOut(conversation, target, revealed, flipped));
+    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : beforeChange(layOut(conversation, target, revealed, opened));
     flushSync(() => view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace: conversation.segments[target - 1]!.formatted.exchange.trace_id }, position));
     latest.current("choose");
   };
@@ -354,12 +357,12 @@ function sameFields(a: Row, b: Row): boolean {
 // A run of unchanged rows, or of a branch's, folded: one line saying how many, across both columns, which opens it on a
 // click.
 function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
-  const flip = useFlip(foldKey(fold.key));
+  const { toggle } = useToggle(foldKey(fold.key), false);
   return (
     <button
       type="button"
       className="flex w-full items-center gap-3 py-0.5 pl-7 text-left font-sans text-foreground-muted hover:bg-hover"
-      onClick={flip}
+      onClick={toggle}
     >
       <span className="w-3">▸</span>
       {fold.branch === undefined ? `${fold.count} unchanged` : `branch off ${fold.branch.from} · ${fold.count} rows`}
@@ -435,7 +438,8 @@ const endings = { ok: "", pending: "", unread: "no end read", error: "error", ab
 // content below: a changed block's diff with the version before, line against line, and any other block's parts on each
 // side. Clicking a line switches between them, on both sides, from how the version shown starts.
 function BlockLines({ row, inset }: { row: Extract<Row, { kind: "block" }>; inset: string | undefined }) {
-  const open = useView((state) => isExpanded(state.flipped, row.key, row.block ?? row.before));
+  const starts = useSettings((state) => startsExpanded(row, state.visibility));
+  const { open, toggle } = useToggle(row.key, starts);
   // [LAW:dataflow-not-control-flow] Each line of the row is its two sides' versions, each in its gutter, through the
   // same cells; a side without a version, the left where the step added the row and the right where it removed it, is
   // empty.
@@ -445,7 +449,7 @@ function BlockLines({ row, inset }: { row: Extract<Row, { kind: "block" }>; inse
   });
   return (
     <>
-      <Sides change={row.change} inset={inset} {...cells((block) => <BlockLine rowKey={row.key} block={block} open={open} />)} />
+      <Sides change={row.change} inset={inset} {...cells((block) => <BlockLine rowKey={row.key} block={block} open={open} toggle={toggle} />)} />
       {open &&
         (row.change === "changed" ? (
           <ChangeLines row={row} inset={inset} />
@@ -467,14 +471,13 @@ function Gutter({ block, children }: { block: KeyedBlock; children: ReactNode })
 }
 
 // A block's line: its name, a preview of its content while collapsed, and its size.
-function BlockLine({ rowKey: key, block, open }: { rowKey: string; block: KeyedBlock; open: boolean }) {
+function BlockLine({ rowKey: key, block, open, toggle }: { rowKey: string; block: KeyedBlock; open: boolean; toggle: () => void }) {
   const size = sizeOf(block);
-  const flip = useFlip(key);
   return (
     <button
       type="button"
       className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
-      onClick={flip}
+      onClick={toggle}
     >
       <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
       <span className="min-w-0 truncate" title={block.name}>
@@ -548,15 +551,13 @@ function DiffLineView({ words, change, from, where }: { words: Edit[]; change: E
 // A run of a diff's unchanged lines, folded: a line saying how many, on both sides, which opens and closes it on a click;
 // opened, below it, the lines themselves, made only then. It is kept, as a text's region is, by the line it opens on.
 function DiffFold({ row, inset, fold, lines }: { row: ChangedRow; inset: string | undefined; fold: LineFold; lines: () => ReactNode }) {
-  const key = regionKey(partKey(row.key, address.change), fold.line);
-  const open = useView((state) => state.flipped[key] === true);
-  const flip = useFlip(key);
+  const { open, toggle } = useToggle(regionKey(partKey(row.key, address.change), fold.line), false);
   const line = (block: KeyedBlock) => (
     <Gutter block={block}>
       <button
         type="button"
         className="flex w-full items-center gap-3 pl-6 text-left font-sans text-foreground-muted hover:bg-hover"
-        onClick={flip}
+        onClick={toggle}
       >
         <span className="w-3">{open ? "▾" : "▸"}</span>
         {fold.pairs.length} unchanged lines

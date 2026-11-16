@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 import type { Part } from "../format/parts.ts";
 import { Highlighted } from "./Highlighted.tsx";
-import { useFlip, useWhere, type Where } from "./painting.ts";
+import { useToggle, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
 import { renderingOf, type Block, type Fold, type Inline, type Leaf, type Run } from "./rendering.ts";
 import { partKey } from "./search.ts";
-import { useView } from "./state.ts";
 
 // A text part as its rendering shows it (view/rendering.ts): the one view of every text, whoever's it is. It knows
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
@@ -47,15 +46,13 @@ function leafView(leaf: Leaf, where: Where, key?: number): ReactNode {
 // A long region starts collapsed: its line names it and how many lines it shows, and expanded it shows `children`. It
 // is kept by its part's key and the line it opens on.
 function RegionView({ fold, where, children }: { fold: Fold; where: Where; children: ReactNode }) {
-  const key = regionKey(partKey(where.blockKey, where.at), fold.line);
-  const open = useView((state) => state.flipped[key] === true);
-  const flip = useFlip(key);
+  const { open, toggle } = useToggle(regionKey(partKey(where.blockKey, where.at), fold.line), false);
   return (
     <div>
       <button
         type="button"
         className="font-mono text-foreground-muted hover:bg-hover"
-        onClick={flip}
+        onClick={toggle}
       >
         {open ? "▾" : "▸"} {fold.label} · {fold.lines} lines
       </button>

@@ -97,7 +97,7 @@ Stable selectors (from `packages/ui/src/view/`):
 |---|---|
 | Recordings menu / Launch menu / theme menu | `[data-open=recordings]`, `[data-open=launch]`, `[data-open=theme]` |
 | A recording in the list | `[data-recording="<file>.jsonl"]` (newest first) |
-| Category toggle | `[title^="<category>:"]` — title reads e.g. `system: hidden. Click to show it.` |
+| Category toggle | `[title^="<category>:"]` — title reads e.g. `system: compact, a line each. Click for expanded.` |
 | Search box / match count / next-prev | `[aria-label="Search the conversation"]`, `[data-tally]`, `[data-step]` |
 | Step strip / step back, forward | `[aria-label="Steps"]`, `[title="The step before (←)"]`, `[title="The step after (→)"]` |
 | Launch form | `[data-launch-session]`, `[data-launch-command]`, `[data-launch]` |

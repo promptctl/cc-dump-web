@@ -5,7 +5,7 @@
 export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: string; offset: number };
 
 // A placed row: its key, where it starts, in pixels from the top of the conversation, and its height.
-export type Placed = { key: string | number | bigint; start: number; size: number };
+export type Placed = { key: string; start: number; size: number };
 
 // The scroll offset a position is at, given where the rows are: undefined while its row is not among them. A row
 // shorter than the offset into it, as a block just collapsed is, puts the view at its end. A row standing in for the
@@ -39,5 +39,5 @@ export function rowIndex(key: string, indexOf: (key: string) => number | undefin
 // The place a scroll offset is at: the row at the top of the view and how far into it, or the start.
 export function positionAt(offset: number, rowAt: (offset: number) => Placed | undefined): Exclude<Position, { at: "end" }> {
   const row = offset <= 0 ? undefined : rowAt(offset);
-  return row === undefined ? { at: "start" } : { at: "row", key: String(row.key), offset: offset - row.start };
+  return row === undefined ? { at: "start" } : { at: "row", key: row.key, offset: offset - row.start };
 }

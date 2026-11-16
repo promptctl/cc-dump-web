@@ -2,6 +2,7 @@ import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseSettings, useSettings } from "../settings.ts";
 import { events, useEvents } from "../store.ts";
+import type { BlockRow } from "./search.ts";
 import { useView, view } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
@@ -16,13 +17,13 @@ describe("opening a recording", () => {
     expect(useView.getState().open).toBeNull();
   });
 
-  it("opens it by its name, at its end with no current match, keeping the flips", () => {
+  it("opens it by its name, at its end with no current match, keeping the reader's choices", () => {
     const match = { key: "t1/request/http", at: "text", start: 0 };
-    useView.setState({ flipped: { "t1/request/http": true }, position: { at: "row", key: "t1", offset: 12 }, search: { query: "x", current: match } });
+    useView.setState({ opened: { "t1/request/http": true }, position: { at: "row", key: "t1", offset: 12 }, search: { query: "x", current: match } });
     view.open(agent);
     expect(useView.getState()).toMatchObject({
       open: agent,
-      flipped: { "t1/request/http": true },
+      opened: { "t1/request/http": true },
       position: { at: "end" },
       search: { query: "x", current: undefined },
     });
@@ -94,6 +95,40 @@ describe("the search", () => {
     expect(useView.getState().search).toEqual({ query: "x", current: undefined });
     expect(useSettings.getState().search.wholeWord).toBe(true);
   });
+
+  // A step chooses only what it changes, so a block shows after a later change of level as the reader left it.
+  it("opens a match's block and the regions holding it, and records no choice for a block already open", () => {
+    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", block: { category: "tools", name: "Read", parts: [], key: "c" }, before: undefined, change: "added", branch: undefined };
+    const { visibility } = parseSettings(undefined);
+    view.goTo({ match, block, regions: ["r"] }, "t1", visibility);
+    expect(useView.getState().opened).toEqual({ [block.key]: true, r: true });
+    useView.setState({ opened: {} });
+    view.goTo({ match, block, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    expect(useView.getState().opened).toEqual({});
+    useView.setState({ opened: { [block.key]: false } });
+    view.goTo({ match, block, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    expect(useView.getState().opened).toEqual({ [block.key]: true });
+  });
+});
+
+describe("a block, region or fold toggled", () => {
+  beforeEach(() => useView.setState(useView.getInitialState(), true));
+
+  it("shows the other way from how it shows, and keeps the choice as made, the same as its start or not", () => {
+    view.toggle("k", false);
+    expect(useView.getState().opened).toEqual({ k: true });
+    view.toggle("k", false);
+    expect(useView.getState().opened).toEqual({ k: false });
+  });
+
+  // Closed at expanded and opened again, a block stays open at compact: the reader's last act was to open it.
+  it("keeps the reader's last choice across a change of the level it starts at", () => {
+    view.toggle("k", true);
+    view.toggle("k", true);
+    expect(useView.getState().opened).toEqual({ k: true });
+    view.toggle("k", false);
+    expect(useView.getState().opened).toEqual({ k: false });
+  });
 });
 
 describe("the moment", () => {
@@ -117,12 +152,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10");
+    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10", parseSettings(undefined).visibility);
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10");
+    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10", parseSettings(undefined).visibility);
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();
@@ -141,12 +176,12 @@ describe("the moment", () => {
 
 describe("a view stored by another version", () => {
   it("opens the tab as a new one, with none open", async () => {
-    const stored = new Map([["cc-dump.view", JSON.stringify({ state: { open: { recording: "live" }, flipped: { k: true } }, version: 1 })]]);
+    const stored = new Map([["cc-dump.view", JSON.stringify({ state: { open: { recording: "live" }, flipped: { k: true } }, version: 3 })]]);
     useView.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: (key) => stored.get(key) ?? null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
 
     await useView.persist.rehydrate();
 
-    expect(useView.getState()).toMatchObject({ open: null, flipped: {} });
+    expect(useView.getState()).toMatchObject({ open: null, opened: {} });
   });
 });

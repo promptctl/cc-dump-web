@@ -2,22 +2,21 @@ import type { Launched, TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
-import { settings, type SearchOptions } from "../settings.ts";
+import type { Category } from "../format/blocks.ts";
+import { settings, type SearchOptions, type Visibility } from "../settings.ts";
 import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
-import { isExpanded } from "./rows.ts";
+import { isOpen, startsExpanded, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
-// launch opened (F13), each block, region or fold they flipped from how it starts, by key, where they are, the moment
+// launch opened (F13), each block, region or fold they opened or closed (rows.ts), where they are, the moment
 // shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
 // tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab
 // opens at the end, now, which follows the conversation while follow is on. While it is off, the end becomes the place
 // under the view at the first step.
-// [LAW:types-are-the-program] A flip is a key's presence, so a block flipped back is no entry, not one that says its
-// default.
-export type View = { open: OpenRecording; window: TmuxWindow | null; flipped: Record<string, true>; position: Position; moment: Moment; search: Search };
+export type View = { open: OpenRecording; window: TmuxWindow | null; opened: Opened; position: Position; moment: Moment; search: Search };
 
 // The moment shown on the right (docs/design/02-design.md, "Two axes"), by its step's exchange: `now`, the latest step,
 // whichever it is as exchanges arrive; `left`, the step that was now when the reader's own act (a scroll, a click on a
@@ -32,7 +31,7 @@ export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chos
 export type Search = { query: string; current: Match | undefined };
 
 // A tab opens with no recording: the person launches an agent, or opens one.
-const initial: View = { open: null, window: null, flipped: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
+const initial: View = { open: null, window: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
 // The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
 // this one does not read, so the tab opens as a new one.
@@ -40,14 +39,14 @@ export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 3,
+    version: 4,
     migrate: () => initial,
   }),
 );
 
 export const view = {
   // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last
-  // recording's. Flips are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
+  // recording's. Choices are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
   // [LAW:no-ambient-temporal-coupling] The events shown are emptied as it opens, so the view of the last recording's
   // events unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
   // as that commit's effects run (useRecording), and reads it from its start, the one already open again as well: a read
@@ -64,7 +63,8 @@ export const view = {
   },
   // The terminal put away; the agent runs on in its window, and the next launch shows its own.
   putAway: () => useView.setState({ window: null }),
-  toggle: (key: string) => useView.setState(({ flipped }) => ({ flipped: flip(flipped, key) })),
+  // What is kept at `key`, which starts open or not as `starts` says, chosen to show the other way from how it shows.
+  toggle: (key: string, starts: boolean) => useView.setState(({ opened }) => ({ opened: { ...opened, [key]: !isOpen(opened, key, starts) } })),
   // The position moved, by `by`. At the end it is following, so the moment is now; a reader's move anywhere else, while
   // the moment is now, leaves it at now's step, `now`, the latest step's exchange.
   place: (position: Position, by: By, now: string | undefined) =>
@@ -81,12 +81,13 @@ export const view = {
     useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
   },
   // A step to a match, the reader's act, with now's step `now`: it becomes current, its block and the regions holding it
-  // show expanded, and the view moves to its row, which the step then refines to the match's line.
-  goTo: ({ match, block, regions }: Step, now: string | undefined) =>
-    useView.setState(({ flipped, moment, search }) => {
-      const opened = block === undefined || isExpanded(flipped, block.key, block.block) ? flipped : flip(flipped, block.key);
+  // show expanded, and the view moves to its row, which the step then refines to the match's line. The step chooses only
+  // what it changes: a block already open, as the levels `visibility` start it or as the reader chose, is left as it is.
+  goTo: ({ match, block, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
+    useView.setState(({ opened, moment, search }) => {
+      const shown = block === undefined || isOpen(opened, block.key, startsExpanded(block, visibility)) ? opened : { ...opened, [block.key]: true };
       return {
-        flipped: { ...opened, ...Object.fromEntries(regions.map((key) => [key, true] as const)) },
+        opened: { ...shown, ...Object.fromEntries(regions.map((key) => [key, true] as const)) },
         position: { at: "row", key: match.key, offset: 0 },
         moment: leave(moment, now),
         search: { ...search, current: match },
@@ -98,10 +99,4 @@ export const view = {
 // was. Before any exchange there is no step to leave.
 function leave(moment: Moment, now: string | undefined): Moment {
   return moment.at === "now" && now !== undefined ? { at: "left", trace: now } : moment;
-}
-
-// The flips with `key` flipped.
-function flip(flipped: Record<string, true>, key: string): Record<string, true> {
-  const { [key]: was, ...rest } = flipped;
-  return was ? rest : { ...rest, [key]: true };
 }

@@ -2,13 +2,13 @@ import { context } from "../format/diff.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
-import type { Block, Category } from "../format/blocks.ts";
+import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
-import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
+import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Row } from "./rows.ts";
+import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, type Opened, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -23,14 +23,15 @@ const turns = (count: number, system = "Be brief.") =>
   Array.from({ length: count }, (_, turn) =>
     request(`t${turn + 1}`, { model: "m", system: [text(system)], tools: [{ name: "Read" }], messages: Array.from({ length: turn + 1 }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] })) }),
   ).flat();
-const shown = parseSettings(undefined).visibility;
+// Every category listed, a block a line.
+const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
 const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
 
 // The layout at each step of `events`, as the view lays them out.
 function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, unchanged: Unchanged = "show", branches: Branches = "stay") {
   const history = createHistory()(createFormatter()(exchanges(events)));
   const layOut = createLayout(visibility, unchanged, branches);
-  return (step: number, revealed?: string, opened: Record<string, true> = {}) => layOut(history, step, revealed, opened);
+  return (step: number, revealed?: string, opened: Opened = {}) => layOut(history, step, revealed, opened);
 }
 const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.count}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
 
@@ -191,14 +192,49 @@ describe("layout", () => {
     expect(after.keys).not.toBe(before.keys);
   });
 
-  it("starts each side of a row as its own version starts, a user's or an assistant's block expanded and what the harness injected collapsed, and one flip turns both", () => {
+  it("starts a block's row as its category's level says, of the version it shows, and what the harness injected or a hidden category's revealed block collapsed", () => {
     const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
-    expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
-    expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
+    const added = (side: Block): Extract<Row, { kind: "block" }> => ({ kind: "block", key: "k", block: { ...side, key: "c" }, before: undefined, change: "added", branch: undefined });
+    const levels = { ...shown, user: "expanded", tools: "compact" } as const;
+    expect([said, reminder, tools].map((side) => startsExpanded(added(side), levels))).toEqual([true, false, false]);
+    expect([said, reminder, tools].map((side) => startsExpanded(added(side), { ...levels, user: "compact", tools: "expanded" }))).toEqual([false, false, true]);
+    expect(startsExpanded(added(tools), { ...levels, tools: "hidden" })).toBe(false);
+    expect(startsExpanded({ kind: "block", key: "k", block: undefined, before: { ...said, key: "c" }, change: "removed", branch: undefined }, levels)).toBe(true);
+    // A changed row starts as the version it shows, and is estimated on its taller side; the reader's choice outranks the start.
     const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
-    expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
-    expect(estimateHeight(row, { k: true })).toBe(20);
+    expect(estimateHeight(row, {}, levels)).toBe(20 + 10 * 16);
+    expect(estimateHeight(row, { k: false }, levels)).toBe(20);
+    expect(estimateHeight(row, {}, { ...levels, user: "compact" })).toBe(20);
+    expect(estimateHeight(row, { k: true }, { ...levels, user: "compact" })).toBe(20 + 10 * 16);
+  });
+
+  it("lists a hidden category's blocks at neither level but the search's revealed one", () => {
+    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed));
+    expect(keys({ ...shown, tools: "expanded" })).toEqual(keys(shown));
+    expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/request/tools.Read.0 added");
+    expect(keys({ ...shown, tools: "hidden" }, "thread:t1/request/tools.Read.0")).toContain("thread:t1/request/tools.Read.0 added");
+  });
+
+  // The virtualizer keeps a row's measured height by this key, so a height measured at one level is not read at another.
+  it("measures a block's row by its key and how its level starts it, and keeps the keys while neither changes", () => {
+    const at = (visibility: Record<Category, Visibility>) => {
+      const layOut = layouts(turns(2), visibility);
+      const { keys, rows } = layOut(2);
+      return { keys, again: layOut(2).keys, measured: rows.map((_, index) => keys.measuredBy(index)) };
+    };
+    const compact = at(shown);
+    const expanded = at({ ...shown, system: "expanded" });
+    expect(compact.again).toBe(compact.keys);
+    const system = "thread:t1/request/system.0";
+    expect(compact.measured).toContain(`${system}#collapsed`);
+    expect(expanded.measured).toContain(`${system}#expanded`);
+    // Rows that are not a block's, and blocks the level does not start differently, are measured by the same key at both.
+    expect(expanded.measured.filter((key) => !key.startsWith(system))).toEqual(compact.measured.filter((key) => !key.startsWith(system)));
+    // An opened block is measured as its level starts it: the reader's choice changes its height only on screen.
+    const layOut = layouts(turns(2));
+    const index = layOut(2).rows.findIndex(({ key }) => key === system);
+    expect(layOut(2, undefined, { [system]: true }).keys.measuredBy(index)).toBe(`${system}#collapsed`);
   });
 });
 

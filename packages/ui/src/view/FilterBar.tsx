@@ -1,9 +1,9 @@
 import { categories, type Category } from "../format/blocks.ts";
-import { branchPlacements, settings, useSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
+import { branchPlacements, settings, useSettings, visibilities, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter (docs/design/01-mvp.md, F5): each category's visibility, always on screen, and the control that changes it;
+// The filter (docs/design/01-mvp.md, F5): each category's level, always on screen, and the control that changes it;
 // and whether the rows a step left unchanged fold.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
@@ -65,16 +65,17 @@ const unchangedStates: Record<Unchanged, { next: Unchanged; pressed: boolean; no
   show: { next: "fold", pressed: true, now: "shown", does: "fold them" },
 };
 
-// A click moves the category to its next visibility.
+// A click moves the category to the next level, of more detail, and from the most back to none.
 function CategoryToggle({ category, visibility }: { category: Category; visibility: Visibility }) {
-  const { next, pressed, look, does } = visibilityStates[visibility];
+  const next = visibilities[(visibilities.indexOf(visibility) + 1) % visibilities.length]!;
+  const { pressed, look, shows } = visibilityStates[visibility];
   return (
     <Toggle
       style={categoryVars(category)}
       data-visibility={visibility}
       pressed={pressed}
-      title={`${category}: ${visibility}. Click to ${does}.`}
-      className={`rounded px-2 py-0.5 font-medium ${look}`}
+      title={`${category}: ${visibility}, ${shows}. Click for ${next}.`}
+      className={`rounded border px-2 py-0.5 font-medium ${look}`}
       onClick={() => settings.setVisibility(category, next)}
     >
       {category}
@@ -82,10 +83,12 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
   );
 }
 
-// [LAW:dataflow-not-control-flow] Each visibility: the one a click moves to, whether the toggle is pressed, how it looks
-// and what a click does. A shown category's chip is in its color, the same the gutter paints its blocks with, so the bar
-// is the gutter's legend (docs/design/02-design.md); a hidden one reads as struck out and uncolored.
-const visibilityStates: Record<Visibility, { next: Visibility; pressed: boolean; look: string; does: string }> = {
-  shown: { next: "hidden", pressed: true, look: "bg-(--category-chip) text-(--category-chip-text)", does: "hide it" },
-  hidden: { next: "shown", pressed: false, look: "text-foreground-muted line-through hover:bg-hover", does: "show it" },
+// [LAW:dataflow-not-control-flow] Each level: whether the toggle is pressed, how it looks and what it shows. A listed
+// category's chip is in its color, the same the gutter paints its blocks with, so the bar is the gutter's legend
+// (docs/design/02-design.md): filled while its blocks show in full, outlined while they show a line each. A hidden one
+// reads as struck out and uncolored.
+const visibilityStates: Record<Visibility, { pressed: boolean | "mixed"; look: string; shows: string }> = {
+  hidden: { pressed: false, look: "border-transparent text-foreground-muted line-through hover:bg-hover", shows: "not listed" },
+  compact: { pressed: "mixed", look: "border-(--category-chip) text-foreground hover:bg-hover", shows: "a line each" },
+  expanded: { pressed: true, look: "border-(--category-chip) bg-(--category-chip) text-(--category-chip-text)", shows: "each in full" },
 };

@@ -50,11 +50,12 @@ Each feature is stated as what the person using the app can do and see.
 - **Follow mode:** while on, the view stays at the newest content. Scrolling away pauses it and returning to the bottom resumes it. A control shows whether it is on, paused or off.
 - **Expanding:** every block has a collapsed form (one line naming the block and its size) and an expanded form (all of its content). Clicking the block switches between them.
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
-- Blocks in the user and assistant categories start expanded, except the content the harness injects (F3). Blocks in the other categories start collapsed.
+- A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
 
 ### F5. Filter
-- Each of the six categories can be shown or hidden independently.
-- A filter bar that is always on screen shows each category's current state. It is also the control that changes it.
+- Each of the six categories is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line) or expanded (each block is expanded).
+- The levels start as in cc-dump: user and assistant expanded; tools, system and thinking compact; metadata hidden.
+- A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
@@ -80,7 +81,7 @@ Each feature is stated as what the person using the app can do and see.
 - Every color, including the six category colors, comes from the theme. Adding a theme means adding one set of values and changing no component.
 
 ### F11. Settings persist
-- These survive a restart of the browser, the app and the machine: the theme, each category's shown or hidden state, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.
+- These survive a restart of the browser, the app and the machine: the theme, each category's level, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.
 
 ### F12. Hot reload
 - Saving a change to any source file except the proxy's takes effect in the running app without restarting the proxy.
@@ -126,7 +127,7 @@ Hot reload is designed in first, because it decides where every other piece live
 The MVP is the base the intermediate and advanced features are added to, so its seams are placed where those features attach:
 
 - A new block type or a richer rendering is one new entry in the formatter, with no change to capture or the view.
-- A category's state is a value that can grow from shown/hidden to more levels without changing the blocks that read it.
+- A category's state is a value, its level, that can grow more levels without changing the blocks that read it.
 - Anything computed from traffic (cost, timelines, change tracking) is another reader of the same events.
 - A terminal pane, more agents, and other providers attach at the launch feature and the connection interface.
 
@@ -139,7 +140,7 @@ The MVP is the base the intermediate and advanced features are added to, so its 
 
 ## Not in the MVP
 
-- Detail levels beyond shown and hidden, per-tool renderers, markdown rendering, and token-cost figures. These were proposed as the next layer and are not part of this scope.
+- Per-tool renderers, markdown rendering, and token-cost figures. These were proposed as the next layer and are not part of this scope.
 - A tool result linked to its call, as in the original: named for its tool and the call's detail (the path, command or pattern), in a color shared with the call.
 - Everything in the intermediate and advanced layers.
 

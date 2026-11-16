@@ -1,7 +1,7 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
-import type { Block, Category } from "../format/blocks.ts";
+import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
@@ -29,7 +29,9 @@ const body = {
 };
 // b's first message is its own, so it is a thread of its own, every row of it b's.
 const other = { ...body, messages: [{ role: "user", content: "Look for the needle!" }, ...body.messages.slice(1)] };
-const { visibility: shown, search: defaults } = parseSettings(undefined);
+const { search: defaults } = parseSettings(undefined);
+// Every category listed.
+const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
 const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
   createLayout(visibility, "show", "stay")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
 // A query read under the default options, with those given changed.

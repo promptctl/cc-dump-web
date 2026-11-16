@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from "react";
 import type { Range } from "./range.ts";
+import { isOpen } from "./rows.ts";
 import { find, nothing, type Searched } from "./search.ts";
 import { useView, view } from "./state.ts";
 
@@ -34,17 +35,21 @@ export function useWhereOn(side: "right" | "left", blockKey: string, at: string,
   return { blockKey, at, ranges, current };
 }
 
-// What a block or region calls when clicked, before it flips: the view holds where it is.
+// What a block or region calls when clicked, before it shows the other way: the view holds where it is.
 export const Hold = createContext<() => void>(() => {
   throw new Error("A block is shown outside a Conversation");
 });
 
-// [LAW:one-source-of-truth] A click's flip of what is kept at `key`, a block, a region or a fold: the view holds where
-// it is, then the flip turns.
-export function useFlip(key: string): () => void {
+// [LAW:one-source-of-truth] Whether what is kept at `key`, a block, a region or a fold, which starts open or not as
+// `starts` says, shows open; and a click's toggle of it: the view holds where it is, then it shows the other way.
+export function useToggle(key: string, starts: boolean): { open: boolean; toggle: () => void } {
   const hold = useContext(Hold);
-  return () => {
-    hold();
-    view.toggle(key);
+  const open = useView((state) => isOpen(state.opened, key, starts));
+  return {
+    open,
+    toggle: () => {
+      hold();
+      view.toggle(key, starts);
+    },
   };
 }

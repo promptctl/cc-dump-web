@@ -4,10 +4,21 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
 import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
-// Whether a category's blocks are listed (docs/design/01-mvp.md, F5). [LAW:types-are-the-program] A value, not a
-// boolean, so a later level of detail is one more member ("Scaffold").
-export const visibilities = ["shown", "hidden"] as const;
+// A category's level of detail (docs/design/01-mvp.md, F5): its blocks not listed, `hidden`; listed, each as its line,
+// `compact`; or each in full, `expanded`. In order of more detail, the order a click on the filter bar moves through.
+export const visibilities = ["hidden", "compact", "expanded"] as const;
 export type Visibility = (typeof visibilities)[number];
+
+// Each category's level until the reader sets one, as in the original cc-dump (src/cc_dump/core/filter_registry.py):
+// what the user and the model said in full, the harness's machinery a line a block, the request's metadata not at all.
+export const defaultVisibility: Record<Category, Visibility> = {
+  user: "expanded",
+  assistant: "expanded",
+  tools: "compact",
+  system: "compact",
+  metadata: "hidden",
+  thinking: "compact",
+};
 
 // Whether the runs of rows a step left unchanged fold into one row each, or are all shown (docs/design/02-design.md, "Two
 // axes").
@@ -29,7 +40,7 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
-// is on. `visibility`: each category's. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
+// is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
 // whether unchanged rows fold. `branches`: where a branch is listed after its last request.
 export type Settings = { follow: boolean; visibility: Record<Category, Visibility>; theme: ThemeChoice; search: SearchOptions; unchanged: Unchanged; branches: Branches };
 
@@ -44,7 +55,7 @@ export function parseSettings(stored: unknown): Settings {
   const branches = fieldOf(stored, "branches");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
-    return isOneOf(visibilities)(value) ? value : "shown";
+    return isOneOf(visibilities)(value) ? value : defaultVisibility[category];
   };
   // A query is a regular expression, in any case, until the reader chooses otherwise.
   const option = (name: keyof SearchOptions, fallback: boolean) => {

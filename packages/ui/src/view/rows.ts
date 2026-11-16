@@ -37,15 +37,25 @@ export type ChangedRow = Extract<Row, { kind: "block"; change: "changed" }>;
 // and `every` row, listed or not, which the search reads, since a hidden category's blocks are searched
 // (docs/design/01-mvp.md, F6). `brought`: the key of the first row listed that the step shown brought, added, changed or
 // removed, of its segments' own rows, not those a branch's placement took away; none for a step that brought none.
-export type Layout = { rows: Row[]; keys: Keys; every: { rows: Row[]; keys: Keys }; brought: string | undefined };
+export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; brought: string | undefined };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
 // fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
 // object while no row, listed or not, arrives, goes or moves, so what places rows by key (the virtualizer, from the first
 // row) places them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
+// The keys of the rows listed, which the virtualizer places, and the key it keeps each one's measured height by
+// (measuredBy): the same object, too, while no row's height is measured by another key.
+export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 
-// The key a fold is opened by, among the flips, by its first row's key: a flip of its own, apart from that row's.
+// [LAW:one-source-of-truth] What the reader chose to show of each block, region or fold they opened or closed, by key:
+// open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts now
+// or not, since how a block starts moves with its category's level and the choice outlasts a change of level
+// (docs/design/01-mvp.md, F4).
+export type Opened = Record<string, boolean>;
+export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
+
+// The key a fold is opened by, among the choices, by its first row's key: a choice of its own, apart from that row's.
 export const foldKey = (first: string) => `fold:${first}`;
 
 // Lays out the conversation at step `step` of `history`, leaving out the blocks of each category `visibility` hides
@@ -58,8 +68,8 @@ export function createLayout(
   visibility: Record<Category, Visibility>,
   unchanged: Unchanged,
   branches: Branches,
-): (history: History, step: number, revealed: string | undefined, opened: Record<string, true>) => Layout {
-  let last: Layout = { rows: [], keys: keysOf([], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, brought: undefined };
+): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
+  let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, brought: undefined };
   const place = placements[branches];
   return (history, step, revealed, opened) => {
     // The keys of the branches folded into one row each.
@@ -72,7 +82,7 @@ export function createLayout(
     });
     const every = placed.flatMap(({ rows }) => rows);
     const taken = placed.flatMap(({ rows, taken }) => rows.map(() => taken));
-    const isShown = every.map((row) => row.kind !== "block" || isListed[visibility[(row.change === "removed" ? row.before : row.block).category]] || row.key === revealed);
+    const isShown = every.map((row) => row.kind !== "block" || levels[visibility[(row.change === "removed" ? row.before : row.block).category]].listed || row.key === revealed);
     // A group's title is listed over a block of it listed: read from the end, whether one follows before the next title.
     let blockListed = false;
     for (let index = every.length - 1; index >= 0; index--) {
@@ -91,13 +101,17 @@ export function createLayout(
       else places.set(row.key, before);
     });
     const listedKeys = folding.rows.map(({ key }) => key);
+    const listedMeasured = folding.rows.map((row) => measuredBy(row, visibility));
     const everyKeys = every.map(({ key }) => key);
     const sameKeys = same(everyKeys, last.every.rows.map(({ key }) => key));
     const sameEvery = sameKeys && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
     last = {
       rows: folding.rows,
       // What a row shows changing, as a streaming block does, moves no row, so the keys are the ones before.
-      keys: sameKeys && same(listedKeys, last.rows.map(({ key }) => key)) ? last.keys : keysOf(listedKeys, places),
+      keys:
+        sameKeys && same(listedKeys, last.rows.map(({ key }) => key)) && listedMeasured.every((key, index) => key === last.keys.measuredBy(index))
+          ? last.keys
+          : listedKeysOf(listedKeys, listedMeasured, places),
       // [LAW:one-source-of-truth] The search reads every row's block alone, so the same blocks are the same `every`, and
       // what memoizes on it is not run again by a step of the search or of time that changed none.
       every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
@@ -166,11 +180,11 @@ const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
 function fold(
   listed: Row[],
   revealed: string | undefined,
-  opened: Record<string, true>,
+  opened: Opened,
   unchanged: Unchanged,
   collapsed: ReadonlySet<string>,
 ): { rows: Row[]; placeOf: Map<string, number> } {
-  const isOpened = (run: Row[]) => opened[foldKey(run[0]!.key)] === true;
+  const isOpened = (run: Row[]) => isOpen(opened, foldKey(run[0]!.key), false);
   const branchOf = ({ branch }: Row) => (branch !== undefined && collapsed.has(branch.key) ? branch : undefined);
   const branches = foldRuns(
     listed,
@@ -218,9 +232,15 @@ const same = (a: string[], b: string[]) => a.length === b.length && a.every((key
 function keysOf(keys: string[], places: Map<string, number>): Keys {
   return { at: (index) => keys[index]!, indexOf: (key) => places.get(key) };
 }
+const listedKeysOf = (keys: string[], measured: string[], places: Map<string, number>): ListedKeys => ({ ...keysOf(keys, places), measuredBy: (index) => measured[index]! });
 
-// [LAW:types-are-the-program] Whether a block of each visibility is listed: the compiler asks for an entry for each.
-const isListed: Record<Visibility, boolean> = { shown: true, hidden: false };
+// [LAW:types-are-the-program] What each level shows of its category's blocks (docs/design/01-mvp.md, F4, F5): whether
+// they are listed, and whether each starts expanded. The compiler asks for an entry for each level.
+const levels: Record<Visibility, { listed: boolean; startsExpanded: boolean }> = {
+  hidden: { listed: false, startsExpanded: false },
+  compact: { listed: true, startsExpanded: false },
+  expanded: { listed: true, startsExpanded: true },
+};
 
 // How much a block holds, in characters of its content: what its collapsed line says, and what its expanded height is
 // estimated from. A JSON string is counted by its length, so a tool's input still streaming is not serialized each time.
@@ -327,20 +347,28 @@ export function seconds(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
-// Whether a block at `key` shows expanded: as its category starts, the user's and the assistant's expanded and the rest
-// collapsed, and what the harness injected into their messages collapsed with the rest, since it is not what they said
-// (docs/design/01-mvp.md, F4), unless the reader flipped it. A row starts as the version it shows does, the one on the
-// right, or the one on the left where the step removed it, and one flip turns both its sides.
-export function isExpanded(flipped: Record<string, true>, key: string, block: Block): boolean {
-  return (flipped[key] === true) !== startsExpanded(block);
+// [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen): as the
+// version it shows does, the one on the right, or the one on the left where the step removed it, so one choice holds
+// both its sides. A block starts as its category's level says, but what the harness injected into a message starts
+// collapsed, since it is not what was said (docs/design/01-mvp.md, F4), and so does a block of a hidden category the
+// search revealed.
+export function startsExpanded(row: Extract<Row, { kind: "block" }>, visibility: Record<Category, Visibility>): boolean {
+  const { category, injected } = row.block ?? row.before;
+  return injected === undefined && levels[visibility[category]].startsExpanded;
 }
-const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
+
+// The key the virtualizer keeps a row's measured height by: what decides that height, the row's key and, for a block's
+// row, how its level starts it. A height measured at one level is never read at another, and a row a change of levels
+// starts the other way is a new item, measured as it mounts. A choice of the reader's changes a row's height only while
+// the row is on screen, where the change is measured as it happens.
+export const measuredBy = (row: Row, visibility: Record<Category, Visibility>): string =>
+  row.kind === "block" ? `${row.key}#${startsExpanded(row, visibility) ? "expanded" : "collapsed"}` : row.key;
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
 // block's line and its content at about 100 characters a line, on its taller side, a changed block's too, whose diff is
 // not made to estimate it, since that would diff rows never shown. Only rows not yet on screen use it, so it decides how
 // the scrollbar reads, not where anything lands.
-export function estimateHeight(row: Row, flipped: Record<string, true>): number {
+export function estimateHeight(row: Row, opened: Opened, visibility: Record<Category, Visibility>): number {
   const line = 20;
   const parts = (block: Block | undefined) => (block === undefined ? 0 : Math.ceil(sizeOf(block) / 100) * 16);
   switch (row.kind) {
@@ -350,7 +378,7 @@ export function estimateHeight(row: Row, flipped: Record<string, true>): number 
     case "fold":
       return line;
     case "block":
-      if (!isExpanded(flipped, row.key, row.block ?? row.before)) return line;
+      if (!isOpen(opened, row.key, startsExpanded(row, visibility))) return line;
       return line + Math.max(parts(row.block), parts(row.before));
   }
 }
