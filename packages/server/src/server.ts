@@ -10,9 +10,11 @@ import { TmuxRefused, type Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
 // tmux server, the running proxy (what it says it is, and the recording it makes for an agent), and `directory`, the one
-// the app was started in, where every agent it launches starts.
+// the app was started in, where every agent it launches starts. `logs`: the app server's log lines (processLog), which
+// `GET /logs` serves to the logs panel (docs/design/01-mvp.md, F9).
 export type Parts = {
   log: Log;
+  logs: Handler;
   settingsPath: string;
   tmux: Tmux;
   proxyInfo: () => Promise<ProxyInfo>;
@@ -33,7 +35,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 
 // The app server restarts on every source change, so it holds nothing that must survive one: the settings are on disk,
 // and tmux and the proxy are asked again on each request.
-export function createApp({ log, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
+export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
   const readSettings = async (trace_id: string) =>
@@ -77,7 +79,10 @@ export function createApp({ log, settingsPath, tmux, proxyInfo, proxyRecording, 
     // (docs/design/01-mvp.md).
     res.setHeader("access-control-allow-origin", "*");
     if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} cannot launch agents`));
-    const route = routes[new URL(req.url!, "http://server").pathname];
+    const pathname = new URL(req.url!, "http://server").pathname;
+    // The log is a stream, not an answer.
+    if (pathname === "/logs") return logs(req, res, work);
+    const route = routes[pathname];
     if (route === undefined) return void res.writeHead(404).end();
     const allow = Object.keys(route).join(", ");
     // The browser's preflight of a JSON POST from the UI's origin.

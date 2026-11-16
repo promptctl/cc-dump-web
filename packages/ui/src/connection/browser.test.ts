@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
+import { processLog } from "@cc-dump/log/lines";
 import { arrivals, send, serving } from "@cc-dump/log/testing";
+import { PassThrough } from "node:stream";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserConnection } from "./browser.ts";
+import type { Part } from "./connection.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
@@ -275,6 +278,63 @@ describe("the browser connection", () => {
     expect(await statusing(createBrowserConnection({ readerPort: reader.port })).next()).toEqual({
       failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
     });
+  });
+});
+
+type LogArrival = "opened" | { line: string } | "dropped" | { failed: Error };
+
+// A part's log, whose arrivals the test waits on, each line by its event's name.
+function logging(connection: ReturnType<typeof createBrowserConnection>, part: Part) {
+  const abort = new AbortController();
+  onTestFinished(() => abort.abort());
+  const { arrive, next } = arrivals<LogArrival>();
+  connection.logs(
+    part,
+    { opened: () => arrive("opened"), line: ({ event }) => arrive({ line: event.event }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) },
+    abort.signal,
+  );
+  return { next };
+}
+
+describe("a part's log", () => {
+  const event = (name: string) => ({ event: name, trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1, outcome: "ok" as const });
+
+  it("reads the app server's lines kept, then each as it is written", async () => {
+    const { log, logs } = processLog("server", new PassThrough());
+    log(event("kept"));
+    const server = await serving(logs);
+    const logged = logging(createBrowserConnection({ serverPort: server.port }), "server");
+    expect([await logged.next(), await logged.next()]).toEqual(["opened", { line: "kept" }]);
+    log(event("written"));
+    expect(await logged.next()).toEqual({ line: "written" });
+  });
+
+  it("resumes the proxy's lines after the last one read, once a dropped connection is made again", async () => {
+    const { log, logs } = processLog("proxy", new PassThrough());
+    log(event("before"));
+    let connections = 0;
+    // The first connection is cut once its lines are sent; `retry` makes the browser reconnect in 10ms, not its default 3s.
+    const reader = await serving((req, res, work) => {
+      logs(req, res, work);
+      if (++connections === 1) res.write("retry: 10\n\n", () => res.destroy());
+    });
+    const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
+    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "before" }, "dropped"]);
+    log(event("after"));
+    expect([await logged.next(), await logged.next()]).toEqual(["opened", { line: "after" }]);
+  });
+
+  it("reports a line that does not parse as failed, and goes on to the lines after it", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: {}\n\ndata: ${JSON.stringify({ run: "r", seq: 0, event: { service: "proxy", ...event("next") } })}\n\n`);
+    });
+    const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
+    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual([
+      "opened",
+      { failed: expect.objectContaining({ message: `GET ${reader.url}/logs`, cause: expect.objectContaining({ message: "log line: event: is not an object" }) }) },
+      { line: "next" },
+    ]);
   });
 });
 

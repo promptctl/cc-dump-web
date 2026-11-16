@@ -12,6 +12,7 @@ import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { InfoPanel } from "./view/InfoPanel.tsx";
 import { Launch } from "./view/Launch.tsx";
+import { LogsPanel } from "./view/LogsPanel.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { Terminal } from "./view/Terminal.tsx";
 import { useView } from "./view/state.ts";
@@ -31,6 +32,7 @@ export function App({ connection }: { connection: Connection }) {
   const shown = useMemo(() => format(exchanges(events)), [format, events]);
   const session = useMemo(() => shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session, [shown]);
   const info = useSettings((state) => state.info);
+  const logs = useSettings((state) => state.logs);
   return (
     <div className="flex h-screen flex-col">
       <header className="flex h-12 items-center gap-6 border-b bg-surface px-4 text-xs">
@@ -48,6 +50,9 @@ export function App({ connection }: { connection: Connection }) {
           <Toggle pressed={info} data-info-toggle className="control aria-pressed:font-semibold" onClick={() => settings.setInfo(!info)}>
             Info
           </Toggle>
+          <Toggle pressed={logs} data-logs-toggle className="control aria-pressed:font-semibold" onClick={() => settings.setLogs(!logs)}>
+            Logs
+          </Toggle>
         </div>
       </header>
       {/* The conversation, and the launched agent's window beside it, each half the width (F13). */}
@@ -64,6 +69,7 @@ export function App({ connection }: { connection: Connection }) {
         {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
         {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
         {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
+        {logs ? <LogsPanel connection={connection} /> : null}
       </div>
     </div>
   );

@@ -163,6 +163,13 @@ describe("routes", () => {
     expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
     expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
   });
+
+  it("serves its log at /logs to the UI's page, and refuses it to a page from another site", async () => {
+    const { url } = await app();
+    const res = await fetch(`${url}/logs`, { headers: { origin: "http://127.0.0.1:3346" } });
+    expect([res.status, res.headers.get("access-control-allow-origin"), await res.text()]).toEqual([200, "*", "the app server's log"]);
+    expect((await fetch(`${url}/logs`, { headers: { origin: "https://example.com" } })).status).toBe(403);
+  });
 });
 
 describe("the launch's answer", () => {

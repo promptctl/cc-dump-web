@@ -1,4 +1,4 @@
-import type { Ending } from "@cc-dump/log/ending";
+import { outcomes, type Ending } from "@cc-dump/log/ending";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -185,7 +185,6 @@ const recordedTypes: Record<Recorded["type"], true> = {
   response_trailers: true,
   end: true,
 };
-const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
 const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
 // A time exactly as `toISOString` writes it, which is how the proxy writes every time it sends.
 const isTimeOrNull = (value: unknown): value is string | null =>

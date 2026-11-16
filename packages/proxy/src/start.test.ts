@@ -1,12 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { serve } from "@cc-dump/log";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { LOOPBACK } from "@cc-dump/log/address";
-import { send, serving } from "@cc-dump/log/testing";
+import { parseLogLine } from "@cc-dump/log/line";
+import { send, serving, subscribe } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, recordingStart } from "./format.ts";
-import { proxyProcess, subscribe } from "./testing.ts";
+import { proxyProcess } from "./testing.ts";
 
 describe("the reader port", () => {
   const proxy = async () => {
@@ -16,16 +18,37 @@ describe("the reader port", () => {
     return { dir, upstream: upstream.url, ...(await proxyProcess(upstream.url, dir, "unlimited")) };
   };
 
-  it("serves the recordings and the proxy's status and info, every answer to any origin", async () => {
+  it("serves the recordings and the proxy's status, info and log, every answer to any origin", async () => {
     const { readerPort } = await proxy();
-    const answers = await Promise.all(["/recordings", "/status", "/info", "/elsewhere"].map((path) => send(readerPort, { path })));
+    const answers = await Promise.all(["/recordings", "/status", "/info", "/logs", "/elsewhere"].map((path) => send(readerPort, { path })));
     expect(answers.map((res) => [res.statusCode, res.headers["content-type"], res.headers["access-control-allow-origin"]])).toEqual([
       [200, "application/json", "*"],
       [200, "text/event-stream", "*"],
       [200, "application/json", "*"],
+      [200, "text/event-stream", "*"],
       [404, undefined, "*"],
     ]);
     for (const res of answers) res.destroy();
+  });
+
+  it("sends a request its upstream cannot be reached for to its log's readers, as it fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    // A port nothing listens on: bound, then let go.
+    const bound = await serve(() => {}, (_req, res) => res.end(), 0);
+    await bound.close();
+    const { proxyPort, readerPort } = await proxyProcess(`http://${LOOPBACK}:${bound.port}`, dir, "unlimited");
+    const { res, next } = await subscribe(readerPort, "/logs");
+    onTestFinished(() => void res.destroy());
+    // The lines of the proxy's start come first; the request's comes once it has failed.
+    const failed = (async () => {
+      for (;;) {
+        const { event } = parseLogLine((await next()).data);
+        if (event.event === "request") return event;
+      }
+    })();
+    void fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" }).then((res) => res.text());
+    expect(await failed).toMatchObject({ service: "proxy", event: "request", outcome: "error", error: expect.stringContaining("ECONNREFUSED"), facts: { method: "POST", url: "/v1/messages" } });
   });
 
   it("makes a recording for an agent about to launch, answering its name, and lists none until it holds something", async () => {

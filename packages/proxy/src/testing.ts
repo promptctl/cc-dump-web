@@ -2,36 +2,9 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { Event } from "@cc-dump/log";
-import { arrivals, eventLog, send } from "@cc-dump/log/testing";
+import { eventLog } from "@cc-dump/log/testing";
 import { expect, onTestFinished } from "vitest";
 import { runRecordingName } from "./format.ts";
-
-export type ServerSentEvent = { id?: string; event?: string; data: string };
-
-// A Server-Sent Events client of the reader port: `next()` resolves with each event as it arrives.
-export async function subscribe(port: number, path: string, headers: Record<string, string> = {}) {
-  const res = await send(port, { path, headers });
-  const { arrive, next } = arrivals<ServerSentEvent>();
-  let text = "";
-  res.setEncoding("utf8");
-  res.on("data", (chunk: string) => {
-    text += chunk;
-    for (let at = text.indexOf("\n\n"); at !== -1; at = text.indexOf("\n\n")) {
-      const fields = text
-        .slice(0, at)
-        .split("\n")
-        .map((line) => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]);
-      text = text.slice(at + 2);
-      arrive({ data: "", ...Object.fromEntries(fields) } as ServerSentEvent);
-    }
-  });
-  const take = async (n: number) => {
-    const events: ServerSentEvent[] = [];
-    while (events.length < n) events.push(await next());
-    return events;
-  };
-  return { res, next, take };
-}
 
 // The name of the run's recording in a proxy process: the traffic no agent claims is recorded there.
 const runStart = "2026-11-13T09:00:00.000Z";

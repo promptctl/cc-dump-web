@@ -106,7 +106,7 @@ Hot reload is designed in first, because it decides where every other piece live
 | Part | Reloads | Does |
 |---|---|---|
 | Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, lists the recordings, and serves a recording to readers from any position: one the proxy run is writing to its end and then live, any other to its end. Reads its port and upstream from its settings file at its start. |
-| App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores the settings it launches with, relays logs. |
+| App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores the settings it launches with, serves its log lines to the logs panel, as the proxy serves its own on its reader port (F9). |
 | Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
 
 **The proxy stays small so that it rarely changes.** It knows nothing about messages, blocks or streaming events. Everything that understands the Anthropic API lives where it can be reloaded. This is also what makes "every block type is captured" true by construction: the proxy cannot drop what it never parses.

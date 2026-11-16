@@ -8,7 +8,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
 import { countTraffic, createStatus, watchable, watchSource } from "./status.ts";
-import { subscribe } from "./testing.ts";
+import { subscribe } from "@cc-dump/log/testing";
 
 // Two source files in a directory of their own, recorded as they are now.
 function sourceFiles() {

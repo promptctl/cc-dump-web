@@ -1,4 +1,5 @@
 import { LOOPBACK } from "@cc-dump/log/address";
+import { parseLogLine } from "@cc-dump/log/line";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { ask } from "@cc-dump/proxy/ask";
 import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
@@ -8,7 +9,7 @@ import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
 import type { Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader and the app server, on the address they are bound to, whatever host the
-// page was opened at: `fetch` for the list and for launching, one EventSource per read and per status, which
+// page was opened at: `fetch` for the list and for launching, one EventSource per read, per status and per log, which
 // resumes a dropped connection by itself, and a WebSocket per terminal, through the app server.
 export function createBrowserConnection({ readerPort = READER_PORT, serverPort = SERVER_PORT } = {}): Connection {
   const origin = `http://${LOOPBACK}:${readerPort}`;
@@ -42,6 +43,14 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     status: (watcher, signal) => {
       const stream = eventStream(`${origin}/status`, signal, watcher.failed);
       stream.on("message", parseProxyStatus, watcher.status, watcher.failed);
+      stream.dropped(watcher.dropped);
+    },
+    // Each line stands alone, so one that does not parse taints none after it, as a status does. The EventSource sends
+    // the id of the last line it read when it reconnects, so the same process resumes after it (processLog).
+    logs: (part, watcher, signal) => {
+      const stream = eventStream(`${part === "proxy" ? origin : server}/logs`, signal, watcher.failed);
+      stream.on("message", parseLogLine, watcher.line, watcher.failed);
+      stream.opened(watcher.opened);
       stream.dropped(watcher.dropped);
     },
     launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
@@ -116,5 +125,7 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
     listening,
   );
   const dropped = (listener: () => void) => void drops.add(listener);
-  return { on, dropped, close, fail };
+  // Told each time the connection is made, the first time and after each drop.
+  const opened = (listener: () => void) => source.addEventListener("open", listener, listening);
+  return { on, opened, dropped, close, fail };
 }

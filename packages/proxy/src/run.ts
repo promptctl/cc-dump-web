@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { createLog, logged, shutdownOnSignal } from "@cc-dump/log";
+import { logged, shutdownOnSignal } from "@cc-dump/log";
+import { processLog } from "@cc-dump/log/lines";
 import { READER_PORT } from "./address.ts";
 import { runRecordingName } from "./format.ts";
 import { createRecordings } from "./recordings.ts";
@@ -12,7 +13,7 @@ import { baseDirectory } from "@cc-dump/config/xdg";
 // The proxy as `pnpm dev` runs it, running `source`. Run with plain `node`, never a watcher: the proxy must not
 // restart while requests are in flight.
 export async function run(source: Source) {
-  const log = createLog("proxy", (line) => process.stdout.write(line));
+  const { log, logs } = processLog("proxy");
 
   // Its settings, from cc-dump/proxy.json under the XDG config home. Its event says which config home, which settings
   // the file set, and what the proxy took; a file it cannot take fails it, and the proxy does not start.
@@ -33,5 +34,5 @@ export async function run(source: Source) {
   const run = runRecordingName(new Date());
   const recordings = logged(log, "recordings", { dir, run, data_home_from: dataHome.from, xdg_data_home: process.env.XDG_DATA_HOME }, () => createRecordings(log, dir, run));
 
-  shutdownOnSignal(log, await startProxy(log, { upstream: settings.upstream, recordings, source, proxyPort: settings.port, readerPort: READER_PORT }));
+  shutdownOnSignal(log, await startProxy(log, { upstream: settings.upstream, recordings, source, logs, proxyPort: settings.port, readerPort: READER_PORT }));
 }

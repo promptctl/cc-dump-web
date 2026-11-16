@@ -1,9 +1,10 @@
+import type { LogLine } from "@cc-dump/log/line";
 import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 import type { Launch, Launched, Launcher, TmuxWindow } from "@cc-dump/server/format";
 import type { TerminalConnection } from "@promptctl/tmux-control-mode-js/window-terminal";
 
-// [LAW:locality-or-seam] The UI's one way to the backend: it names recordings, reads them, follows the proxy's status,
-// and launches agents, and how they are reached is the implementation's alone (the browser on the proxy's reader and
+// [LAW:locality-or-seam] The UI's one way to the backend: it names recordings, reads them, follows the proxy's status
+// and each part's log, and launches agents, and how they are reached is the implementation's alone (the browser on the proxy's reader and
 // the app server today; an Electron shell later).
 export type Connection = {
   // The recordings, by name.
@@ -18,6 +19,11 @@ export type Connection = {
   // lost, or not made, is reported as dropped while it is tried again, and the next status says it is back. A signal
   // already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
+  // The log lines of `part` (F9): the ones it kept, then each as it is written, across its restarts (the restarted
+  // process's lines follow), until `signal` aborts it, which reports nothing. A line it cannot read is reported as
+  // failed, and the lines after it still arrive. A connection lost, or not made, is reported as dropped while it is tried
+  // again, and as opened once it is made. A signal already aborted throws its reason.
+  logs: (part: Part, watcher: LogWatcher, signal: AbortSignal) => void;
   // Makes a new recording for an agent started by hand, which the proxy follows from its first event (F8). Made once
   // asked, so it is asked only for an agent about to be started.
   agentRecording: () => Promise<Listing>;
@@ -38,6 +44,17 @@ export type TmuxConnection = TerminalConnection & { connect: () => Promise<void>
 
 export type StatusWatcher = {
   status: (status: ProxyStatus) => void;
+  dropped: () => void;
+  failed: (error: Error) => void;
+};
+
+// The parts that write a log: the proxy and the app server.
+export const parts = ["proxy", "server"] as const;
+export type Part = (typeof parts)[number];
+
+export type LogWatcher = {
+  opened: () => void;
+  line: (line: LogLine) => void;
   dropped: () => void;
   failed: (error: Error) => void;
 };

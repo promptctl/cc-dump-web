@@ -11,7 +11,8 @@ import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
 import { agentBaseUrl, parseListing, parseListings, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
 import { createRecordings, type Recordings } from "./recordings.ts";
-import { proxyProcess, runName, subscribe, type ServerSentEvent } from "./testing.ts";
+import { proxyProcess, runName } from "./testing.ts";
+import { subscribe, type ServerSentEvent } from "@cc-dump/log/testing";
 
 // A recordings directory, removed when the test finishes.
 function recordingsDir() {

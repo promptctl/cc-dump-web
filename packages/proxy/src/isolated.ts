@@ -6,7 +6,8 @@ import { recordSource } from "./source.ts";
 // `run-start`, a UTC time like 2026-11-13T09:00:00Z, names the run's recording as main.ts names it for its start.
 // [LAW:no-ambient-temporal-coupling] Its source is recorded before the rest of the proxy loads, as main.ts records it.
 const recording = recordSource(import.meta.url);
-const { createLog, logged, shutdownOnSignal } = await import("@cc-dump/log");
+const { logged, shutdownOnSignal } = await import("@cc-dump/log");
+const { processLog } = await import("@cc-dump/log/lines");
 const { runRecordingName } = await import("./format.ts");
 const { createRecordings } = await import("./recordings.ts");
 const { startProxy } = await import("./start.ts");
@@ -23,8 +24,8 @@ function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest
   return { upstream: parseUpstream(upstream), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
 }
 
-const log = createLog("proxy", (line) => process.stdout.write(line));
+const { log, logs } = processLog("proxy");
 // [LAW:nothing-unseen] Its `arguments` event says where it forwards and records, as main.ts's settings and recordings say.
 const { upstream, dir, run, proxyPort, readerPort } = logged(log, "arguments", { argv: process.argv.slice(2) }, () => parseArguments(process.argv.slice(2)), (parsed) => parsed);
 const recordings = createRecordings(log, dir, run);
-shutdownOnSignal(log, await startProxy(log, { upstream, recordings, source: recording.loaded(), proxyPort, readerPort }));
+shutdownOnSignal(log, await startProxy(log, { upstream, recordings, source: recording.loaded(), logs, proxyPort, readerPort }));
