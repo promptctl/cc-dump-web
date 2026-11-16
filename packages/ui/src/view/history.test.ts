@@ -171,7 +171,7 @@ describe("branches", () => {
     // The turn's message and reply are the thread's own, not versions of the question's.
     expect(keysAt(after, 6)).toContain("thread:t1/message.4/content.0");
     expect(versioned(after)).toEqual([]);
-    expect([...after.branches]).toEqual([["branch:btw", { first: 5, last: 5 }]]);
+    expect([...after.branches]).toEqual([["branch:btw", 5]]);
   });
 
   it("makes a compaction a branch, and the thread goes on past it with nothing of the thread changed", () => {

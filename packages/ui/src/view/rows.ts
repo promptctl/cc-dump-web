@@ -59,7 +59,7 @@ export function createLayout(
     // Each row of a branch folded into one, by the branch.
     const collapsed = new Map<string, Branch>();
     const every = history.segments.slice(0, step).flatMap((segment, index) => {
-      const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!.last);
+      const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
       const { rows, collapses } = place(() => segmentRows(segment, index + 1, step), () => segmentRows(segment, index + 1, step - 1).map(removed), past);
       if (collapses) for (const row of rows) collapsed.set(row.key, segment.branch!);
       return rows;

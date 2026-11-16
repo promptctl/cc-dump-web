@@ -25,9 +25,8 @@ export type Segment = { formatted: FormattedExchange; groups: { key: string; tit
 export type Branch = { key: string; from: number };
 
 // The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, and the
-// steps each branch's requests span, by its key.
-export type History = { segments: Segment[]; stepOf: (trace: string) => number | undefined; branches: ReadonlyMap<string, Span> };
-export type Span = { first: number; last: number };
+// step of each branch's last request, by its key.
+export type History = { segments: Segment[]; stepOf: (trace: string) => number | undefined; branches: ReadonlyMap<string, number> };
 
 // A thread: the first message every request of it sends, the tree of the paths its requests have sent, and its lines,
 // by key, each with where its places' items are.
@@ -149,10 +148,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     undoTo(folded, refold);
     for (let index = refold; index < read.length; index++) folded.push(fold(read[index]!, roleOf.get(index + 1), index + 1));
     const steps = new Map(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
-    const branches = new Map<string, Span>();
-    folded.forEach(({ segment: { branch } }, index) => {
-      if (branch !== undefined) branches.set(branch.key, { first: branches.get(branch.key)?.first ?? index + 1, last: index + 1 });
-    });
+    const branches = new Map(folded.flatMap(({ segment: { branch } }, index) => (branch === undefined ? [] : [[branch.key, index + 1] as const])));
     last = { segments: folded.map(({ segment }) => segment), stepOf: (trace) => steps.get(trace), branches };
     return last;
   };

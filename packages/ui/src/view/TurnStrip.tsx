@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useRef } from "react";
 import type { FormattedExchange } from "../format/format.ts";
-import type { Branch, Segment } from "./history.ts";
+import type { Segment } from "./history.ts";
 import { clockTime } from "./rows.ts";
 
 // The conversation's steps, above the columns (docs/design/02-design.md, "Two axes"): one mark per step, in the order
@@ -32,25 +32,26 @@ export const TurnStrip = memo(function TurnStrip({
       </button>
       <ol className="flex h-3 min-w-0 flex-1 items-stretch gap-px overflow-x-auto [scrollbar-width:none]">
         {segments.map(({ formatted, branch }, index) => (
-          <Mark key={formatted.exchange.trace_id} formatted={formatted} branch={branch} step={index + 1} isShown={index + 1 === shown} onGo={onGo} />
+          <Mark key={formatted.exchange.trace_id} formatted={formatted} off={branch?.from} step={index + 1} isShown={index + 1 === shown} onGo={onGo} />
         ))}
       </ol>
     </nav>
   );
 });
 
-// A step's mark: half height for a request on a branch of its thread, which stands below the thread's. Memoized on what
+// A step's mark: half height for a request on a branch of its thread, which stands below the thread's; `off`, the step
+// the branch left from. Memoized on what
 // it shows: the formatter keeps an exchange the same object while it is unchanged, so as one streams, or the step shown
 // moves, only the marks it changes render again.
 const Mark = memo(function Mark({
   formatted: { exchange, facts },
-  branch,
+  off,
   step,
   isShown,
   onGo,
 }: {
   formatted: FormattedExchange;
-  branch: Branch | undefined;
+  off: number | undefined;
   step: number;
   isShown: boolean;
   onGo: (step: number) => void;
@@ -65,10 +66,10 @@ const Mark = memo(function Mark({
       <button
         type="button"
         aria-current={isShown ? "step" : undefined}
-        title={[`${step}`, clockTime(facts.began), facts.model, branch === undefined ? undefined : `branch off ${branch.from}`, failed ? "failed" : undefined]
+        title={[`${step}`, clockTime(facts.began), facts.model, off === undefined ? undefined : `branch off ${off}`, failed ? "failed" : undefined]
           .filter((fact) => fact !== undefined)
           .join(" · ")}
-        className={`flex-1 rounded-[1px] ${branch === undefined ? "" : "mt-[6px]"} ${marks[isShown ? "shown" : failed ? "failed" : "step"]}`}
+        className={`flex-1 rounded-[1px] ${off === undefined ? "" : "mt-[6px]"} ${marks[isShown ? "shown" : failed ? "failed" : "step"]}`}
         onClick={() => onGo(step)}
       />
     </li>

@@ -13,17 +13,17 @@ export type Fact = { step: number; trace: string; left: { step: number; whole: b
 // the step on it it left from.
 export type Role = { line: string; branch: { base: string; from: number } | undefined };
 
-// A line: its steps in order, and, for a branch, the step it left from; and, for a branch that left inside what its
-// line's last request added, that line and request, whose place it takes once it is continued while the line has had
-// nothing since.
-type Line = { steps: number[]; from: number | undefined; sibling: { line: Line; step: number } | undefined };
+// A line: its steps in order, and, for a branch that left inside what its line's last request added, that request, whose
+// place it takes once it is continued while that request is still its line's last. A line is a branch exactly when its
+// first request left another, and it left from where that request left.
+type Line = { steps: number[]; sibling: number | undefined };
 
 // Each fact's role, in the facts' order: one thread's requests, or several threads' interleaved, since a request's line
 // is found from the line holding the step it left. [LAW:dataflow-not-control-flow] Every request is placed by the same
 // three rules, read off its fact:
 // - a thread's first request begins its main line;
 // - a request after the whole of another's continues that one's line, and the requests after that one on it, which it
-//   does not resend, are a branch off it (a side question, a prompt suggestion, turns rewound);
+//   does not resend, are a branch (a side question, a prompt suggestion, turns rewound);
 // - a request that leaves inside what another added edits that line's history in place when it sends more messages than
 //   the line's last request, carrying the line on past it (old tool results cleared, a changed system prompt), and is
 //   otherwise a branch of its own off it (a compaction, a twin, a side request with a system prompt of its own).
@@ -33,26 +33,23 @@ type Line = { steps: number[]; from: number | undefined; sibling: { line: Line; 
 export function linesOf(facts: readonly Fact[]): Role[] {
   const factOf = new Map(facts.map((fact) => [fact.step, fact]));
   const lineOf = new Map<number, Line>();
-  const begin = (steps: number[], from: number | undefined, sibling: Line["sibling"]) => {
-    const line: Line = { steps, from, sibling };
-    for (const step of steps) lineOf.set(step, line);
-  };
   const join = (line: Line, steps: number[]) => {
     line.steps.push(...steps);
     for (const step of steps) lineOf.set(step, line);
   };
+  const begin = (steps: number[], sibling: number | undefined) => join({ steps: [], sibling }, steps);
   // The line a request after the whole of one of `line`'s continues: `line`, or, while its sibling is still its line's
   // last, the sibling's line, which `line`'s steps join as the sibling goes to a branch of its own.
   const continued = (line: Line): Line => {
-    const { sibling } = line;
-    if (sibling === undefined || sibling.line.steps.at(-1) !== sibling.step) return line;
-    begin(sibling.line.steps.splice(-1), factOf.get(sibling.step)!.left!.step, undefined);
-    join(sibling.line, line.steps.splice(0));
-    return sibling.line;
+    const siblings = line.sibling === undefined ? undefined : lineOf.get(line.sibling)!;
+    if (siblings === undefined || siblings.steps.at(-1) !== line.sibling) return line;
+    begin(siblings.steps.splice(-1), undefined);
+    join(siblings, line.steps.splice(0));
+    return siblings;
   };
   for (const { step, left, messages } of facts) {
     if (left === undefined) {
-      begin([step], undefined, undefined);
+      begin([step], undefined);
       continue;
     }
     const line = lineOf.get(left.step)!;
@@ -61,19 +58,18 @@ export function linesOf(facts: readonly Fact[]): Role[] {
       const on = continued(line);
       // Searched from the end, where a request almost always leaves its line.
       const after = on.steps.splice(on.steps.lastIndexOf(left.step) + 1);
-      if (after.length > 0) begin(after, left.step, undefined);
+      if (after.length > 0) begin(after, undefined);
       join(on, [step]);
     } else if (messages > factOf.get(last)!.messages) join(line, [step]);
-    else {
-      const siblings = last === left.step && factOf.get(last)!.left !== undefined;
-      begin([step], left.step, siblings ? { line, step: last } : undefined);
-    }
+    else begin([step], last === left.step && factOf.get(last)!.left !== undefined ? last : undefined);
   }
-  // [LAW:one-source-of-truth] A line's key is named by its first request at the end, and a branch's base is the line its
-  // step is on then, since a later request can change which requests a line holds.
-  const keyOf = ({ steps, from }: Line) => `${from === undefined ? "thread" : "branch"}:${factOf.get(steps[0]!)!.trace}`;
+  // [LAW:one-source-of-truth] A line's key, and for a branch where it left from, are its first request's, and its base
+  // the line that step is on, read at the end, since a later request can change which requests a line holds.
+  const firstOf = (line: Line) => factOf.get(line.steps[0]!)!;
+  const keyOf = (line: Line) => `${firstOf(line).left === undefined ? "thread" : "branch"}:${firstOf(line).trace}`;
   return facts.map(({ step }) => {
     const line = lineOf.get(step)!;
-    return { line: keyOf(line), branch: line.from === undefined ? undefined : { base: keyOf(lineOf.get(line.from)!), from: line.from } };
+    const from = firstOf(line).left?.step;
+    return { line: keyOf(line), branch: from === undefined ? undefined : { base: keyOf(lineOf.get(from)!), from } };
   });
 }

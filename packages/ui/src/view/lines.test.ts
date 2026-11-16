@@ -34,8 +34,8 @@ describe("linesOf", () => {
       "thread:t1",
       "branch:t2 off 1",
       "thread:t1",
-      "branch:t4 off 1",
-      "branch:t4 off 1",
+      "branch:t4 off 2",
+      "branch:t4 off 2",
     ]);
   });
 
@@ -65,6 +65,10 @@ describe("linesOf", () => {
 
   it("makes a side request with the thread's first message and a system prompt of its own a branch, and the thread goes on", () => {
     expect(lines([first(1), whole(2, 1, 3), inside(3, 1, 1), whole(4, 2, 5)])).toEqual(["thread:t1", "thread:t1", "branch:t3 off 1", "thread:t1"]);
+  });
+
+  it("makes an edit in place the line went on without a branch off where the edit left the line", () => {
+    expect(lines([first(1), whole(2, 1, 3), inside(3, 1, 5), whole(4, 2, 5)])).toEqual(["thread:t1", "thread:t1", "branch:t3 off 1", "thread:t1"]);
   });
 
   it("keeps a request that edits the line's history and carries it on past its last request on the line", () => {
