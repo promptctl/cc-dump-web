@@ -365,16 +365,16 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
 }
 
 // The exchange's line (docs/design/02-design.md, "Print what varies", "Layout"): its facts in columns of fixed widths,
-// aligned down the conversation, on two rows so that every column fits beside the other side's: who answered and how,
-// then the tokens. Each is cut with an ellipsis where a rare value outgrows its column, the model's first, since its
-// column alone gives way to a narrow side. It is a band on the chrome's ground, so an exchange's start is seen without a
-// line drawn. `reading`: whether the read can still bring this exchange its end. `branch`: the branch its request is on,
-// which its model's column names first, where a long model's ellipsis does not reach.
+// aligned down the conversation, on two rows: who answered and how it ended, then the tokens. The model's column alone
+// gives way to a narrow side, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
+// chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
+// exchange its end. `branch`: the branch its request is on, which its model's column names first, where a long model's
+// ellipsis does not reach.
 function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exchange: FormattedExchange; branch: Branch | undefined; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
-    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,18ch)_7ch_3ch_10ch_minmax(0,1fr)] items-baseline gap-x-3 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
+    <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_14ch] items-baseline gap-x-3 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
       <span className="text-right text-foreground-muted">{facts.ordinal}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
@@ -393,12 +393,14 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
       <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
         {facts.status}
       </span>
-      <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>
-      {/* How it ended: a response that began can still be cut, and one streaming has not ended. */}
-      <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
-        {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
+      {/* How it ended: why the model stopped, and a response that began can still be cut, and one streaming has not ended. */}
+      <span>
+        <span className="font-mono" title={facts.stopReason}>{facts.stopReason}</span>{" "}
+        <span className={end?.outcome === "error" ? "text-error" : "text-foreground-muted"} title={end?.error}>
+          {endings[end?.outcome ?? (reading ? "pending" : "unread")]}
+        </span>
       </span>
-      <div className="col-span-6 col-start-2 grid grid-cols-[9ch_12ch_14ch_10ch] gap-x-3 *:truncate">
+      <div className="col-[1/-1] grid grid-cols-[9ch_12ch_14ch_10ch] gap-x-3 *:truncate">
         <Fact label="in" count={facts.input} />
         <Fact label="cache" count={facts.cacheRead} />
         <Fact label="written" count={facts.cacheWritten} />

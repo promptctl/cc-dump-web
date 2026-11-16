@@ -167,7 +167,7 @@ describe("a block's line", () => {
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
 
-  it("previews a block by the start of its first text or JSON, on one line, and prints a line's time and duration", () => {
+  it("previews a block by the start of its first text or JSON, on one line, and prints an exchange line's time, duration and model", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "fields", fields: [["id", "t1"]] }, { kind: "json", label: "input", value: { command: "ls -la" } }] })).toBe('{ "command": "ls -la" }');
     expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
