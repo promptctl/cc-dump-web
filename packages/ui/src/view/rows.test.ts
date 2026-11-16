@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block, Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
-import { parseSettings, type Unchanged, type Visibility } from "../settings.ts";
+import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
+import { createSearch } from "./search.ts";
 import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, preview, seconds, sizeOf, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
@@ -24,9 +25,9 @@ const shown = parseSettings(undefined).visibility;
 const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
 
 // The layout at each step of `events`, as the view lays them out.
-function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, unchanged: Unchanged = "show") {
+function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, unchanged: Unchanged = "show", branches: Branches = "stay") {
   const history = createHistory()(createFormatter()(exchanges(events)));
-  const layOut = createLayout(visibility, unchanged);
+  const layOut = createLayout(visibility, unchanged, branches);
   return (step: number, revealed?: string, opened: Record<string, true> = {}) => layOut(history, step, revealed, opened);
 }
 const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.count}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
@@ -126,7 +127,7 @@ describe("layout", () => {
 
   it("keeps the keys while what a row shows changes and no row moves, as while a block streams", () => {
     const events = turns(3);
-    const layOut = createLayout(shown, "show");
+    const layOut = createLayout(shown, "show", "stay");
     // Two formatters make the same rows of other block objects.
     const first = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
     const again = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
@@ -140,7 +141,7 @@ describe("layout", () => {
     const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
     const history = createHistory();
     const format = createFormatter();
-    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "show");
+    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "show", "stay");
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));
@@ -153,7 +154,7 @@ describe("layout", () => {
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
     expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
-    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed" };
+    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
     expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
     expect(estimateHeight(row, { k: true })).toBe(20);
   });
@@ -180,5 +181,46 @@ describe("a block's line", () => {
     expect(preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] })).toMatch(/^.{198,200}…$/u);
     expect(clockTime("2026-11-13T08:00:00.000Z")).toMatch(/^\d\d:\d\d:\d\d$/);
     expect(seconds(2100)).toBe("2.1s");
+  });
+});
+
+// A side request, re-asking the second turn with a block of its own in the last message, then two turns of the thread:
+// a branch at step 3 (view/lines.ts), the thread's turns at steps 4 and 5.
+const say = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
+const thread = (trace: string, messages: unknown[]) => request(trace, { model: "m", system: [text("Be brief.")], tools: [{ name: "Read" }], messages });
+const branched = [...turns(2), ...thread("side", [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }]), ...thread("t3", say(3)), ...thread("t4", say(4))];
+
+describe("branches", () => {
+  it("lists a branch where it arrived, as it was, at every later step, marked as the branch it is", () => {
+    const at = layouts(branched, shown, "show", "stay");
+    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
+    expect(listed(at(5))).toContain("branch:side/message.1/content.1 same");
+    expect(at(5).rows.find(({ key }) => key === "side")).toMatchObject({ kind: "exchange", branch: { key: "branch:side", from: 2 } });
+  });
+
+  it("folds a branch into one row once its last request is behind the step shown, opened by its flip or a block revealed in it", () => {
+    const at = layouts(branched, shown, "show", "fold");
+    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
+    const folded = at(4).rows.filter(({ kind }) => kind === "fold");
+    expect(folded).toEqual([{ kind: "fold", key: "side", count: 5, branch: { key: "branch:side", from: 2 } }]);
+    // Its rows are still the search's, and stand where the fold does.
+    expect(at(4).every.rows.map(({ key }) => key)).toContain("branch:side/message.1/content.1");
+    expect(at(4).keys.indexOf("branch:side/message.1/content.1")).toBe(at(4).keys.indexOf("side"));
+    expect(listed(at(4, undefined, { [foldKey("side")]: true }))).toContain("branch:side/message.1/content.1 same");
+    expect(listed(at(4, "branch:side/message.1/content.1"))).toContain("branch:side/message.1/content.1 same");
+    // An unchanged fold never takes a branch's rows.
+    const unchanged = layouts(branched, shown, "fold", "fold")(5);
+    expect(unchanged.rows.filter(({ kind }) => kind === "fold").map(({ key, branch }) => [key, branch?.key])).toContainEqual(["side", "branch:side"]);
+  });
+
+  it("lists a branch only while its requests are: the step after its last shows it removed, on the left alone, and later steps not at all", () => {
+    const at = layouts(branched, shown, "show", "step");
+    expect(listed(at(3))).toContain("branch:side/message.1/content.1 added");
+    const removed = at(4).rows.filter((row) => row.kind !== "fold" && row.change === "removed");
+    expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "branch:side/message.1/content.1"]);
+    expect(removed.at(-1)).toMatchObject({ block: undefined, before: { key: "content.1" } });
+    // What is removed is not the moment shown's, so the search does not count it.
+    expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(0);
+    expect(at(5).every.rows.map(({ key }) => key)).not.toContain("side");
   });
 });

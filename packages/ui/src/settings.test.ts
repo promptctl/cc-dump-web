@@ -6,6 +6,7 @@ describe("settings", () => {
     theme: "system",
     search: { caseSensitive: false, wholeWord: false, regex: true },
     unchanged: "fold",
+    branches: "stay",
   };
 
   it("reads nothing stored as every setting's default", () => {
@@ -15,14 +16,15 @@ describe("settings", () => {
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
     expect(
-      parseSettings({ follow: false, visibility: { tools: "hidden", system: "summary", metadata: 1 }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, unchanged: "show" }),
+      parseSettings({ follow: false, visibility: { tools: "hidden", system: "summary", metadata: 1 }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, unchanged: "show", branches: "fold" }),
     ).toEqual({
       follow: false,
       visibility: { ...defaults.visibility, tools: "hidden" },
       theme: "nord",
       search: { caseSensitive: true, wholeWord: false, regex: false },
       unchanged: "show",
+      branches: "fold",
     });
-    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], unchanged: "hide" })).toEqual(defaults);
+    expect(parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], unchanged: "hide", branches: "everywhere" })).toEqual(defaults);
   });
 });

@@ -30,7 +30,7 @@ const body = {
 const other = { ...body, messages: [{ role: "user", content: "Look for the needle!" }, ...body.messages.slice(1)] };
 const { visibility: shown, search: defaults } = parseSettings(undefined);
 const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
-  createLayout(visibility, "show")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
+  createLayout(visibility, "show", "stay")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
 // A query read under the default options, with those given changed.
 const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(query, { ...defaults, ...options });
 const { pattern } = read("needle");
@@ -168,7 +168,7 @@ describe("search", () => {
     const found = createSearch()(every.rows, pattern);
     const hiddenBlocksListed = (revealed?: string) =>
       layOut(hidden, revealed)
-        .rows.filter((row) => row.kind === "block" && hidden[row.block.category] === "hidden")
+        .rows.filter((row) => row.kind === "block" && row.change !== "removed" && hidden[row.block.category] === "hidden")
         .map(({ key }) => key);
     expect(hiddenBlocksListed()).toEqual([]);
     const categoryOf = (key: string) => (every.rows.find((row) => row.key === key) as { block: { category: Category } }).block.category;

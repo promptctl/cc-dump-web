@@ -8,7 +8,8 @@ import { jsonText, type Keys, type Row } from "./rows.ts";
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
 
-export type BlockRow = Extract<Row, { kind: "block" }>;
+// A block row the search reads: one showing a block on the right, the moment shown, which a removed row does not.
+export type BlockRow = Extract<Row, { kind: "block"; block: KeyedBlock }>;
 
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text.
 // A text part only grows at its end as it streams, so a match in it keeps its place. A text replaced at its address, as
@@ -118,7 +119,7 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
     const blocks: FoundBlock[] = [];
     let count = 0;
     rows.forEach((row, index) => {
-      const own = row.kind === "block" ? countOf(row.block) : 0;
+      const own = row.kind === "block" && row.change !== "removed" ? countOf(row.block) : 0;
       if (own === 0) return;
       blocks.push({ row: row as BlockRow, index, count: own, before: count });
       count += own;

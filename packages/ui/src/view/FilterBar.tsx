@@ -1,5 +1,5 @@
 import { categories, type Category } from "../format/blocks.ts";
-import { settings, useSettings, type Unchanged, type Visibility } from "../settings.ts";
+import { branchPlacements, settings, useSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
@@ -8,6 +8,7 @@ import { Toggle } from "./Toggle.tsx";
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
   const unchanged = useSettings((state) => state.unchanged);
+  const branches = useSettings((state) => state.branches);
   return (
     <div className="flex flex-wrap items-center gap-4">
       <div role="group" aria-label="Categories" className="flex flex-wrap items-center gap-2">
@@ -16,9 +17,36 @@ export function FilterBar() {
         ))}
       </div>
       <UnchangedToggle unchanged={unchanged} />
+      <BranchesChoice branches={branches} />
     </div>
   );
 }
+
+// Where a branch is listed once its last request is behind the step shown: one of the placements, the one chosen pressed.
+function BranchesChoice({ branches }: { branches: Branches }) {
+  return (
+    <div role="radiogroup" aria-label="Branches" className="flex items-center gap-1 font-sans text-foreground-muted">
+      branches:
+      {branchPlacements.map((placement) => (
+        <Toggle
+          key={placement}
+          pressed={placement === branches}
+          title={branchTitles[placement]}
+          className="rounded px-1.5 py-0.5 aria-pressed:bg-panel aria-pressed:text-foreground aria-[pressed=false]:hover:bg-hover"
+          onClick={() => settings.setBranches(placement)}
+        >
+          {placement}
+        </Toggle>
+      ))}
+    </div>
+  );
+}
+
+const branchTitles: Record<Branches, string> = {
+  stay: "A branch stays where it arrived, as it was.",
+  fold: "A branch folds into one row once its last request is behind the step shown.",
+  step: "A branch shows only while its requests are; the step after its last shows it removed.",
+};
 
 // A click shows every unchanged row, or folds them again.
 function UnchangedToggle({ unchanged }: { unchanged: Unchanged }) {

@@ -5,7 +5,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { Part } from "../format/blocks.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
-import { createHistory, type History } from "./history.ts";
+import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
 import { regionKey, segments, type Segment } from "./regions.ts";
@@ -37,7 +37,8 @@ export function Conversation({ formatted, reading }: { formatted: FormattedExcha
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
   const unchanged = useSettings((state) => state.unchanged);
-  const layOut = useMemo(() => createLayout(visibility, unchanged), [visibility, unchanged]);
+  const branches = useSettings((state) => state.branches);
+  const layOut = useMemo(() => createLayout(visibility, unchanged, branches), [visibility, unchanged, branches]);
   // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
   // the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
@@ -344,13 +345,15 @@ const RowView = memo(
   function RowView({ row, reading }: { row: Row; reading: boolean }) {
     if (row.kind === "fold") return <FoldLine fold={row} />;
     const sides = sidesOf(row, reading);
+    // A branch's rows stand one step in, under the thread they left (docs/design/02-design.md, "Two axes").
+    const inset = row.branch === undefined ? undefined : "pl-6";
     return (
       <div className="grid grid-cols-[4px_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_4px_minmax(0,1fr)]">
-        <div className="hidden lg:block">
+        <div className={`hidden lg:block ${inset ?? ""}`}>
           <Side.Provider value="left">{sides.left}</Side.Provider>
         </div>
         <div className={bands[row.change]} />
-        <div>{sides.right}</div>
+        <div className={inset}>{sides.right}</div>
       </div>
     );
   },
@@ -358,24 +361,24 @@ const RowView = memo(
 );
 
 // What each side of a row shows: the right, the moment shown; the left, the step before, nothing where the step added
-// the row.
+// the row, and the right nothing where it removed it.
 function sidesOf(row: Exclude<Row, { kind: "fold" }>, reading: boolean): { left: ReactNode; right: ReactNode } {
+  const sides = (line: ReactNode) => ({ left: row.change === "added" ? null : line, right: row.change === "removed" ? null : line });
   switch (row.kind) {
-    case "exchange": {
-      const line = <ExchangeLine exchange={row.exchange} reading={reading} />;
-      return { left: row.change === "added" ? null : line, right: line };
-    }
-    case "group": {
-      const title = <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
-      return { left: row.change === "added" ? null : title, right: title };
-    }
+    case "exchange":
+      return sides(<ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />);
+    case "group":
+      return sides(<h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>);
     case "block":
-      return { left: row.before === undefined ? null : <BlockView rowKey={row.key} block={row.before} />, right: <BlockView rowKey={row.key} block={row.block} /> };
+      return {
+        left: row.before === undefined ? null : <BlockView rowKey={row.key} block={row.before} />,
+        right: row.block === undefined ? null : <BlockView rowKey={row.key} block={row.block} />,
+      };
   }
 }
 
 // [LAW:dataflow-not-control-flow] The band between a row's sides, by what the step did to it.
-const bands: Record<Change, string> = { added: "bg-(--success)", changed: "bg-(--warning)", same: "" };
+const bands: Record<Change, string> = { added: "bg-(--success)", changed: "bg-(--warning)", removed: "bg-(--error)", same: "" };
 
 // Whether two rows show the same: every field the same value.
 function sameFields(a: Row, b: Row): boolean {
@@ -383,7 +386,8 @@ function sameFields(a: Row, b: Row): boolean {
   return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
 }
 
-// A run of unchanged rows, folded: one line saying how many, across both columns, which opens it on a click.
+// A run of unchanged rows, or of a branch's, folded: one line saying how many, across both columns, which opens it on a
+// click.
 function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
   const hold = useContext(Hold);
   return (
@@ -396,7 +400,7 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
       }}
     >
       <span className="w-3">▸</span>
-      {fold.count} unchanged
+      {fold.branch === undefined ? `${fold.count} unchanged` : `branch off ${fold.branch.from} · ${fold.count} rows`}
     </button>
   );
 }
@@ -404,8 +408,9 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
 // The exchange's line (docs/design/02-design.md, "Print what varies"): its facts in columns of fixed widths, aligned down
 // the conversation, each cut with an ellipsis where a rare value outgrows its column, and how it ended. It is a band on
 // the chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring
-// this exchange its end.
-function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+// this exchange its end. `branch`: the branch its request is on, which its model's column names first, where a long
+// model's ellipsis does not reach.
+function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exchange: FormattedExchange; branch: Branch | undefined; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
@@ -415,7 +420,14 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
         {clockTime(facts.began)}
       </time>
       {/* A request whose head was not recorded has no model to name; the line says why. */}
-      {exchange.request.head === undefined ? <span className="text-foreground-muted">request not recorded</span> : <span className="font-mono" title={facts.model}>{facts.model}</span>}
+      {exchange.request.head === undefined ? (
+        <span className="text-foreground-muted">request not recorded</span>
+      ) : (
+        <span className="font-mono" title={branch === undefined ? facts.model : `${facts.model}, on a branch off step ${branch.from}: its blocks are its own, not the thread's`}>
+          {branch === undefined ? null : <span className="font-sans text-foreground-muted">↳ off {branch.from} </span>}
+          {facts.model}
+        </span>
+      )}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
       {/* An HTTP error reads as one, its reason phrase on hover. */}
       <span className={facts.status !== undefined && facts.status >= 400 ? "text-error" : undefined} title={reason}>
