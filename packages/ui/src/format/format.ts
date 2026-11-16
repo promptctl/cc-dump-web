@@ -2,7 +2,7 @@ import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { formatBlock, formatContent, formatError, raw, restBlock, restParts, roleCategory, unreadLabel, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
@@ -182,7 +182,7 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       return {
         blocks: [
           ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
-          ...placed({ in: "request", prompt: true }, [...one("tools", tools), ...each("system", system)]),
+          ...placed({ in: "request", prompt: true }, [...tools, ...each("system", system)]),
           ...one("cache", cache),
         ],
         messages,
@@ -238,10 +238,37 @@ function systemBlocks(system: unknown): Block[] {
   return blocks.map((block) => formatBlock(block, "system", "markdown"));
 }
 
-function toolBlocks(tools: unknown): BlockOrNone {
+// Each tool definition as a block of its own, named for its tool, its description read first and its schema after.
+// [LAW:types-are-the-program] Keyed by its name, `tools.<name>.<n>`, `n` its occurrence among tools of that name, so a
+// tool is the same item in every request that offers it wherever it stands in the list (view/history.ts), and the key
+// is unique and has no `/` (view/position.ts) whatever a recorded request holds. A tool that does not fit is shown raw.
+function toolBlocks(tools: unknown): KeyedBlock[] {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
-  return [{ category: "tools", name: `tool definitions: ${tools.length}`, parts: tools.map((tool) => ({ kind: "json", label: toolName(tool), value: tool })) }];
+  const seen = new Map<string, number>();
+  return tools.map((tool) => {
+    const name = toolName(tool);
+    const occurrence = seen.get(name) ?? 0;
+    seen.set(name, occurrence + 1);
+    return { ...toolBlock(tool, name), key: `tools.${encodeURIComponent(name)}.${occurrence}` };
+  });
+}
+
+function toolBlock(tool: unknown, name: string): Block {
+  return fitting(
+    (): Block => {
+      const fields = readObject(tool, "tool definition");
+      // Read so the name the block is named for is not shown again among the rest.
+      fields.optionalString("name");
+      const description = fields.optionalString("description");
+      return {
+        category: "tools",
+        name,
+        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...restParts(fields, unreadLabel)],
+      };
+    },
+    (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
+  );
 }
 
 // A client tool's name; a server tool's type, which names it when it has no name.

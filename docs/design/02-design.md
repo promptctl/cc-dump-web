@@ -55,8 +55,8 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 │ in 46k cache 44k written 2k out 390│ in 48k cache 46k written 2k out 812│▒▒│  │
 │ ▌▸ HTTP request              929   │ ▌▸ HTTP request              929   │░░│  │
 │ ▌▸ parameters              12.5k   │ ▌▸ parameters              12.5k   │░░│  │
-│ ▌▸ tool definitions  63     183k   │ ▌▸ tool definitions  63     183k   │▒▒│  │
-│   41 blocks unchanged              │   41 blocks unchanged              │░░│  │
+│ ▌▸ Agent  Launch a new agent… 7.1k │ ▌▸ Agent  Launch a new agent… 7.1k │▒▒│  │
+│   103 blocks unchanged             │   103 blocks unchanged             │░░│  │
 │ ▌▾ user  proxy ok               8  │ ▌▾ user  proxy ok               8  │░░│  │
 │                                    │ ▌▾ tool_result                569  │▒▒│  │
 │                                    │ ▌  <system-reminder> …             │  │  │

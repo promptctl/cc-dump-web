@@ -40,7 +40,7 @@ describe("layout", () => {
       "t1/request",
       "t1/request/http added",
       "thread:t1/request/parameters added",
-      "thread:t1/request/tools added",
+      "thread:t1/request/tools.Read.0 added",
       "thread:t1/request/system.0 added",
       "t1/message.0",
       "thread:t1/message.0/content.0 added",
@@ -62,6 +62,34 @@ describe("layout", () => {
     expect(system).toMatchObject({ change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, block: { parts: [{ kind: "text", text: "Be briefer." }] } });
     // At the step it arrived, the item is what it was then.
     expect(at(1).rows.find(({ key }) => key === "thread:t1/request/system.0")).toMatchObject({ change: "added", block: { parts: [{ kind: "text", text: "Be brief." }] } });
+  });
+
+  it("marks exactly the tool a request changed, dropped or added, the rest unchanged, and a prompt block dropped as removed the step it goes", () => {
+    const tool = (name: string, description: string) => ({ name, description, input_schema: {} });
+    const messages = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
+    const turn = (trace: string, count: number, tools: unknown[], system: string[]) => request(trace, { model: "m", system: system.map(text), tools, messages: messages(count) });
+    const at = layouts([
+      ...turn("t1", 1, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs")], ["Be brief.", "Mind the tools."]),
+      ...turn("t2", 2, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+      ...turn("t3", 3, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+      ...turn("t4", 4, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+    ]);
+    const prompt = (step: number) => listed(at(step)).filter((row) => /request\/(tools|system)/.test(row));
+    // Each tool is its own item, lined up by its name: Bash changed, Edit gone, Grep come, Read as it was.
+    expect(prompt(2)).toEqual([
+      "thread:t1/request/tools.Read.0 same",
+      "thread:t1/request/tools.Edit.0 removed",
+      "thread:t1/request/tools.Bash.0 changed",
+      "thread:t1/request/system.0 same",
+      "thread:t1/request/system.1 removed",
+      "thread:t2/request/tools.Grep.0 added",
+    ]);
+    expect(at(2).rows.find(({ key }) => key === "thread:t1/request/tools.Edit.0")).toMatchObject({ block: undefined, before: { name: "Edit" } });
+    // Gone, it has no row; resent as it was, nothing is marked.
+    expect(prompt(3)).toEqual(["thread:t1/request/tools.Read.0 same", "thread:t1/request/tools.Bash.0 same", "thread:t1/request/system.0 same", "thread:t2/request/tools.Grep.0 same"]);
+    // Offered again, it comes back where it stood, as added.
+    expect(prompt(4)).toContain("thread:t1/request/tools.Edit.0 added");
+    expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual(["thread:t1/request/tools.Edit.0 added"]);
   });
 
   it("folds each run of unchanged rows beyond the context beside a change into one row, and lists an opened one", () => {
@@ -90,7 +118,7 @@ describe("layout", () => {
 
   it("never folds the block the search revealed, hidden or not", () => {
     const at = layouts(turns(4), shown, "fold");
-    const revealed = "thread:t1/request/tools";
+    const revealed = "thread:t1/request/tools.Read.0";
     expect(at(4).rows.map(({ key }) => key)).not.toContain(revealed);
     const keys = at(4, revealed).rows.map(({ key }) => key);
     expect(keys).toContain(revealed);
@@ -114,9 +142,9 @@ describe("layout", () => {
     const at = layouts(turns(3), { ...shown, tools: "hidden" });
     const first = at(3);
     const everyKey = first.every.rows.map(({ key }) => key);
-    expect(everyKey).toContain("thread:t1/request/tools");
+    expect(everyKey).toContain("thread:t1/request/tools.Read.0");
     expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
-    const revealed = at(3, "thread:t1/request/tools");
+    const revealed = at(3, "thread:t1/request/tools.Read.0");
     expect(revealed.every).toBe(first.every);
     expect(revealed.keys).not.toBe(first.keys);
     expect(at(3).keys).not.toBe(revealed.keys);

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block } from "./blocks.ts";
 import { createFormatter, type FormattedExchange } from "./format.ts";
+import { doesNotFit } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -102,7 +103,7 @@ describe("format", () => {
       end("a"),
     ]);
 
-    expect(lines(group(formatted, "request"))).toEqual(["metadata HTTP request", "metadata parameters", "tools tool definitions: 2", "system system prompt", "metadata cache breakpoints: 1"]);
+    expect(lines(group(formatted, "request"))).toEqual(["metadata HTTP request", "metadata parameters", "tools Read", "tools web_search_20250305", "system system prompt", "metadata cache breakpoints: 1"]);
     expect(lines(group(formatted, "user"))).toEqual(["user user", "user image", "user document"]);
     expect(lines(group(formatted, "assistant"))).toEqual([
       "thinking thinking",
@@ -149,9 +150,15 @@ describe("format", () => {
     expect(message!.parts).toEqual([{ kind: "json", label: "fields", value: expect.objectContaining({ id: "msg_1", context_management: { applied_edits: [] } }) }]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
     expect(group(formatted, "request")[1]!.parts).toEqual([{ kind: "json", value: { model: "claude-fable-5-2", max_tokens: 32000, thinking: body.thinking } }]);
+    // A tool's description reads first, what else defines it after; a server tool is named by its type.
+    expect(group(formatted, "request")[2]!.parts).toEqual([
+      { kind: "text", form: "markdown", text: "Reads a file" },
+      { kind: "json", label: "fields", value: { input_schema: { type: "object" } } },
+    ]);
+    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "json", label: "fields", value: { type: "web_search_20250305", max_uses: 2 } }]);
     // The cache breakpoint is the request's, out of the block it was set on.
-    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
-    expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "fields", fields: [["system.0", '{"type":"ephemeral"}']] }]);
+    expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
+    expect(group(formatted, "request")[5]!.parts).toEqual([{ kind: "fields", fields: [["system.0", '{"type":"ephemeral"}']] }]);
   });
 
   it("lifts the cache breakpoints out of the blocks into the request's, in the order the cache's prefix is built", () => {
@@ -175,15 +182,32 @@ describe("format", () => {
       parts: [{ kind: "fields", fields: [["tools.1", JSON.stringify(breakpoint)], ["system.0", JSON.stringify(breakpoint)], ["message.0/content.1", JSON.stringify(breakpoint)]] }],
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
-    expect(group(formatted, "request")[2]!.parts).toEqual([
-      { kind: "json", label: "Read", value: { name: "Read", input_schema: {} } },
-      { kind: "json", label: "Bash", value: { name: "Bash", input_schema: {} } },
+    expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([
+      [{ kind: "json", label: "fields", value: { input_schema: {} } }],
+      [{ kind: "json", label: "fields", value: { input_schema: {} } }],
     ]);
     expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Go." }]);
     // What the request sends is its thread's; the breakpoints and its HTTP are its own.
-    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request", prompt: false }], ["tools", { in: "request", prompt: true }], ["system.0", { in: "request", prompt: true }], ["cache", undefined]]);
+    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request", prompt: false }], ["tools.Read.0", { in: "request", prompt: true }], ["tools.Bash.0", { in: "request", prompt: true }], ["system.0", { in: "request", prompt: true }], ["cache", undefined]]);
     expect(group(formatted, "assistant").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
     expect(formatted.messages).toBe(2);
+  });
+
+  it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
+    const blocks = group(
+      one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }] })),
+      "request",
+    ).filter(({ category }) => category === "tools");
+    // Two of one name, which the API refuses but a recording may hold, are two items; a key never nests at a `/`.
+    expect(blocks.map(({ key, name }) => [key, name])).toEqual([
+      ["tools.Read.0", "Read"],
+      ["tools.Read.1", "Read"],
+      ["tools.a%2Fb.0", "a/b"],
+      ["tools.tool.0", "tool"],
+      ["tools.Grep.0", "Grep"],
+    ]);
+    expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition is not an object"), { kind: "json", value: "Bash" }]);
+    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition's description is not a string, if present"));
   });
 
   it("returns beside the blocks the facts the exchange line prints: the model from the request, the usage and stop reason from the message, the timing from the events", () => {

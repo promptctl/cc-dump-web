@@ -9,9 +9,10 @@ import { linesOf, type Fact, type Role } from "./lines.ts";
 // request's block but a block at its place in a thread: it enters with the exchange it first arrives with and stays
 // there, resending it adds nothing, and different content at its place is a new version of it.
 
-// A version of an item: the block at its place from `step` on, and whether it arrived as a reply, which is compared with
-// the block the next request resends as that block is.
-export type Version = { step: number; block: KeyedBlock; reply: boolean };
+// A version of an item: the block at its place from `step` on, none once a request no longer sends it, and whether it
+// arrived as a reply, which is compared with the block the next request resends as that block is.
+export type Version = Sent | { step: number; block: undefined; reply: false };
+type Sent = { step: number; block: KeyedBlock; reply: boolean };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
 // [LAW:types-are-the-program] The key names the item, so it is the same at every moment: a thread's item is
@@ -36,7 +37,7 @@ type Thread = { first: KeyedBlock[]; root: Root; lines: Map<string, Line> };
 // place, `at`, as the request that first sent it there, `owner`, sent it. Each has the nodes after it on the paths that
 // pass it, and the steps whose path, reply included, ends at it.
 type Root = { owner: number; children: Node[]; ends: number[] };
-type Node = Root & { at: string; version: Version };
+type Node = Root & { at: string; version: Sent };
 // A line's places, and the line it left, whose places it resends.
 type Line = { places: Map<string, Location>; base: { line: Line; from: number } | undefined };
 type Location = { step: number; group: number; index: number };
@@ -104,6 +105,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const undo: (() => void)[] = [];
     const trace = formatted.exchange.trace_id;
     const line = thread === undefined || role === undefined ? undefined : lineOf(thread, role, undo);
+    const sent = new Set<string>();
     const groups = formatted.groups.map((group, groupIndex) => {
       const items: Item[] = [];
       for (const block of group.blocks) {
@@ -114,6 +116,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
         }
         const at = `${placeName(block.place, formatted.messages)}/${block.key}`;
         const reply = block.place.in === "reply";
+        sent.add(at);
         const found = find(line, at);
         if (found !== undefined && alike(itemAt(found.location).versions.findLast(({ step }) => step <= found.upTo)!, block)) continue;
         if (found?.line === line) {
@@ -128,6 +131,17 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       }
       return { key: group.key, title: group.title, items };
     });
+    // A request sends its line's prompt and parameters whole, so an item of the line's own among them that it did not
+    // send is gone from the step on; the messages are the line's history, which a request sending fewer leaves as a
+    // branch (view/lines.ts).
+    for (const [at, location] of line?.places ?? []) {
+      if (sent.has(at)) continue;
+      const item = itemAt(location);
+      const now = item.versions.at(-1)!;
+      if (now.block === undefined || now.block.place?.in !== "request") continue;
+      replace(location, { ...item, versions: [...item.versions, { step, block: undefined, reply: false }] });
+      undo.push(() => replace(location, item));
+    }
     const branch = role?.branch === undefined ? undefined : { key: role.line, from: role.branch.from };
     return { segment: { formatted, groups, branch }, role, undo };
   };
@@ -179,7 +193,7 @@ const sameRole = (a: Role | undefined, b: Role | undefined) => a?.line === b?.li
 // A request's path through its thread: the blocks of its prompt, then of each message it sends, then of its reply, each
 // at its place, in the order a request sends them, which is the order the cache builds its prefix in. Its parameters are
 // not on it, since a client changes them on any request.
-function pathOf(formatted: FormattedExchange, step: number): { at: string; version: Version }[] {
+function pathOf(formatted: FormattedExchange, step: number): { at: string; version: Sent }[] {
   return formatted.groups.flatMap(({ blocks }) =>
     blocks.flatMap((block) =>
       block.place === undefined || (block.place.in === "request" && !block.place.prompt)
@@ -232,8 +246,8 @@ function createComparison(): Comparison {
   // A reply is compared as it is resent: a request resends a reply's content block, and only the client knows which of
   // the fields the API reported about it (a thinking block's estimated_tokens, a tool use's caller) it keeps, so of the
   // fields no read asked for, only those the resent block has.
-  const compare = (version: Version, block: KeyedBlock) =>
-    version.reply && block.place?.in !== "reply" ? cached(version.block, block, () => equal(content(asResent(version.block, block)), content(block))) : blocks(version.block, block);
+  const compare = ({ block: was, reply }: Version, block: KeyedBlock) =>
+    was === undefined ? false : reply && block.place?.in !== "reply" ? cached(was, block, () => equal(content(asResent(was, block)), content(block))) : blocks(was, block);
   return Object.assign(compare, { blocks });
 }
 

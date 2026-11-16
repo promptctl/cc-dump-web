@@ -62,7 +62,7 @@ export function createLayout(
     const collapsed = new Set<string>();
     const every = history.segments.slice(0, step).flatMap((segment, index) => {
       const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
-      const { rows, collapses } = place(() => segmentRows(segment, index + 1, step), () => segmentRows(segment, index + 1, step - 1).map(removed), past);
+      const { rows, collapses } = place(() => segmentRows(segment, index + 1, step), () => removed(segmentRows(segment, index + 1, step - 1)), past);
       if (collapses) collapsed.add(segment.branch!.key);
       return rows;
     });
@@ -109,8 +109,8 @@ const placements: Record<Branches, Placement> = {
   step: (rows, removed, past) => ({ rows: past === 0 ? rows() : past === 1 ? removed() : [], collapses: false }),
 };
 
-// A row a segment lists while it is shown: no fold, and a block with a version at the step shown.
-type Shown = Extract<Row, { kind: "exchange" | "group" }> | Extract<Row, { kind: "block"; block: KeyedBlock }>;
+// A row a segment lists while it is shown: any but a fold.
+type Shown = Exclude<Row, { kind: "fold" }>;
 
 // The rows of step `own`'s segment at step `step`: its exchange's line, then each group's title and items.
 function segmentRows({ formatted, groups, branch }: Segment, own: number, step: number): Shown[] {
@@ -120,20 +120,24 @@ function segmentRows({ formatted, groups, branch }: Segment, own: number, step: 
     { kind: "exchange", key: trace, exchange: formatted, change, branch },
     ...groups
       .filter(({ items }) => items.length > 0)
-      .flatMap(({ key, title, items }): Shown[] => [{ kind: "group", key: `${trace}/${key}`, title, change, branch }, ...items.map((item) => itemRow(item, own, step, branch))]),
+      .flatMap(({ key, title, items }): Shown[] => [{ kind: "group", key: `${trace}/${key}`, title, change, branch }, ...items.flatMap((item) => itemRow(item, own, step, branch))]),
   ];
 }
 
-// An item's row at step `step`: its version then, and the one before, unless step `own`, the step it arrived at, is it.
-function itemRow(item: Item, own: number, step: number, branch: Branch | undefined): Shown {
+// An item's row at step `step`, from its version then and the one before, unless step `own`, the step it arrived at, is
+// it: a block on the right, added against none on the left; on the left alone, removed, the step it went; none once gone.
+function itemRow(item: Item, own: number, step: number, branch: Branch | undefined): Shown[] {
   const now = versionAt(item, step);
-  const before = own === step ? undefined : versionAt(item, step - 1);
-  return { kind: "block", key: item.key, block: now.block, before: before?.block, change: before === undefined ? "added" : before === now ? "same" : "changed", branch };
+  const before = own === step ? undefined : versionAt(item, step - 1).block;
+  if (now.block !== undefined) return [{ kind: "block", key: item.key, block: now.block, before, change: before === undefined ? "added" : before === now.block ? "same" : "changed", branch }];
+  return before === undefined ? [] : [{ kind: "block", key: item.key, block: undefined, before, change: "removed", branch }];
 }
 
-// A row the step shown took away: what it showed at the step before, on the left alone.
-function removed(row: Shown): Row {
-  return row.kind === "block" ? { kind: "block", key: row.key, block: undefined, before: row.block, change: "removed", branch: row.branch } : { ...row, change: "removed" };
+// The rows the step shown took away: what the step before showed, on the left alone.
+function removed(rows: Shown[]): Row[] {
+  return rows.flatMap((row): Row[] =>
+    row.kind !== "block" ? [{ ...row, change: "removed" }] : row.block === undefined ? [] : [{ kind: "block", key: row.key, block: undefined, before: row.block, change: "removed", branch: row.branch }],
+  );
 }
 
 // An item's version at a step at or after the one it arrived at.

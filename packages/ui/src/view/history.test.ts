@@ -58,7 +58,7 @@ describe("history", () => {
         response: ["probe/response/http", "thread:probe/message.1/content.0", "probe/response/stop reason", "probe/response/usage", "probe/response/fields"],
       },
       {
-        request: ["t1/request/http", "thread:t1/request/parameters", "thread:t1/request/tools", "thread:t1/request/system.0"],
+        request: ["t1/request/http", "thread:t1/request/parameters", "thread:t1/request/tools.Read.0", "thread:t1/request/system.0"],
         "message.0": ["thread:t1/message.0/content.0"],
         // The reply is the thread's next message.
         response: ["t1/response/http", "thread:t1/message.1/content.0", "t1/response/stop reason", "t1/response/usage", "t1/response/fields"],
@@ -86,7 +86,7 @@ describe("history", () => {
     const edited = [...process, ...request("t3", { ...main, system: [text("You are Claude Code, edited.")], messages: turn })];
     const after = read(edited);
     const system = after.segments[1]!.groups[0]!.items.find(({ key }) => key === "thread:t1/request/system.0")!;
-    expect(system.versions.map(({ step, block }) => [step, block.parts])).toEqual([
+    expect(system.versions.map(({ step, block }) => [step, block?.parts])).toEqual([
       [2, [{ kind: "text", form: "markdown", text: "You are Claude Code." }]],
       [5, [{ kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
     ]);
