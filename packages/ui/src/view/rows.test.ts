@@ -6,6 +6,7 @@ import { createFormatter } from "../format/format.ts";
 import { parseSettings, type Branches, type Unchanged, type Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
+import { lineDiff } from "../format/diff.ts";
 import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, modelName, preview, seconds, sizeOf, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
@@ -167,10 +168,12 @@ describe("a block's line", () => {
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
 
-  it("previews a block by the start of its first text or JSON, on one line", () => {
+  it("previews a block by the start of its first part that is text, on one line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
-    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "fields", fields: [["id", "t1"]] }, { kind: "json", label: "input", value: { command: "ls -la" } }] })).toBe('{ "command": "ls -la" }');
-    expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
+    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: { command: "ls -la" } }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe('{ "command": "ls -la" }');
+    expect(preview({ category: "tools", name: "tool_use: Read", parts: [{ kind: "fields", fields: [["file_path", "/a.ts"], ["limit", "5"]] }] })).toBe("file_path /a.ts limit 5");
+    expect(preview({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", lines: lineDiff("old", "new") }] })).toBe("old new");
+    expect(preview({ category: "user", name: "image", parts: [{ kind: "media", of: "image", source: { type: "url", url: "u" } }] })).toBe("");
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "x".repeat(500) }] })).toBe(`${"x".repeat(200)}…`);
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "x".repeat(200) }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));

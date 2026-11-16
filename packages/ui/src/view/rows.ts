@@ -1,4 +1,5 @@
-import type { Block, Category, Part } from "../format/blocks.ts";
+import type { Block, Category } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Unchanged, Visibility } from "../settings.ts";
 import type { Branch, History, Item, Segment } from "./history.ts";
@@ -238,6 +239,8 @@ function partSize(part: Part): number {
       return part.fields.reduce((length, [name, value]) => length + name.length + value.length, 0);
     case "media":
       return part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length;
+    case "diff":
+      return part.lines.reduce((length, line) => length + line.text.length, 0);
   }
 }
 
@@ -251,14 +254,12 @@ export function compact(count: number): string {
 // A size in characters.
 export const describeSize = (size: number): string => `${compact(size)} chars`;
 
-// What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of its first text
-// or JSON part on one line, as much as a line could hold, and an ellipsis where it was cut. A block with neither, a tool
-// result with only its id, shows nothing.
+// What a block's line shows after its name (docs/design/02-design.md, "Print what varies"): the start of its first part
+// that is text, on one line, as much as a line could hold, and an ellipsis where it was cut. A block of media alone
+// shows nothing.
 export function preview(block: Block): string {
-  const part = block.parts.find((part) => part.kind === "text" || part.kind === "json");
-  // A JSON string, as a tool's input is while it streams, is its own text, so it is never serialized for a line; any
-  // other value's serialization is jsonText's, which the block's size has already made.
-  const text = part === undefined ? "" : part.kind === "text" ? part.text : typeof part.value === "string" ? part.value : jsonText(part);
+  const part = block.parts.find((part): part is Exclude<Part, { kind: "media" }> => part.kind !== "media");
+  const text = part === undefined ? "" : partText(part);
   // A long text is read only a few lines' worth ahead, enough to fill the line once its whitespace, JSON's indentation
   // included, is collapsed; each cut is at a whole character, not between a surrogate pair's halves, and the ellipsis
   // says something visible was cut.
@@ -268,6 +269,22 @@ export function preview(block: Block): string {
   return line.length < collapsed.length || /\S/.test(text.slice(scanned.length)) ? `${line.trimEnd()}…` : line;
 }
 const previewLength = 200;
+
+// A part's text, as its preview reads it: a field as its name and value. A JSON string, as a tool's input is while it
+// streams, is its own text, so it is never serialized for a line; any other value's serialization is jsonText's, which
+// the block's size has already made.
+function partText(part: Exclude<Part, { kind: "media" }>): string {
+  switch (part.kind) {
+    case "text":
+      return part.text;
+    case "json":
+      return typeof part.value === "string" ? part.value : jsonText(part);
+    case "fields":
+      return part.fields.map(([name, value]) => `${name} ${value}`).join("  ");
+    case "diff":
+      return part.lines.map((line) => line.text).join("\n");
+  }
+}
 
 // The first `length` code units of `text`, one fewer where the last would be the first half of a surrogate pair.
 function wholeCut(text: string, length: number): string {

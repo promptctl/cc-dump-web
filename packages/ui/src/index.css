@@ -28,6 +28,11 @@
   --color-surface: var(--surface);
   --color-panel: var(--panel);
   --color-error: var(--text-error);
+  /* A diff's lines (view/Conversation.tsx): what a change removed on the theme's muted error, what it added on its muted
+     success, each marked in that color's text. */
+  --color-removed: var(--error-muted);
+  --color-added: var(--success-muted);
+  --color-success: var(--text-success);
   /* A hairline is Textual's unfocused border, a focus ring its focused one. */
   --color-border: var(--border-blurred);
   --color-focus: var(--border);

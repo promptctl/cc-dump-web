@@ -132,9 +132,9 @@ describe("format", () => {
       { kind: "json", label: "fields", value: { title: "notes" } },
     ]);
     expect(group(formatted, "user", 1)[0]!.parts).toEqual([
-      { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
       { kind: "text", form: "verbatim", text: "Read 1 image" },
       { kind: "media", of: "image", source: png },
+      { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
     ]);
     const [, thinking, text, toolUse, , usage, message] = group(formatted, "response");
     // A field of an event that nothing reads lands on the block the event builds: the thinking delta's estimate.
@@ -144,7 +144,7 @@ describe("format", () => {
       { kind: "json", label: "fields", value: { estimated_tokens: 50 } },
     ]);
     expect(text!.parts).toEqual([{ kind: "text", form: "markdown", text: "Red and blue." }]);
-    expect(toolUse!.parts).toContainEqual({ kind: "json", label: "input", value: { command: "ls" } });
+    expect(toolUse!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "command", text: "ls" });
     expect(usage!.parts).toEqual([{ kind: "json", value: { input_tokens: 2, output_tokens: 90 } }]);
     expect(message!.parts).toEqual([{ kind: "json", label: "fields", value: expect.objectContaining({ id: "msg_1", context_management: { applied_edits: [] } }) }]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
@@ -599,7 +599,7 @@ describe("format", () => {
       ]),
       "response",
     );
-    expect(blocks.find(({ category }) => category === "tools")!.parts).toContainEqual(expect.objectContaining({ kind: "json", value: { command: "ls" } }));
+    expect(blocks.find(({ category }) => category === "tools")!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "command", text: "ls" });
     const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
     expect(notApplied).toEqual(["content_block_delta event: content block 0 has stopped", "content_block_stop event: content block 0 has stopped"]);
   });

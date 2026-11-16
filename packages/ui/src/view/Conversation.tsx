@@ -2,7 +2,8 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import type { Part } from "../format/blocks.ts";
+import type { DiffLine } from "../format/diff.ts";
+import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
@@ -13,10 +14,10 @@ import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
-import { HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Side, unpainted } from "./painting.ts";
+import { Highlighted, HighlightedText } from "./Highlighted.tsx";
+import { Hold, Painted, Side, unpainted, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, diffText, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -497,6 +498,8 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
           ))}
         </dl>
       );
+    case "diff":
+      return <DiffView part={part} blockKey={blockKey} at={address.part(index)} />;
     case "media": {
       const { of, source } = part;
       switch (source.type) {
@@ -515,6 +518,33 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
       }
     }
   }
+}
+
+// A change as a unified diff: each line marked for what the change did to it and set on that mark's ground, verbatim,
+// placed in the diff's text at its passage so the search's matches paint where they are.
+const diffMarks: Record<DiffLine["change"], { mark: string; ground: string; color: string }> = {
+  same: { mark: " ", ground: "", color: "" },
+  removed: { mark: "-", ground: "bg-removed", color: "text-error" },
+  added: { mark: "+", ground: "bg-added", color: "text-success" },
+};
+function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
+  const searched = diffText(part);
+  const where = useWhere(blockKey, at, searched);
+  return (
+    <pre className="font-mono break-words whitespace-pre-wrap">
+      {part.lines.map((line, index) => {
+        const { mark, ground, color } = diffMarks[line.change];
+        return (
+          <div key={index} className={`flex ${ground}`}>
+            <span className={`w-3 shrink-0 select-none ${color}`}>{mark}</span>
+            <span className="min-w-0">
+              <Highlighted slice={line.text} from={searched.passages[index]!.start} where={where} />
+            </span>
+          </div>
+        );
+      })}
+    </pre>
+  );
 }
 
 function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: string }) {

@@ -1,4 +1,5 @@
-import { fitting, formatError, Misfit, parseJson, readObject, restBlock, type Block } from "./blocks.ts";
+import { formatError, restBlock, type Block } from "./blocks.ts";
+import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
 // message_start), the blocks of the events that are not part of it (an error event, an event this view cannot apply),

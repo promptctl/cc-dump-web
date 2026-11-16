@@ -1,5 +1,5 @@
 import { useContext, type ReactNode } from "react";
-import type { Part } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import { Highlighted } from "./Highlighted.tsx";
 import { Hold, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";

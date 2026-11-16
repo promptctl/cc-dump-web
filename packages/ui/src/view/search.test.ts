@@ -2,13 +2,14 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Category } from "../format/blocks.ts";
+import { lineDiff } from "../format/diff.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { createLayout, type Layout } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -106,6 +107,13 @@ describe("search", () => {
     expect(createSearch()(layOut().every.rows, read("(").pattern).count).toBe(0);
   });
 
+  it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
+    const [, shown] = shownTexts({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", lines: lineDiff("keep\nold end", "keep\nnew") }] });
+    expect(shown).toEqual({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
+    expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
+    expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
+  });
+
   it("finds no match where an expression matches nothing", () => {
     expect(find(read("x*").pattern, whole("axxb"))).toEqual([{ start: 1, end: 3 }]);
     expect(find(read("^").pattern, whole("line\nline"))).toEqual([]);
@@ -157,10 +165,10 @@ describe("search", () => {
   it("steps on from a current match in a hidden category to the match before and after it in the conversation", () => {
     const { every } = layOut({ ...shown, tools: "hidden" });
     const found = createSearch()(every.rows, pattern);
-    const toolResult = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, every.keys)!.match;
+    const toolResult = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, every.keys)!.match;
     // After exchange a's tool result: exchange b's header; before it: the JSON of exchange a's tool call, also hidden.
     expect(adjacent(found, toolResult, top, "next", pattern, every.keys)!.match.key).toBe("b/request/http");
-    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(1) });
+    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
   });
 
   it("lists a hidden category's block while it holds the current match, and no longer once a step moves on from it", () => {
@@ -191,7 +199,7 @@ describe("search", () => {
     const found = createSearch()(rows, pattern);
     const replaced = { key: "thread:a/message.1/content.0/so-far", at: address.part(0), start: 0 };
     expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
-    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(1) });
+    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
     // One whose exchange is not among the rows at all: the first match going on, the last going back.
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
   });
@@ -209,11 +217,10 @@ describe("search", () => {
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const result = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(1), start: -1 }, top, "next", pattern, keys)!;
-    // The tool result's part 0 is its tool_use_id; its text is part 1.
-    const part = partKey("thread:a/message.2/content.0", address.part(1));
+    const result = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, keys)!;
+    const part = partKey("thread:a/message.2/content.0", address.part(0));
     expect(result).toEqual({
-      match: { key: "thread:a/message.2/content.0", at: address.part(1), start: result.match.start },
+      match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
       block: rows.find((row) => row.key === "thread:a/message.2/content.0"),
       regions: [regionKey(part, 1), regionKey(part, 3)],
     });

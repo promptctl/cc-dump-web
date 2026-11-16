@@ -1,4 +1,5 @@
-import type { Block, Part } from "../format/blocks.ts";
+import type { Block } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
@@ -62,9 +63,28 @@ function partTexts(part: Part, index: number): Shown[] {
         { at: address.field(index, field, "name"), searched: whole(name), in: "content" as const },
         { at: address.field(index, field, "value"), searched: whole(value), in: "content" as const },
       ]);
+    case "diff":
+      return [{ at: address.part(index), searched: diffText(part), in: "content" }];
     case "media":
       return [];
   }
+}
+
+// The text a diff shows, its lines in order, each line a passage, so a match is within one line, as it is shown.
+// [LAW:one-source-of-truth] Made once per part, for the search and the view, which places each line by its passage.
+const diffTexts = new WeakMap<Extract<Part, { kind: "diff" }>, Searched>();
+export function diffText(part: Extract<Part, { kind: "diff" }>): Searched {
+  const made = diffTexts.get(part);
+  if (made !== undefined) return made;
+  let start = 0;
+  const passages = part.lines.map(({ text }) => {
+    const passage = { start, end: start + text.length };
+    start = passage.end + 1;
+    return passage;
+  });
+  const searched = { text: part.lines.map((line) => line.text).join("\n"), passages };
+  diffTexts.set(part, searched);
+  return searched;
 }
 
 // A query as read under the search's options: the `pattern` its matches are found with, and `error`, why it is not one,

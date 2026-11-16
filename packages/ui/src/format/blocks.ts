@@ -1,5 +1,7 @@
-import type { Header } from "@cc-dump/proxy/format";
 import { split, type Piece } from "./injected.ts";
+import type { Form, Medium, Part } from "./parts.ts";
+import { fitting, Misfit, readObject, type Fields } from "./read.ts";
+import { inputParts } from "./tools.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -7,23 +9,6 @@ import { split, type Piece } from "./injected.ts";
 // the filter bar lists them.
 export const categories = ["user", "assistant", "tools", "system", "metadata", "thinking"] as const;
 export type Category = (typeof categories)[number];
-
-// What a media source is the source of: an image the view shows as one, or a document it names.
-export type Medium = "image" | "document";
-export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
-
-// How a text reads (docs/design/02-design.md, "Two voices"): as Markdown, the way the model writes and reads what a
-// sender wrote, or verbatim, the way a tool returned it or the proxy reports it. [LAW:one-type-per-behavior] One kind of
-// text part, one rendering; the form is a value.
-export type Form = "markdown" | "verbatim";
-
-// [LAW:locality-or-seam] What a block shows, in kinds the view renders without knowing the API: a new block type, or a
-// richer rendering of one, is a change to the formatter alone.
-export type Part =
-  | { kind: "text"; form: Form; label?: string; text: string }
-  | { kind: "json"; label?: string; value: unknown }
-  | { kind: "fields"; label?: string; fields: Header[] }
-  | { kind: "media"; label?: string; of: Medium; source: Source };
 
 // [LAW:types-are-the-program] `injected`: the harness's own content in a message the user or the assistant sent, a system
 // reminder, hook output or a CLAUDE.md, which the view never mistakes for what they said, whatever its category.
@@ -50,31 +35,9 @@ const pieces: Record<Role, (text: string) => Piece[]> = {
 // reply's by it (view/history.ts).
 export const unreadLabel = "fields";
 
-// A JSON value that is not the shape its reader needs.
-export class Misfit extends Error {}
-
-// `format()`, or, when what it reads does not fit, `misfit` with why. [LAW:no-silent-failure] The callers show a value
-// that does not fit as raw, with the reason, so a shape the API changes is seen, not dropped.
-export function fitting<T>(format: () => T, misfit: (reason: string) => T): T {
-  try {
-    return format();
-  } catch (error) {
-    if (!(error instanceof Misfit)) throw error;
-    return misfit(error.message);
-  }
-}
-
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
 export function raw(category: Category, name: string, reason: string, received: Part): Block {
   return { category, name, parts: [{ kind: "text", form: "verbatim", label: "does not fit", text: reason }, received] };
-}
-
-export function parseJson(text: string, what: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Misfit(`${what} is not JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
@@ -82,30 +45,6 @@ export function formatError(fields: Fields): Block {
   return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...restParts(fields, unreadLabel)] };
 }
 
-// [LAW:parse-dont-validate] The fields of a JSON object, each read as the type it must have or a Misfit naming it, and
-// the fields no read asked for: those are shown as they are, so a field the API adds is never dropped.
-export function readObject(value: unknown, what: string) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Misfit(`${what} is not an object`);
-  const object = value as Record<string, unknown>;
-  const read = new Set<string>();
-  const field = (name: string) => {
-    read.add(name);
-    return object[name];
-  };
-  const fits = <T>(name: string, is: (value: unknown) => value is T, expected: string): T => {
-    const value = field(name);
-    if (!is(value)) throw new Misfit(`${what}'s ${name} is not ${expected}`);
-    return value;
-  };
-  return {
-    value: field,
-    string: (name: string) => fits(name, (value) => typeof value === "string", "a string"),
-    optionalString: (name: string) => fits(name, (value) => value === undefined || typeof value === "string", "a string, if present"),
-    array: (name: string) => fits(name, Array.isArray, "a list"),
-    rest: (): Record<string, unknown> => Object.fromEntries(Object.entries(object).filter(([name]) => !read.has(name))),
-  };
-}
-export type Fields = ReturnType<typeof readObject>;
 
 // The fields of an object no read asked for, as a part, when there are any.
 export function restParts(fields: Fields, label: string): Part[] {
@@ -131,26 +70,27 @@ const thinking = () => "thinking" as const;
 const toolUse: Entry = {
   category: tools,
   name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
-  parts: (fields) => [{ kind: "fields", fields: [["id", fields.string("id")]] }, inputPart(fields.value("input"))],
+  parts: (fields) => [...toolInput(fields.string("name"), fields.value("input")), { kind: "fields", fields: [["id", fields.string("id")]] }],
 };
 // A tool's input: the API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as
 // the text it is.
-function inputPart(input: unknown): Part {
-  return typeof input === "string" ? { kind: "text", form: "verbatim", label: "input so far", text: input } : { kind: "json", label: "input", value: input };
+function toolInput(name: string, input: unknown): Part[] {
+  return typeof input === "string" ? [{ kind: "text", form: "verbatim", label: "input so far", text: input }] : inputParts(name, input);
 }
-// A tool result's content is optional: a result may say only that its tool failed.
+// A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
+// what it holds: it is how the two refer to each other, not what either says.
 const toolResult: Entry = {
   category: tools,
   parts: (fields, role) => {
     const content = fields.value("content");
-    return [{ kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }, ...(content === undefined ? [] : contentParts(content, role))];
+    return [...(content === undefined ? [] : contentParts(content, role)), { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] }];
   },
 };
 const serverToolResult: Entry = {
   category: tools,
   parts: (fields) => [
-    { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
     { kind: "json", label: "content", value: fields.value("content") },
+    { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
   ],
 };
 const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), of, role) });

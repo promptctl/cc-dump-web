@@ -2,7 +2,8 @@ import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { fitting, formatBlock, formatContent, formatError, Misfit, parseJson, raw, readObject, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
 // A run of an exchange's blocks under one heading: the request's own, each message the request sends, the response.

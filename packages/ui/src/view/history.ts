@@ -1,4 +1,5 @@
-import { unreadLabel, type Block, type Part } from "../format/blocks.ts";
+import { unreadLabel, type Block } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
 import { linesOf, type Fact, type Role } from "./lines.ts";
 

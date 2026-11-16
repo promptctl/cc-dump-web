@@ -1,5 +1,5 @@
 import MarkdownIt, { type StateBlock, type StateCore, type Token } from "markdown-it";
-import type { Form, Part } from "../format/blocks.ts";
+import type { Form, Part } from "../format/parts.ts";
 import type { Range } from "./range.ts";
 import { LONG, segments, tagLine, type Segment } from "./regions.ts";
 import { linkOpening } from "./terminalLink.ts";
