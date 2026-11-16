@@ -337,9 +337,9 @@ export function isExpanded(flipped: Record<string, true>, key: string, block: Bl
 const startsExpanded = ({ category, injected }: Block): boolean => injected === undefined && (category === "user" || category === "assistant");
 
 // A row's height before it is measured, in pixels: one line, an exchange's band with the space above it, or an expanded
-// block's line and its content at about 100 characters a line, on its taller side; for a changed block, whose diff folds
-// what it kept, an upper bound, since diffing a row to estimate it would diff rows never shown. Only rows not yet on
-// screen use it, so it decides how the scrollbar reads, not where anything lands.
+// block's line and its content at about 100 characters a line, on its taller side, a changed block's too, whose diff is
+// not made to estimate it, since that would diff rows never shown. Only rows not yet on screen use it, so it decides how
+// the scrollbar reads, not where anything lands.
 export function estimateHeight(row: Row, flipped: Record<string, true>): number {
   const line = 20;
   const parts = (block: Block | undefined) => (block === undefined ? 0 : Math.ceil(sizeOf(block) / 100) * 16);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../format/blocks.ts";
-import { blockDiff, blockText, type LineFold, type Pair } from "./change.ts";
+import { blockDiff, blockText, wordsOf, type LineFold, type Pair } from "./change.ts";
 
 const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text }] });
 const numbered = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}`);
@@ -33,13 +33,14 @@ describe("blockDiff", () => {
   it("sets a replaced line against its replacement, marked word by word, and a line one side has more of against an empty slot", () => {
     const { entries } = blockDiff(block("keep\nmodel: a\ngone"), block("keep\nmodel: b"));
     expect(entries).toEqual([
-      { kind: "same", left: { line: 0, words: [{ change: "same", text: "keep" }] }, right: { line: 0, words: [{ change: "same", text: "keep" }] } },
-      {
-        kind: "replaced",
-        left: { line: 1, words: [{ change: "same", text: "model: " }, { change: "removed", text: "a" }] },
-        right: { line: 1, words: [{ change: "same", text: "model: " }, { change: "added", text: "b" }] },
-      },
-      { kind: "removed", left: { line: 2, words: [{ change: "removed", text: "gone" }] }, right: undefined },
+      { kind: "same", left: { line: 0, text: "keep" }, right: { line: 0, text: "keep" } },
+      { kind: "replaced", left: { line: 1, text: "model: a" }, right: { line: 1, text: "model: b" } },
+      { kind: "removed", left: { line: 2, text: "gone" }, right: undefined },
+    ]);
+    expect(entries.map((entry) => wordsOf(entry as Pair))).toEqual([
+      { left: [{ change: "same", text: "keep" }], right: [{ change: "same", text: "keep" }] },
+      { left: [{ change: "same", text: "model: " }, { change: "removed", text: "a" }], right: [{ change: "same", text: "model: " }, { change: "added", text: "b" }] },
+      { left: [{ change: "removed", text: "gone" }], right: [] },
     ]);
   });
 

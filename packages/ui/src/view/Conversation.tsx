@@ -3,7 +3,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type Re
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { context, diffOf, marks, type Edit } from "../format/diff.ts";
-import { blockDiff, type LineFold, type Pair, type SideLine } from "./change.ts";
+import { blockDiff, wordsOf, type LineFold, type Pair } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { categoryVars } from "../theme/theme.ts";
@@ -509,7 +509,9 @@ function ChangeLines({ row, inset }: { row: ChangedRow; inset: string | undefine
     const line = pair[side];
     return (
       <Gutter block={block}>
-        {line !== undefined && <DiffLineView line={line} ground={grounds[pair.kind][side]} from={diff[side].passages[line.line]!.start} where={where[side]} />}
+        {line !== undefined && (
+          <DiffLineView words={wordsOf(pair)[side]} change={pair.kind === "same" ? "same" : sideChange[side]} from={diff[side].passages[line.line]!.start} where={where[side]} />
+        )}
       </Gutter>
     );
   };
@@ -523,26 +525,19 @@ function ChangeLines({ row, inset }: { row: ChangedRow; inset: string | undefine
   );
 }
 
-// [LAW:dataflow-not-control-flow] The ground of each side of a pair of lines, by what the change did to them.
-const grounds: Record<Pair["kind"], { left: string; right: string }> = {
-  same: { left: "", right: "" },
-  replaced: { left: "bg-removed", right: "bg-added" },
-  removed: { left: "bg-removed", right: "" },
-  added: { left: "", right: "bg-added" },
-};
-// The color of a word, by what the change did to it: what it removed or added in that color's text, on its line's ground.
-const wordColors: Record<Edit["change"], string> = { same: "", removed: "font-semibold text-error", added: "font-semibold text-success" };
+// What a change did to a line a side has that the other side does not have as it is.
+const sideChange = { left: "removed", right: "added" } as const;
 
-// A line of a diff, `from` its place in its side's text, each word in the color of what the change did to it. An empty
-// line still takes a line's height, as it does in the text.
-function DiffLineView({ line, ground, from, where }: { line: SideLine; ground: string; from: number; where: Where }) {
+// A line of a diff, `from` its place in its side's text, on the ground of what the change did to it, each word in the
+// weight and color of what the change did to that word. An empty line still takes a line's height, as it does in the text.
+function DiffLineView({ words, change, from, where }: { words: Edit[]; change: Edit["change"]; from: number; where: Where }) {
   // Where each word starts: after the words before it.
   const starts = [from];
-  for (const { text } of line.words) starts.push(starts.at(-1)! + text.length);
+  for (const { text } of words) starts.push(starts.at(-1)! + text.length);
   return (
-    <div className={`min-h-lh max-w-[110ch] pl-6 font-mono break-words whitespace-pre-wrap ${ground}`}>
-      {line.words.map(({ change, text }, index) => (
-        <span key={index} className={wordColors[change]}>
+    <div className={`min-h-lh max-w-[110ch] pl-6 font-mono break-words whitespace-pre-wrap ${diffMarks[change].ground}`}>
+      {words.map(({ change, text }, index) => (
+        <span key={index} className={`${diffMarks[change].weight} ${diffMarks[change].color}`}>
           <Highlighted slice={text} from={starts[index]!} where={where} />
         </span>
       ))}
@@ -631,13 +626,16 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
   }
 }
 
+// [LAW:one-source-of-truth] The one table of how a diff, a part's or a block's, shows a line or a word by what the change
+// did to it: a line on its ground, a word a block's diff marks within a line in its weight and color.
+const diffMarks: Record<Edit["change"], { ground: string; color: string; weight: string }> = {
+  same: { ground: "", color: "", weight: "" },
+  removed: { ground: "bg-removed", color: "text-error", weight: "font-semibold" },
+  added: { ground: "bg-added", color: "text-success", weight: "font-semibold" },
+};
+
 // A change as a unified diff: each line marked for what the change did to it and set on that mark's ground, verbatim,
 // placed in the diff's text at its passage so the search's matches paint where they are.
-const diffMarks: Record<Edit["change"], { ground: string; color: string }> = {
-  same: { ground: "", color: "" },
-  removed: { ground: "bg-removed", color: "text-error" },
-  added: { ground: "bg-added", color: "text-success" },
-};
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
   const diff = diffOf(part);
   const where = useWhere(blockKey, at, diff);
