@@ -4,6 +4,16 @@
 @import "@fontsource/ibm-plex-mono/500.css";
 @import "@fontsource/ibm-plex-mono/600.css";
 
+/* The icons a terminal program draws from a Nerd Font (file and git icons, powerline separators): Nerd Fonts'
+   symbols-only face (fonts/, v3.5.1, its licenses beside it), served with the app so they draw on a machine without
+   one installed. Its range is Nerd Fonts' own code points, the private use areas, so no character with a meaning of
+   its own is ever drawn from it. */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("./fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}
+
 /* The theme's variables are Textual's, set on the root under Textual's names by theme/useTheme.ts from the one table in
    theme/theme.ts (docs/design/02-design.md, "Themes"); each part of the app uses the one Textual made for its purpose.
    Two voices ("Type"): the app speaks in the sans, and everything that was on the wire is set in the mono. */
@@ -28,6 +38,8 @@
 /* Until the theme's variables are set, the page follows the OS's scheme rather than flashing white. */
 :root {
   color-scheme: light dark;
+  /* The terminal's face (view/Terminal.tsx): the mono, then the icons a terminal program draws. */
+  --font-terminal: "IBM Plex Mono", "Symbols Nerd Font Mono", monospace;
 }
 
 /* Depth is told by Textual's grounds, not lines: the app's chrome is on `surface`, the conversation on `background`, and

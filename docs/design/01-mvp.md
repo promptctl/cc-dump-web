@@ -94,6 +94,7 @@ Added 2026-11-14, from using the app: the agent is watched and used in the same 
 - A launch (F1) shows the pane it opened.
 - After a reload the pane is shown again as it is now.
 - The terminal is in the theme (F10).
+- It draws what the agent prints as iTerm does: a statusline's Nerd Font icons and powerline separators, and its emoji two cells wide, as tmux counts them. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, any other scheme (a statusline's cc-candybar://) by the app the OS has for it. The pointer over a link shows where it goes.
 
 ## How hot reload shapes the design
 

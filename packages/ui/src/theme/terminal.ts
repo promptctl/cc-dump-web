@@ -1,20 +1,18 @@
-import type { Appearance } from "@promptctl/tmux-control-mode-js/window-terminal";
+import type { ITheme } from "@xterm/xterm";
 import { getThemeBaseColors } from "@promptctl/rich-js/themes/registry";
 import type { Theme } from "./theme.ts";
-
-type XtermTheme = NonNullable<Appearance["theme"]>;
 
 // xterm.js's names for the 16 ANSI colors, in their table order: the 8 normal, then the 8 bright.
 const ansiNames = [
   "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
   "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
-] as const satisfies readonly (keyof XtermTheme)[];
+] as const satisfies readonly (keyof ITheme)[];
 
 // The terminal in the theme (docs/design/01-mvp.md, F10, F13): a terminal is content, so it is on the theme's background
 // in its foreground (docs/design/02-design.md, Principles), its cursor and selection are the theme's input cursor and
 // selection, and the 16 ANSI colors are the theme's terminal table, rich-js's own, so what the agent prints in color is
 // in the theme's colors as rich-js renders them.
-export function terminalTheme({ name, palette }: Theme): XtermTheme {
+export function terminalTheme({ name, palette }: Theme): ITheme {
   const { ansi } = getThemeBaseColors(name);
   return {
     background: palette.get("background").hex,

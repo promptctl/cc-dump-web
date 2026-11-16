@@ -15,7 +15,7 @@
     "@cc-dump/config": "workspace:*",
     "@cc-dump/log": "workspace:*",
     "@cc-dump/proxy": "workspace:*",
-    "@promptctl/tmux-control-mode-js": "^0.3.0",
+    "@promptctl/tmux-control-mode-js": "^0.4.0",
     "ws": "^8.23.0"
   },
   "devDependencies": {

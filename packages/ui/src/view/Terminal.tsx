@@ -1,13 +1,18 @@
 import "@xterm/xterm/css/xterm.css";
 import { describe } from "@cc-dump/log/describe";
 import type { TmuxWindow } from "@cc-dump/server/format";
-import type { WindowTerminalError, WindowTerminalState } from "@promptctl/tmux-control-mode-js/window-terminal";
+import type { WindowTerminalError, WindowTerminalState, XtermAddons } from "@promptctl/tmux-control-mode-js/window-terminal";
 import { WindowTerminal } from "@promptctl/tmux-control-mode-js/window-terminal/react";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
+import type { ITerminalAddon, Terminal as Xterm } from "@xterm/xterm";
 import { useLayoutEffect, useMemo, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { terminalTheme } from "../theme/terminal.ts";
 import type { Theme } from "../theme/theme.ts";
 import { view } from "./state.ts";
+import { hideTarget, LINK_FRAME, linkHandler, openLink, showTarget } from "./terminalLink.ts";
 
 // The agent's tmux window, live, beside the conversation (docs/design/01-mvp.md, F13): every pane as tmux lays it out,
 // what the agent prints as it prints it, and what the person types, once they click into a pane, sent to that pane. Its
@@ -27,9 +32,16 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
   }, [tmux]);
   const [state, setState] = useState<WindowTerminalState>({ phase: "connecting" });
   const [error, setError] = useState<WindowTerminalError | undefined>(undefined);
-  // [LAW:one-source-of-truth] The UI's monospace face is the stylesheet's (index.css), read where xterm.js needs a name.
-  const appearance = useMemo(
-    () => ({ theme: terminalTheme(theme), fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono") }),
+  // [LAW:one-source-of-truth] The terminal's face is the stylesheet's (index.css), read where xterm.js needs a name: the
+  // mono, then the icons a statusline draws. Each link opens on a click (terminalLink.ts); Unicode 11's widths are the
+  // proposed API's.
+  const xterm = useMemo(
+    () => ({
+      theme: terminalTheme(theme),
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-terminal"),
+      linkHandler,
+      allowProposedApi: true,
+    }),
     [theme],
   );
   // A window terminal gone is gone for good, so its connection is closed then, and no longer attaches to the window's
@@ -53,9 +65,44 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
           Put away
         </button>
       </header>
-      <WindowTerminal className="min-h-0 flex-1 bg-background" connection={tmux} window={window.window_id} appearance={appearance} onState={changed} onError={setError} />
+      <WindowTerminal className="min-h-0 flex-1 bg-background" connection={tmux} window={window.window_id} xterm={xterm} addons={addons} onState={changed} onError={setError} />
+      <iframe name={LINK_FRAME} title="Links opened by their app" hidden />
     </section>
   );
+}
+
+// What each pane draws with, as iTerm draws a terminal program's output:
+// - WebGL, whose renderer draws powerline separators and box drawing itself, edge to edge of the cell, where a font's
+//   glyph is shorter than the row. A pane whose context is lost goes on in xterm.js's DOM renderer.
+// - Unicode 11's widths, as tmux counts them: an emoji is two cells, so what follows it is where tmux put it
+//   (xterm.js's own table, Unicode 6's, counts one).
+// - The URLs a program prints as text, as links, opened as those it writes as links are.
+// - The faces as they arrive: a glyph is drawn once in whatever face has loaded and kept, so a face arriving later (the
+//   icons', or a weight or script of the mono's) has the pane draw its glyphs again.
+const addons: XtermAddons = () => {
+  const webgl = new WebglAddon();
+  webgl.onContextLoss(() => webgl.dispose());
+  return [webgl, cellWidths(), new WebLinksAddon((_event, uri) => openLink(uri), { hover: showTarget, leave: hideTarget }), fontsArriving()];
+};
+
+function cellWidths(): ITerminalAddon {
+  return {
+    activate(terminal: Xterm) {
+      terminal.loadAddon(new Unicode11Addon());
+      terminal.unicode.activeVersion = "11";
+    },
+    dispose() {},
+  };
+}
+
+function fontsArriving(): ITerminalAddon {
+  const controller = new AbortController();
+  return {
+    activate(terminal: Xterm) {
+      document.fonts.addEventListener("loadingdone", () => terminal.clearTextureAtlas(), { signal: controller.signal });
+    },
+    dispose: () => controller.abort(),
+  };
 }
 
 // Where the terminal's connection to its window stands, in words.
