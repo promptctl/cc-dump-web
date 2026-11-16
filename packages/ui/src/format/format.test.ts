@@ -181,7 +181,7 @@ describe("format", () => {
     ]);
     expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "text", text: "Go." }]);
     // What the request sends is its thread's; the breakpoints and its HTTP are its own.
-    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request" }], ["tools", { in: "request" }], ["system.0", { in: "request" }], ["cache", undefined]]);
+    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request", prompt: false }], ["tools", { in: "request", prompt: true }], ["system.0", { in: "request", prompt: true }], ["cache", undefined]]);
     expect(group(formatted, "assistant").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
     expect(formatted.messages).toBe(2);
   });

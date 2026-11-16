@@ -14,8 +14,9 @@ export type KeyedBlock = Block & { key: string; place?: Place };
 // Where a block stands in the thread its exchange is part of (view/history.ts), which every request of the thread
 // resends: among what the request sends besides its messages, its parameters, tools and system prompt; in the message at
 // `index`; or in the reply, the message the response adds after the request's. A block with no place is the exchange's
-// own, as its HTTP, its cache breakpoints and its usage are.
-export type Place = { in: "request" } | { in: "message"; index: number } | { in: "reply" };
+// own, as its HTTP, its cache breakpoints and its usage are. `prompt`: whether a request block is part of the prompt the
+// model reads, as the tools and system prompt are and the parameters are not, which a client changes on any request.
+export type Place = { in: "request"; prompt: boolean } | { in: "message"; index: number } | { in: "reply" };
 
 // One exchange of the conversation: the request, then its response (docs/design/01-mvp.md, F3), the facts its line
 // prints, and how many messages the request sends, which is the reply's index among the thread's messages.
@@ -178,7 +179,11 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       const parameters: Block = { category: "metadata", name: "parameters", parts: [{ kind: "json", value: rest }] };
       const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }] }];
       return {
-        blocks: [...placed({ in: "request" }, [...one("parameters", [parameters]), ...one("tools", tools), ...each("system", system)]), ...one("cache", cache)],
+        blocks: [
+          ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
+          ...placed({ in: "request", prompt: true }, [...one("tools", tools), ...each("system", system)]),
+          ...one("cache", cache),
+        ],
         messages,
         model: typeof rest.model === "string" ? rest.model : undefined,
       };

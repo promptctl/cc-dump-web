@@ -54,7 +54,9 @@ describe("layout", () => {
   });
 
   it("marks a block a step gave a new version as changed, with the version before it on the left", () => {
-    const at = layouts([...turns(1), ...request("t2", { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages: [{ role: "user", content: [text("Say 0.")] }] })]);
+    // The second turn edits the system prompt in place, carrying the thread on.
+    const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
+    const at = layouts([...turns(1), ...request("t2", { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages })]);
     const system = at(2).rows.find(({ key }) => key === "thread:t1/request/system.0");
     expect(system).toMatchObject({ change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, block: { parts: [{ kind: "text", text: "Be briefer." }] } });
     // At the step it arrived, the item is what it was then.
@@ -134,10 +136,11 @@ describe("layout", () => {
 
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
     const t1 = turns(1);
-    const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages: [{ role: "user", content: [text("Say 0.")] }] });
+    const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
+    const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
     const history = createHistory();
     const format = createFormatter();
-    const layOut = createLayout({ ...shown, system: "hidden", metadata: "hidden" }, "show");
+    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "show");
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));

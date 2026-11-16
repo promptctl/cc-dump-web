@@ -81,14 +81,16 @@ describe("history", () => {
 
   it("keeps a block resent with something different as its item's next version, where the item stands, and stepping back undoes it", () => {
     const read = reader();
-    const edited = [...process, ...request("t3", { ...main, system: [text("You are Claude Code, edited.")], messages: [hi, assistant(...hello), user(text("More."))] })];
+    // The next turn carries the thread on with its system prompt edited in place.
+    const turn = [hi, assistant(...hello), user(text("More.")), assistant(text("More hello.")), user(text("Again."))];
+    const edited = [...process, ...request("t3", { ...main, system: [text("You are Claude Code, edited.")], messages: turn })];
     const after = read(edited);
     const system = after.segments[1]!.groups[0]!.items.find(({ key }) => key === "thread:t1/request/system.0")!;
     expect(system.versions.map(({ step, block }) => [step, block.parts])).toEqual([
       [2, [{ kind: "text", text: "You are Claude Code." }]],
       [5, [{ kind: "text", text: "You are Claude Code, edited." }]],
     ]);
-    expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"] });
+    expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"], "message.4": ["thread:t1/message.4/content.0"] });
     // Read without the last step, the history is as it was before it.
     expect(read(exchangesUpTo(edited, 4)).segments).toEqual(history(process).segments);
     // A history once returned is never changed by a later fold.
@@ -143,6 +145,84 @@ describe("history", () => {
     const read = reader();
     expect(arrived(read([...process.slice(0, 14), ...partial]))[2]).toEqual({ request: ["t2/request/http"] });
     expect(arrived(read([...process.slice(0, 14), ...request("t2", { ...main, messages: [hi, assistant(...hello)] })]))[2]).toEqual({ request: ["t2/request/http"] });
+  });
+});
+
+// Branches, shaped as a recording made through the app has them (dump-design-ajl.m1g): after `process`'s second turn,
+// t2 (step 4), a side question resends it with its reply and asks its own; a compaction resends t2's messages without
+// its reply, its last message given the summary instruction; and the thread's next turn resends t2 with its reply.
+const more = [hi, assistant(...hello), user(text("More."))];
+const answered = [...more, assistant(text("More hello."))];
+const btw = [...request("btw", { ...main, messages: [...answered, user(text("Aside?"))] }), ...reply("btw", [text("Aside.")])];
+const compact = [...request("compact", { ...main, messages: [hi, assistant(...hello), user(text("More."), text("Summarize."))] }), ...reply("compact", [text("Summary.")])];
+const t3 = [...request("t3", { ...main, messages: [...answered, user(text("Again."))] }), ...reply("t3", [text("Again hello.")])];
+// Every key of a thread's main line that has more than one version.
+const versioned = ({ segments }: History) =>
+  segments.flatMap(({ groups }) => groups.flatMap(({ items }) => items.filter(({ key, versions }) => key.startsWith("thread:") && versions.length > 1).map(({ key }) => key)));
+const keysAt = ({ segments }: History, step: number) => segments[step - 1]!.groups.flatMap(({ items }) => items.map(({ key }) => key));
+
+describe("branches", () => {
+  it("keeps a side question on the thread until the thread's next turn leaves it out, then makes it a branch of its own", () => {
+    const asked = history([...process, ...btw]);
+    expect(keysAt(asked, 5)).toContain("thread:t1/message.4/content.0");
+    const after = history([...process, ...btw, ...t3]);
+    expect(keysAt(after, 5)).toEqual(["btw/request/http", "branch:btw/message.4/content.0", "btw/response/http", "branch:btw/message.5/content.0", "btw/response/stop reason", "btw/response/usage", "btw/response/fields"]);
+    expect(after.segments[4]!.branch).toEqual({ key: "branch:btw", from: 4 });
+    // The turn's message and reply are the thread's own, not versions of the question's.
+    expect(keysAt(after, 6)).toContain("thread:t1/message.4/content.0");
+    expect(versioned(after)).toEqual([]);
+    expect([...after.branches]).toEqual([["branch:btw", { first: 5, last: 5 }]]);
+  });
+
+  it("makes a compaction a branch, and the thread goes on past it with nothing of the thread changed", () => {
+    const after = history([...process, ...compact, ...t3]);
+    expect(keysAt(after, 5)).toEqual([
+      "compact/request/http",
+      "branch:compact/message.2/content.1",
+      "compact/response/http",
+      "branch:compact/message.3/content.0",
+      "compact/response/stop reason",
+      "compact/response/usage",
+      "compact/response/fields",
+    ]);
+    expect(keysAt(after, 6)).toContain("thread:t1/message.4/content.0");
+    expect(after.segments[5]!.branch).toBeUndefined();
+    expect(versioned(after)).toEqual([]);
+  });
+
+  it("puts twins, two requests that send the same first message, on lines of their own", () => {
+    const task = user(text("Find the longest word."));
+    const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+    const after = history([
+      ...request("s1", { ...agent, messages: [task] }),
+      ...reply("s1", [text("A.")]),
+      ...request("s2", { ...agent, messages: [task] }),
+      ...reply("s2", [text("B.")]),
+      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
+      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
+    ]);
+    expect(keysAt(after, 2)).toContain("branch:s2/message.1/content.0");
+    expect(keysAt(after, 3)).toContain("thread:s1/message.2/content.0");
+    expect(keysAt(after, 4)).toContain("branch:s2/message.2/content.0");
+    expect(versioned(after)).toEqual([]);
+  });
+
+  it("makes a side request with the thread's first message and a system prompt of its own a branch, never a version of the thread's", () => {
+    const side = [...request("side", { model: "m", system: [text("Is this a new topic?")], messages: [hi] }), ...reply("side", [text("Yes.")])];
+    const after = history([...process, ...side, ...t3]);
+    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["branch:side/request/system.0", "branch:side/message.1/content.0"]));
+    expect(versioned(after)).toEqual([]);
+  });
+
+  it("reads exchanges as they arrive to what a full read of them gives, a branch decided again included", () => {
+    const events = [...process, ...btw, ...compact, ...t3];
+    const read = reader();
+    for (let count = 1; count <= 7; count++) {
+      const now = read(exchangesUpTo(events, count));
+      const full = history(exchangesUpTo(events, count));
+      expect(now.segments).toEqual(full.segments);
+      expect(now.branches).toEqual(full.branches);
+    }
   });
 });
 
