@@ -2,7 +2,9 @@ import type { Block, Part } from "../format/blocks.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
-import { regionKey, segments, type Segment } from "./regions.ts";
+import type { Range } from "./range.ts";
+import { regionKey } from "./regions.ts";
+import { regionsAround, renderingOf, type Rendering } from "./rendering.ts";
 import { jsonText, type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
@@ -11,13 +13,10 @@ import { jsonText, type Keys, type Row } from "./rows.ts";
 // A block row the search reads: one showing a block on the right, the moment shown, which a removed row does not.
 export type BlockRow = Extract<Row, { kind: "block"; block: KeyedBlock }>;
 
-// A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text.
-// A text part only grows at its end as it streams, so a match in it keeps its place. A text replaced at its address, as
-// a tool's input so far is by its JSON once whole, names by that offset whichever match starts there now, or none.
+// A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text
+// that changes at its address names by that offset whichever match starts there now, or none: a tool's input so far
+// replaced by its JSON once whole, or a streaming Markdown text whose rendering a closing backtick or asterisk shortens.
 export type Match = { key: string; at: string; start: number };
-
-// A match's characters in its text, from `start` up to `end`.
-export type Range = { start: number; end: number };
 
 // [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON, and the name or
 // value of a part's field. The search and the view both name a text by them.
@@ -32,26 +31,36 @@ export function partKey(key: string, at: string): string {
   return `${key}/${at}`;
 }
 
+// A text the search reads: its characters, and the passages of them a match is found within, in order; a match runs
+// from no passage into the next.
+export type Searched = { text: string; passages: Range[] };
+
+// A text read whole, one passage.
+export function whole(text: string): Searched {
+  return { text, passages: [{ start: 0, end: text.length }] };
+}
+
 // A text a block shows: its address, the text, and where it shows: on the block's line, always on screen; in its
-// content, while it is expanded; or in its content and inside a region of it, a text part's, while that is expanded too.
-export type Shown = { at: string; text: string; in: "line" | "content" | "regions" };
+// content, while it is expanded; or, a text part's rendering, in its content and inside the regions of it holding the
+// match, while they are expanded too: what the reader sees, not the text as sent.
+export type Shown = { at: string } & ({ in: "line" | "content"; searched: Searched } | { in: "regions"; searched: Rendering });
 
 // The texts a block shows, in the order it shows them. Labels are the view's words, not the traffic's, and media is
 // shown as itself or a line describing it, so neither is searched.
 export function shownTexts(block: Block): Shown[] {
-  return [{ at: address.name, text: block.name, in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
 }
 
 function partTexts(part: Part, index: number): Shown[] {
   switch (part.kind) {
     case "text":
-      return [{ at: address.part(index), text: part.text, in: "regions" }];
+      return [{ at: address.part(index), searched: renderingOf(part), in: "regions" }];
     case "json":
-      return [{ at: address.part(index), text: jsonText(part), in: "content" }];
+      return [{ at: address.part(index), searched: whole(jsonText(part)), in: "content" }];
     case "fields":
       return part.fields.flatMap(([name, value], field) => [
-        { at: address.field(index, field, "name"), text: name, in: "content" as const },
-        { at: address.field(index, field, "value"), text: value, in: "content" as const },
+        { at: address.field(index, field, "name"), searched: whole(name), in: "content" as const },
+        { at: address.field(index, field, "value"), searched: whole(value), in: "content" as const },
       ]);
     case "media":
       return [];
@@ -92,8 +101,10 @@ export function patternOf(query: string, { caseSensitive, wholeWord, regex }: Se
 // [LAW:single-enforcer] Where a pattern matches a text, in order: the one definition of a match, which the count, the
 // highlighting and the steps between matches all use. A match has characters: where an expression matches nothing, as
 // `x*` can, there is nothing to highlight and nowhere to step.
-export function find(pattern: RegExp, text: string): Range[] {
-  return Array.from(text.matchAll(pattern), (found) => ({ start: found.index, end: found.index + found[0].length })).filter(({ start, end }) => end > start);
+export function find(pattern: RegExp, { text, passages }: Searched): Range[] {
+  return passages.flatMap(({ start: from, end: to }) =>
+    Array.from(text.slice(from, to).matchAll(pattern), (found) => ({ start: from + found.index, end: from + found.index + found[0].length })).filter(({ start, end }) => end > start),
+  );
 }
 
 // A block with matches: its row, the row's index among the rows, how many matches it holds, and how many come before.
@@ -112,7 +123,7 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
     const counts = counted.get(pattern) ?? new WeakMap<KeyedBlock, number>();
     counted.set(pattern, counts);
     const countOf = (block: KeyedBlock) => {
-      const count = counts.get(block) ?? shownTexts(block).reduce((sum, { text }) => sum + find(pattern, text).length, 0);
+      const count = counts.get(block) ?? shownTexts(block).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
       counts.set(block, count);
       return count;
     };
@@ -130,7 +141,7 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
 
 // The matches of a block, in the order it shows them, each with the text it is in.
 function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row.block).flatMap((shown, order) => find(pattern, shown.text).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+  return shownTexts(row.block).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
@@ -190,29 +201,23 @@ function stepTo(row: BlockRow, { match, shown }: { match: Match; shown: Shown })
     case "content":
       return { match, block: row, regions: [] };
     case "regions":
-      return { match, block: row, regions: regionsAround(segments(shown.text), match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
+      return { match, block: row, regions: regionsAround(shown.searched, match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
   }
 }
 
-// The opening lines of the regions holding offset `start`, outermost first. One on a region's closing line is in no
-// segment of its body.
-function regionsAround(list: Segment[], start: number): number[] {
-  const segment = list.find(({ end }) => start < end);
-  if (segment?.kind !== "region") return [];
-  return [segment.line, ...(start >= segment.start + segment.open.length ? regionsAround(segment.body, start) : [])];
-}
-
-// The ranges of a text's matches, `ranges`, that start in its characters from `from` up to `to`. They are in order and
-// apart, so a binary search finds the first, and a text cut into many slices is not scanned whole for each.
+// The ranges of a text's matches, `ranges`, that hold any of its characters from `from` up to `to`, so none of an empty
+// slice: a match can run from one leaf of a rendering into the next, as one across emphasis does. They are in order
+// and apart, so their ends are in order too, a binary search finds the first, and a text cut into many slices is not
+// scanned whole for each.
 export function rangesIn(ranges: Range[], from: number, to: number): Range[] {
   let low = 0;
   let high = ranges.length;
   while (low < high) {
     const middle = (low + high) >> 1;
-    if (ranges[middle]!.start < from) low = middle + 1;
+    if (ranges[middle]!.end <= from) low = middle + 1;
     else high = middle;
   }
   let end = low;
-  while (end < ranges.length && ranges[end]!.start < to) end++;
+  while (end < ranges.length && Math.max(ranges[end]!.start, from) < Math.min(ranges[end]!.end, to)) end++;
   return ranges.slice(low, end);
 }

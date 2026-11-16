@@ -154,7 +154,7 @@ describe("layout", () => {
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     expect([said, reminder, tools].map((side) => isExpanded({}, "k", side))).toEqual([true, false, false]);
     expect([said, reminder, tools].map((side) => isExpanded({ k: true }, "k", side))).toEqual([false, true, true]);
-    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
+    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
     expect(estimateHeight(row, {})).toBe(20 + 10 * 16);
     expect(estimateHeight(row, { k: true })).toBe(20);
   });
@@ -162,19 +162,19 @@ describe("layout", () => {
 
 describe("a block's line", () => {
   it("sizes a block by the characters of its content", () => {
-    expect(sizeOf({ category: "user", name: "text", parts: [{ kind: "text", text: "Hello." }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe("Hello.".length + 4);
+    expect(sizeOf({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "Hello." }, { kind: "fields", fields: [["id", "t1"]] }] })).toBe("Hello.".length + 4);
     expect([999, 12_345, 999_949, 999_960, 2_500_000].map(describeSize)).toEqual(["999 chars", "12.3k chars", "999.9k chars", "1.0M chars", "2.5M chars"]);
     expect([999, 12_345, 999_960].map(compact)).toEqual(["999", "12.3k", "1.0M"]);
   });
 
   it("previews a block by the start of its first text or JSON, on one line, and prints a line's time and duration", () => {
-    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "  Hello.\n\nSecond   line" }] })).toBe("Hello. Second line");
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "fields", fields: [["id", "t1"]] }, { kind: "json", label: "input", value: { command: "ls -la" } }] })).toBe('{ "command": "ls -la" }');
     expect(preview({ category: "tools", name: "tool_result", parts: [{ kind: "fields", fields: [["tool_use_id", "t1"]] }] })).toBe("");
-    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "x".repeat(500) }] })).toBe(`${"x".repeat(200)}…`);
-    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: "x".repeat(200) }] })).toBe("x".repeat(200));
-    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
-    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "x".repeat(500) }] })).toBe(`${"x".repeat(200)}…`);
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: "x".repeat(200) }] })).toBe("x".repeat(200));
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
+    expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
     // Deep JSON's indentation does not use up the line.
     const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };

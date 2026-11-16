@@ -16,7 +16,8 @@
 
 /* The theme's variables are Textual's, set on the root under Textual's names by theme/useTheme.ts from the one table in
    theme/theme.ts (docs/design/02-design.md, "Themes"); each part of the app uses the one Textual made for its purpose.
-   Two voices ("Type"): the app speaks in the sans, and everything that was on the wire is set in the mono. */
+   Two voices: the app speaks in the sans, and everything that was on the wire is set in the mono, but for the
+   conversation's prose, read rendered, its code in the mono (view/Text.tsx). */
 @theme inline {
   --font-sans: "IBM Plex Sans Variable", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;

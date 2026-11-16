@@ -1,4 +1,4 @@
-import type { Range as Characters } from "./search.ts";
+import type { Range as Characters } from "./range.ts";
 
 // The search's matches as the page paints them (docs/design/01-mvp.md, F6), with the CSS Custom Highlight API: a match
 // is a range of a text node, painted by the stylesheet's ::highlight(match) and ::highlight(match-current). A text with
@@ -9,13 +9,14 @@ const highlights = { match: new Highlight(), current: new Highlight() };
 CSS.highlights.set("match", highlights.match);
 CSS.highlights.set("match-current", highlights.current);
 
-// Paints the matches `ranges` in the text node `node`, whose first character is at `from` in its text, the one starting
-// at `current` as the current match. Gives what removes them.
-export function paint(node: Text, from: number, ranges: Characters[], current: number | undefined): () => void {
+// Paints the matches `ranges` in the text node `node`, which holds its text's characters from `from` up to `to`, the
+// one starting at `current` as the current match. A match running past the node, from one leaf of a rendering into the
+// next, is painted in each as far as it holds it. Gives what removes them.
+export function paint(node: Text, from: number, to: number, ranges: Characters[], current: number | undefined): () => void {
   const painted = ranges.map(({ start, end }) => {
     const range = new Range();
-    range.setStart(node, start - from);
-    range.setEnd(node, end - from);
+    range.setStart(node, Math.max(start, from) - from);
+    range.setEnd(node, Math.min(end, to) - from);
     const highlight = start === current ? highlights.current : highlights.match;
     highlight.add(range);
     return { highlight, range };

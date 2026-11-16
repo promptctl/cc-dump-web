@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import type { Part } from "../format/blocks.ts";
@@ -8,13 +8,15 @@ import { categoryVars } from "../theme/theme.ts";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Position } from "./position.ts";
-import { regionKey, segments, type Segment } from "./regions.ts";
 import { clockTime, compact, context, createLayout, describeSize, estimateHeight, foldKey, isExpanded, jsonText, preview, seconds, sizeOf, type Change, type Layout, type Row } from "./rows.ts";
 import { step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
-import { currentMatch, paint } from "./highlights.ts";
-import { address, adjacent, createSearch, find, nothing, ordinal, partKey, patternOf, rangesIn, type Direction, type Range } from "./search.ts";
+import { currentMatch } from "./highlights.ts";
+import { HighlightedText } from "./Highlighted.tsx";
+import { Hold, Painted, Side, unpainted } from "./painting.ts";
+import { TextView } from "./Text.tsx";
+import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -288,51 +290,6 @@ function takesKeys(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
-// How each side paints the search's matches: the right, the moment shown, with the pattern and the current match, so
-// what is painted is what the search counts; the left with neither.
-type Painting = { pattern: RegExp; current: boolean };
-const unpainted: Painting = { pattern: nothing, current: false };
-const Painted = createContext<{ right: Painting; left: Painting } | undefined>(undefined);
-// The side a block is shown on.
-const Side = createContext<"right" | "left">("right");
-
-// Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
-// in this text.
-type Where = { blockKey: string; at: string; ranges: Range[]; current: number | undefined };
-
-// A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
-// current match leaves and enters.
-function useWhere(blockKey: string, at: string, text: string): Where {
-  const painted = useContext(Painted);
-  if (painted === undefined) throw new Error("A text is shown outside a Conversation");
-  const { pattern, current: paintsCurrent } = painted[useContext(Side)];
-  const ranges = useMemo(() => find(pattern, text), [pattern, text]);
-  const current = useView(({ search: { current } }) => (paintsCurrent && current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
-  return { blockKey, at, ranges, current };
-}
-
-// A whole text, its matches highlighted.
-function HighlightedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
-  return <Highlighted slice={text} from={0} where={useWhere(blockKey, at, text)} />;
-}
-
-// A slice of a text, starting at `from` in it: whole lines, so a match, which a query of one line cannot carry past a
-// line's end, is in one slice. Its matches are highlighted and the current one highlighted apart.
-function Highlighted({ slice, from, where: { ranges, current } }: { slice: string; from: number; where: Where }) {
-  const span = useRef<HTMLSpanElement>(null);
-  const to = from + slice.length;
-  // The current match if it is in this slice, so a step paints again only the slices it leaves and enters.
-  const own = current !== undefined && current >= from && current < to ? current : undefined;
-  // An empty slice has no text node, and no match to paint in one.
-  useLayoutEffect(() => paint(span.current!.firstChild as Text, from, rangesIn(ranges, from, to), own), [from, to, ranges, own]);
-  return <span ref={span}>{slice}</span>;
-}
-
-// What a block or region calls when clicked, before it flips: the view holds where it is.
-const Hold = createContext<() => void>(() => {
-  throw new Error("A block is shown outside a Conversation");
-});
-
 // The largest scroll offset: the one that shows the end of the conversation.
 function largest(element: HTMLElement): number {
   return element.scrollHeight - element.clientHeight;
@@ -512,7 +469,7 @@ function PartView({ part, blockKey, index }: { part: Part; blockKey: string; ind
 function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
   switch (part.kind) {
     case "text":
-      return <TextView text={part.text} blockKey={blockKey} at={address.part(index)} />;
+      return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;
     case "json":
       return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
     case "fields":
@@ -556,51 +513,5 @@ function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }
     <pre className="break-all whitespace-pre-wrap">
       <HighlightedText blockKey={blockKey} at={at} text={text} />
     </pre>
-  );
-}
-
-// A text with its long regions (code blocks, tagged sections), each collapsing and expanding as a block does.
-function TextView({ text, blockKey, at }: { text: string; blockKey: string; at: string }) {
-  const segmented = useMemo(() => segments(text), [text]);
-  return <pre className="break-words whitespace-pre-wrap">{segmentViews(segmented, useWhere(blockKey, at, text))}</pre>;
-}
-
-function segmentViews(list: Segment[], where: Where): ReactNode[] {
-  return list.map((segment, index) =>
-    segment.kind === "text" ? <Highlighted key={index} slice={segment.text} from={segment.start} where={where} /> : <RegionView key={index} region={segment} where={where} />,
-  );
-}
-
-// A long region starts collapsed: its line names it and how many lines it spans. It is kept by its part's key and the
-// line it opens on.
-function RegionView({ region, where }: { region: Extract<Segment, { kind: "region" }>; where: Where }) {
-  const key = regionKey(partKey(where.blockKey, where.at), region.line);
-  const open = useView((state) => state.flipped[key] === true);
-  const hold = useContext(Hold);
-  const line = (
-    <button
-      type="button"
-      className="text-foreground-muted hover:bg-hover"
-      onClick={() => {
-        hold();
-        view.toggle(key);
-      }}
-    >
-      {open ? "▾" : "▸"} {region.label} · {region.lines} lines
-    </button>
-  );
-  return open ? (
-    <span>
-      {line}
-      {"\n"}
-      <Highlighted slice={region.open} from={region.start} where={where} />
-      {segmentViews(region.body, where)}
-      <Highlighted slice={region.close} from={region.end - region.close.length} where={where} />
-    </span>
-  ) : (
-    <span>
-      {line}
-      {"\n"}
-    </span>
   );
 }

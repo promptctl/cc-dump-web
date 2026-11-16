@@ -21,7 +21,7 @@ The diff answers the first two questions at once: what is new on the right is wh
 ## Principles
 
 - **Color means category, or what Textual made it mean.** The six category colors are the only hues the app adds to its theme. Every other color is a theme variable used for its Textual purpose: an error in `text-error`, a search match in the warning, a focus ring in `border`, the grounds and scrollbars as the theme sets them. A hue the theme does not define is always a category.
-- **Two voices.** What the app says is set in a sans. What was on the wire, every byte of content, is set in a monospace face, verbatim. The reader never wonders which is which.
+- **Two voices.** What the app says is set in a sans. What was on the wire, every byte of content, is set in a monospace face, verbatim, but for the conversation's prose: what a sender wrote (a message's text, the system prompt, thinking) is read as the model reads it, its Markdown rendered, its prose in the sans and its code in the mono, the same for every speaker; the block's name and gutter alone say who spoke. What a tool returned and what the proxy reports stay verbatim. The reader never wonders which is which.
 - **Print what varies.** An exchange line prints the facts that differ between exchanges and nothing that repeats. A block line names the block usefully, with a preview of its content, not its category's name.
 - **Hierarchy by weight, indent and ground, never boxes.** No cards, no borders around blocks, no shadows. Depth is Textual's three grounds: the app's chrome on `surface`, the conversation on `background`, what is raised (a button, a popover) on `panel`. An exchange boundary is its line, a band on `surface`.
 - **One bold element.** The category gutter: a bar in the category's color at the left edge of every block row. Scrolling fast, the gutter alone shows the rhythm of a run. The filter bar is its legend. This is the original cc-dump's gutter, carried to the web.
@@ -57,10 +57,10 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 │ ▌▸ parameters              12.5k   │ ▌▸ parameters              12.5k   │░░│  │
 │ ▌▸ tool definitions  63     183k   │ ▌▸ tool definitions  63     183k   │▒▒│  │
 │   41 blocks unchanged              │   41 blocks unchanged              │░░│  │
-│ ▌▾ text  proxy ok               8  │ ▌▾ text  proxy ok               8  │░░│  │
+│ ▌▾ user  proxy ok               8  │ ▌▾ user  proxy ok               8  │░░│  │
 │                                    │ ▌▾ tool_result                569  │▒▒│  │
 │                                    │ ▌  <system-reminder> …             │  │  │
-│                                    │ ▌▾ text  Reading the…          210  │  │  │
+│                                    │ ▌▾ assistant  Reading…         210  │  │  │
 │                                       ● Following                       │  │  │
 └────────────────────────────────────┴────────────────────────────────────┴──┴──┘
                                                                  minimap ─┘  └─ panels

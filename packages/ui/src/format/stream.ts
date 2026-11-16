@@ -111,8 +111,8 @@ export function createReassembly(): Reassembly {
               category: "metadata",
               name: `${name} event`,
               parts: [
-                { kind: "text", label: "not applied", text: reason },
-                { kind: "text", label: "data", text: data },
+                { kind: "text", form: "verbatim", label: "not applied", text: reason },
+                { kind: "text", form: "verbatim", label: "data", text: data },
               ],
             }),
         );

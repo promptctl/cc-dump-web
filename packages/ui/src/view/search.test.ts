@@ -5,9 +5,10 @@ import type { Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
+import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { createLayout, type Layout } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, type Match } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -44,53 +45,53 @@ describe("search", () => {
         category: "tools",
         name: "tool_use: X",
         parts: [
-          { kind: "text", text: "t" },
+          { kind: "text", form: "verbatim", text: "t" },
           { kind: "json", value: { a: 1 } },
           { kind: "fields", fields: [["id", "1"]] },
           { kind: "media", of: "image", source: { type: "url", url: "u" } },
         ],
       }),
     ).toEqual([
-      { at: address.name, text: "tool_use: X", in: "line" },
-      { at: "0", text: "t", in: "regions" },
-      { at: "1", text: '{\n  "a": 1\n}', in: "content" },
-      { at: "2/0/name", text: "id", in: "content" },
-      { at: "2/0/value", text: "1", in: "content" },
+      { at: address.name, searched: whole("tool_use: X"), in: "line" },
+      { at: "0", searched: render("t", "verbatim"), in: "regions" },
+      { at: "1", searched: whole('{\n  "a": 1\n}'), in: "content" },
+      { at: "2/0/name", searched: whole("id"), in: "content" },
+      { at: "2/0/value", searched: whole("1"), in: "content" },
     ]);
   });
 
   it("reads a query as a regular expression, in any case, and the empty query as matching nowhere", () => {
     expect(defaults).toEqual({ caseSensitive: false, wholeWord: false, regex: true });
-    expect(find(read("a.b").pattern, "A.B axb a.b")).toEqual([
+    expect(find(read("a.b").pattern, whole("A.B axb a.b"))).toEqual([
       { start: 0, end: 3 },
       { start: 4, end: 7 },
       { start: 8, end: 11 },
     ]);
-    expect(find(read("ab|cd").pattern, "xcd AB")).toEqual([
+    expect(find(read("ab|cd").pattern, whole("xcd AB"))).toEqual([
       { start: 1, end: 3 },
       { start: 4, end: 6 },
     ]);
-    expect(find(read("").pattern, "anything")).toEqual([]);
+    expect(find(read("").pattern, whole("anything"))).toEqual([]);
     expect(read("").error).toBeUndefined();
   });
 
   it("reads a query as the characters typed when regular expression is off, and as typed in case when case is on", () => {
-    expect(find(read("a.b", { regex: false }).pattern, "A.B axb a.b")).toEqual([
+    expect(find(read("a.b", { regex: false }).pattern, whole("A.B axb a.b"))).toEqual([
       { start: 0, end: 3 },
       { start: 8, end: 11 },
     ]);
-    expect(find(read("a.b", { regex: false, caseSensitive: true }).pattern, "A.B axb a.b")).toEqual([{ start: 8, end: 11 }]);
-    expect(find(read("(", { regex: false }).pattern, "f(x)")).toEqual([{ start: 1, end: 2 }]);
+    expect(find(read("a.b", { regex: false, caseSensitive: true }).pattern, whole("A.B axb a.b"))).toEqual([{ start: 8, end: 11 }]);
+    expect(find(read("(", { regex: false }).pattern, whole("f(x)"))).toEqual([{ start: 1, end: 2 }]);
   });
 
   it("matches a whole word only, with Unicode letters and the underscore making words, and an alternation whole", () => {
-    const whole = (query: string, text: string, options: Partial<SearchOptions> = {}) =>
-      find(read(query, { wholeWord: true, ...options }).pattern, text).map(({ start }) => start);
-    expect(whole("cat", "cat concat cats caféx cat_ cat.")).toEqual([0, 27]);
-    expect(whole("caf", "café caf")).toEqual([5]);
-    expect(whole("é", "café é")).toEqual([5]);
-    expect(whole("cat|dog", "dogs cat bobdog dog")).toEqual([5, 16]);
-    expect(whole("a.b", "a.b axb", { regex: false })).toEqual([0]);
+    const starts = (query: string, text: string, options: Partial<SearchOptions> = {}) =>
+      find(read(query, { wholeWord: true, ...options }).pattern, whole(text)).map(({ start }) => start);
+    expect(starts("cat", "cat concat cats caféx cat_ cat.")).toEqual([0, 27]);
+    expect(starts("caf", "café caf")).toEqual([5]);
+    expect(starts("é", "café é")).toEqual([5]);
+    expect(starts("cat|dog", "dogs cat bobdog dog")).toEqual([5, 16]);
+    expect(starts("a.b", "a.b axb", { regex: false })).toEqual([0]);
   });
 
   it("reports a query that is not a valid expression, which matches nothing, and reads it as characters when regular expression is off", () => {
@@ -98,7 +99,7 @@ describe("search", () => {
       for (const query of ["(", "[a-", "a)(b", "*", "\\"]) {
         const { pattern, error } = read(query, options);
         expect(error, `${query} ${JSON.stringify(options)}`).toEqual(expect.any(String));
-        expect(find(pattern, `${query} anything`)).toEqual([]);
+        expect(find(pattern, whole(`${query} anything`))).toEqual([]);
       }
     }
     expect(read("(", { regex: false }).error).toBeUndefined();
@@ -106,8 +107,8 @@ describe("search", () => {
   });
 
   it("finds no match where an expression matches nothing", () => {
-    expect(find(read("x*").pattern, "axxb")).toEqual([{ start: 1, end: 3 }]);
-    expect(find(read("^").pattern, "line\nline")).toEqual([]);
+    expect(find(read("x*").pattern, whole("axxb"))).toEqual([{ start: 1, end: 3 }]);
+    expect(find(read("^").pattern, whole("line\nline"))).toEqual([]);
   });
 
   it("counts the matches in every block, hidden categories' included, in names, text, JSON and fields", () => {
@@ -220,7 +221,7 @@ describe("search", () => {
     expect(name).toMatchObject({ block: undefined, regions: [] });
   });
 
-  it("gives the matches starting in a slice of a text", () => {
+  it("gives the matches holding any of a slice of a text", () => {
     const ranges = [
       { start: 2, end: 4 },
       { start: 8, end: 12 },
@@ -230,5 +231,20 @@ describe("search", () => {
     expect(rangesIn(ranges, 8, 20)).toEqual([{ start: 8, end: 12 }]);
     expect(rangesIn(ranges, 4, 8)).toEqual([]);
     expect(rangesIn(ranges, 0, 30)).toEqual(ranges);
+    // A match running from one leaf into the next is in both; an empty leaf holds no characters, so no match.
+    expect(rangesIn(ranges, 10, 11)).toEqual([{ start: 8, end: 12 }]);
+    expect(rangesIn(ranges, 3, 9)).toEqual([
+      { start: 2, end: 4 },
+      { start: 8, end: 12 },
+    ]);
+    expect(rangesIn(ranges, 10, 10)).toEqual([]);
+  });
+
+  it("finds in a Markdown text what a reader sees: no syntax, and a phrase across emphasis once", () => {
+    const rendering = render("Say **hello** world, `code` too.\n", "markdown");
+    expect(find(read("**").pattern, rendering)).toEqual([]);
+    expect(find(read("`").pattern, rendering)).toEqual([]);
+    expect(find(read("hello world").pattern, rendering)).toHaveLength(1);
+    expect(find(read("code too").pattern, rendering)).toHaveLength(1);
   });
 });

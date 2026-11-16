@@ -12,10 +12,15 @@ export type Category = (typeof categories)[number];
 export type Medium = "image" | "document";
 export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
 
+// How a text reads (docs/design/02-design.md, "Two voices"): as Markdown, the way the model writes and reads what a
+// sender wrote, or verbatim, the way a tool returned it or the proxy reports it. [LAW:one-type-per-behavior] One kind of
+// text part, one rendering; the form is a value.
+export type Form = "markdown" | "verbatim";
+
 // [LAW:locality-or-seam] What a block shows, in kinds the view renders without knowing the API: a new block type, or a
 // richer rendering of one, is a change to the formatter alone.
 export type Part =
-  | { kind: "text"; label?: string; text: string }
+  | { kind: "text"; form: Form; label?: string; text: string }
   | { kind: "json"; label?: string; value: unknown }
   | { kind: "fields"; label?: string; fields: Header[] }
   | { kind: "media"; label?: string; of: Medium; source: Source };
@@ -30,6 +35,8 @@ export type BlockOrNone = [] | [Block];
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
+// What a sender's own text is named: who said it.
+const said: Record<Role, string> = { user: "user", assistant: "assistant", system: "system prompt" };
 // The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
 // where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
 // (docs/design/01-mvp.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
@@ -59,7 +66,7 @@ export function fitting<T>(format: () => T, misfit: (reason: string) => T): T {
 
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
 export function raw(category: Category, name: string, reason: string, received: Part): Block {
-  return { category, name, parts: [{ kind: "text", label: "does not fit", text: reason }, received] };
+  return { category, name, parts: [{ kind: "text", form: "verbatim", label: "does not fit", text: reason }, received] };
 }
 
 export function parseJson(text: string, what: string): unknown {
@@ -113,8 +120,9 @@ export function restBlock(fields: Fields, name: string): BlockOrNone {
 }
 
 // How one content block type is shown. `category` from the role of the message holding it; `name` and `parts` from
-// its fields. Each reads the fields it shows; the ones it does not read are shown after its parts.
-type Entry = { category: (role: Role) => Category; name?: (fields: Fields) => string; parts: (fields: Fields, role: Role) => Part[] };
+// its fields. Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text
+// block's text reads where the block is: Markdown in a message, verbatim in what a tool or a document returned.
+type Entry = { category: (role: Role) => Category; name?: (fields: Fields, role: Role) => string; parts: (fields: Fields, role: Role, form: Form) => Part[] };
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
@@ -128,7 +136,7 @@ const toolUse: Entry = {
 // A tool's input: the API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as
 // the text it is.
 function inputPart(input: unknown): Part {
-  return typeof input === "string" ? { kind: "text", label: "input so far", text: input } : { kind: "json", label: "input", value: input };
+  return typeof input === "string" ? { kind: "text", form: "verbatim", label: "input so far", text: input } : { kind: "json", label: "input", value: input };
 }
 // A tool result's content is optional: a result may say only that its tool failed.
 const toolResult: Entry = {
@@ -150,7 +158,7 @@ const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, rol
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
-  ["text", { category: byRole, parts: (fields) => [{ kind: "text", text: fields.string("text") }] }],
+  ["text", { category: byRole, name: (_, role) => said[role], parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }] }],
   // Claude Code asks for thinking with display omitted: the text is empty and the signature is the whole block. A
   // streamed thinking block has no signature until its signature delta, just before its stop.
   [
@@ -161,7 +169,7 @@ const entries = new Map<string, Entry>([
         const text = fields.string("thinking");
         const signature = fields.optionalString("signature");
         return [
-          { kind: "text", text },
+          { kind: "text", form: "markdown", text },
           { kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
         ];
       },
@@ -194,9 +202,10 @@ const entries = new Map<string, Entry>([
   ],
 ]);
 
-// A content block of a message in `role`, as the block the view shows. [LAW:no-silent-failure] A type with no entry
-// is shown as its raw JSON under its type name; a block its entry cannot read is shown the same way, with why.
-export function formatBlock(block: unknown, role: Role): Block {
+// A content block of a message in `role`, as the block the view shows, a text block's text read in `form`.
+// [LAW:no-silent-failure] A type with no entry is shown as its raw JSON under its type name; a block its entry cannot
+// read is shown the same way, with why.
+export function formatBlock(block: unknown, role: Role, form: Form): Block {
   const type = typeof block === "object" && block !== null && "type" in block && typeof block.type === "string" ? block.type : "block";
   const entry = entries.get(type);
   if (entry === undefined) return { category: byRole(role), name: type, parts: [{ kind: "json", value: block }] };
@@ -204,8 +213,8 @@ export function formatBlock(block: unknown, role: Role): Block {
     () => {
       const fields = readObject(block, type);
       fields.value("type");
-      const parts = entry.parts(fields, role);
-      return { category: entry.category(role), name: entry.name?.(fields) ?? type, parts: [...parts, ...restParts(fields, unreadLabel)] };
+      const parts = entry.parts(fields, role, form);
+      return { category: entry.category(role), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...restParts(fields, unreadLabel)] };
     },
     (reason) => raw(entry.category(role), type, reason, { kind: "json", value: block }),
   );
@@ -215,12 +224,12 @@ export function formatBlock(block: unknown, role: Role): Block {
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
 // shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields follow its last piece.
 export function formatContent(block: unknown, role: Role): Block[] {
-  const formatted = formatBlock(block, role);
+  const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
   const [, ...fields] = formatted.parts;
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
-    const parts: Part[] = [{ kind: "text", text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
+    const parts: Part[] = [{ kind: "text", form: "markdown", text: piece.text }, ...(index === textPieces.length - 1 ? fields : [])];
     return pieceBlock(piece, formatted.category, formatted.name, parts);
   });
 }
@@ -229,7 +238,7 @@ function isText(block: unknown): block is { type: "text"; text: string } {
   return typeof block === "object" && block !== null && "type" in block && block.type === "text" && "text" in block && typeof block.text === "string";
 }
 
-// A piece as a block: what was said is named as the text block it is, and what was injected for what it is.
+// A piece as a block: what was said is named as its text block is, for who said it, and what was injected for what it is.
 function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[]): Block {
   switch (piece.kind) {
     case "said":
@@ -245,10 +254,11 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
   }
 }
 
-// The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows.
+// The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows. Its
+// text is what the tool or the source returned, read verbatim.
 function contentParts(content: unknown, role: Role): Part[] {
-  if (typeof content === "string") return [{ kind: "text", text: content }];
-  if (Array.isArray(content)) return content.flatMap((block) => formatBlock(block, role).parts);
+  if (typeof content === "string") return [{ kind: "text", form: "verbatim", text: content }];
+  if (Array.isArray(content)) return content.flatMap((block) => formatBlock(block, role, "verbatim").parts);
   throw new Misfit("content is neither a string nor a list of blocks");
 }
 
@@ -266,7 +276,7 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
       case "file":
         return [{ kind: "media", of, source: { type, file_id: fields.string("file_id") } }];
       case "text":
-        return [{ kind: "text", text: fields.string("data") }];
+        return [{ kind: "text", form: "verbatim", text: fields.string("data") }];
       case "content":
         return contentParts(fields.value("content"), role);
       // A source of a type not here: its other fields follow.

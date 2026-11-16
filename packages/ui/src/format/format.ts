@@ -188,7 +188,7 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
         model: typeof rest.model === "string" ? rest.model : undefined,
       };
     },
-    (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", text })]), messages: [], model: undefined }),
+    (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], model: undefined }),
   );
 }
 
@@ -231,9 +231,10 @@ function isRole(role: string): role is Role {
 
 function systemBlocks(system: unknown): Block[] {
   if (system === undefined) return [];
-  if (typeof system === "string") return [{ category: "system", name: "system prompt", parts: [{ kind: "text", text: system }] }];
-  if (Array.isArray(system)) return system.map((block) => formatBlock(block, "system"));
-  throw new Misfit("system is neither a string nor a list of blocks");
+  // A string is the text of one text block.
+  const blocks = typeof system === "string" ? [{ type: "text", text: system }] : system;
+  if (!Array.isArray(blocks)) throw new Misfit("system is neither a string nor a list of blocks");
+  return blocks.map((block) => formatBlock(block, "system", "markdown"));
 }
 
 function toolBlocks(tools: unknown): BlockOrNone {
@@ -287,7 +288,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => none(one("body", [raw("metadata", "response body", reason, { kind: "text", text })])),
+    (reason) => none(one("body", [raw("metadata", "response body", reason, { kind: "text", form: "verbatim", text })])),
   );
 }
 
@@ -342,21 +343,21 @@ function ending(end: Of<"end"> | undefined): BlockOrNone {
       return [];
     // A failure stands where the reply would have been, as an error the API returned does.
     case "error":
-      return [{ category: "assistant", name: "error", parts: [{ kind: "text", text: end.error }] }];
+      return [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }];
     case "aborted":
-      return [{ category: "metadata", name: "aborted", parts: [{ kind: "text", text: "The agent left the exchange before it completed." }] }];
+      return [{ category: "metadata", name: "aborted", parts: [{ kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }];
     case "stopped":
-      return [{ category: "metadata", name: "stopped", parts: [{ kind: "text", text: "The proxy stopped before the exchange completed." }] }];
+      return [{ category: "metadata", name: "stopped", parts: [{ kind: "text", form: "verbatim", text: "The proxy stopped before the exchange completed." }] }];
   }
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
   const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "metadata", name, parts: [{ kind: "text", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  return { category: "metadata", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {
-  return { category: "metadata", name: `HTTP ${side}`, parts: [{ kind: "text", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+  return { category: "metadata", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
 }
 
 // A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
@@ -369,10 +370,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
 function undecoded(body: Body): BlockOrNone {
-  return body.error === undefined ? [] : [{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", text: body.error }] }];
+  return body.error === undefined ? [] : [{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
 }
 function leftover(name: string, text: string): BlockOrNone {
-  return text === "" ? [] : [{ category: "metadata", name, parts: [{ kind: "text", text }] }];
+  return text === "" ? [] : [{ category: "metadata", name, parts: [{ kind: "text", form: "verbatim", text }] }];
 }
 
 function show(value: unknown): string {
