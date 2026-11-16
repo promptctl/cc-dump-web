@@ -290,7 +290,7 @@ function logging(connection: ReturnType<typeof createBrowserConnection>, part: P
   const { arrive, next } = arrivals<LogArrival>();
   connection.logs(
     part,
-    { opened: () => arrive("opened"), line: ({ event }) => arrive({ line: event.event }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) },
+    { opened: () => arrive("opened"), line: (line) => arrive({ line: "event" in line ? line.event.event : `unread: ${line.error}` }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) },
     abort.signal,
   );
   return { next };
@@ -324,16 +324,24 @@ describe("a part's log", () => {
     expect([await logged.next(), await logged.next()]).toEqual(["opened", { line: "after" }]);
   });
 
-  it("reports a line that does not parse as failed, and goes on to the lines after it", async () => {
+  it("delivers a line whose event does not parse unread, and goes on to the lines after it", async () => {
     const reader = await serving((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {}\n\ndata: ${JSON.stringify({ run: "r", seq: 0, event: { service: "proxy", ...event("next") } })}\n\n`);
+      res.write(`id: ab:0\ndata: {}\n\nid: ab:1\ndata: ${JSON.stringify({ service: "proxy", ...event("next") })}\n\n`);
     });
     const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
-    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual([
+    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "unread: log line: service is not a string" }, { line: "next" }]);
+  });
+
+  it("ends a log whose message has no line's position, reporting it as failed", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ service: "proxy", ...event("nowhere") })}\n\n`);
+    });
+    const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
+    expect([await logged.next(), await logged.next()]).toEqual([
       "opened",
-      { failed: expect.objectContaining({ message: `GET ${reader.url}/logs`, cause: expect.objectContaining({ message: "log line: event: is not an object" }) }) },
-      { line: "next" },
+      { failed: expect.objectContaining({ message: `GET ${reader.url}/logs`, cause: expect.objectContaining({ message: 'log line: id "" is not run:seq' }) }) },
     ]);
   });
 });

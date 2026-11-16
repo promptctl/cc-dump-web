@@ -45,11 +45,12 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       stream.on("message", parseProxyStatus, watcher.status, watcher.failed);
       stream.dropped(watcher.dropped);
     },
-    // Each line stands alone, so one that does not parse taints none after it, as a status does. The EventSource sends
-    // the id of the last line it read when it reconnects, so the same process resumes after it (processLog).
+    // A line's id is its position, which the EventSource sends back when it reconnects, so the same process resumes
+    // after the last line read (processLog). A line whose event does not parse is delivered unread (parseLogLine); a
+    // message with no position is no log's, and ends it.
     logs: (part, watcher, signal) => {
       const stream = eventStream(`${part === "proxy" ? origin : server}/logs`, signal, watcher.failed);
-      stream.on("message", parseLogLine, watcher.line, watcher.failed);
+      stream.on("message", parseLogLine, watcher.line, stream.fail);
       stream.opened(watcher.opened);
       stream.dropped(watcher.dropped);
     },
@@ -97,13 +98,13 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
     close();
     failed(error);
   };
-  const on = <T>(type: string, parse: (data: string) => T, deliver: (value: T) => void, refused: (error: Error) => void) =>
+  const on = <T>(type: string, parse: (data: string, id: string) => T, deliver: (value: T) => void, refused: (error: Error) => void) =>
     source.addEventListener(
       type,
-      ({ data }: MessageEvent<string>) => {
+      ({ data, lastEventId }: MessageEvent<string>) => {
         let value: T;
         try {
-          value = parse(data);
+          value = parse(data, lastEventId);
         } catch (error) {
           return refused(new Error(`GET ${url}`, { cause: error }));
         }
@@ -112,14 +113,14 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
       listening,
     );
   // An error that leaves the EventSource CONNECTING is the browser reconnecting after a dropped connection, or after a
-  // first one it could not make. One that leaves it CLOSED is a request the reader did not serve (a name not listed, a
-  // position that is no event's, a server error), and the EventSource does not say which: the reader's request event
-  // in the proxy's log does.
+  // first one it could not make. One that leaves it CLOSED is a request its server did not serve (a name not listed, a
+  // position that is no event's, a refused origin, a server error), and the EventSource does not say which: the request
+  // event in that server's log does.
   const drops = new Set<() => void>();
   source.addEventListener(
     "error",
     () => {
-      if (source.readyState === EventSource.CLOSED) fail(new Error(`GET ${url}: not served; its status is on the reader's request event in the proxy's log`));
+      if (source.readyState === EventSource.CLOSED) fail(new Error(`GET ${url}: not served; its status is on its request event in the log of the part serving it`));
       else for (const dropped of drops) dropped();
     },
     listening,

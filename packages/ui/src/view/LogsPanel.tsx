@@ -1,6 +1,6 @@
 import { describe } from "@cc-dump/log/describe";
-import { levelOf, levels, type Level } from "@cc-dump/log/line";
-import { useLayoutEffect, useRef } from "react";
+import { lineLevel, levels, type Level, type LoggedEvent } from "@cc-dump/log/line";
+import { memo, useLayoutEffect, useRef } from "react";
 import { parts, type Connection, type Part } from "../connection/connection.ts";
 import { useLogs, type Listed, type LogConnection } from "../logs.ts";
 import { settings, useSettings } from "../settings.ts";
@@ -12,13 +12,15 @@ const named: Record<Part, string> = { proxy: "proxy", server: "app server" };
 export function LogsPanel({ connection }: { connection: Pick<Connection, "logs"> }) {
   const logs = useLogs(connection);
   const least = useSettings((state) => state.logLevel);
-  const shown = logs.lines.filter(({ line }) => levels.indexOf(levelOf(line.event.outcome)) <= levels.indexOf(least));
+  const shown = logs.lines.filter(({ line }) => levels.indexOf(lineLevel(line)) <= levels.indexOf(least));
   // The list follows the latest line while it is scrolled to the bottom, and stays where the reader put it otherwise.
+  // The latest is followed by itself, not by how many are listed, which stays the same once old lines are let go.
   const list = useRef<HTMLOListElement>(null);
   const atBottom = useRef(true);
+  const latest = shown.at(-1);
   useLayoutEffect(() => {
     if (atBottom.current && list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [shown.length]);
+  }, [latest]);
   return (
     <aside aria-label="Logs" data-logs className="flex w-[32rem] shrink-0 flex-col border-l bg-surface text-xs">
       <div className="flex items-center gap-3 border-b p-3">
@@ -74,29 +76,38 @@ function PartState({ part, connection }: { part: Part; connection: LogConnection
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23" });
 
 // A line: when its work ended, its part, its level, its unit of work and what it says, the error first; opened, the
-// whole of its event.
-function LogRow({ listed: { line, ended } }: { listed: Listed }) {
-  const { service, event, outcome, error, facts } = line.event;
-  const level = levelOf(outcome);
-  const said = error === undefined ? Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ") : error.split("\n")[0];
+// whole of its event, or, for a line not read, why and its text. A line is never changed once listed, so a row renders
+// once, not again for each line after it.
+const LogRow = memo(function LogRow({ listed: { part, line, ended, restarted } }: { listed: Listed }) {
+  const level = lineLevel(line);
+  const { service, event, said, error, opened } =
+    "event" in line
+      ? { ...line.event, said: summary(line.event), opened: JSON.stringify({ started_at: line.event.started_at, duration_ms: line.event.duration_ms, outcome: line.event.outcome, ...line.event.facts }, null, 2) }
+      : { service: named[part], event: "unread", said: line.error, error: line.error, opened: line.unread };
   return (
     <li data-log-level={level}>
+      {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote after its last line here is in its terminal</p> : null}
       <details>
         <summary className="flex cursor-pointer gap-2 whitespace-nowrap hover:bg-hover">
-          <span className="text-foreground-muted">{time.format(ended)}</span>
+          <span className="text-foreground-muted">{"event" in line ? time.format(ended) : "—"}</span>
           <span className="w-12 shrink-0 text-foreground-muted">{service}</span>
           <span className={`w-10 shrink-0 ${levelStyle[level]}`}>{level}</span>
           <span className="shrink-0">{event}</span>
           <span className={`min-w-0 truncate ${level === "error" ? "text-error" : "text-foreground-muted"}`}>{said}</span>
         </summary>
         <div className="py-1 pl-4 *:break-all *:whitespace-pre-wrap">
-          {/* The error as node wrote it, its stack on lines of their own; the rest of the event as JSON. */}
+          {/* The error as it was written, its stack on lines of their own; the rest of the event as JSON, or the line's text. */}
           {error === undefined ? null : <pre className="text-error">{error}</pre>}
-          <pre>{JSON.stringify({ started_at: line.event.started_at, duration_ms: line.event.duration_ms, outcome, ...facts }, null, 2)}</pre>
+          <pre>{opened}</pre>
         </div>
       </details>
     </li>
   );
+});
+
+// What an event says on its row: its error's first line, or its facts.
+function summary({ error, facts }: LoggedEvent): string {
+  return error === undefined ? Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ") : error.split("\n")[0]!;
 }
 
 const levelStyle: Record<Level, string> = { error: "text-error font-semibold", warn: "font-semibold", info: "text-foreground-muted" };
