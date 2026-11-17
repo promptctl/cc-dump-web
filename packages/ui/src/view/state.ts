@@ -87,11 +87,12 @@ export const view = {
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the set its block is in shows open,
   // its block, unless the match is on its line, and the regions holding it show expanded, and the view moves to its row,
   // which the step then refines to the match's line. The step chooses only what it changes: a set or a block already
-  // open, as the levels `visibility` start it or as the reader chose, is left as it is.
+  // open, as the levels `visibility` start it or as the reader chose, is left as it is, and so is a region the choices
+  // hold open, so a step among the matches of what is open leaves the choices the record they were.
   goTo: ({ match, row, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
     useView.setState(({ opened, moment, search }) => {
       const set = closedSetOf(row, visibility, opened);
-      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, opened) ? [] : [row.key]), ...regions];
+      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, opened) ? [] : [row.key]), ...regions.filter((key) => opened[key] !== true)];
       return {
         opened: opens.length === 0 ? opened : { ...opened, ...Object.fromEntries(opens.map((key) => [key, true] as const)) },
         position: { at: "row", key: match.key, offset: 0 },

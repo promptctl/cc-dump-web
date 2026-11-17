@@ -114,6 +114,11 @@ describe("the search", () => {
     const { visibility } = parseSettings(undefined);
     view.goTo({ match, row, inContent: true, regions: ["r"] }, "t1", visibility);
     expect(useView.getState().opened).toEqual({ [row.key]: true, r: true });
+    // The next match in the same region: nothing is chosen, so the choices are the record they were.
+    const { opened } = useView.getState();
+    view.goTo({ match: { ...match, start: match.start + 1 }, row, inContent: true, regions: ["r"] }, "t1", visibility);
+    expect(useView.getState().opened).toBe(opened);
+    expect(useView.getState().search.current).toEqual({ ...match, start: match.start + 1 });
     useView.setState({ opened: {} });
     view.goTo({ match, row, inContent: true, regions: [] }, "t1", { ...visibility, tools: "expanded" });
     expect(useView.getState().opened).toEqual({});

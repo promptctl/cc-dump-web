@@ -465,16 +465,19 @@ const endings = { ok: "", pending: "", unread: "no end read", error: "error", ab
 // Clicking the line switches between expanded and not, from how the block starts.
 function BlockView({ row }: { row: BlockRow }) {
   const starts = useSettings((state) => startsExpanded(row, state.visibility));
-  const { open, toggle } = useToggle(row.key, starts);
+  const { open: chosen, toggle } = useToggle(row.key, starts);
   const rewrites = useToggle(pastKey(row.key), false);
   const block = blockOf(row);
+  // A block with no content has nothing to open: a branch's line for what it does not send (view/history.ts). Its line
+  // is no control, and it shows open under no choice or level.
+  const opens = block.parts.length > 0;
+  const open = opens && chosen;
   const size = sizeOf(block);
   return (
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
       <div className="flex items-baseline gap-3 font-sans hover:bg-hover">
-        <button type="button" className="flex min-w-0 flex-1 items-baseline gap-3 text-left" onClick={toggle}>
-          {/* A block with no content has nothing to open: a branch's line for what it does not send (view/history.ts). */}
-          <span className="w-3 text-foreground-muted">{block.parts.length === 0 ? "" : open ? "▾" : "▸"}</span>
+        <button type="button" className="flex min-w-0 flex-1 items-baseline gap-3 text-left" disabled={!opens} onClick={toggle}>
+          <span className="w-3 text-foreground-muted">{!opens ? "" : open ? "▾" : "▸"}</span>
           {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
           <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>
             <HighlightedText blockKey={row.key} at={address.name} text={block.name} />

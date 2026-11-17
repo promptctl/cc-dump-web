@@ -2,7 +2,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
-import { createHistory, type History } from "./history.ts";
+import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
@@ -171,6 +171,15 @@ describe("history", () => {
     const read = reader();
     expect(arrived(read([...process.slice(0, 14), ...partial]))[2]).toEqual({ request: ["t2/request/http"] });
     expect(arrived(read([...process.slice(0, 14), ...request("t2", { ...main, messages: [hi, assistant(...hello)] })]))[2]).toEqual({ request: ["t2/request/http"] });
+  });
+
+  it("says two objects say the same when they have the same fields with the same values, a field that holds undefined not standing for one the other lacks", () => {
+    const block = {};
+    expect(sameFields({ step: 1, block }, { block, step: 1 })).toBe(true);
+    expect(sameFields({ step: 1, block }, { step: 1, block: {} })).toBe(false);
+    expect(sameFields({ step: 1, block: undefined }, { step: 1, block: undefined })).toBe(true);
+    expect(sameFields({ step: 1, block: undefined }, { step: 1, rewrote: block })).toBe(false);
+    expect(sameFields({ step: 1 }, { step: 1, block: undefined })).toBe(false);
   });
 });
 
