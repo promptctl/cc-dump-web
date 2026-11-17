@@ -1,7 +1,7 @@
 import type { Block, Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
-import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
+import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
 import type { Branches, Visibility } from "../settings.ts";
 import { sameContent, type Branch, type History, type Item, type Segment, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
@@ -27,7 +27,7 @@ export const changeColors: Record<Change, `--${string}` | undefined> = { added: 
 // closed, opened, or gone. `branch`: the branch a row is part of.
 export type Row =
   | { kind: "exchange"; key: string; exchange: FormattedExchange; change: "added" | "same"; branch: Branch | undefined }
-  | { kind: "group"; key: string; title: Group["title"]; change: "added" | "same"; branch: Branch | undefined }
+  | { kind: "group"; key: string; title: Heading; change: "added" | "same"; branch: Branch | undefined }
   | BlockRow
   | { kind: "fold"; key: string; rows: Row[]; branch: Branch };
 export type BlockRow = { kind: "block"; key: string; change: Change; versions: readonly Version[]; at: number; branch: Branch | undefined };
@@ -169,16 +169,17 @@ const placements: Record<Branches, (past: number) => { listed: boolean; collapse
 // A row a segment lists while it is shown: any but a fold.
 type Shown = Exclude<Row, { kind: "fold" }>;
 
-// The rows of step `own`'s segment at step `step`: its exchange's line, then each group with an item, its title over
-// their rows.
+// The rows of step `own`'s segment at step `step`: its exchange's line, then each group's items' rows, under its title
+// where it has one and an item.
 function segmentRows({ formatted, groups, branch }: Segment, own: number, step: number): Shown[] {
   const change = own === step ? "added" : "same";
   const trace = formatted.exchange.trace_id;
   return [
     { kind: "exchange", key: trace, exchange: formatted, change, branch },
-    ...groups.flatMap(({ key, title, items }): Shown[] =>
-      items.length === 0 ? [] : [{ kind: "group", key: `${trace}/${key}`, title, change, branch }, ...items.map((item) => itemRow(item, step, branch))],
-    ),
+    ...groups.flatMap(({ key, title, items }): Shown[] => [
+      ...(title === undefined || items.length === 0 ? [] : [{ kind: "group", key: `${trace}/${key}`, title, change, branch } satisfies Shown]),
+      ...items.map((item) => itemRow(item, step, branch)),
+    ]),
   ];
 }
 

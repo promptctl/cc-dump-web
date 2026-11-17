@@ -2,9 +2,10 @@ import { formatError, restBlock, type Block } from "./blocks.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
-// message_start), the blocks of the events that are not part of it (an error event, an event this view cannot apply),
-// and the text after the last complete event, which is the next event still arriving or what a cut-off stream left.
-export type Stream = { message: Record<string, unknown> | undefined; blocks: Block[]; tail: string };
+// message_start), the errors its error events returned, which stand where the reply would have, the blocks of its other
+// events that are not part of the message (a ping's fields, an event this view cannot apply), and the text after the
+// last complete event, which is the next event still arriving or what a cut-off stream left.
+export type Stream = { message: Record<string, unknown> | undefined; errors: Block[]; blocks: Block[]; tail: string };
 
 // The reassembly of one streamed Messages response as its text arrives: `reassemble` takes the text decoded so far, and
 // whether it is all the text there will be, and returns the stream as far as it has arrived. Events it has applied before are not parsed or applied again, so a
@@ -24,6 +25,7 @@ export function createReassembly(): Reassembly {
   let tail = "";
   let message: Record<string, unknown> | undefined;
   const content = new Map<number, Building>();
+  const errors: Block[] = [];
   const blocks: Block[] = [];
 
   // Every event but message_start, a ping and an error builds on the message message_start began.
@@ -83,7 +85,7 @@ export function createReassembly(): Reassembly {
         return;
       }
       case "error":
-        blocks.push(formatError(event));
+        errors.push(formatError(event));
         return;
       // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
@@ -119,7 +121,7 @@ export function createReassembly(): Reassembly {
         );
       }
       const built = message === undefined ? undefined : { ...message, content: [...content.entries()].sort(([a], [b]) => a - b).map(([, built]) => assembled(built)) };
-      return { message: built, blocks: [...blocks], tail };
+      return { message: built, errors: [...errors], blocks: [...blocks], tail };
     },
   };
 }

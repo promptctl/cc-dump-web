@@ -12,6 +12,7 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Proxy | The local HTTP endpoint the agent sends its API requests to. It forwards them to Anthropic. |
 | Exchange | One API request and its response. |
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
+| Heading | The word over a run of an exchange's blocks, saying whose they are: `tools`, the tools the model is offered; `system`, its system prompt, and a message in the system's role; `user` and `assistant`, a message by who speaks, the reply as much as an assistant's message sent again; `message`, a message that is not the shape a message has. The exchange's envelope has no heading: it stands under the exchange's line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, thinking, and the exchange's envelope by where it is from: parameters (what a request asks beside its prompt and messages, its cache breakpoints among them), usage (what the API reported about its reply: why it stopped, what it counted) and http (the wire as received: each side's head, a body or event not read, how the connection ended). |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
 | Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
@@ -38,9 +39,12 @@ Each feature is stated as what the person using the app can do and see.
 - The `authorization`, `x-api-key`, `cookie` and `set-cookie` headers are forwarded but never written to a recording and never sent to the browser.
 
 ### F3. Format
-- Each exchange is shown as one unit: the request, then its response.
-- The request shows the model and parameters, the HTTP headers, the tool definitions, the system prompt, and every message with its content blocks.
-- The response shows its content blocks, the stop reason, and the token usage the API reported. Input is shown as its total, the uncached, cache-read and cache-written tokens together, with the cache read and the cache written beside it.
+- Each exchange is shown as one unit: its line, then its envelope, then what the request sends, then the reply.
+- The envelope stands under the exchange's line with no heading: the request's HTTP headers, its model and parameters and its cache breakpoints, then the response's HTTP headers, the stop reason, and the token usage the API reported. Input is shown as its total, the uncached, cache-read and cache-written tokens together, with the cache read and the cache written beside it. An exchange cut short before any reply says how it ended here.
+- What the request sends is the tool definitions under `tools`, the system prompt under `system`, and every message with its content blocks under who speaks, `user` or `assistant`.
+- The reply is the response's content blocks under `assistant`, the heading the same content has when a later request sends it again as a message. An error that ended the exchange stands with the reply.
+- A heading and the block under it do not say the same thing: a block of text is named `text` under whoever speaks.
+- A thinking block that holds no text says only what the API reported, how long its signature is: it is usage, not thinking, so it is no row among what was said until the usage is shown.
 - Content the harness injects into a user message is split out of it into blocks of its own, each named for what it is: a system reminder, hook output, the contents of a CLAUDE.md file named by its path.
 - Every content block type has a rendering: text, thinking, redacted thinking, tool use, tool result, image, document, server tool use and its results.
 - A block of a type the app does not know is shown under its type name as raw JSON. No block is ever dropped.
