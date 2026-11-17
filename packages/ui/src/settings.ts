@@ -11,14 +11,17 @@ export const visibilities = ["hidden", "compact", "expanded"] as const;
 export type Visibility = (typeof visibilities)[number];
 
 // Each category's level until the reader sets one, as in the original cc-dump (src/cc_dump/core/filter_registry.py):
-// what the user and the model said in full, the harness's machinery a line a block, the request's metadata not at all.
+// what the user and the model said in full, the harness's machinery a line a block, the exchange's envelope, which the
+// original listed as metadata, not at all.
 export const defaultVisibility: Record<Category, Visibility> = {
   user: "expanded",
   assistant: "expanded",
   tools: "compact",
   system: "compact",
-  metadata: "hidden",
   thinking: "compact",
+  parameters: "hidden",
+  usage: "hidden",
+  http: "hidden",
 };
 
 // Where a branch of a thread (view/lines.ts), a side question or a compaction, is listed once its last request is behind

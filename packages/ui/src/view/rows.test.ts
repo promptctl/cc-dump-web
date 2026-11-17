@@ -24,7 +24,7 @@ const turns = (count: number, system = "Be brief.") =>
   ).flat();
 // Every category listed, a block a line.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
-const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
+const dialogue = { ...shown, tools: "hidden", system: "hidden", parameters: "hidden", usage: "hidden", http: "hidden", thinking: "hidden" } as const;
 
 // The layout at each step of `events`, as the view lays them out.
 function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, branches: Branches = "stay") {
@@ -197,7 +197,7 @@ describe("layout", () => {
     const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
     const history = createHistory();
     const format = createFormatter();
-    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "stay");
+    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" }, "stay");
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));
@@ -280,14 +280,14 @@ describe("a block's line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ kind: "text", form: "markdown", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
     expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
     // A field that holds fields reads as theirs, each by its path; a null holds nothing to read.
-    const nested: Block = { category: "metadata", name: "parameters", parts: [{ kind: "fields", fields: [["model", '"m"'], ["stop", "null"], ["thinking", [["type", '"adaptive"'], ["list", [["0", "1"]]]]]] }] };
+    const nested: Block = { category: "parameters", name: "parameters", parts: [{ kind: "fields", fields: [["model", '"m"'], ["stop", "null"], ["thinking", [["type", '"adaptive"'], ["list", [["0", "1"]]]]]] }] };
     expect(preview(nested)).toBe('model "m" thinking.type "adaptive" thinking.list.0 1');
     // A JSON value that is a null reads as one a field holds.
-    expect(preview({ category: "metadata", name: "error", parts: [{ kind: "json", value: null }] })).toBe("");
-    expect(preview({ category: "metadata", name: "error", parts: [{ kind: "json", value: 5 }] })).toBe("5");
+    expect(preview({ category: "http", name: "error", parts: [{ kind: "json", value: null }] })).toBe("");
+    expect(preview({ category: "http", name: "error", parts: [{ kind: "json", value: 5 }] })).toBe("5");
     // Deep JSON reads as its leaves, cut where the line ends.
     const deep = { a: { b: { c: { d: Array.from({ length: 60 }, (_, index) => index) } } } };
-    const line = preview({ category: "metadata", name: "usage", parts: [{ kind: "json", value: deep }] });
+    const line = preview({ category: "usage", name: "usage", parts: [{ kind: "json", value: deep }] });
     expect(line).toMatch(/^a\.b\.c\.d\.0 0 a\.b\.c\.d\.1 1 /);
     expect(line).toMatch(/^.{198,200}…$/u);
   });
@@ -296,7 +296,7 @@ describe("a block's line", () => {
     const reminder = "<system-reminder>\nContext left: 80%.\n</system-reminder>";
     const parts: Part[] = [{ kind: "text", form: "markdown", text: reminder }];
     expect(preview({ category: "user", name: "system reminder", parts, preview: [{ kind: "text", form: "markdown", text: "\nContext left: 80%.\n" }] })).toBe("Context left: 80%.");
-    expect(preview({ category: "metadata", name: "stop reason: end_turn", parts, preview: [{ kind: "fields", fields: [["stop_sequence", "null"]] }] })).toBe("");
+    expect(preview({ category: "usage", name: "stop reason: end_turn", parts, preview: [{ kind: "fields", fields: [["stop_sequence", "null"]] }] })).toBe("");
     // Its first part with anything to read, as a block's own are read.
     expect(preview({ category: "user", name: "text", parts, preview: [{ kind: "text", form: "markdown", text: "" }, { kind: "fields", label: "fields", fields: [["foo", "1"]] }] })).toBe("foo 1");
   });

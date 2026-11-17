@@ -12,7 +12,7 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Proxy | The local HTTP endpoint the agent sends its API requests to. It forwards them to Anthropic. |
 | Exchange | One API request and its response. |
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
-| Category | The kind of content a block belongs to: user, assistant, tools, system, metadata, thinking. |
+| Category | The kind of content a block belongs to: user, assistant, tools, system, thinking, and the exchange's envelope by where it is from: parameters (what a request asks beside its prompt and messages, its cache breakpoints among them), usage (what the API reported about its reply: why it stopped, what it counted) and http (the wire as received: each side's head, a body or event not read, how the connection ended). |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
 | Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
 
@@ -53,8 +53,8 @@ Each feature is stated as what the person using the app can do and see.
 - A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
 
 ### F5. Filter
-- Each of the six categories is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line) or expanded (each block is expanded).
-- The levels start as in cc-dump: user and assistant expanded; tools, system and thinking compact; metadata hidden.
+- Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line) or expanded (each block is expanded).
+- The levels start as in cc-dump: user and assistant expanded; tools, system and thinking compact; parameters, usage and http, which cc-dump lists as one category, metadata, hidden (Brandon, 2026-11-16: "metadata is too broad of a category").
 - A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
@@ -78,7 +78,7 @@ Each feature is stated as what the person using the app can do and see.
 
 ### F10. Themes
 - The app ships with more than one theme, including a light one and a dark one. Switching takes effect immediately.
-- Every color, including the six category colors, comes from the theme. Adding a theme means adding one set of values and changing no component.
+- Every color, including the category colors, comes from the theme. Adding a theme means adding one set of values and changing no component.
 
 ### F11. Settings persist
 - These survive a restart of the browser, the app and the machine: the theme, each category's level, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.

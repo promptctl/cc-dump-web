@@ -6,7 +6,7 @@ import { usePrefersDark } from "../theme/useTheme.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 
 // The theme control (docs/design/01-mvp.md, F10): the choice in effect, and every theme to choose from, each shown
-// with its ground and its six category colors, so the derived colors are seen before they are chosen. The system
+// with its ground and its category colors, so the derived colors are seen before they are chosen. The system
 // choice is shown as the theme it resolves to now.
 export function ThemePicker() {
   const choice = useSettings((state) => state.theme);
@@ -47,7 +47,7 @@ function Option({ choice, label, swatch, current, pick }: { choice: ThemeChoice;
   );
 }
 
-// A theme's ground with its six category bars on it, in the filter bar's order.
+// A theme's ground with its category bars on it, in the filter bar's order.
 function Swatch({ theme }: { theme: Theme }) {
   return (
     <span aria-hidden className="flex h-5 w-12 shrink-0 items-stretch gap-px rounded-sm p-1" style={{ background: theme.palette.get("background").hex }}>

@@ -186,10 +186,10 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "metadata", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
       // Its line previews where they are.
       const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "metadata", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
         blocks: [
           ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
@@ -200,7 +200,7 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
         said: { model: typeof rest.model === "string" ? rest.model : undefined, session: sessionOf(rest.metadata) },
       };
     },
-    (reason) => ({ blocks: one("body", [raw("metadata", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], said: unsaid }),
+    (reason) => ({ blocks: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], said: unsaid }),
   );
 }
 
@@ -248,9 +248,9 @@ function messageGroup(message: unknown, index: number): Group {
       const content = fields.value("content");
       const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
-      return { key, title: role, blocks: [...messageContent(blocks, role, place), ...placed(place, one("fields", restBlock(fields, "message")))] };
+      return { key, title: role, blocks: [...messageContent(blocks, role, place), ...placed(place, one("fields", restBlock(fields, "parameters", "message")))] };
     },
-    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("metadata", "message", reason, { kind: "json", value: message })])) }),
+    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("http", "message", reason, { kind: "json", value: message })])) }),
   );
 }
 
@@ -350,7 +350,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => none(one("body", [raw("metadata", "response body", reason, { kind: "text", form: "verbatim", text })])),
+    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", form: "verbatim", text })])),
   );
 }
 
@@ -375,15 +375,15 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
           // The stop reason is the line's name; the stop sequence, when one stopped it, is its preview.
           ...one("stop reason", [
             {
-              category: "metadata",
+              category: "usage",
               name: `stop reason: ${show(stopReason)}`,
               parts: [pickedPart(stop, ["stop_reason", "stop_sequence"])],
               preview: [pickedPart(stop, ["stop_sequence"])],
             },
           ]),
-          ...one("usage", [{ category: "metadata", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
+          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
+          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
         ],
         message: {
           input: uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0),
@@ -394,7 +394,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
         },
       };
     },
-    (reason) => none(one("message", [raw("metadata", "message", reason, { kind: "json", value: message })])),
+    (reason) => none(one("message", [raw("http", "message", reason, { kind: "json", value: message })])),
   );
 }
 
@@ -418,19 +418,19 @@ function ending(end: Of<"end"> | undefined): BlockOrNone {
     case "error":
       return [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }];
     case "aborted":
-      return [{ category: "metadata", name: "aborted", parts: [{ kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }];
+      return [{ category: "http", name: "aborted", parts: [{ kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }];
     case "stopped":
-      return [{ category: "metadata", name: "stopped", parts: [{ kind: "text", form: "verbatim", text: "The proxy stopped before the exchange completed." }] }];
+      return [{ category: "http", name: "stopped", parts: [{ kind: "text", form: "verbatim", text: "The proxy stopped before the exchange completed." }] }];
   }
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
   const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "metadata", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  return { category: "http", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {
-  return { category: "metadata", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+  return { category: "http", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
 }
 
 // A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
@@ -443,10 +443,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
 function undecoded(body: Body): BlockOrNone {
-  return body.error === undefined ? [] : [{ category: "metadata", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
+  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
 }
 function leftover(name: string, text: string): BlockOrNone {
-  return text === "" ? [] : [{ category: "metadata", name, parts: [{ kind: "text", form: "verbatim", text }] }];
+  return text === "" ? [] : [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }];
 }
 
 function show(value: unknown): string {

@@ -6,8 +6,11 @@ import { inputParts, jsonInput } from "./tools.ts";
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
 // [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/01-mvp.md, "Vocabulary"), in the order
-// the filter bar lists them.
-export const categories = ["user", "assistant", "tools", "system", "metadata", "thinking"] as const;
+// the filter bar lists them: what was said and sent, then the exchange's envelope by where it is from. `parameters`:
+// what a request asks beside its prompt and its messages, its cache breakpoints and a message's other fields among
+// them. `usage`: what the API reported about its reply, why it stopped and what it counted. `http`: the wire as it was
+// received, each side's head, a body or an event not read, and how the connection ended.
+export const categories = ["user", "assistant", "tools", "system", "thinking", "parameters", "usage", "http"] as const;
 export type Category = (typeof categories)[number];
 
 // [LAW:types-are-the-program] `injected`: the harness's own content in a message the user or the assistant sent, a system
@@ -52,10 +55,10 @@ export function formatError(fields: Fields): Block {
 // The fields of an object no read asked for, as a part, when there are any.
 export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), { label: unreadLabel });
 
-// The fields of an object no read asked for, as a metadata block of their own, when there are any.
-export function restBlock(fields: Fields, name: string): BlockOrNone {
+// The fields of an object no read asked for, as a block of their own in `category`, when there are any.
+export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
   const parts = unreadParts(fields);
-  return parts.length === 0 ? [] : [{ category: "metadata", name, parts }];
+  return parts.length === 0 ? [] : [{ category, name, parts }];
 }
 
 // How one content block type is shown. `category` from the role of the message holding it; `name` and `parts` from

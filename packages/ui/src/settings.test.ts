@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseSettings } from "./settings.ts";
 
 describe("settings", () => {
-  const defaults = { follow: true, visibility: { user: "expanded", assistant: "expanded", tools: "compact", system: "compact", metadata: "hidden", thinking: "compact" },
+  const defaults = { follow: true, visibility: { user: "expanded", assistant: "expanded", tools: "compact", system: "compact", thinking: "compact", parameters: "hidden", usage: "hidden", http: "hidden" },
     theme: "system",
     search: { caseSensitive: false, wholeWord: false, regex: true },
     branches: "stay",
@@ -18,7 +18,7 @@ describe("settings", () => {
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
     expect(
-      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", metadata: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, branches: "fold", info: true, logs: true, logLevel: "warn" }),
+      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, branches: "fold", info: true, logs: true, logLevel: "warn" }),
     ).toEqual({
       follow: false,
       // A level the last build stored, "shown", is not one this build has.

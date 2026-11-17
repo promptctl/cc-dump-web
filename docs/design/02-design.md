@@ -21,7 +21,7 @@ The marks answer the first two questions at once: what the band marks is what ju
 
 ## Principles
 
-- **Color means category, or what Textual made it mean.** The six category colors are the only hues the app adds to its theme. Every other color is a theme variable used for its Textual purpose: an error in `text-error`, a search match in the warning, a focus ring in `border`, the grounds and scrollbars as the theme sets them. A hue the theme does not define is always a category.
+- **Color means category, or what Textual made it mean.** The category colors are the only hues the app adds to its theme. Every other color is a theme variable used for its Textual purpose: an error in `text-error`, a search match in the warning, a focus ring in `border`, the grounds and scrollbars as the theme sets them. A hue the theme does not define is always a category.
 - **Two voices.** What the app says is set in a sans. What was on the wire, every byte of content, is set in a monospace face, verbatim, but for the conversation's prose: what a sender wrote (a message's text, the system prompt, thinking) is read as the model reads it, its Markdown rendered, its prose in the sans and its code in the mono, the same for every speaker; the block's name and gutter alone say who spoke. What a tool returned and what the proxy reports stay verbatim. The reader never wonders which is which.
 - **Print what varies.** An exchange line prints the facts that differ between exchanges and nothing that repeats. A block line names the block usefully, with a preview of its content, not its category's name.
 - **Hierarchy by weight, indent and ground, never boxes.** No cards, no borders around blocks, no shadows. Depth is Textual's three grounds: the app's chrome on `surface`, the conversation on `background`, what is raised (a button, a popover) on `panel`. An exchange boundary is its line, a band on `surface`.
@@ -49,7 +49,7 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │ cc-dump  ● connected  1 in flight  last 4s ago     Recording ▾  Launch  Theme │
-│ ▮ user  ▮ assistant  ▮ tools  ▮ system  ▮ metadata  ▮ thinking   search… 3/41 │
+│ ▮ user  ▮ assistant  ▮ tools  ▮ system  ▮ thinking  ▮ usage …    search… 3/41 │
 │ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ▣  ·  ·     turn strip     │
 ├─────────────────────────────────────────────────────────────────────────┬──┬──┤
 │  11  14:03:19  opus-5-5  2.1s  200                                      │▒▒│  │

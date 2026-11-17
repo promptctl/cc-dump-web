@@ -35,7 +35,7 @@ cc-dump paths are relative to `~/code/cc-dump`; cc-dump-web paths to this repo. 
 
 - **cc-dump:** search covers every category, hidden ones included, and moving to a match reveals its block even when its category is hidden (`src/cc_dump/tui/view_overrides.py`, `set_search_reveal`; `src/cc_dump/tui/search_controller.py`). It is regex and case-insensitive by default, and incremental (`src/cc_dump/tui/search.py`).
 - **cc-dump-web:** search covers "every match in the shown categories" (F6; `packages/ui/src/view/search.ts`). Regex, case options and "search inside hidden categories" are listed under "Not in the MVP" (`01-mvp.md`).
-- **Why it matters:** a reader hunting for a tool name or a reminder in metadata, tools or system has to know where it lives and unhide that category first. cc-dump's search exists so they do not have to.
+- **Why it matters:** a reader hunting for a tool name or a reminder in parameters, tools or system has to know where it lives and unhide that category first. cc-dump's search exists so they do not have to.
 - **Ruling (Brandon, 2026-11-14):** cc-dump's behavior is correct, and is the spec. (`01-mvp.md`, F6.)
 - **Status:** Fixed: dump-mvp-v3s.vap, merged.
 

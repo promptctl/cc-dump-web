@@ -142,7 +142,7 @@ describe("search", () => {
     // Each exchange: the header's value, the user's text, the tool call's name and its input's JSON, the tool result.
     expect(found.count).toBe(10);
     expect(found.blocks.map(({ count }) => count)).toEqual([1, 1, 2, 1, 1, 1, 2, 1]);
-    const hidden = layOut({ ...shown, tools: "hidden", metadata: "hidden" });
+    const hidden = layOut({ ...shown, tools: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" });
     expect(createSearch()(hidden.every.rows, pattern).count).toBe(10);
     expect(hidden.rows.length).toBeLessThan(every.rows.length);
   });
@@ -174,7 +174,7 @@ describe("search", () => {
       for (let index = 0; index < found.count; index++) matches.push(adjacent(found, matches.at(-1), top, "next", pattern, every.keys)!.match);
       return { count: found.count, matches, ordinals: matches.map((match) => ordinal(found, match, pattern)) };
     };
-    const hidden = stepsOf({ ...shown, tools: "hidden", metadata: "hidden" });
+    const hidden = stepsOf({ ...shown, tools: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" });
     expect(hidden).toEqual(stepsOf(shown));
     expect(hidden.ordinals).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
@@ -189,7 +189,7 @@ describe("search", () => {
   });
 
   it("lists a hidden category's block while it holds the current match, and no longer once a step moves on from it", () => {
-    const hidden = { ...shown, tools: "hidden", metadata: "hidden" } as const;
+    const hidden = { ...shown, tools: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" } as const;
     const { every } = layOut(hidden);
     const found = createSearch()(every.rows, pattern);
     const hiddenBlocksListed = (revealed?: string) =>
