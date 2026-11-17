@@ -54,25 +54,32 @@ describe("history", () => {
     expect(arrived(history(process))).toEqual([
       {
         request: ["probe/request/http", "thread:probe/request/parameters"],
+        response: ["probe/response/http", "probe/response/stop reason", "probe/response/usage", "probe/response/fields"],
         "message.0": ["thread:probe/message.0/content.0"],
-        response: ["probe/response/http", "thread:probe/message.1/content.0", "probe/response/stop reason", "probe/response/usage", "probe/response/fields"],
+        reply: ["thread:probe/message.1/content.0"],
       },
       {
-        request: ["t1/request/http", "thread:t1/request/parameters", "thread:t1/request/tools.Read.0", "thread:t1/request/system.0"],
+        request: ["t1/request/http", "thread:t1/request/parameters"],
+        response: ["t1/response/http", "t1/response/stop reason", "t1/response/usage", "t1/response/fields"],
+        tools: ["thread:t1/tools/tools.Read.0"],
+        system: ["thread:t1/system/system.0"],
         "message.0": ["thread:t1/message.0/content.0"],
         // The reply is the thread's next message.
-        response: ["t1/response/http", "thread:t1/message.1/content.0", "t1/response/stop reason", "t1/response/usage", "t1/response/fields"],
+        reply: ["thread:t1/message.1/content.0"],
       },
       {
-        request: ["title/request/http", "thread:title/request/parameters", "thread:title/request/system.0"],
+        request: ["title/request/http", "thread:title/request/parameters"],
+        response: ["title/response/http", "title/response/stop reason", "title/response/usage", "title/response/fields"],
+        system: ["thread:title/system/system.0"],
         "message.0": ["thread:title/message.0/content.0"],
-        response: ["title/response/http", "thread:title/message.1/content.0", "title/response/stop reason", "title/response/usage", "title/response/fields"],
+        reply: ["thread:title/message.1/content.0"],
       },
       // The second turn resends the first, its reply included, and the system prompt and tools: only what is new is its.
       {
         request: ["t2/request/http"],
+        response: ["t2/response/http", "t2/response/stop reason", "t2/response/usage", "t2/response/fields"],
         "message.2": ["thread:t2/message.2/content.0"],
-        response: ["t2/response/http", "thread:t2/message.3/content.0", "t2/response/stop reason", "t2/response/usage", "t2/response/fields"],
+        reply: ["thread:t2/message.3/content.0"],
       },
     ]);
     expect(history(process).stepOf("title")).toBe(3);
@@ -85,8 +92,8 @@ describe("history", () => {
     const turn = [hi, assistant(...hello), user(text("More.")), assistant(text("More hello.")), user(text("Again."))];
     const edited = [...process, ...request("t3", { ...main, system: [text("You are Claude Code, edited.")], messages: turn })];
     const after = read(edited);
-    const system = after.segments[1]!.groups[0]!.items.find(({ key }) => key === "thread:t1/request/system.0")!;
-    expect(system.versions.map(({ step, block }) => [step, block?.parts])).toEqual([
+    const system = () => after.segments[1]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/system/system.0")!;
+    expect(system().versions.map(({ step, block }) => [step, block?.parts])).toEqual([
       [2, [{ kind: "text", form: "markdown", text: "You are Claude Code." }]],
       [5, [{ kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
     ]);
@@ -94,7 +101,7 @@ describe("history", () => {
     // Read without the last step, the history is as it was before it.
     expect(read(exchangesUpTo(edited, 4)).segments).toEqual(history(process).segments);
     // A history once returned is never changed by a later fold.
-    expect(after.segments[1]!.groups[0]!.items.find(({ key }) => key === "thread:t1/request/system.0")!.versions).toHaveLength(2);
+    expect(system().versions).toHaveLength(2);
   });
 
   it("folds again from the exchange still streaming to what a full read of it gives", () => {
@@ -133,7 +140,7 @@ describe("history", () => {
   });
 
   it("names a thread's places apart from every row of the exchange that began it", () => {
-    const rows = ["t1", "t1/request", "t1/request/http", "t1/user", "t1/response"];
+    const rows = ["t1", "t1/request/http", "t1/response/http", "t1/tools", "t1/system", "t1/message.0", "t1/reply"];
     const indexOf = (key: string) => (rows.includes(key) ? rows.indexOf(key) : undefined);
     for (const { groups } of history(process).segments) {
       for (const { key } of groups.flatMap(({ items }) => items).filter(({ key }) => key.startsWith("thread:"))) expect(rowIndex(key, indexOf)).toBeUndefined();
@@ -166,7 +173,7 @@ describe("branches", () => {
     const asked = history([...process, ...btw]);
     expect(keysAt(asked, 5)).toContain("thread:btw/message.4/content.0");
     const after = history([...process, ...btw, ...t3]);
-    expect(keysAt(after, 5)).toEqual(["btw/request/http", "thread:btw/message.4/content.0", "btw/response/http", "thread:btw/message.5/content.0", "btw/response/stop reason", "btw/response/usage", "btw/response/fields"]);
+    expect(keysAt(after, 5)).toEqual(["btw/request/http", "btw/response/http", "btw/response/stop reason", "btw/response/usage", "btw/response/fields", "thread:btw/message.4/content.0", "thread:btw/message.5/content.0"]);
     expect(after.segments[4]!.branch).toEqual({ key: "branch:btw", from: 4 });
     // The turn's message and reply are the thread's own, not versions of the question's.
     expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
@@ -178,12 +185,12 @@ describe("branches", () => {
     const after = history([...process, ...compact, ...t3]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
-      "thread:compact/message.2/content.1",
       "compact/response/http",
-      "thread:compact/message.3/content.0",
       "compact/response/stop reason",
       "compact/response/usage",
       "compact/response/fields",
+      "thread:compact/message.2/content.1",
+      "thread:compact/message.3/content.0",
     ]);
     expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
     expect(after.segments[5]!.branch).toBeUndefined();
@@ -210,7 +217,7 @@ describe("branches", () => {
   it("makes a side request with the thread's first message and a system prompt of its own a branch, never a version of the thread's", () => {
     const side = [...request("side", { model: "m", system: [text("Is this a new topic?")], messages: [hi] }), ...reply("side", [text("Yes.")])];
     const after = history([...process, ...side, ...t3]);
-    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/request/system.0", "thread:side/message.1/content.0"]));
+    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/system/system.0", "thread:side/message.1/content.0"]));
     expect(versioned(after)).toEqual([]);
   });
 

@@ -17,7 +17,7 @@ type Sent = { step: number; block: KeyedBlock; reply: boolean };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
 // [LAW:types-are-the-program] The key names the item, so it is the same at every moment: a thread's item is
-// `thread:<trace>/request/<block>` or `thread:<trace>/message.<i>/<block>`, by the exchange that first sent it and its
+// `thread:<trace>/tools/<block>` or `thread:<trace>/message.<i>/<block>`, by the exchange that first sent it and its
 // place, never by its line, which a later request can decide again; named apart from any exchange's rows, since a key's
 // `/` prefixes are the rows it stands inside (position.ts) and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was, `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
@@ -216,7 +216,7 @@ const sameRole = (a: Role | undefined, b: Role | undefined) => a?.line === b?.li
 function pathOf(formatted: FormattedExchange, step: number): { at: string; version: Sent }[] {
   return formatted.groups.flatMap(({ blocks }) =>
     blocks.flatMap((block) =>
-      block.place === undefined || (block.place.in === "request" && !block.place.prompt)
+      block.place === undefined || block.place.in === "parameters"
         ? []
         : [{ at: `${placeName(block.place, formatted.messages)}/${block.key}`, version: { step, block, reply: block.place.in === "reply" } }],
     ),
@@ -236,12 +236,15 @@ function threadOf(formatted: FormattedExchange, threads: Thread[], alike: Compar
   return begun;
 }
 
-// A place's name in its thread: what the request sends besides its messages, or a message, the reply the one after the
-// request's.
+// A place's name in its thread, which is the key of the group a request sends it in (format/format.ts): the request's
+// own for its parameters, its tools, its system prompt, or a message, the reply the one after the request's.
 function placeName(place: Place, messages: number): string {
   switch (place.in) {
-    case "request":
+    case "parameters":
       return "request";
+    case "tools":
+    case "system":
+      return place.in;
     case "message":
       return `message.${place.index}`;
     case "reply":

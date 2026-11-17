@@ -7,21 +7,26 @@ import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./part
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
-// A run of an exchange's blocks under one heading: the request's own, each message the request sends, the response.
-// [LAW:types-are-the-program] `key` names what a group or a block is, unique among its siblings, so it never moves as
-// blocks arrive around it: a choice the view keeps about a block (expanded, scrolled to) stays with that block.
-export type Group = { key: string; title: "request" | Role | "message" | "response"; blocks: KeyedBlock[] };
+// A run of an exchange's blocks (docs/design/01-mvp.md, "Vocabulary"). `title`: the heading over it, which says who
+// speaks, in the same word whether the content arrived as a reply or is resent as a message, or what the model is given
+// beside the messages, its tools and its system prompt; `message` over a message that names no speaker this view knows.
+// The envelope's groups, the request's own and the response's own, have none: they stand under the exchange's line, which
+// already prints their facts. [LAW:types-are-the-program] `key` names what a group or a block is, unique among its
+// siblings, so it never moves as blocks arrive around it: a choice the view keeps about a block (expanded, scrolled to)
+// stays with that block.
+export type Group = { key: string; title: Heading | undefined; blocks: KeyedBlock[] };
+export type Heading = Role | "tools" | "message";
 export type KeyedBlock = Block & { key: string; place?: Place };
 
 // Where a block stands in the thread its exchange is part of (view/history.ts), which every request of the thread
-// resends: among what the request sends besides its messages, its parameters, tools and system prompt; in the message at
-// `index`; or in the reply, the message the response adds after the request's. A block with no place is the exchange's
-// own, as its HTTP, its cache breakpoints and its usage are. `prompt`: whether a request block is part of the prompt the
-// model reads, as the tools and system prompt are and the parameters are not, which a client changes on any request.
-export type Place = { in: "request"; prompt: boolean } | { in: "message"; index: number } | { in: "reply" };
+// resends: among what the request sends besides its messages, its parameters, its tools or its system prompt; in the
+// message at `index`; or in the reply, the message the response adds after the request's. A block with no place is the
+// exchange's own, as its HTTP, its cache breakpoints and its usage are.
+export type Place = { in: "parameters" } | { in: "tools" } | { in: "system" } | { in: "message"; index: number } | { in: "reply" };
 
-// One exchange of the conversation: the request, then its response (docs/design/01-mvp.md, F3), the facts its line
-// prints, and how many messages the request sends, which is the reply's index among the thread's messages.
+// One exchange of the conversation (docs/design/01-mvp.md, F3): its envelope, then what its request sends, the tools,
+// the system prompt and each message, then the reply; the facts its line prints; and how many messages the request
+// sends, which is the reply's index among the thread's messages.
 export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
@@ -76,9 +81,10 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       const before = formatted.get(exchange.latest);
       if (before?.facts.ordinal === ordinal) return before;
       // An empty side formats the same whatever the key, so any of the exchange's events will do.
-      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestGroups(sides, exchange.request));
-      const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseBlocks(sides, exchange.response));
+      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestShown(sides, exchange.request));
+      const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseShown(sides, exchange.response));
       const { first: opened, end } = exchange;
+      const ended = ending(end);
       const shown: FormattedExchange = {
         exchange,
         facts: {
@@ -90,7 +96,12 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
           session: request.session,
           ...response.message,
         },
-        groups: [...request.groups, { key: "response", title: "response", blocks: [...response.blocks, ...one("end", ending(end))] }],
+        groups: [
+          { key: "request", title: undefined, blocks: request.own },
+          { key: "response", title: undefined, blocks: [...response.own, ...one("end", ended.own)] },
+          ...request.sent,
+          { key: "reply", title: "assistant", blocks: [...response.reply, ...one("end", ended.reply)] },
+        ],
         messages: request.messages,
       };
       formatted.set(exchange.latest, shown);
@@ -101,13 +112,14 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.
 type Sides = { decode: (side: RequestSide | ResponseSide) => { body: Body; whole: boolean }; reassemble: (side: ResponseSide, body: Body) => Stream };
 
-// A request formatted: its groups, the model it asks for, the session it is part of and how many messages it sends. A
-// response formatted: its blocks and its message's facts.
-type RequestShown = { groups: Group[]; messages: number } & Said;
+// A request formatted: the blocks that are its exchange's own, the groups it sends, its tools, its system prompt and
+// each message, how many of them are messages, the model it asks for and the session it is part of. A response
+// formatted: the blocks that are its exchange's own, the reply's, and its message's facts.
+type RequestShown = { own: KeyedBlock[]; sent: Group[]; messages: number } & Said;
 // What a request's body says of it beside its blocks, once the body is whole.
 type Said = { model: string | undefined; session: string | undefined };
 const unsaid: Said = { model: undefined, session: undefined };
-type ResponseShown = { blocks: KeyedBlock[]; message: MessageFacts };
+type ResponseShown = { own: KeyedBlock[]; reply: KeyedBlock[]; message: MessageFacts };
 
 function first(side: RequestSide | ResponseSide): object | undefined {
   return side.head ?? side.body[0];
@@ -159,18 +171,20 @@ function isMessages({ request: { head } }: Exchange): boolean {
   return head === undefined || (head.method === "POST" && URL.parse(head.url, "http://proxy")?.pathname === "/v1/messages");
 }
 
-function requestGroups(sides: Sides, side: RequestSide): RequestShown {
+function requestShown(sides: Sides, side: RequestSide): RequestShown {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
-  const { blocks, messages, said } = requestBody(body.text, whole);
-  return { groups: [{ key: "request", title: "request", blocks: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...blocks] }, ...messages], ...said, messages: messages.length };
+  const { own, ...sent } = requestBody(body.text, whole);
+  return { own: [...one("http", [http]), ...one("undecoded", undecoded(body)), ...own], ...sent };
 }
 
-// The request body: its parameters, tool definitions and system prompt, then its cache breakpoints, then each message it
-// sends; and the model and the session among its parameters.
-function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; messages: Group[]; said: Said } {
-  if (!whole) return { blocks: one("body", leftover("request body so far", text)), messages: [], said: unsaid };
+// The request body: its parameters and its cache breakpoints, which stand with the exchange's own; what it sends, its
+// tool definitions, its system prompt and each message; and the model and the session among its parameters.
+// [LAW:one-source-of-truth] A request sends a place when it has the place's group (view/history.ts), so a whole body has
+// its tools' and its system prompt's groups whether or not it sends any.
+function requestBody(text: string, whole: boolean): RequestShown {
+  if (!whole) return { own: one("body", leftover("request body so far", text)), sent: [], messages: 0, ...unsaid };
   return fitting(
     () => {
       const body = readObject(parseJson(text, "request body"), "request body");
@@ -191,16 +205,18 @@ function requestBody(text: string, whole: boolean): { blocks: KeyedBlock[]; mess
       const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
       const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
-        blocks: [
-          ...placed({ in: "request", prompt: false }, one("parameters", [parameters])),
-          ...placed({ in: "request", prompt: true }, [...tools, ...each("system", system)]),
-          ...one("cache", cache),
+        own: [...placed({ in: "parameters" }, one("parameters", [parameters])), ...one("cache", cache)],
+        sent: [
+          { key: "tools", title: "tools", blocks: placed({ in: "tools" }, tools) },
+          { key: "system", title: "system", blocks: placed({ in: "system" }, each("system", system)) },
+          ...messages,
         ],
-        messages,
-        said: { model: typeof rest.model === "string" ? rest.model : undefined, session: sessionOf(rest.metadata) },
+        messages: messages.length,
+        model: typeof rest.model === "string" ? rest.model : undefined,
+        session: sessionOf(rest.metadata),
       };
     },
-    (reason) => ({ blocks: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), messages: [], said: unsaid }),
+    (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
   );
 }
 
@@ -312,7 +328,7 @@ function toolName(tool: unknown): string {
 }
 
 // The response's blocks, up to how its exchange ended, and its message's facts.
-function responseBlocks(sides: Sides, side: ResponseSide): ResponseShown {
+function responseShown(sides: Sides, side: ResponseSide): ResponseShown {
   const { head, trailers } = side;
   const { body, whole } = sides.decode(side);
   // A response that has not begun has no head to miss.
@@ -322,8 +338,8 @@ function responseBlocks(sides: Sides, side: ResponseSide): ResponseShown {
         ? []
         : [notRecorded("response")]
       : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
-  const { blocks, message } = responseBody(sides, side, body, whole);
-  return { blocks: [...one("http", http), ...one("undecoded", undecoded(body)), ...blocks], message };
+  const { own, ...read } = responseBody(sides, side, body, whole);
+  return { own: [...one("http", http), ...one("undecoded", undecoded(body)), ...own], ...read };
 }
 
 // The response body: a stream reassembled into its message; once whole, a message or an error; anything else raw.
@@ -334,8 +350,8 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
     // The text after the last complete event is the event still arriving until the side is complete, and only then
     // left over, as a stream cut short leaves it: shown earlier, it would come and go as each frame's bytes end.
     const tail = side.completedBy === undefined ? "" : stream.tail;
-    const { blocks, message } = stream.message === undefined ? none([]) : messageBlocks(stream.message);
-    return { blocks: [...blocks, ...each("event", stream.blocks), ...one("tail", leftover("stream tail", tail))], message };
+    const { own, reply, message } = stream.message === undefined ? none([]) : messageBlocks(stream.message);
+    return { own: [...own, ...each("event", stream.blocks), ...one("tail", leftover("stream tail", tail))], reply: [...reply, ...each("error", stream.errors)], message };
   }
   if (!whole) return none(one("body", leftover("response body so far", text)));
   return fitting(
@@ -345,7 +361,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
         case "message":
           return messageBlocks(body.rest());
         case "error":
-          return none(one("error", [formatError(body)]));
+          return { ...none([]), reply: one("error", [formatError(body)]) };
         default:
           throw new Misfit("response body is neither a message nor an error");
       }
@@ -354,15 +370,16 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
   );
 }
 
-// Blocks with no message among them.
-const none = (blocks: KeyedBlock[]): ResponseShown => ({ blocks, message: noMessage });
+// A response no message was read from: the blocks that are its exchange's own, and no reply.
+const none = (own: KeyedBlock[]): ResponseShown => ({ own, reply: [], message: noMessage });
 
-// A response message: its content, then what the API reported about it; and, of what it reported, the facts.
+// A response message: its content, which is the reply; what the API reported about it, which is the exchange's own;
+// and, of what it reported, the facts.
 function messageBlocks(message: Record<string, unknown>): ResponseShown {
   return fitting(
     (): ResponseShown => {
       const fields = readObject(message, "message");
-      const content = messageContent(fields.array("content"), "assistant", { in: "reply" });
+      const reply = messageContent(fields.array("content"), "assistant", { in: "reply" });
       const stopReason = fields.value("stop_reason");
       const stop = { stop_reason: stopReason, stop_sequence: fields.value("stop_sequence") };
       const usage = fields.value("usage");
@@ -370,8 +387,8 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const cacheRead = tokens(usage, "cache_read_input_tokens");
       const cacheWritten = tokens(usage, "cache_creation_input_tokens");
       return {
-        blocks: [
-          ...content,
+        reply,
+        own: [
           // The stop reason is the line's name; the stop sequence, when one stopped it, is its preview.
           ...one("stop reason", [
             {
@@ -408,19 +425,22 @@ function tokens(usage: unknown, name: string): number | undefined {
   return typeof count === "number" ? count : undefined;
 }
 
-// How an exchange ended, as the blocks it adds: none for one that completed or has not ended.
-function ending(end: Of<"end"> | undefined): BlockOrNone {
+// How an exchange ended, as the block it adds, to the reply or to the exchange's own: none for one that completed or
+// has not ended.
+type Ending = { own: BlockOrNone; reply: BlockOrNone };
+function ending(end: Of<"end"> | undefined): Ending {
+  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }], reply: [] });
   switch (end?.outcome) {
     case undefined:
     case "ok":
-      return [];
+      return { own: [], reply: [] };
     // A failure stands where the reply would have been, as an error the API returned does.
     case "error":
-      return [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }];
+      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }] };
     case "aborted":
-      return [{ category: "http", name: "aborted", parts: [{ kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }];
+      return cut("aborted", "The agent left the exchange before it completed.");
     case "stopped":
-      return [{ category: "http", name: "stopped", parts: [{ kind: "text", form: "verbatim", text: "The proxy stopped before the exchange completed." }] }];
+      return cut("stopped", "The proxy stopped before the exchange completed.");
   }
 }
 

@@ -43,7 +43,7 @@ export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 5,
+    version: 6,
     migrate: () => initial,
   }),
 );

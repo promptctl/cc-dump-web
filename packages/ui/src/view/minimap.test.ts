@@ -7,7 +7,7 @@ import type { Change, Row } from "./rows.ts";
 
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
 const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
-const group: Row = { kind: "group", key: "t1/request", title: "request", change: "same", branch: undefined };
+const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", branch: undefined };
 const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: { key: "branch:side", from: 2 } });
 const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.

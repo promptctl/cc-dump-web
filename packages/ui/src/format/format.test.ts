@@ -40,7 +40,11 @@ const one = (events: RecordedEvent[]): FormattedExchange => {
   return formatted!;
 };
 const lines = (blocks: Block[]) => blocks.map(({ category, name }) => `${category} ${name}`);
-const group = ({ groups }: FormattedExchange, title: string, nth = 0) => groups.filter((group) => group.title === title)[nth]!.blocks;
+// A group's blocks, by its key: `request` and `response`, the exchange's own of each side; `tools`, `system` and
+// `message.<i>`, what the request sends; `reply`, what the response says.
+const group = ({ groups }: FormattedExchange, key: string) => groups.find((group) => group.key === key)!.blocks;
+// What a response brought, where which group holds it is not what is tested: the exchange's own, then the reply.
+const received = (formatted: FormattedExchange) => [...group(formatted, "response"), ...group(formatted, "reply")];
 
 // The place of a block of the first message.
 const firstMessage = { in: "message", index: 0 } as const;
@@ -72,7 +76,7 @@ describe("fieldValue", () => {
 });
 
 describe("format", () => {
-  it("shows every content block of a session with its category, request then response", () => {
+  it("shows every content block of a session with its category, the envelope, then what the request sends, then the reply", () => {
     const body = {
       model: "claude-fable-5-2",
       max_tokens: 32000,
@@ -129,41 +133,52 @@ describe("format", () => {
       end("a"),
     ]);
 
-    expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters", "tools Read", "tools web_search_20250305", "system system prompt", "parameters cache breakpoints: 1"]);
-    expect(lines(group(formatted, "user"))).toEqual(["user user", "user image", "user document"]);
-    expect(lines(group(formatted, "assistant"))).toEqual([
-      "thinking thinking",
-      "thinking redacted_thinking",
-      "assistant assistant",
+    // The envelope's two groups have no heading; what the request sends is headed by what it is or who speaks, and the
+    // reply by the word an assistant's message resent has.
+    expect(formatted.groups.map(({ key, title }) => [key, title])).toEqual([
+      ["request", undefined],
+      ["response", undefined],
+      ["tools", "tools"],
+      ["system", "system"],
+      ["message.0", "user"],
+      ["message.1", "assistant"],
+      ["message.2", "user"],
+      ["message.3", "system"],
+      ["reply", "assistant"],
+    ]);
+    expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters", "parameters cache breakpoints: 1"]);
+    expect(lines(group(formatted, "response"))).toEqual(["http HTTP response", "usage stop reason: tool_use", "usage usage", "usage message"]);
+    expect(lines(group(formatted, "tools"))).toEqual(["tools Read", "tools web_search_20250305"]);
+    // A text block is named for its type, as every other block is: its heading says who spoke.
+    expect(lines(group(formatted, "system"))).toEqual(["system text"]);
+    expect(lines(group(formatted, "message.0"))).toEqual(["user text", "user image", "user document"]);
+    // A thinking block that holds no text, and a redacted one, are usage, sent or streamed.
+    expect(lines(group(formatted, "message.1"))).toEqual([
+      "usage thinking",
+      "usage redacted_thinking",
+      "assistant text",
       "tools tool_use: Read",
       "tools server_tool_use: web_search",
       "tools web_search_tool_result",
     ]);
-    expect(lines(group(formatted, "user", 1))).toEqual(["tools tool_result"]);
-    expect(lines(group(formatted, "system"))).toEqual(["system system reminder"]);
-    expect(lines(group(formatted, "response"))).toEqual([
-      "http HTTP response",
-      "thinking thinking",
-      "assistant assistant",
-      "tools tool_use: Bash",
-      "usage stop reason: tool_use",
-      "usage usage",
-      "usage message",
-    ]);
+    expect(lines(group(formatted, "message.2"))).toEqual(["tools tool_result"]);
+    expect(lines(group(formatted, "message.3"))).toEqual(["system system reminder"]);
+    expect(lines(group(formatted, "reply"))).toEqual(["usage thinking", "assistant text", "tools tool_use: Bash"]);
 
     // The content each shows: the image, the text document, the tool result's text and image, the streamed message.
-    expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "media", of: "image", source: png }]);
-    expect(group(formatted, "user")[2]!.parts).toEqual([
+    expect(group(formatted, "message.0")[1]!.parts).toEqual([{ kind: "media", of: "image", source: png }]);
+    expect(group(formatted, "message.0")[2]!.parts).toEqual([
       { kind: "text", form: "verbatim", text: "Quarterly notes" },
       { kind: "fields", label: "source fields", fields: [["media_type", '"text/plain"']] },
       { kind: "fields", label: "fields", fields: [["title", '"notes"']] },
     ]);
-    expect(group(formatted, "user", 1)[0]!.parts).toEqual([
+    expect(group(formatted, "message.2")[0]!.parts).toEqual([
       { kind: "text", form: "verbatim", text: "Read 1 image" },
       { kind: "media", of: "image", source: png },
       { kind: "fields", fields: [["tool_use_id", "toolu_1"]] },
     ]);
-    const [, thinking, text, toolUse, , usage, message] = group(formatted, "response");
+    const [thinking, text, toolUse] = group(formatted, "reply");
+    const [, , usage, message] = group(formatted, "response");
     // A field of an event that nothing reads lands on the block the event builds: the thinking delta's estimate.
     expect(thinking!.parts).toEqual([
       { kind: "text", form: "markdown", text: "" },
@@ -191,14 +206,32 @@ describe("format", () => {
       },
     ]);
     // A tool's description reads first, what else defines it after; a server tool is named by its type, not shown again.
-    expect(group(formatted, "request")[2]!.parts).toEqual([
+    expect(group(formatted, "tools")[0]!.parts).toEqual([
       { kind: "text", form: "markdown", text: "Reads a file" },
       { kind: "fields", label: "fields", fields: [["input_schema", [["type", '"object"']]]] },
     ]);
-    expect(group(formatted, "request")[3]!.parts).toEqual([{ kind: "fields", label: "fields", fields: [["max_uses", "2"]] }]);
+    expect(group(formatted, "tools")[1]!.parts).toEqual([{ kind: "fields", label: "fields", fields: [["max_uses", "2"]] }]);
     // The cache breakpoint is the request's, out of the block it was set on.
-    expect(group(formatted, "request")[4]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
-    expect(group(formatted, "request")[5]!.parts).toEqual([{ kind: "fields", fields: [["system.0", [["type", '"ephemeral"']]]] }]);
+    expect(group(formatted, "system")[0]!.parts).toEqual([{ kind: "text", form: "markdown", text: "You are Claude Code." }]);
+    expect(group(formatted, "request")[2]!.parts).toEqual([{ kind: "fields", fields: [["system.0", [["type", '"ephemeral"']]]] }]);
+  });
+
+  it("reads a thinking block that holds text as thinking, in a message and in the reply", () => {
+    const thought = { type: "thinking", thinking: "The file is small.", signature: "c2ln" };
+    const formatted = one([
+      ...request("a", { model: "m", messages: [{ role: "assistant", content: [thought] }] }),
+      ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content: [thought] }))),
+    ]);
+    expect(lines(group(formatted, "message.0"))).toEqual(["thinking thinking"]);
+    expect(lines(group(formatted, "reply"))).toEqual(["thinking thinking"]);
+    expect(group(formatted, "reply")[0]!.parts[0]).toEqual({ kind: "text", form: "markdown", text: "The file is small." });
+  });
+
+  it("shows an exchange cut short with the exchange's own, where no reply stands", () => {
+    const cut = (outcome: "aborted" | "stopped") => one([...request("a", { model: "m", messages: [] }), { ...at("a"), type: "end", outcome }]);
+    expect(group(cut("aborted"), "response")).toEqual([{ key: "end", category: "http", name: "aborted", parts: [{ kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }]);
+    expect(group(cut("stopped"), "response")).toMatchObject([{ key: "end", category: "http", name: "stopped" }]);
+    expect(group(cut("aborted"), "reply")).toEqual([]);
   });
 
   it("lifts the cache breakpoints out of the blocks into the request's, in the order the cache's prefix is built", () => {
@@ -225,22 +258,25 @@ describe("format", () => {
       preview: [{ kind: "text", form: "verbatim", text: "tools.Bash.0  system.0  message.0/content.1" }],
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
-    expect(group(formatted, "request").slice(2, 4).map(({ parts }) => parts)).toEqual([
+    expect(group(formatted, "tools").map(({ parts }) => parts)).toEqual([
       [{ kind: "fields", label: "fields", fields: [["input_schema", "{}"]] }],
       [{ kind: "fields", label: "fields", fields: [["input_schema", "{}"]] }],
     ]);
-    expect(group(formatted, "user")[1]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Go." }]);
-    // What the request sends is its thread's; the breakpoints and its HTTP are its own.
-    expect(request_.map(({ key, place }) => [key, place])).toEqual([["http", undefined], ["parameters", { in: "request", prompt: false }], ["tools.Read.0", { in: "request", prompt: true }], ["tools.Bash.0", { in: "request", prompt: true }], ["system.0", { in: "request", prompt: true }], ["cache", undefined]]);
-    expect(group(formatted, "assistant").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
+    expect(group(formatted, "message.0")[1]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Go." }]);
+    // What the request sends is its thread's, its parameters too; the breakpoints and its HTTP are its own.
+    const places = (key: string) => group(formatted, key).map(({ key, place }) => [key, place]);
+    expect(places("request")).toEqual([["http", undefined], ["parameters", { in: "parameters" }], ["cache", undefined]]);
+    expect(places("tools")).toEqual([["tools.Read.0", { in: "tools" }], ["tools.Bash.0", { in: "tools" }]]);
+    expect(places("system")).toEqual([["system.0", { in: "system" }]]);
+    expect(group(formatted, "message.1").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
     expect(formatted.messages).toBe(2);
   });
 
   it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
     const blocks = group(
       one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }, { name: "a%2Fb" }, { name: "x\ud800" }] })),
-      "request",
-    ).filter(({ category }) => category === "tools");
+      "tools",
+    );
     // Two of one name, which the API refuses but a recording may hold, are two items; a key never nests at a `/`, is
     // another name's key never, and is made of any string, a lone surrogate's too.
     expect(blocks.map(({ key, name }) => [key, name])).toEqual([
@@ -259,9 +295,9 @@ describe("format", () => {
   it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
     for (const usage of [null, {}, undefined, "[]"]) {
       const message = { type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage };
-      const blocks = group(one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]), "response");
-      expect(blocks.find(({ name }) => name === "assistant")!.parts).toEqual([{ kind: "text", form: "markdown", text: "hi" }]);
-      expect(blocks.find(({ name }) => name === "usage")!.parts).toEqual([{ kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
+      const formatted = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]);
+      expect(group(formatted, "reply").map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "hi" }]]);
+      expect(group(formatted, "response").find(({ name }) => name === "usage")!.parts).toEqual([{ kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
     }
   });
 
@@ -330,17 +366,17 @@ describe("format", () => {
         messageDelta,
       ]),
     ]);
-    expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
+    expect(group(formatted, "message.0")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
+    expect(group(formatted, "reply")).toEqual([{ key: "content.0", place: { in: "reply" }, category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] }]);
+    // The events it cannot apply are shown too, with the exchange's own, each raw under its event name with why.
     const blocks = group(formatted, "response");
-    expect(blocks).toContainEqual({ key: "content.0", place: { in: "reply" }, category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
-    // The events it cannot apply are shown too, each raw under its event name with why.
     expect(lines(blocks)).toEqual(expect.arrayContaining(["http content_block_delta event", "http sparkle event"]));
     expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", label: "not applied", text: "sparkle is not an event this view applies" });
   });
 
   it("shows a block of a known type whose fields do not fit as raw JSON, with what does not fit", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "text", text: 5 }] }] }));
-    expect(group(formatted, "user")).toEqual([
+    expect(group(formatted, "message.0")).toEqual([
       {
         key: "content.0",
         place: firstMessage,
@@ -371,12 +407,15 @@ describe("format", () => {
       ...request("connection", { model: "m", messages: [] }),
       { ...at("connection"), type: "end", outcome: "error", error: "connect ECONNREFUSED 160.79.104.10:443" },
     ]);
-    const responses = formatted.map((exchange) => group(exchange, "response"));
-    expect(responses[0]!.slice(1)).toEqual([
+    const replies = formatted.map((exchange) => group(exchange, "reply"));
+    expect(replies[0]).toEqual([
       { key: "error", category: "assistant", name: "error", parts: [{ kind: "json", value: overloaded.error }, { kind: "fields", label: "fields", fields: [["request_id", '"req_1"']] }] },
     ]);
-    expect(lines(responses[1]!)).toEqual(["http HTTP response", "assistant assistant", "usage stop reason: null", "usage usage", "usage message", "assistant error"]);
-    expect(responses[2]).toEqual([{ key: "end", category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
+    // What the stream had said stands, the error after it; what the API reported stays with the exchange's own.
+    expect(replies[1]!.map(({ key, category, name }) => [key, category, name])).toEqual([["content.0", "assistant", "text"], ["error.0", "assistant", "error"]]);
+    expect(lines(group(formatted[1]!, "response"))).toEqual(["http HTTP response", "usage stop reason: null", "usage usage", "usage message"]);
+    expect(replies[2]).toEqual([{ key: "end", category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
+    expect(group(formatted[2]!, "response")).toEqual([]);
   });
 
   it("shows a stream as far as it has arrived, its tool's input so far as text, and once it is cut short what was not yet whole", () => {
@@ -388,7 +427,7 @@ describe("format", () => {
     const cut = `${sofar}event: content_block_delta\ndata: {"type":"content_bl`;
     const headers: Header[] = [["Content-Type", "text/event-stream"]];
     const arriving = [...request("a", { model: "m", messages: [] }), ...response("a", 200, headers, Buffer.from(cut), false)];
-    const blocks = group(one(arriving), "response");
+    const blocks = received(one(arriving));
     expect(blocks.find(({ name }) => name === "tool_use: Bash")!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "input so far", text: '{"command": "l' });
     expect(blocks.map(({ key }) => key)).not.toContain("tail");
     const cutShort = group(one([...arriving, end("a")]), "response");
@@ -427,18 +466,20 @@ describe("format", () => {
     expect(first.map(({ facts }) => facts.ordinal)).toEqual([1, 2]);
     const later = formatter(exchanges([...headless, ...messages, ...request("other", {}, { method: "GET", url: "/v1/models" })]));
     expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([["messages", 1]]);
-    expect(later[0]!.groups[0]).toBe(first[1]!.groups[0]);
+    expect(group(later[0]!, "request")).toBe(group(first[1]!, "request"));
   });
 
   it("keeps an exchange that got no new event, and a streaming exchange's request, as the objects formatted before", () => {
     const formatter = createFormatter();
     const done = [...request("done", { model: "m", messages: [] }), ...streamed("done", [messageStart]), end("done")];
-    const streaming = [...request("streaming", { model: "m", messages: [] }), ...streamed("streaming", [messageStart], false)];
+    const streaming = [...request("streaming", { model: "m", messages: [{ role: "user", content: "Hi." }] }), ...streamed("streaming", [messageStart], false)];
     const first = formatter(exchanges([...done, ...streaming]));
     const later = formatter(exchanges([...done, ...streaming, end("streaming")]));
     expect(later[0]).toBe(first[0]);
     expect(later[1]).not.toBe(first[1]);
-    expect(later[1]!.groups[0]).toBe(first[1]!.groups[0]);
+    // Its own blocks and each block it sends.
+    expect(group(later[1]!, "request")).toBe(group(first[1]!, "request"));
+    expect(group(later[1]!, "message.0")[0]).toBe(group(first[1]!, "message.0")[0]);
   });
 
   it("keys each block by what it is, so a block keeps its key as a stream adds blocks around it", () => {
@@ -452,13 +493,13 @@ describe("format", () => {
       messageDelta,
     ];
     const keys = (count: number) => {
-      const blocks = group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "response");
+      const blocks = received(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]));
       return Object.fromEntries(blocks.map(({ key, name }) => [name, key]));
     };
-    expect(keys(3)).toEqual({ "HTTP response": "http", assistant: "content.0", "stop reason: null": "stop reason", usage: "usage", message: "fields" });
+    expect(keys(3)).toEqual({ "HTTP response": "http", text: "content.0", "stop reason: null": "stop reason", usage: "usage", message: "fields" });
     expect(keys(7)).toEqual({
       "HTTP response": "http",
-      assistant: "content.0",
+      text: "content.0",
       "tool_use: Bash": "content.1",
       "stop reason: tool_use": "stop reason",
       usage: "usage",
@@ -466,10 +507,14 @@ describe("format", () => {
       "sparkle event": "event.0",
     });
     const formatted = one(request("a", { model: "m", system: "s", messages: [{ role: "user", content: "Hi." }] }));
+    // A request whose body is whole has its tools' and its system prompt's groups, whether or not it sends any.
     expect(formatted.groups.map(({ key, blocks }) => [key, blocks.map(({ key }) => key)])).toEqual([
-      ["request", ["http", "parameters", "system.0"]],
-      ["message.0", ["content.0"]],
+      ["request", ["http", "parameters"]],
       ["response", []],
+      ["tools", []],
+      ["system", ["system.0"]],
+      ["message.0", ["content.0"]],
+      ["reply", []],
     ]);
   });
 
@@ -488,7 +533,7 @@ describe("format", () => {
     expect(shown(user!)).toEqual([
       ["content.0.0", "system reminder", "user", true],
       ["content.0.1", "CLAUDE.md /work/app/CLAUDE.md", "user", true],
-      ["content.1", "user", "user", undefined],
+      ["content.1", "text", "user", undefined],
       ["content.2", "image", "user", undefined],
     ]);
     // The pieces are the text, nothing lost and nothing twice, and the prompt's other fields stay with it.
@@ -500,7 +545,7 @@ describe("format", () => {
     // Whatever the role, and the category stays the role's. A hook's output is what a program printed, so it reads verbatim.
     expect(shown(system!)).toEqual([["content.0", "SessionStart hook", "system", true]]);
     expect(system!.blocks[0]!.parts).toEqual([{ kind: "text", form: "verbatim", text: "SessionStart hook additional context: Be explanatory." }]);
-    expect(shown(again!)).toEqual([["content.0", "user", "user", undefined]]);
+    expect(shown(again!)).toEqual([["content.0", "text", "user", undefined]]);
   });
 
   it("splits no text but a user's or a system-role message's: a tool result's, the system prompt's, an assistant's and the reply's stay as sent", () => {
@@ -516,10 +561,10 @@ describe("format", () => {
       }),
       ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content: [{ type: "text", text: reminder }] }))),
     ]);
-    expect(group(formatted, "request").at(-1)).toMatchObject({ name: "system prompt", parts: [{ kind: "text", form: "markdown", text: reminder }] });
-    expect(group(formatted, "user")[0]!.parts).toContainEqual({ kind: "text", form: "verbatim", text: reminder });
-    expect(group(formatted, "assistant")).toMatchObject([{ key: "content.0", name: "assistant", parts: [{ kind: "text", form: "markdown", text: `It said:\n${reminder}` }] }]);
-    expect(group(formatted, "response")[1]).toMatchObject({ key: "content.0", name: "assistant", parts: [{ kind: "text", form: "markdown", text: reminder }] });
+    expect(group(formatted, "system")).toMatchObject([{ key: "system.0", name: "text", parts: [{ kind: "text", form: "markdown", text: reminder }] }]);
+    expect(group(formatted, "message.0")[0]!.parts).toContainEqual({ kind: "text", form: "verbatim", text: reminder });
+    expect(group(formatted, "message.1")).toMatchObject([{ key: "content.0", name: "text", parts: [{ kind: "text", form: "markdown", text: `It said:\n${reminder}` }] }]);
+    expect(group(formatted, "reply")).toMatchObject([{ key: "content.0", name: "text", parts: [{ kind: "text", form: "markdown", text: reminder }] }]);
   });
 
   it("formats a reply as the next request resends it, at the next message's place", () => {
@@ -533,21 +578,21 @@ describe("format", () => {
       ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content }))),
       ...request("b", { model: "m", messages: [{ role: "user", content: "Read /a." }, { role: "assistant", content }] }),
     ]);
-    const reply = group(replied!, "response").filter(({ place }) => place !== undefined);
+    const reply = group(replied!, "reply");
     expect(replied!.messages).toBe(1);
-    expect(reply.map(({ place, ...block }) => [place, block])).toEqual(group(resent!, "assistant").map((block) => [{ in: "reply" }, { ...block, place: undefined }]));
-    expect(group(resent!, "assistant").map(({ place }) => place)).toEqual(content.map(() => ({ in: "message", index: 1 })));
+    expect(reply.map(({ place, ...block }) => [place, block])).toEqual(group(resent!, "message.1").map((block) => [{ in: "reply" }, { ...block, place: undefined }]));
+    expect(group(resent!, "message.1").map(({ place }) => place)).toEqual(content.map(() => ({ in: "message", index: 1 })));
   });
 
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
     const constructor = { type: "constructor", value: 1 };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [constructor] }] }));
-    expect(group(formatted, "user")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
+    expect(group(formatted, "message.0")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "constructor", parts: [{ kind: "json", value: constructor }] }]);
   });
 
   it("shows a tool result with no content, as a failed tool may return, named for its tool's failure and marked failed", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true }] }] }));
-    expect(group(formatted, "user")).toEqual([
+    expect(group(formatted, "message.0")).toEqual([
       {
         key: "content.0",
         place: firstMessage,
@@ -561,7 +606,7 @@ describe("format", () => {
 
   it("marks no tool result failed whose is_error is not true", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: false, content: "ok" }] }] }));
-    expect(group(formatted, "user")[0]).not.toHaveProperty("failed");
+    expect(group(formatted, "message.0")[0]).not.toHaveProperty("failed");
   });
 
   it("marks failed a failed tool's result its entry cannot read, and a server tool's result of its error type", () => {
@@ -580,7 +625,7 @@ describe("format", () => {
         ],
       }),
     );
-    expect(group(formatted, "user").map(({ name, failed }) => [name, failed])).toEqual([
+    expect(group(formatted, "message.0").map(({ name, failed }) => [name, failed])).toEqual([
       ["tool_result: error", true],
       ["web_search_tool_result: error", true],
       ["web_search_tool_result", undefined],
@@ -631,11 +676,12 @@ describe("format", () => {
       ]),
     ]);
     const returned = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
-    expect(group(streamedMessage, "response").slice(1)).toEqual(group(returned, "response").slice(1));
+    expect(received(streamedMessage).slice(1)).toEqual(received(returned).slice(1));
+    expect(group(streamedMessage, "reply")).toHaveLength(1);
   });
 
   it("builds a stream's blocks and message from what its events carry, and shows an event that breaks the stream", () => {
-    const blocks = group(
+    const blocks = received(
       one([
         ...request("a", { model: "m", messages: [] }),
         ...streamed("a", [
@@ -652,7 +698,6 @@ describe("format", () => {
           { type: "message_stop", metrics: { latency_ms: 812 } },
         ]),
       ]),
-      "response",
     );
     expect(blocks.find(({ name }) => name === "thinking")!.parts).toEqual([{ kind: "text", form: "markdown", text: "" }, { kind: "fields", fields: [["signature", "4 characters"]] }]);
     const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
@@ -671,7 +716,7 @@ describe("format", () => {
   });
 
   it("shows a thinking block while it streams, before its signature arrives", () => {
-    const blocks = group(
+    const blocks = received(
       one([
         ...request("a", { model: "m", messages: [] }),
         ...streamed(
@@ -685,24 +730,22 @@ describe("format", () => {
           false,
         ),
       ]),
-      "response",
     );
     // A ping before the message begins builds nothing and is nothing wrong.
-    expect(lines(blocks)).toEqual(["http HTTP response", "thinking thinking", "usage stop reason: null", "usage usage", "usage message"]);
-    expect(blocks[1]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Let me think" }, { kind: "fields", fields: [["signature", "none"]] }]);
+    expect(lines(blocks)).toEqual(["http HTTP response", "usage stop reason: null", "usage usage", "usage message", "thinking thinking"]);
+    expect(blocks[4]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Let me think" }, { kind: "fields", fields: [["signature", "none"]] }]);
   });
 
   it("shows a second message_start as an event not applied, keeping the message it began", () => {
-    const blocks = group(
+    const blocks = received(
       one([...request("a", { model: "m", messages: [] }), ...streamed("a", [messageStart, { ...messageStart, message: { ...messageStart.message, id: "msg_2" } }])]),
-      "response",
     );
     expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "fields", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) });
     expect(blocks.find(({ name }) => name === "message_start event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", label: "not applied", text: "the message has already started" });
   });
 
   it("shows a delta or a stop for a block that has stopped as an event not applied, keeping the input it stopped with", () => {
-    const blocks = group(
+    const blocks = received(
       one([
         ...request("a", { model: "m", messages: [] }),
         ...streamed("a", [
@@ -714,7 +757,6 @@ describe("format", () => {
           { type: "content_block_stop", index: 0 },
         ]),
       ]),
-      "response",
     );
     expect(blocks.find(({ category }) => category === "tools")!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "command", text: "ls" });
     const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
@@ -729,13 +771,14 @@ describe("format", () => {
       ...response("a", 200, [["Content-Type", "text/event-stream"], ["Content-Encoding", "deflate"]], deflated.subarray(0, deflated.length - 6), false),
       end("a"),
     ]);
-    expect(lines(group(formatted, "response")).slice(0, 4)).toEqual(["http HTTP response", "http body not decoded", "assistant assistant", "usage stop reason: null"]);
+    expect(lines(group(formatted, "response")).slice(0, 3)).toEqual(["http HTTP response", "http body not decoded", "usage stop reason: null"]);
+    expect(lines(group(formatted, "reply"))).toEqual(["assistant text"]);
   });
 
   it("shows each field of a source of a type it does not know once", () => {
     const image = { type: "image", source: { type: "s3", bucket: "b", key: "k" } };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [image] }] }));
-    expect(group(formatted, "user")[0]!.parts).toEqual([
+    expect(group(formatted, "message.0")[0]!.parts).toEqual([
       { kind: "fields", label: "source", fields: [["type", "s3"]] },
       { kind: "fields", label: "source fields", fields: [["bucket", '"b"'], ["key", '"k"']] },
     ]);
