@@ -10,6 +10,10 @@ import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 export const visibilities = ["hidden", "compact", "expanded"] as const;
 export type Visibility = (typeof visibilities)[number];
 
+// The level a click on a category's chip, or a press of its key, moves it to from `visibility`: the next, of more
+// detail, and from the most back to none.
+export const levelAfter = (visibility: Visibility): Visibility => visibilities[(visibilities.indexOf(visibility) + 1) % visibilities.length]!;
+
 // Each category's level until the reader sets one, as in the original cc-dump (src/cc_dump/core/filter_registry.py):
 // what the user and the model said in full, the harness's machinery a line a block, the exchange's envelope, which the
 // original listed as metadata, not at all.
@@ -42,6 +46,7 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6).
 // `branches`: where a branch is listed after its last request. `info`: whether the info
 // panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a line it lists asks (F9).
+// `keys`: whether the keys panel is open (view/keyboard.ts).
 export type Settings = {
   follow: boolean;
   visibility: Record<Category, Visibility>;
@@ -51,6 +56,7 @@ export type Settings = {
   info: boolean;
   logs: boolean;
   logLevel: Level;
+  keys: boolean;
 };
 
 const name = "cc-dump.settings";
@@ -64,6 +70,7 @@ export function parseSettings(stored: unknown): Settings {
   const info = fieldOf(stored, "info");
   const logs = fieldOf(stored, "logs");
   const logLevel = fieldOf(stored, "logLevel");
+  const keys = fieldOf(stored, "keys");
   const visibility = (category: Category) => {
     const value = fieldOf(fieldOf(stored, "visibility"), category);
     return isOneOf(visibilities)(value) ? value : defaultVisibility[category];
@@ -82,6 +89,7 @@ export function parseSettings(stored: unknown): Settings {
     info: typeof info === "boolean" ? info : false,
     logs: typeof logs === "boolean" ? logs : false,
     logLevel: isOneOf(levels)(logLevel) ? logLevel : "info",
+    keys: typeof keys === "boolean" ? keys : false,
   };
 }
 
@@ -100,7 +108,9 @@ export const settings = {
   setInfo: (info: boolean) => useSettings.setState({ info }),
   setLogs: (logs: boolean) => useSettings.setState({ logs }),
   setLogLevel: (logLevel: Level) => useSettings.setState({ logLevel }),
-  setVisibility: (category: Category, visibility: Visibility) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: visibility } })),
+  setKeys: (keys: boolean) => useSettings.setState({ keys }),
+  // [LAW:single-enforcer] A category moved to its next level, by a click on its chip or a press of its key.
+  stepVisibility: (category: Category) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: levelAfter(state.visibility[category]) } })),
   // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
   // so every tab holds the settings the reader chose last.
   changedElsewhere: (key: string | null) => {

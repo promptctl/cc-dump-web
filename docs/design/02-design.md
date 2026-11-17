@@ -71,4 +71,14 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
                                                                  minimap ─┘  └─ panels
 ```
 
-Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. Under it stands the exchange's envelope, with no heading, then each run of blocks under a heading that says whose it is (`01-mvp.md`, "Vocabulary"). The tool definitions are a set: `TOOLS` is their one line, closed here, which a click opens to a line each. The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info and logs panels (F8, F9) open at the right.
+Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. Under it stands the exchange's envelope, with no heading, then each run of blocks under a heading that says whose it is (`01-mvp.md`, "Vocabulary"). The tool definitions are a set: `TOOLS` is their one line, closed here, which a click opens to a line each. The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info, logs and keys panels (F8, F9, "Keys" below) open at the right.
+
+## Keys
+
+The app is driven from the keyboard, with the keys of the original where it has the act (`divergences.md`, "Presets and keys"). Every key is one line of one table, `packages/ui/src/view/keyboard.ts`: its chord, what it does, and its act. The listener, the keys panel and the controls' titles read that table, so this document does not list the keys: `?` does.
+
+- **A key is heard in one of three places.** The conversation's keys and `?` are heard anywhere on the page outside a field. The search field hears its own three, Enter, Shift+Enter and Esc, and nothing else of the table: a character typed in a field, the terminal's among them, is typed.
+- **A chord is written as it is read.** `N` is Shift with n and `?` is Shift with /, so Shift is said only with a key that types nothing (`Shift+Enter`). A press with Ctrl or Meta is the browser's, never a key of the table.
+- **A key does what its control does.** `f` is a click on the follow control, a digit a click on the category in that place of the filter bar, an arrow a click on the turn strip's. A control with a key says it in its title.
+- **A move by key is a reader's move.** `g`, `G`, `j`, `k` scroll, so they pause and resume following as the wheel does. Alt+N and Alt+P go to the next and the previous block the harness injected among the rows listed, counted from where the view is, and around the ends.
+- **The keys panel is the help.** `?` opens it at the right, beside the conversation and not over it, so a key can be tried while its line is read. It stays open until it is put away, by `?` or its control in the header, and across a restart (F11).

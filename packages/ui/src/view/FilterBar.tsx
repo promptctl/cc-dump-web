@@ -1,6 +1,7 @@
 import { categories, type Category } from "../format/blocks.ts";
-import { branchPlacements, settings, useSettings, visibilities, type Branches, type Visibility } from "../settings.ts";
+import { branchPlacements, levelAfter, settings, useSettings, type Branches, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
+import { levelKeys, withKeys } from "./keyboard.ts";
 import { Toggle } from "./Toggle.tsx";
 
 // The filter (docs/design/01-mvp.md, F5): each category's level, always on screen, and the control that changes it.
@@ -45,18 +46,17 @@ const branchTitles: Record<Branches, string> = {
   step: "A branch shows only while its requests are; from the step after its last it is not listed.",
 };
 
-// A click moves the category to the next level, of more detail, and from the most back to none.
+// A click moves the category to its next level (settings.ts, levelAfter), as a press of its key does.
 function CategoryToggle({ category, visibility }: { category: Category; visibility: Visibility }) {
-  const next = visibilities[(visibilities.indexOf(visibility) + 1) % visibilities.length]!;
   const { pressed, look, shows } = visibilityStates[visibility];
   return (
     <Toggle
       style={categoryVars(category)}
       data-visibility={visibility}
       pressed={pressed}
-      title={`${category}: ${visibility}, ${shows}. Click for ${next}.`}
+      title={withKeys(`${category}: ${visibility}, ${shows}. Click for ${levelAfter(visibility)}.`, levelKeys[category])}
       className={`rounded border px-2 py-0.5 font-medium ${look}`}
-      onClick={() => settings.setVisibility(category, next)}
+      onClick={() => settings.stepVisibility(category)}
     >
       {category}
     </Toggle>

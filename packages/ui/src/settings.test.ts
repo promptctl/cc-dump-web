@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSettings } from "./settings.ts";
+import { levelAfter, parseSettings, visibilities } from "./settings.ts";
 
 describe("settings", () => {
   const defaults = { follow: true, visibility: { user: "expanded", assistant: "expanded", tools: "compact", system: "compact", thinking: "compact", parameters: "hidden", usage: "hidden", http: "hidden" },
@@ -9,6 +9,7 @@ describe("settings", () => {
     info: false,
     logs: false,
     logLevel: "info",
+    keys: false,
   };
 
   it("reads nothing stored as every setting's default", () => {
@@ -18,7 +19,7 @@ describe("settings", () => {
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
     expect(
-      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, branches: "fold", info: true, logs: true, logLevel: "warn" }),
+      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, branches: "fold", info: true, logs: true, logLevel: "warn", keys: true }),
     ).toEqual({
       follow: false,
       // A level the last build stored, "shown", is not one this build has.
@@ -29,9 +30,14 @@ describe("settings", () => {
       info: true,
       logs: true,
       logLevel: "warn",
+      keys: true,
     });
     expect(
-      parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], branches: "everywhere", info: "open", logs: 1, logLevel: "debug" }),
+      parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], branches: "everywhere", info: "open", logs: 1, logLevel: "debug", keys: "?" }),
     ).toEqual(defaults);
+  });
+
+  it("moves a category to its next level, of more detail, and from the most back to none", () => {
+    expect(visibilities.map(levelAfter)).toEqual(["compact", "expanded", "hidden"]);
   });
 });

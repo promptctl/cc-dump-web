@@ -11,6 +11,8 @@ import { useEvents } from "./store.ts";
 import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { InfoPanel } from "./view/InfoPanel.tsx";
+import { appKeys, heard, useKeys, withKeys, type AppActs } from "./view/keyboard.ts";
+import { KeysPanel } from "./view/KeysPanel.tsx";
 import { Launch } from "./view/Launch.tsx";
 import { LogsPanel } from "./view/LogsPanel.tsx";
 import { Recordings } from "./view/Recordings.tsx";
@@ -33,6 +35,9 @@ export function App({ connection }: { connection: Connection }) {
   const session = useMemo(() => shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session, [shown]);
   const info = useSettings((state) => state.info);
   const logs = useSettings((state) => state.logs);
+  const keys = useSettings((state) => state.keys);
+  // Heard here, not in the conversation, so ? answers before a recording is open.
+  useKeys(heard.app.keys, appActs);
   return (
     <div className="flex h-screen flex-col">
       <header className="flex h-12 items-center gap-6 border-b bg-surface px-4 text-xs">
@@ -59,6 +64,9 @@ export function App({ connection }: { connection: Connection }) {
           <Toggle pressed={logs} data-logs-toggle className="control aria-pressed:font-semibold" onClick={() => settings.setLogs(!logs)}>
             Logs
           </Toggle>
+          <Toggle pressed={keys} data-keys-toggle title={withKeys("What each key does", appKeys.help)} className="control aria-pressed:font-semibold" onClick={() => settings.setKeys(!keys)}>
+            Keys
+          </Toggle>
         </div>
       </header>
       {/* The conversation, and the launched agent's window beside it, each half the width (F13). */}
@@ -76,10 +84,14 @@ export function App({ connection }: { connection: Connection }) {
         {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
         {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
         {logs ? <LogsPanel connection={connection} /> : null}
+        {keys ? <KeysPanel /> : null}
       </div>
     </div>
   );
 }
+
+// What the app's keys act on: the keys panel, shown when it is not and put away when it is.
+const appActs: AppActs = { help: () => settings.setKeys(!useSettings.getState().keys) };
 
 function ReadingState({ reading }: { reading: Reading }) {
   switch (reading.state) {
