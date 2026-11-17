@@ -7,11 +7,11 @@ import { settings, type SearchOptions, type Visibility } from "../settings.ts";
 import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
-import { isOpen, showsOpen, type Opened } from "./rows.ts";
+import { closedSetOf, isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
-// launch opened and whether its terminal is shown (F13), each block, region or fold they opened or closed (rows.ts),
+// launch opened and whether its terminal is shown (F13), each block, set, region or fold they opened or closed (rows.ts),
 // where they are, the moment shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
 // tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab
 // opens at the end, now, which follows the conversation while follow is on. While it is off, the end becomes the place
@@ -84,14 +84,16 @@ export const view = {
     settings.setSearchOption(option, on);
     useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
   },
-  // A step to a match, the reader's act, with now's step `now`: it becomes current, its block and the regions holding it
-  // show expanded, and the view moves to its row, which the step then refines to the match's line. The step chooses only
-  // what it changes: a block already open, as the levels `visibility` start it or as the reader chose, is left as it is.
-  goTo: ({ match, block, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
+  // A step to a match, the reader's act, with now's step `now`: it becomes current, the set its block is in shows open,
+  // its block, unless the match is on its line, and the regions holding it show expanded, and the view moves to its row,
+  // which the step then refines to the match's line. The step chooses only what it changes: a set or a block already
+  // open, as the levels `visibility` start it or as the reader chose, is left as it is.
+  goTo: ({ match, row, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
     useView.setState(({ opened, moment, search }) => {
-      const shown = block === undefined || showsOpen(block, visibility, opened) ? opened : { ...opened, [block.key]: true };
+      const set = closedSetOf(row, visibility, opened);
+      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, opened) ? [] : [row.key]), ...regions];
       return {
-        opened: { ...shown, ...Object.fromEntries(regions.map((key) => [key, true] as const)) },
+        opened: opens.length === 0 ? opened : { ...opened, ...Object.fromEntries(opens.map((key) => [key, true] as const)) },
         position: { at: "row", key: match.key, offset: 0 },
         moment: leave(moment, now),
         search: { ...search, current: match },

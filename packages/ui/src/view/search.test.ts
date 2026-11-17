@@ -42,7 +42,7 @@ const top = { at: "start" } as const;
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
-  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
+  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined, set: undefined };
 };
 
 describe("search", () => {
@@ -238,11 +238,12 @@ describe("search", () => {
     const part = partKey("thread:a/message.2/content.0", address.part(0));
     expect(result).toEqual({
       match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
-      block: rows.find((row) => row.key === "thread:a/message.2/content.0"),
+      row: rows.find((row) => row.key === "thread:a/message.2/content.0"),
+      inContent: true,
       regions: [regionKey(part, 1), regionKey(part, 3)],
     });
     const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
-    expect(name).toMatchObject({ block: undefined, regions: [] });
+    expect(name).toMatchObject({ row: { key: "thread:a/message.1/content.0" }, inContent: false, regions: [] });
   });
 
   it("gives the matches holding any of a slice of a text", () => {

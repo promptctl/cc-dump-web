@@ -160,9 +160,10 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
   return index === -1 ? undefined : block.before + index + 1;
 }
 
-// A step to a match, and what must show expanded for it to be on screen: its block's row, unless the match is on the
-// block's line, and the regions holding it, by key, which all start collapsed.
-export type Step = { match: Match; block: BlockRow | undefined; regions: string[] };
+// A step to a match, and what must show for it to be on screen: its block's `row`, listed, so the set it is in open;
+// the row expanded, when the match is `inContent`, not on the block's line; and the regions holding it, by key, which
+// all start collapsed.
+export type Step = { match: Match; row: BlockRow; inContent: boolean; regions: string[] };
 
 export type Direction = "next" | "previous";
 
@@ -202,11 +203,11 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
 function stepTo(row: BlockRow, { match, shown }: { match: Match; shown: Shown }): Step {
   switch (shown.in) {
     case "line":
-      return { match, block: undefined, regions: [] };
+      return { match, row, inContent: false, regions: [] };
     case "content":
-      return { match, block: row, regions: [] };
+      return { match, row, inContent: true, regions: [] };
     case "regions":
-      return { match, block: row, regions: regionsAround(shown.searched, match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
+      return { match, row, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
   }
 }
 

@@ -1,14 +1,14 @@
 import { categories, type Category } from "../format/blocks.ts";
 import { cssVariables, type Theme } from "../theme/theme.ts";
-import { blockOf, changeColors, markOf, type Change, type Row } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, markOf, type Change, type Row } from "./rows.ts";
 
 // The minimap (docs/design/02-design.md, "Layout"): the conversation's rows drawn top to bottom at the minimap's height,
 // the vertical navigator. Its geometry, pure: what each row is drawn as and where, and the way back from a point on it to
 // a place in the conversation.
 
 // [LAW:types-are-the-program] What a row's sliver is painted: a block in its category's color, or the theme's error for a
-// tool's result that says its tool failed, and a fold that holds one; an exchange's line and any other fold muted; a
-// group's title not at all.
+// tool's result that says its tool failed, and a fold that holds one; a set's line in its blocks' category's color,
+// which it stands for while it is closed; an exchange's line and any other fold muted; a group's title not at all.
 export type Paint = Category | "failed" | "exchange" | "fold" | "none";
 
 // A row as the minimap draws it: from `y`, `height` minimap pixels tall, painted `paint`, beside its mark, `change`
@@ -26,6 +26,8 @@ export function paintOf(row: Row): Paint {
       return "exchange";
     case "fold":
       return row.rows.some((held) => paintOf(held) === "failed") ? "failed" : "fold";
+    case "set":
+      return categoryOf(row);
     case "group":
       return "none";
   }
