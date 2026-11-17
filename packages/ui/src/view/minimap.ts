@@ -20,8 +20,10 @@ export type Extent = { start: number; size: number };
 
 export function paintOf(row: Row): Paint {
   switch (row.kind) {
-    case "block":
-      return blockOf(row).failed ? "failed" : blockOf(row).category;
+    case "block": {
+      const { failed, category } = blockOf(row);
+      return failed ? "failed" : category;
+    }
     case "exchange":
       return "exchange";
     case "fold":

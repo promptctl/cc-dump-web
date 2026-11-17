@@ -60,6 +60,16 @@ describe("blockDiff", () => {
     expect(kinds(blockDiff(block(numbered(9).join("\n")), block(twice(7).join("\n"))))).not.toContainEqual(expect.stringMatching(/fold/));
   });
 
+  it("says what a rewrite did to the block's name, its category or whether the harness injected it, above what it did to its content", () => {
+    const lines = (before: Partial<Block>, after: Partial<Block>) =>
+      blockDiff({ ...block("keep"), ...before }, { ...block("keep"), ...after }).map((entry) => (entry.kind === "fold" ? "fold" : `${entry.change} ${entry.words.map(({ text }) => text).join("")}`));
+    expect(lines({ name: "tool_result" }, { name: "tool_result: error" })).toEqual(["removed tool_result", "added tool_result: error", "same keep"]);
+    expect(lines({ category: "user" }, { category: "assistant" })).toEqual(["removed user", "added assistant", "same keep"]);
+    expect(lines({}, { injected: true })).toEqual(["removed system", "added system, injected", "same keep"]);
+    // A rewrite of the content alone says nothing of them.
+    expect(lines({}, {})).toEqual(["same keep"]);
+  });
+
   it("diffs each pair of blocks once", () => {
     const [before, after] = [block("a"), block("b")];
     expect(blockDiff(before, after)).toBe(blockDiff(before, after));

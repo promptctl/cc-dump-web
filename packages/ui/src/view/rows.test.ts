@@ -220,7 +220,7 @@ describe("layout", () => {
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     const row = (side: Block, gone = false): BlockRow => {
       const shown = { ...side, key: "c" };
-      return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined, set: undefined };
+      return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined };
     };
     const levels = { ...shown, user: "expanded", tools: "compact" } as const;
     expect([said, reminder, tools].map((side) => startsExpanded(row(side), levels))).toEqual([true, false, false]);
@@ -423,13 +423,49 @@ describe("branches", () => {
     const events = [...ask("t1", say(1), ["Read", "Edit"]), ...ask("t2", say(2), ["Read", "Edit"]), ...ask("side", aside, ["Read"]), ...ask("t3", say(3), ["Read", "Edit"])];
     const at = layouts(events, listing, "stay");
     const edit = blockAt(at(3), "thread:side/tools/tools.Edit.0");
-    expect([edit.change, blockOf(edit), edit.branch]).toMatchObject(["removed", { name: "Edit" }, { key: "branch:side" }]);
+    // Its row is the block's line alone: the block is the row's of the line the branch left.
+    expect([edit.change, blockOf(edit), edit.branch]).toMatchObject(["removed", { name: "Edit", parts: [] }, { key: "branch:side" }]);
     // The line it left sends it still, and gives it no version.
     expect(listed(at(3))).toContain("thread:t1/tools/tools.Edit.0 same");
     expect(listed(at(4))).toContain("thread:t1/tools/tools.Edit.0 same");
     // It stays listed where it stood while the branch does, and goes with the branch.
     expect(listed(at(4)).filter((row) => row.startsWith("thread:side/tools/"))).toEqual(["thread:side/tools/tools.Edit.0 same"]);
     expect(listed(layouts(events, listing, "step")(4)).filter((row) => row.startsWith("thread:side/tools/"))).toEqual([]);
+  });
+
+  it("searches a block a branch stops sending where the line it left shows it, and its name on each line that says it", () => {
+    const tool = (name: string) => ({ name, description: "zebra", input_schema: {} });
+    const ask = (trace: string, messages: unknown[], tools: string[]) => request(trace, { model: "m", tools: tools.map(tool), messages });
+    const aside = [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }];
+    const at = layouts([...ask("t1", say(1), ["Read", "Edit"]), ...ask("t2", say(2), ["Read", "Edit"]), ...ask("side", aside, ["Read"]), ...ask("t3", say(3), ["Read", "Edit"])], listing, "stay");
+    const count = (step: number, pattern: RegExp) => createSearch()(at(step).every.rows, pattern).count;
+    expect([2, 3, 4].map((step) => count(step, /zebra/g))).toEqual([2, 2, 2]);
+    // The branch's struck line says the name, as the line's row does.
+    expect([2, 3, 4].map((step) => count(step, /Edit/g))).toEqual([1, 2, 2]);
+  });
+
+  it("reads a block a branch stopped sending and sends again as sent again, as the line it left sent it, or as rewritten from that", () => {
+    const ask = (trace: string, description: string, system: string[], messages: unknown[]) =>
+      request(trace, { model: "m", tools: [{ name: "Read", description, input_schema: {} }], system: system.map(text), messages });
+    const aside = [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }];
+    // The side request rewrites the tool, so its path is its own from there, and drops the prompt's second block; the
+    // request after carries it on, sending that block again.
+    const minded = (again: string) =>
+      blockAt(
+        layouts([
+          ...ask("t1", "Reads", ["Be brief.", "Mind it."], say(1)),
+          ...ask("t2", "Reads", ["Be brief.", "Mind it."], say(2)),
+          ...ask("side", "Reads a file", ["Be brief."], aside),
+          ...ask("side2", "Reads a file", ["Be brief.", again], [...aside, ...say(1)]),
+        ])(4),
+        "thread:side/system/system.1",
+      );
+    expect(minded("Mind it.").branch).toMatchObject({ key: "branch:side" });
+    expect(pastOf(minded("Mind it."))).toEqual([{ step: 3, change: "removed" }, { step: 4, change: "added" }]);
+    expect(pastOf(minded("Mind that."))).toMatchObject([
+      { step: 3, change: "removed" },
+      { step: 4, change: "changed", before: { parts: [{ text: "Mind it." }] }, after: { parts: [{ text: "Mind that." }] } },
+    ]);
   });
 
   it("lists a branch only while its requests are: from the step after its last, none of its rows, which the search no longer reads", () => {

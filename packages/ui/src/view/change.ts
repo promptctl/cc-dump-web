@@ -56,6 +56,11 @@ function fnv1a(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+// [LAW:one-source-of-truth] What a block shows beside its content, which a version is decided by with it
+// (view/history.ts, content): its category, with whether the harness injected it, and its name, a line each, so a step
+// that rewrote one of them alone is a diff that says which.
+const headText = ({ category, name, injected }: Block): string => `${category}${injected === undefined ? "" : ", injected"}\n${name}`;
+
 // [LAW:one-source-of-truth] Each pair of blocks is diffed once, when it is first shown, so a frame that shows it again
 // does not pay for it again; and only then, so a block's past never opened is never diffed.
 const diffs = new WeakMap<Block, WeakMap<Block, (DiffLine | LineFold)[]>>();
@@ -64,7 +69,9 @@ export function blockDiff(before: Block, after: Block): (DiffLine | LineFold)[] 
   if (made !== undefined) return made;
   const afters = diffs.get(before) ?? new WeakMap<Block, (DiffLine | LineFold)[]>();
   diffs.set(before, afters);
-  const diff = folded(linesOf(lineDiff(blockText(before), blockText(after))));
+  // Of the blocks' heads, the lines the change rewrote, none where it rewrote the content alone; then the content's.
+  const head = linesOf(lineDiff(headText(before), headText(after))).filter(({ change }) => change !== "same");
+  const diff = folded([...head, ...linesOf(lineDiff(blockText(before), blockText(after)))]);
   afters.set(after, diff);
   return diff;
 }
