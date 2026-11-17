@@ -234,7 +234,11 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
     if (key === undefined) return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
-    scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`)!.focus({ preventScroll: true });
+    const line = scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`);
+    // [LAW:no-silent-failure] The block's row is the position's, which the commit keeps mounted, so its line is drawn
+    // once committed.
+    if (line === null) throw new Error(`The injected block gone to is not on screen: ${key}`);
+    line.focus({ preventScroll: true });
   };
   const field = useRef<HTMLInputElement>(null);
   // The conversation's keys (keyboard.ts). A line's scroll moves the scroller as a wheel does, so the step that reads a
