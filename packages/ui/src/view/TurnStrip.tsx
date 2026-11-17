@@ -14,7 +14,7 @@ export const TurnStrip = memo(function TurnStrip({
   onGo,
   onStep,
 }: {
-  segments: Segment[];
+  segments: readonly Segment[];
   shown: number;
   onGo: (step: number) => void;
   onStep: (by: -1 | 1) => void;

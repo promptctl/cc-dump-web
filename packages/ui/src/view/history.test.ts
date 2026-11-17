@@ -240,6 +240,26 @@ describe("branches", () => {
     expect(versioned(after)).toEqual([]);
   });
 
+  it("returns the groups it returned before wherever a step read again changed nothing, as each event of a reply still arriving reads its step again", () => {
+    const groupsOf = ({ segments }: History) => segments.flatMap(({ formatted, groups }) => groups.map((group) => [`${formatted.exchange.trace_id}/${group.key}`, group] as const));
+    // The groups that are not the objects they were once the last request, read before its reply, is read with it.
+    const changed = (events: RecordedEvent[], trace: string) => {
+      const read = reader();
+      const before = new Map(groupsOf(read(events)));
+      const after = read([...events, ...reply(trace, [text("Done.")])]);
+      return { after, keys: groupsOf(after).flatMap(([key, group]) => (before.get(key) === group ? [] : [key])) };
+    };
+    const first = [...request("t1", { ...main, tools: [...main.tools, { name: "Edit", input_schema: {} }], messages: [hi] }), ...reply("t1", hello)];
+    // A turn that rewrites the prompt, a version of the first's item: what its reply brought is its own groups' alone.
+    const turn = changed([...first, ...request("t2", { ...main, system: [text("You are an agent.")], messages: [hi, assistant(...hello), user(text("More."))] })], "t2");
+    expect(turn.keys).toEqual(["t2/response", "t2/reply"]);
+    expect(turn.after.segments[0]!.groups.find(({ key }) => key === "system")!.items[0]!.versions.map(({ step }) => step)).toEqual([1, 2]);
+    // A branch that does not send a tool the line it left sends, whose line for it is the tool's name alone.
+    const side = changed([...first, ...request("side", { ...main, system: [text("Is this a new topic?")], messages: [hi] })], "side");
+    expect(side.keys).toEqual(["side/response", "side/reply"]);
+    expect(side.after.segments[1]!.groups.find(({ key }) => key === "tools")!.items).toMatchObject([{ key: "thread:side/tools/tools.Edit.0", versions: [{ step: 2, block: undefined }] }]);
+  });
+
   it("reads exchanges as they arrive to what a full read of them gives, a branch decided again included", () => {
     const events = [...process, ...btw, ...compact, ...t3];
     const read = reader();
