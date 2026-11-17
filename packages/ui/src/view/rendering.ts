@@ -55,9 +55,12 @@ export type Item = { checked: boolean | undefined; blocks: Block[] };
 // spans, its opening and closing lines among them, as a verbatim text's region counts them (view/regions.ts).
 export type Fold = { line: number; label: string; lines: number };
 
-// A run of a text: a verbatim leaf, Markdown's blocks, or a verbatim text's long region, its opening and closing lines
-// and its body runs of its own.
-export type Run = { kind: "verbatim"; leaf: Leaf } | { kind: "markdown"; blocks: Block[] } | ({ kind: "region"; open: Leaf; body: Run[]; close: Leaf } & Fold);
+// A run of a verbatim text: a leaf, or a long region, its opening and closing lines and its body runs of its own.
+export type Verbatim = { kind: "verbatim"; leaf: Leaf } | ({ kind: "region"; open: Leaf; body: Verbatim[]; close: Leaf } & Fold);
+
+// A run of a text: a verbatim text's, or Markdown's blocks. [LAW:types-are-the-program] A verbatim text's region holds
+// no Markdown, so its headings are none of a text's.
+export type Run = Verbatim | { kind: "markdown"; blocks: Block[] };
 
 // A text that folds: its characters, the passages of them a query matches within, and each fold's characters, named by
 // a line, outermost first.
@@ -147,8 +150,8 @@ function createWriter(): Writer {
 }
 
 // A verbatim text's segments: each run of text a leaf, each long region its lines, its body runs of its own between.
-function verbatim(list: Segment[], writer: Writer): Run[] {
-  return list.map((segment): Run => {
+function verbatim(list: Segment[], writer: Writer): Verbatim[] {
+  return list.map((segment): Verbatim => {
     switch (segment.kind) {
       case "text":
         return { kind: "verbatim", leaf: writer.leaf(segment.text) };
@@ -156,7 +159,7 @@ function verbatim(list: Segment[], writer: Writer): Run[] {
         const { line, label, lines } = segment;
         writer.cut();
         const start = writer.at();
-        const run: Run = { kind: "region", line, label, lines, open: writer.leaf(segment.open), body: verbatim(segment.body, writer), close: writer.leaf(segment.close) };
+        const run: Verbatim = { kind: "region", line, label, lines, open: writer.leaf(segment.open), body: verbatim(segment.body, writer), close: writer.leaf(segment.close) };
         writer.cut();
         writer.fold(line, { start, end: writer.at() });
         return run;

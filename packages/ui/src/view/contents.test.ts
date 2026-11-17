@@ -52,6 +52,9 @@ describe("farApart", () => {
     expect(farApart(contents("# One\n\n" + lines(LONG) + "\n# Two\n"))).toBe(true);
     // Two headings a few lines apart are in one place already, however long the text after them.
     expect(farApart(contents("# One\n\nx\n\n# Two\n\n" + lines(LONG * 2)))).toBe(false);
+    // LONG lines apart is not more than LONG, as a region of LONG lines is not long.
+    expect(farApart(contents("# One\n" + lines(LONG) + "# Two\n"))).toBe(true);
+    expect(farApart(contents("# One\n" + lines(LONG - 1) + "# Two\n"))).toBe(false);
     expect(farApart(contents("# Alone\n\n" + lines(LONG * 2)))).toBe(false);
     expect(farApart(contents("none\n"))).toBe(false);
   });
