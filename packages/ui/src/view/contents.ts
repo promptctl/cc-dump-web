@@ -20,24 +20,21 @@ export const contentsKey = (partKey: string) => `contents:${partKey}`;
 export const farApart = (entries: Entry[]): boolean => entries.length > 0 && entries.at(-1)!.line - entries[0]!.line > LONG;
 
 // Every heading of a text, in the order it is read, those in a quote, a list item, a tagged section and a long region
-// among them.
+// among them. A verbatim text has none.
 export function contentsOf(runs: Run[]): Entry[] {
-  return runs.flatMap((run) => ofRun(run, []));
+  return runs.flatMap((run) => {
+    switch (run.kind) {
+      case "verbatim":
+      case "region":
+        return [];
+      case "markdown":
+        return ofBlocks(run.blocks, { folds: [], level: 0 });
+    }
+  });
 }
 
 // Where a block stands: the lines of the folds around it, outermost first, and how many headings' sections it is in.
 type Around = { folds: number[]; level: number };
-
-function ofRun(run: Run, folds: number[]): Entry[] {
-  switch (run.kind) {
-    case "verbatim":
-      return [];
-    case "markdown":
-      return ofBlocks(run.blocks, { folds, level: 0 });
-    case "region":
-      return run.body.flatMap((inner) => ofRun(inner, [...folds, run.line]));
-  }
-}
 
 function ofBlocks(blocks: Block[], around: Around): Entry[] {
   return blocks.flatMap((block) => ofBlock(block, around));

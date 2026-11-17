@@ -29,6 +29,11 @@ export function partKey(key: string, at: string): string {
   return `${key}/${at}`;
 }
 
+// [LAW:one-source-of-truth] The key of what opens on `line` of the text at `at` in the block's row `blockKey`, a long
+// region or a heading's section: the choices keep it by this key, a step opens it by it, and a heading on that line is
+// drawn with it as its id, so one name keeps a section and finds its heading.
+export const keyAt = ({ blockKey, at }: { blockKey: string; at: string }, line: number): string => regionKey(partKey(blockKey, at), line);
+
 // A text the search reads: its characters, and the passages of them a match is found within, in order; a match runs
 // from no passage into the next.
 export type Searched = { text: string; passages: Range[] };
@@ -209,7 +214,7 @@ function stepTo(row: BlockRow, { match, shown }: { match: Match; shown: Shown })
     case "content":
       return { match, row, inContent: true, regions: [] };
     case "regions":
-      return { match, row, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => regionKey(partKey(row.key, shown.at), line)) };
+      return { match, row, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line)) };
   }
 }
 

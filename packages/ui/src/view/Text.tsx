@@ -3,9 +3,8 @@ import type { Part } from "../format/parts.ts";
 import { contentsKey, contentsOf, farApart, type Entry } from "./contents.ts";
 import { Highlighted } from "./Highlighted.tsx";
 import { ToHeading, useSection, useToggle, useWhere, type Where } from "./painting.ts";
-import { regionKey } from "./regions.ts";
 import { renderingOf, type Block, type Fold, type Heading, type Inline, type Leaf, type Run } from "./rendering.ts";
-import { partKey } from "./search.ts";
+import { keyAt, partKey } from "./search.ts";
 
 // A text part as its rendering shows it (view/rendering.ts): the one view of every text, whoever's it is. It knows
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
@@ -25,13 +24,10 @@ export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "
   );
 }
 
-// [LAW:one-source-of-truth] What opens on `line` of the text at `where` is kept by this key, a region or a heading's
-// section, and a heading on that line is drawn with it as its id: one name keeps a section and finds its heading.
-const keyAt = (where: Where, line: number) => regionKey(partKey(where.blockKey, where.at), line);
-
 // [LAW:one-source-of-truth] How a line of the view says how many of its text's lines it holds: a long region's, a
-// closed heading's and an entry of the contents'.
-const holding = (lines: number) => ` · ${lines} ${lines === 1 ? "line" : "lines"}`;
+// closed heading's and an entry of the contents'. One that holds none says nothing of it, as a heading nothing stands
+// under does.
+const holding = (lines: number) => (lines === 0 ? "" : ` · ${lines} ${lines === 1 ? "line" : "lines"}`);
 
 // A text's contents (contents.ts): a line in the view's words, which starts closed, as a long region does, and open
 // lists the text's headings, each set in under the one whose section it stands in, with how many lines stand under it.
@@ -41,7 +37,7 @@ function ContentsView({ entries, where }: { entries: Entry[]; where: Where }) {
   const { open, toggle } = useToggle(contentsKey(partKey(where.blockKey, where.at)), false);
   const toHeading = useContext(ToHeading);
   return (
-    <nav className="flex flex-col items-start pb-1 font-sans text-[13px] leading-relaxed">
+    <div className="flex flex-col items-start pb-1 font-sans text-[13px] leading-relaxed">
       <button type="button" className="text-foreground-muted hover:bg-hover" aria-expanded={open} onClick={toggle}>
         <span className={beside}>{open ? "▾" : "▸"}</span> contents<span className={beside}> · {entries.length} headings</span>
       </button>
@@ -64,7 +60,7 @@ function ContentsView({ entries, where }: { entries: Entry[]; where: Where }) {
             <span className={beside}>{holding(entry.lines)}</span>
           </button>
         ))}
-    </nav>
+    </div>
   );
 }
 
