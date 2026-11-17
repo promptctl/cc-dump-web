@@ -56,6 +56,7 @@ Each feature is stated as what the person using the app can do and see.
 - **Expanding:** every block has a collapsed form (one line naming the block and its size) and an expanded form (all of its content). Clicking the block switches between them.
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
 - A Markdown heading in a block's text is the line of what stands under it, up to the next heading of its depth or a shallower one: a click on the heading hides that, the deeper headings and what is under them with it, and a click shows it again. Closed, the line says how many lines it hides. What the user and the assistant said, and what the assistant thought, starts with all of it shown, so the headings only add places to fold; the system prompt, a tool's description and the content the harness injects start with each heading closed, as their outline. What the user opened or closed stays that way.
+- A Markdown text whose headings stand far apart has its contents above it: one line, closed until clicked, that opens to a list of every heading in the text, each set in under the heading it stands under, with how many lines stand under it. A click on an entry shows its heading, whatever was closed around it, and what stands under it, and puts the view there.
 - A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
 - A set is one line while closed, and its blocks are listed under that line while open; a click on the line switches between them. The line says how many blocks the set holds, their names, as many as fit, and their size together, and the last thing a step did to one of them, so a tool a step rewrote or took away is found from the closed line. A set starts closed at its category's compact level and open at its expanded level, and one the user opened or closed stays that way when the level changes.
 
@@ -68,6 +69,7 @@ Each feature is stated as what the person using the app can do and see.
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
 - The query is a regular expression, matched without regard to case. Each of case, whole word and regular expression can be switched.
 - Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match under a closed heading opens it, moving to a match in a closed set opens the set, and moving to a match in a hidden category shows its block.
+- A text's contents (F4) say its headings a second time, so they are not searched: a match in a heading is counted once, where the heading is.
 
 ### F7. Record and reopen
 - Every exchange is written to its process's recording as it happens, with no action from the user.

@@ -144,6 +144,26 @@ describe("the search", () => {
   });
 });
 
+describe("a click on an entry of a text's contents", () => {
+  beforeEach(() => useView.setState(useView.getInitialState(), true));
+
+  it("opens the folds that show its heading, one the reader closed with them, and moves to its block's row, leaving now and the search as it was", () => {
+    const search = { query: "x", current: { key: "elsewhere", at: "name", start: 0 } };
+    useView.setState({ opened: { "p/2": false, other: false }, search });
+    view.toHeading(row.key, ["p/2", "p/6"], "t4");
+    expect(useView.getState()).toMatchObject({
+      opened: { "p/2": true, "p/6": true, other: false },
+      position: { at: "row", key: row.key, offset: 0 },
+      moment: { at: "left", trace: "t4" },
+      search,
+    });
+    // Its folds already chosen open, another click chooses nothing, so the choices are the record they were.
+    const { opened } = useView.getState();
+    view.toHeading(row.key, ["p/2", "p/6"], "t4");
+    expect(useView.getState().opened).toBe(opened);
+  });
+});
+
 describe("a block, region or fold toggled", () => {
   beforeEach(() => useView.setState(useView.getInitialState(), true));
 

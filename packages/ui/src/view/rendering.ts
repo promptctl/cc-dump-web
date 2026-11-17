@@ -29,13 +29,13 @@ export type Align = "left" | "right" | "center" | null;
 // up to the line holding only its closing tag, in the same container, and that line. A tag line neither is is a `tag`.
 // A long code block or section is a region, folded where it stands, `lines` the lines it shows.
 // A heading's section is `headed`: the heading, which is its line, and the blocks under it, up to the next heading of
-// its depth or a shallower one in the same container, the sections of deeper headings among them. `line`, the text's
-// line its heading is on, names it, and `lines` is how many of the text's lines stand under that one. A heading nothing
-// stands under is a heading alone.
+// its depth or a shallower one in the same container, the sections of deeper headings among them. Its heading's line
+// names it, and `lines` is how many of the text's lines stand under that one. A heading nothing stands under is a
+// heading alone.
 export type Block =
   | { kind: "paragraph"; children: Inline[] }
   | Heading
-  | { kind: "headed"; heading: Heading; body: Block[]; line: number; lines: number }
+  | { kind: "headed"; heading: Heading; body: Block[]; lines: number }
   | { kind: "code"; leaf: Leaf }
   | { kind: "list"; ordered: boolean; start: number | undefined; items: Item[] }
   | { kind: "quote"; children: Block[] }
@@ -45,7 +45,8 @@ export type Block =
   | { kind: "section"; open: Leaf; body: Block[]; close: Leaf }
   | ({ kind: "region"; body: Block } & Fold);
 
-export type Heading = { kind: "heading"; depth: 1 | 2 | 3 | 4 | 5 | 6; children: Inline[] };
+// `line`: the text's line the heading is on, the same line however much of the text arrives after it.
+export type Heading = { kind: "heading"; depth: 1 | 2 | 3 | 4 | 5 | 6; line: number; children: Inline[] };
 
 // A list item: its blocks, and, in a task list, whether its box is checked.
 export type Item = { checked: boolean | undefined; blocks: Block[] };
@@ -293,12 +294,11 @@ function outline(placed: Placed<Block>[], writer: Writer): Block[] {
 function headed(heading: Placed<Heading>, body: Placed<Block>[], writer: Writer): Placed<Block> {
   const last = body.at(-1);
   if (last === undefined) return heading;
-  const line = heading.lines.start;
-  writer.fold(line, { start: heading.characters.end, end: last.characters.end });
+  writer.fold(heading.block.line, { start: heading.characters.end, end: last.characters.end });
   return {
-    block: { kind: "headed", heading: heading.block, body: body.map(({ block }) => block), line, lines: last.lines.end - heading.lines.end },
+    block: { kind: "headed", heading: heading.block, body: body.map(({ block }) => block), lines: last.lines.end - heading.lines.end },
     characters: { start: heading.characters.start, end: last.characters.end },
-    lines: { start: line, end: last.lines.end },
+    lines: { start: heading.lines.start, end: last.lines.end },
   };
 }
 
@@ -313,7 +313,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
     case "paragraph_open":
       return { kind: "paragraph", children: inlineOf(reader, writer, "paragraph_close") };
     case "heading_open":
-      return { kind: "heading", depth: Number(token.tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, children: inlineOf(reader, writer, "heading_close") };
+      return { kind: "heading", depth: Number(token.tag.slice(1)) as 1 | 2 | 3 | 4 | 5 | 6, line: token.map![0], children: inlineOf(reader, writer, "heading_close") };
     case "fence": {
       // A region of more than LONG lines folds, its fences among them, as one cut from a verbatim text does.
       const [first, last] = token.map!;
