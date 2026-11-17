@@ -161,8 +161,8 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
 }
 
 // A step to a match, and what must show for it to be on screen: its block's `row`, listed, so the set it is in open;
-// the row expanded, when the match is `inContent`, not on the block's line; and the regions holding it, by key, which
-// all start collapsed.
+// the row expanded, when the match is `inContent`, not on the block's line; and the regions and the headings' sections
+// holding it, by key, open.
 export type Step = { match: Match; row: BlockRow; inContent: boolean; regions: string[] };
 
 export type Direction = "next" | "previous";

@@ -430,6 +430,13 @@ export function startsExpanded(row: BlockRow, visibility: Record<Category, Visib
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;
 }
 
+// [LAW:one-source-of-truth] Whether the sections under the headings of a block's texts start open, before any choice of
+// the reader's (docs/design/01-mvp.md, F4): what the user or the assistant said or thought reads whole, as it was
+// written, each heading a place to fold it; what was written for the model, its prompt, a tool's description and what
+// the harness injected, starts as its outline, each heading a line that opens.
+export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
+  injected === undefined && (category === "user" || category === "assistant" || category === "thinking");
+
 // [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's: as the level of its blocks'
 // category says, so at compact it is its one line, and at expanded its blocks are listed (docs/design/01-mvp.md, F4).
 export const setStartsOpen = (category: Category, visibility: Record<Category, Visibility>): boolean => levels[visibility[category]].startsExpanded;

@@ -29,6 +29,17 @@ export const Hold = createContext<() => void>(() => {
   throw new Error("A block is shown outside a Conversation");
 });
 
+// Whether the sections under the headings of a block's texts start open (rows.ts, sectionsStartOpen): the block's to
+// say, around its content.
+export const Sections = createContext<boolean | undefined>(undefined);
+
+// A heading's section, kept at `key`: whether it shows open, and a click's toggle of it.
+export function useSection(key: string): { open: boolean; toggle: () => void } {
+  const starts = useContext(Sections);
+  if (starts === undefined) throw new Error("A text is shown outside a block");
+  return useToggle(key, starts);
+}
+
 // [LAW:one-source-of-truth] Whether what is kept at `key`, a block, a region or a fold, which starts open or not as
 // `starts` says, shows open; and a click's toggle of it: the view holds where it is, then it shows the other way.
 export function useToggle(key: string, starts: boolean): { open: boolean; toggle: () => void } {

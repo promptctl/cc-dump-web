@@ -28,9 +28,14 @@ export type Align = "left" | "right" | "center" | null;
 // A tagged section, as a prompt wraps a reminder or a CLAUDE.md's rules: a line holding only an opening tag, the blocks
 // up to the line holding only its closing tag, in the same container, and that line. A tag line neither is is a `tag`.
 // A long code block or section is a region, folded where it stands, `lines` the lines it shows.
+// A heading's section is `headed`: the heading, which is its line, and the blocks under it, up to the next heading of
+// its depth or a shallower one in the same container, the sections of deeper headings among them. `line`, the text's
+// line its heading is on, names it, and `lines` is how many of the text's lines stand under that one. A heading nothing
+// stands under is a heading alone.
 export type Block =
   | { kind: "paragraph"; children: Inline[] }
-  | { kind: "heading"; depth: 1 | 2 | 3 | 4 | 5 | 6; children: Inline[] }
+  | Heading
+  | { kind: "headed"; heading: Heading; body: Block[]; line: number; lines: number }
   | { kind: "code"; leaf: Leaf }
   | { kind: "list"; ordered: boolean; start: number | undefined; items: Item[] }
   | { kind: "quote"; children: Block[] }
@@ -39,6 +44,8 @@ export type Block =
   | { kind: "tag"; leaf: Leaf }
   | { kind: "section"; open: Leaf; body: Block[]; close: Leaf }
   | ({ kind: "region"; body: Block } & Fold);
+
+export type Heading = { kind: "heading"; depth: 1 | 2 | 3 | 4 | 5 | 6; children: Inline[] };
 
 // A list item: its blocks, and, in a task list, whether its box is checked.
 export type Item = { checked: boolean | undefined; blocks: Block[] };
@@ -57,7 +64,8 @@ export type Folded = { text: string; passages: Range[]; folds: (Range & { line: 
 
 // `passages`: the stretches of `text` a query matches within, in order, each leaves drawn one after another; a block,
 // a cell, the lines either side of a hard break and a region each end one, so a match runs across no two things a
-// reader sees apart, and into no region from outside it. `folds`: each region's line and characters, outermost first.
+// reader sees apart, and into no region from outside it. `folds`: each region's line and characters, and each heading's
+// section's, which are those under its heading, not the heading's own, outermost first.
 export type Rendering = Folded & { runs: Run[] };
 
 type TextPart = Extract<Part, { kind: "text" }>;
@@ -128,10 +136,11 @@ function createWriter(): Writer {
     cut,
     at: () => length,
     fold: (line, characters) => folds.push({ line, ...characters }),
-    // A region is placed once whole, so one inside another is placed first; outermost first is by where each starts.
+    // A region is placed once whole, so one inside another is placed first; outermost first is by where each starts,
+    // and, of two of the same characters, a section and the one region under its heading, the one placed last.
     done: () => {
       cut();
-      return { text: written.join(""), passages, folds: folds.sort((a, b) => a.start - b.start || b.end - a.end) };
+      return { text: written.join(""), passages, folds: folds.reverse().sort((a, b) => a.start - b.start || b.end - a.end) };
     },
   };
 }
@@ -204,14 +213,23 @@ function markdown(text: string, writer: Writer): Block[] {
 // token.
 type Reader = ArrayIterator<Token>;
 
-// A tag line as read, before the sections are found: its name, whether it closes, and its line in the text.
-type TagLine = { kind: "tagLine"; leaf: Leaf; name: string; closing: boolean; line: number };
+// A tag line as read, before the sections are found: its name, and whether it closes.
+type TagLine = { kind: "tagLine"; leaf: Leaf; name: string; closing: boolean };
+
+// A block where it stands in its text: the characters it wrote, and the text's lines it spans.
+type Placed<Read> = { block: Read; characters: Range; lines: Range };
+
+const isTagLine = (placed: Placed<Block> | Placed<TagLine>): placed is Placed<TagLine> => placed.block.kind === "tagLine";
+const isHeading = (placed: Placed<Block>): placed is Placed<Heading> => placed.block.kind === "heading";
 
 // The blocks of a container, up to the token closing it, `close`, which is read too; the text's end closes the text.
 function blocks(reader: Reader, writer: Writer, close: string | undefined): Block[] {
-  const read: (Block | TagLine)[] = [];
+  const read: (Placed<Block> | Placed<TagLine>)[] = [];
   for (let token = reader.next().value; token !== undefined && token.type !== close; token = reader.next().value) {
-    read.push(block(token, reader, writer));
+    const [first, last] = token.map!;
+    const start = writer.at();
+    const made = block(token, reader, writer);
+    read.push({ block: made, characters: { start, end: writer.at() }, lines: { start: first, end: last } } as Placed<Block> | Placed<TagLine>);
     // Each block ends a passage, so a query never runs from one into the next.
     writer.cut();
   }
@@ -220,25 +238,68 @@ function blocks(reader: Reader, writer: Writer, close: string | undefined): Bloc
 
 // A container's blocks with its sections found: a closing tag line closes the last section of its name still open, so
 // a section quoting another of its name closes at its own, and one opened inside it and left open is a tag line in it.
-function sections(read: (Block | TagLine)[], writer: Writer): Block[] {
+// A tagged section is a container of its own to the headings in it: a heading's section ends where the tagged one does.
+function sections(read: (Placed<Block> | Placed<TagLine>)[], writer: Writer): Block[] {
   // The sections still open, innermost last, under the container itself, each with the blocks it holds so far.
-  type Open = { tag: TagLine | undefined; body: Block[] };
+  type Open = { tag: Placed<TagLine> | undefined; body: Placed<Block>[] };
   const open: Open[] = [{ tag: undefined, body: [] }];
-  const whole = ({ tag, body }: Open): Block[] => (tag === undefined ? body : [{ kind: "tag", leaf: tag.leaf }, ...body]);
+  const alone = (tag: Placed<TagLine>): Placed<Block> => ({ ...tag, block: { kind: "tag", leaf: tag.block.leaf } });
+  const whole = ({ tag, body }: Open): Placed<Block>[] => (tag === undefined ? body : [alone(tag), ...body]);
   for (const item of read) {
-    const at = item.kind === "tagLine" && item.closing ? open.findLastIndex(({ tag }) => tag?.name === item.name) : -1;
-    if (item.kind === "tagLine" && !item.closing) open.push({ tag: item, body: [] });
-    else if (item.kind === "tagLine" && at === -1) open.at(-1)!.body.push({ kind: "tag", leaf: item.leaf });
-    else if (item.kind === "tagLine") {
+    const at = isTagLine(item) && item.block.closing ? open.findLastIndex(({ tag }) => tag?.block.name === item.block.name) : -1;
+    if (!isTagLine(item)) open.at(-1)!.body.push(item);
+    else if (!item.block.closing) open.push({ tag: item, body: [] });
+    else if (at === -1) open.at(-1)!.body.push(alone(item));
+    else {
       const inner = open.splice(at + 1).flatMap(whole);
       const { tag, body } = open.pop()!;
-      const section: Block = { kind: "section", open: tag!.leaf, body: [...body, ...inner], close: item.leaf };
-      const lines = item.line + 1 - tag!.line;
-      const characters = { start: tag!.leaf.start, end: item.leaf.start + item.leaf.text.length };
-      open.at(-1)!.body.push(lines > LONG ? region(section, { line: tag!.line, label: `<${item.name}>`, lines }, characters, writer) : section);
-    } else open.at(-1)!.body.push(item);
+      const section: Block = { kind: "section", open: tag!.block.leaf, body: outline([...body, ...inner], writer), close: item.block.leaf };
+      const lines = { start: tag!.lines.start, end: item.lines.end };
+      const characters = { start: tag!.characters.start, end: item.characters.end };
+      const fold = { line: lines.start, label: `<${item.block.name}>`, lines: lines.end - lines.start };
+      open.at(-1)!.body.push({ block: fold.lines > LONG ? region(section, fold, characters, writer) : section, characters, lines });
+    }
   }
-  return open.flatMap(whole);
+  return outline(open.flatMap(whole), writer);
+}
+
+// A container's blocks with its headings' sections found: a heading holds the blocks after it, up to the next heading
+// of its depth or a shallower one, the sections of deeper headings among them. What stands before the first heading is
+// in no section.
+function outline(placed: Placed<Block>[], writer: Writer): Block[] {
+  const top: Placed<Block>[] = [];
+  // The sections still open, innermost last, each with the blocks it holds so far.
+  const open: { heading: Placed<Heading>; body: Placed<Block>[] }[] = [];
+  const into = () => open.at(-1)?.body ?? top;
+  // The innermost section ends: whole, it is a block of the one around it.
+  const end = () => {
+    const { heading, body } = open.pop()!;
+    into().push(headed(heading, body, writer));
+  };
+  for (const item of placed) {
+    if (!isHeading(item)) {
+      into().push(item);
+      continue;
+    }
+    while (open.length > 0 && open.at(-1)!.heading.block.depth >= item.block.depth) end();
+    open.push({ heading: item, body: [] });
+  }
+  while (open.length > 0) end();
+  return top.map(({ block }) => block);
+}
+
+// A heading and what stands under it, `body`, as its section, folded under its heading's line; with nothing under it,
+// the heading alone, which has nothing to fold.
+function headed(heading: Placed<Heading>, body: Placed<Block>[], writer: Writer): Placed<Block> {
+  const last = body.at(-1);
+  if (last === undefined) return heading;
+  const line = heading.lines.start;
+  writer.fold(line, { start: heading.characters.end, end: last.characters.end });
+  return {
+    block: { kind: "headed", heading: heading.block, body: body.map(({ block }) => block), line, lines: last.lines.end - heading.lines.end },
+    characters: { start: heading.characters.start, end: last.characters.end },
+    lines: { start: line, end: last.lines.end },
+  };
 }
 
 // `body`, its characters written, folded as the region `fold`. Its blocks end passages on each side of it.
@@ -281,7 +342,7 @@ function block(token: Token, reader: Reader, writer: Writer): Block | TagLine {
       return table(reader, writer);
     case "tag": {
       const { name, closing } = token.meta as { name: string; closing: boolean };
-      return { kind: "tagLine", leaf: writer.leaf(token.content), name, closing, line: token.map![0] };
+      return { kind: "tagLine", leaf: writer.leaf(token.content), name, closing };
     }
     default:
       throw new Error(`markdown-it gave a block this rendering does not read: ${token.type}`);

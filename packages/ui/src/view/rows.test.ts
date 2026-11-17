@@ -7,7 +7,7 @@ import type { Part } from "../format/parts.ts";
 import type { Branches, Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isGone, lastOf, markOf, modelName, pastOf, preview, seconds, sizeOf, startsExpanded, summaryOf, type BlockRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isGone, lastOf, markOf, modelName, pastOf, preview, seconds, sectionsStartOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -207,6 +207,12 @@ describe("layout", () => {
     expect(listed(after)).toEqual(listed(before));
     expect(after.every.rows.map(({ key }) => key)).toContain("thread:t2/system/system.1");
     expect(after.keys).not.toBe(before.keys);
+  });
+
+  it("starts the sections under a block's headings open in what the user or the assistant said or thought, and closed in what was written for the model", () => {
+    const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
+    expect((["user", "assistant", "thinking", "system", "tools"] as const).map((category) => sectionsStartOpen(block(category, false)))).toEqual([true, true, true, false, false]);
+    expect((["user", "assistant"] as const).map((category) => sectionsStartOpen(block(category, true)))).toEqual([false, false]);
   });
 
   it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's revealed block collapsed", () => {

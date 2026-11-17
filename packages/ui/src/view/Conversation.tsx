@@ -11,13 +11,13 @@ import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, useToggle, useWhere } from "./painting.ts";
+import { Hold, Painted, Sections, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
 import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
@@ -495,9 +495,11 @@ function BlockView({ row }: { row: BlockRow }) {
       {rewrites.open && <Rewrites row={row} />}
       {open && (
         <div className="max-w-[110ch] pb-1 pl-6">
-          {block.parts.map((part, index) => (
-            <PartView key={index} part={part} blockKey={row.key} index={index} />
-          ))}
+          <Sections.Provider value={sectionsStartOpen(block)}>
+            {block.parts.map((part, index) => (
+              <PartView key={index} part={part} blockKey={row.key} index={index} />
+            ))}
+          </Sections.Provider>
         </div>
       )}
     </div>

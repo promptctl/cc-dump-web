@@ -21,6 +21,8 @@ function blockLeaves(block: Block): Leaf[] {
     case "paragraph":
     case "heading":
       return block.children.flatMap(inlineLeaves);
+    case "headed":
+      return [...block.heading.children.flatMap(inlineLeaves), ...block.body.flatMap(blockLeaves)];
     case "code":
     case "tag":
       return [block.leaf];
@@ -74,6 +76,7 @@ const corpus = [
   "<system-reminder>\n**reminded**\n" + lines(LONG) + "</system-reminder>\nafter *that*\n",
   "1. Run:\n   ```sh\n" + lines(LONG, "   ") + "   ```\n2. Then.\n",
   "- a\n  <example>\n  inside\n  </example>\n- b\n",
+  "intro\n\n# One\n\nalpha\n\n## Deep\n\nbeta\n\n### Deeper\n\n## Next\n\ngamma\n\n# Two\n",
 ];
 
 describe("render", () => {
@@ -153,6 +156,44 @@ describe("render", () => {
     // The opening and closing lines are the region's too; what follows is in none.
     for (const inside of ["<system-reminder>", "reminded", "</system-reminder>"]) expect(regionsAround(rendering, rendering.text.indexOf(inside))).toEqual([0]);
     expect(regionsAround(rendering, rendering.text.indexOf("that"))).toEqual([]);
+  });
+
+  it("holds under a heading what stands up to the next heading of its depth or a shallower one, the sections of deeper headings among it", () => {
+    expect(blocksOf(corpus[0]!)).toMatchObject([{ kind: "headed", line: 0, lines: 2, heading: { depth: 1 }, body: [{ kind: "paragraph" }] }]);
+    // What stands before the first heading is in no section, and a heading nothing stands under is a heading alone.
+    expect(blocksOf(corpus[12]!)).toEqual([
+      { kind: "paragraph", children: [expect.anything()] },
+      {
+        kind: "headed",
+        line: 2,
+        lines: 12,
+        heading: expect.objectContaining({ depth: 1 }),
+        body: [
+          expect.objectContaining({ kind: "paragraph" }),
+          { kind: "headed", line: 6, lines: 4, heading: expect.objectContaining({ depth: 2 }), body: [expect.objectContaining({ kind: "paragraph" }), expect.objectContaining({ kind: "heading", depth: 3 })] },
+          { kind: "headed", line: 12, lines: 2, heading: expect.objectContaining({ depth: 2 }), body: [expect.objectContaining({ kind: "paragraph" })] },
+        ],
+      },
+      expect.objectContaining({ kind: "heading", depth: 1 }),
+    ]);
+  });
+
+  it("folds what stands under a heading, not the heading: a place under it is in its section and those around it, outermost first", () => {
+    const rendering = render(corpus[12]!, "markdown");
+    const around = (word: string) => regionsAround(rendering, rendering.text.indexOf(word));
+    expect(["intro", "One", "alpha", "Deep", "beta", "Deeper", "Next", "gamma", "Two"].map(around)).toEqual([[], [], [2], [2], [2, 6], [2, 6], [2], [2, 12], []]);
+    // A long code block alone under a heading is the section's characters and its own: the section is around it.
+    const code = render("# Code\n```py\n" + lines(LONG) + "```\n", "markdown");
+    expect(regionsAround(code, code.text.indexOf("line 3"))).toEqual([0, 1]);
+  });
+
+  it("ends a heading's section where the container holding it does, a tagged section or a quote, each whole under the heading before it", () => {
+    expect(blocksOf("# Rules\n\n<notes>\n## Inside\n\nx\n</notes>\n\nafter\n")).toMatchObject([
+      { kind: "headed", line: 0, body: [{ kind: "section", body: [{ kind: "headed", line: 3, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
+    ]);
+    expect(blocksOf("# Rules\n\n> ## Quoted\n> x\n\nafter\n")).toMatchObject([
+      { kind: "headed", line: 0, body: [{ kind: "quote", children: [{ kind: "headed", line: 2, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
+    ]);
   });
 
   it("closes a section at the last of its name still open, leaves a tag nothing closes as a tag line, and reads a tag in a code block as code", () => {
