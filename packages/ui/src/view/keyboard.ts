@@ -69,7 +69,7 @@ export const appKeys = {
 export const heard = {
   conversation: { where: "The conversation", keys: [...Object.values<Key<ConversationActs>>(conversationKeys), ...Object.values(levelKeys)] },
   field: { where: "The search field", keys: Object.values<Key<FieldActs>>(fieldKeys) },
-  app: { where: "Anywhere", keys: Object.values<Key<AppActs>>(appKeys) },
+  app: { where: "The app", keys: Object.values<Key<AppActs>>(appKeys) },
 } as const;
 
 // What a press reads of a keydown event.

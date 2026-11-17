@@ -13,7 +13,7 @@ import { injectedFrom } from "./injected.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, lineOpens, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -234,18 +234,20 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
     if (key === undefined) return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
-    scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] button`)!.focus({ preventScroll: true });
+    scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`)!.focus({ preventScroll: true });
   };
   const field = useRef<HTMLInputElement>(null);
-  // The conversation's keys (keyboard.ts). The keys that scroll move the scroller as a wheel does, so the step that reads a
-  // reader's scroll (scroll.ts) says what follows: at the bottom following resumes, and anywhere else it pauses.
+  // The conversation's keys (keyboard.ts). A line's scroll moves the scroller as a wheel does, so the step that reads a
+  // reader's scroll (scroll.ts) says what follows: at the bottom following resumes, and anywhere else it pauses. An end
+  // is a place the reader chose, as a press on the minimap there is, so the bottom resumes following from the bottom too,
+  // where a scroll would move nothing and be no event.
   useKeys(heard.conversation.keys, {
     search: () => {
       field.current!.focus();
       field.current!.select();
     },
     match: stepTo,
-    edge: (edge) => scroller.current!.scrollTo({ top: edge === "top" ? 0 : scroller.current!.scrollHeight }),
+    edge: (edge) => placeAt(edge === "top" ? 0 : largest(scroller.current!)),
     // A line of the rows' text: the rows are the scroller's first child.
     lines: (by) => scroller.current!.scrollBy({ top: by * parseFloat(getComputedStyle(scroller.current!.firstElementChild!).lineHeight) }),
     inTime: goBy,
@@ -496,15 +498,14 @@ function BlockView({ row }: { row: BlockRow }) {
   const { open: chosen, toggle } = useToggle(row.key, starts);
   const rewrites = useToggle(pastKey(row.key), false);
   const block = blockOf(row);
-  // A block with no content has nothing to open: a branch's line for what it does not send (view/history.ts). Its line
-  // is no control, and it shows open under no choice or level.
-  const opens = block.parts.length > 0;
+  // A line with nothing to open is no control, and it shows open under no choice or level.
+  const opens = lineOpens(block);
   const open = opens && chosen;
   const size = sizeOf(block);
   return (
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
       <div className="flex items-baseline gap-3 font-sans hover:bg-hover">
-        <button type="button" className="flex min-w-0 flex-1 items-baseline gap-3 text-left" disabled={!opens} onClick={toggle}>
+        <button type="button" data-line className="flex min-w-0 flex-1 items-baseline gap-3 text-left" disabled={!opens} onClick={toggle}>
           <span className="w-3 text-foreground-muted">{!opens ? "" : open ? "▾" : "▸"}</span>
           {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
           <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>

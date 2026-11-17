@@ -76,6 +76,10 @@ export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at ===
 // Whether a step took a block's item away by the step shown: its row shows the block it was.
 export const isGone = ({ versions, at }: BlockRow): boolean => versions[at]!.block === undefined;
 
+// [LAW:one-source-of-truth] Whether a block's line opens: one with no content, a branch's line for what it does not
+// send (view/history.ts), has nothing to open, so it is no control and no stop of a move among the blocks.
+export const lineOpens = (block: Block): boolean => block.parts.length > 0;
+
 // A row's mark on the minimap: what the step shown did to it, or, where it left it as it was, the last thing a step did
 // to it since it arrived, so a block rewritten or taken away is marked at every step after.
 export function markOf(row: Row): Change {
