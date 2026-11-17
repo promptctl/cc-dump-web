@@ -3,7 +3,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock } from "../format/format.ts";
 import type { Branches, Visibility } from "../settings.ts";
-import type { Branch, History, Item, Segment, Version } from "./history.ts";
+import { sameContent, type Branch, type History, type Item, type Segment, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -18,30 +18,38 @@ export const changeColors: Record<Change, `--${string}` | undefined> = { added: 
 
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title
 // `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment and however
-// many rows arrive around it. `change`: what the step shown did to the row. A block's row shows one block: its item's
-// version at the step shown, `versions[at]`, or, once a step took the item away, the block it was, which stays listed
-// at its place. `versions` is the item's own, the same array while the item gets no version, so a row made again as it
-// was has the fields it had. A fold stands for a run of a branch's rows, the `rows` it holds, keyed by the first: that
-// row is listed exactly when the fold is not, so a place held at it holds whether the fold is closed, opened, or gone.
-// `branch`: the branch a row is part of.
+// many rows arrive around it. `change`: what the step shown did to the row, which brings an exchange's line and a
+// group's title or leaves them, and rewrites or takes away a block alone. A block's row shows one version of its item,
+// the one at the step shown, `versions[at]`: its block, or, once a step took the item away, the block it was, which
+// stays listed at its place (blockOf). `versions` is the item's own, the same array while the item gets no version, so
+// a row made again as it was has the fields it had. A fold stands for a run of a branch's rows, the `rows` it holds,
+// keyed by the first: that row is listed exactly when the fold is not, so a place held at it holds whether the fold is
+// closed, opened, or gone. `branch`: the branch a row is part of.
 export type Row =
-  | { kind: "exchange"; key: string; exchange: FormattedExchange; change: Change; branch: Branch | undefined }
-  | { kind: "group"; key: string; title: Group["title"]; change: Change; branch: Branch | undefined }
+  | { kind: "exchange"; key: string; exchange: FormattedExchange; change: "added" | "same"; branch: Branch | undefined }
+  | { kind: "group"; key: string; title: Group["title"]; change: "added" | "same"; branch: Branch | undefined }
   | BlockRow
   | { kind: "fold"; key: string; rows: Row[]; branch: Branch };
-export type BlockRow = { kind: "block"; key: string; block: KeyedBlock; change: Change; versions: readonly Version[]; at: number; branch: Branch | undefined };
+export type BlockRow = { kind: "block"; key: string; change: Change; versions: readonly Version[]; at: number; branch: Branch | undefined };
+
+// The block a version shows: its own, or, of one a step took away, the block it was.
+const blockIn = (version: Version): KeyedBlock => (version.block === undefined ? version.was : version.block);
+
+// [LAW:one-source-of-truth] The block a row shows: its version's, read from it and kept nowhere else.
+export const blockOf = ({ versions, at }: BlockRow): KeyedBlock => blockIn(versions[at]!);
 
 // [LAW:types-are-the-program] What a step did to an item: brought it, took it away, or rewrote it, the block before
 // into the block after.
 export type Event = { step: number } & ({ change: "added" | "removed" } | { change: "changed"; before: KeyedBlock; after: KeyedBlock });
 
-// [LAW:one-source-of-truth] What the version at `index` did to its item: took it away; brought it, the first or one
-// after a step took it away; or gave it other content.
+// [LAW:one-source-of-truth] What the version at `index` did to its item: took it away; brought it, the first, or one
+// sent again as it was after a step took it away; or gave it other content than it last had, sent again or not.
 function eventAt(versions: readonly Version[], index: number): Event {
   const { step, block } = versions[index]!;
-  const before = versions[index - 1]?.block;
+  const last = versions[index - 1];
   if (block === undefined) return { step, change: "removed" };
-  return before === undefined ? { step, change: "added" } : { step, change: "changed", before, after: block };
+  if (last === undefined || (last.block === undefined && sameContent(last.was, block))) return { step, change: "added" };
+  return { step, change: "changed", before: blockIn(last), after: block };
 }
 
 // A block's past at the step shown: what each step did to its item since it arrived, in order. None for a block as it
@@ -51,6 +59,9 @@ export function pastOf({ versions, at }: BlockRow): Event[] {
   return events[0]!.change === "added" ? events.slice(1) : events;
 }
 
+// The last of a block's past, read without listing it: what the version shown did, but for a block as it arrived.
+export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at === 0 && versions[0]!.block !== undefined ? undefined : eventAt(versions, at));
+
 // Whether a step took a block's item away by the step shown: its row shows the block it was.
 export const isGone = ({ versions, at }: BlockRow): boolean => versions[at]!.block === undefined;
 
@@ -58,13 +69,12 @@ export const isGone = ({ versions, at }: BlockRow): boolean => versions[at]!.blo
 // to it since it arrived, so a block rewritten or taken away is marked at every step after.
 export function markOf(row: Row): Change {
   if (row.kind === "fold") return "same";
-  return row.kind !== "block" || row.change !== "same" ? row.change : (pastOf(row).at(-1)?.change ?? "same");
+  return row.kind !== "block" || row.change !== "same" ? row.change : (lastOf(row)?.change ?? "same");
 }
 
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
-// category, the group titles over none left, the block revealed always among them;
-// and `every` row, listed or not, which the search reads, since a hidden category's blocks are searched
-// (docs/design/01-mvp.md, F6).
+// category, the group titles over none left, the block revealed always among them; and `every` row, listed or not,
+// which the search reads, since a hidden category's blocks are searched (docs/design/01-mvp.md, F6).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys } };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
@@ -105,12 +115,12 @@ export function createLayout(
     const collapsed = new Set<string>();
     const placed = history.segments.slice(0, step).map((segment, index) => {
       const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
-      const shown = place(() => segmentRows(segment, index + 1, step), () => removed(segmentRows(segment, index + 1, step - 1)), past);
-      if (shown.collapses) collapsed.add(segment.branch!.key);
-      return shown;
+      const { listed, collapses } = place(past);
+      if (collapses) collapsed.add(segment.branch!.key);
+      return listed ? segmentRows(segment, index + 1, step) : [];
     });
-    const every = placed.flatMap(({ rows }) => rows);
-    const isShown = every.map((row) => row.kind !== "block" || levels[visibility[row.block.category]].listed || row.key === revealed);
+    const every = placed.flat();
+    const isShown = every.map((row) => row.kind !== "block" || levels[visibility[blockOf(row).category]].listed || row.key === revealed);
     // A group's title is listed over a block of it listed: read from the end, whether one follows before the next title.
     let blockListed = false;
     for (let index = every.length - 1; index >= 0; index--) {
@@ -131,7 +141,7 @@ export function createLayout(
     const listedMeasured = folding.rows.map((row) => measuredBy(row, visibility, opened));
     const everyKeys = every.map(({ key }) => key);
     const sameKeys = same(everyKeys, last.every.rows.map(({ key }) => key));
-    const sameEvery = sameKeys && every.every((row, index) => blockOf(row) === blockOf(last.every.rows[index]!));
+    const sameEvery = sameKeys && every.every((row, index) => versionOf(row) === versionOf(last.every.rows[index]!));
     last = {
       rows: folding.rows,
       // What a row shows changing, as a streaming block does, moves no row, so the keys are the ones before.
@@ -139,22 +149,21 @@ export function createLayout(
         sameKeys && same(listedKeys, last.rows.map(({ key }) => key)) && listedMeasured.every((key, index) => key === last.keys.measuredBy(index))
           ? last.keys
           : listedKeysOf(listedKeys, listedMeasured, places),
-      // [LAW:one-source-of-truth] The search reads every row's block alone, so the same blocks are the same `every`, and
-      // what memoizes on it is not run again by a step of the search or of time that changed none.
+      // [LAW:one-source-of-truth] The search reads of every row the version it shows alone, its block and whether a
+      // step took it away, so the same versions are the same `every`, and what memoizes on it is not run again by a
+      // step of the search or of time that changed none.
       every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
     };
     return last;
   };
 }
 
-// [LAW:dataflow-not-control-flow] What each placement lists of a branch's segment `past` steps after the branch's last
-// request, 0 while it is not behind the step shown, from its rows at the step shown and its rows taken away; and whether
-// they fold into one.
-type Placement = (rows: () => Shown[], removed: () => Shown[], past: number) => { rows: Shown[]; collapses: boolean };
-const placements: Record<Branches, Placement> = {
-  stay: (rows) => ({ rows: rows(), collapses: false }),
-  fold: (rows, _removed, past) => ({ rows: rows(), collapses: past > 0 }),
-  step: (rows, removed, past) => ({ rows: past === 0 ? rows() : past === 1 ? removed() : [], collapses: false }),
+// [LAW:dataflow-not-control-flow] What each placement does with a branch's segment `past` steps after the branch's last
+// request, 0 while it is not behind the step shown: whether its rows are listed, and whether they fold into one.
+const placements: Record<Branches, (past: number) => { listed: boolean; collapses: boolean }> = {
+  stay: () => ({ listed: true, collapses: false }),
+  fold: (past) => ({ listed: true, collapses: past > 0 }),
+  step: (past) => ({ listed: past === 0, collapses: false }),
 };
 
 // A row a segment lists while it is shown: any but a fold.
@@ -177,15 +186,11 @@ function segmentRows({ formatted, groups, branch }: Segment, own: number, step: 
 // it if that version is the step's.
 function itemRow({ key, versions }: Item, step: number, branch: Branch | undefined): BlockRow {
   const at = versions.findLastIndex((version) => version.step <= step);
-  const version = versions[at]!;
-  const block = version.block === undefined ? version.was : version.block;
-  return { kind: "block", key, block, change: version.step === step ? eventAt(versions, at).change : "same", versions, at, branch };
+  return { kind: "block", key, change: versions[at]!.step === step ? eventAt(versions, at).change : "same", versions, at, branch };
 }
 
-// The rows the step shown took away: what the step before showed.
-const removed = (rows: Shown[]): Shown[] => rows.map((row) => ({ ...row, change: "removed" }));
-
-const blockOf = (row: Row) => (row.kind === "block" ? row.block : undefined);
+// The version a row shows, which only a block's row does.
+const versionOf = (row: Row) => (row.kind === "block" ? row.versions[row.at] : undefined);
 
 // The listed rows with each run of rows of a branch in `collapsed` folded, unless opened in `opened` or the block
 // revealed is in it. `placeOf`: each listed row's place among the rows.
@@ -367,7 +372,7 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
 // what was said (docs/design/01-mvp.md, F4), and so do a block a step took away, which is no longer part of the
 // conversation, and a block of a hidden category the search revealed.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
-  const { category, injected } = row.block;
+  const { category, injected } = blockOf(row);
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;
 }
 
@@ -393,6 +398,6 @@ export function estimateHeight(row: Row, opened: Opened, visibility: Record<Cate
     case "fold":
       return line;
     case "block":
-      return showsOpen(row, visibility, opened) ? line + Math.ceil(sizeOf(row.block) / 100) * 16 : line;
+      return showsOpen(row, visibility, opened) ? line + Math.ceil(sizeOf(blockOf(row)) / 100) * 16 : line;
   }
 }

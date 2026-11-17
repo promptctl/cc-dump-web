@@ -7,7 +7,7 @@ import type { Part } from "../format/parts.ts";
 import type { Branches, Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isGone, markOf, modelName, pastOf, preview, seconds, sizeOf, startsExpanded, type BlockRow, type Opened, type Row } from "./rows.ts";
+import { blockOf, clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isGone, lastOf, markOf, modelName, pastOf, preview, seconds, sizeOf, startsExpanded, type BlockRow, type Opened, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -64,15 +64,16 @@ describe("layout", () => {
     const at = layouts([...turns(1), ...turn("t2", 2), ...turn("t3", 3)]);
     const system = (step: number) => blockAt(at(step), "thread:t1/request/system.0");
     const rewrite = { step: 2, change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, after: { parts: [{ kind: "text", text: "Be briefer." }] } };
-    expect(system(2)).toMatchObject({ change: "changed", block: rewrite.after });
+    expect([system(2).change, blockOf(system(2))]).toMatchObject(["changed", rewrite.after]);
     expect(pastOf(system(2))).toMatchObject([rewrite]);
     // The step after left it as it was, and its past and its mark still say the rewrite.
-    expect(system(3)).toMatchObject({ change: "same", block: rewrite.after });
+    expect([system(3).change, blockOf(system(3))]).toMatchObject(["same", rewrite.after]);
     expect(pastOf(system(3))).toEqual(pastOf(system(2)));
     expect([system(2), system(3)].map(markOf)).toEqual(["changed", "changed"]);
     // At the step it arrived, the item is what it was then, with no past.
-    expect(system(1)).toMatchObject({ change: "added", block: rewrite.before });
+    expect([system(1).change, blockOf(system(1))]).toMatchObject(["added", rewrite.before]);
     expect(pastOf(system(1))).toEqual([]);
+    expect([1, 2, 3].map((step) => lastOf(system(step)))).toEqual([undefined, pastOf(system(2))[0], pastOf(system(2))[0]]);
   });
 
   it("marks exactly the tool a request changed, dropped or added, the rest unchanged, and a prompt block dropped as removed the step it goes", () => {
@@ -97,7 +98,7 @@ describe("layout", () => {
     ]);
     const edit = (step: number) => blockAt(at(step), "thread:t1/request/tools.Edit.0");
     // Its row shows the block it was.
-    expect(edit(2)).toMatchObject({ block: { name: "Edit" } });
+    expect(blockOf(edit(2))).toMatchObject({ name: "Edit" });
     expect(isGone(edit(2))).toBe(true);
     // Taken away, it stays listed where it stood, the step after leaving it and every other row as they were; its past
     // and its mark still say it went.
@@ -113,6 +114,23 @@ describe("layout", () => {
     // Offered again, it is there again, added, with both steps in its past.
     expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual(["thread:t1/request/tools.Edit.0 added"]);
     expect([isGone(edit(4)), pastOf(edit(4))]).toEqual([false, [{ step: 2, change: "removed" }, { step: 4, change: "added" }]]);
+    expect([2, 3, 4].map((step) => lastOf(edit(step)))).toEqual([2, 3, 4].map((step) => pastOf(edit(step)).at(-1)));
+  });
+
+  it("marks a block a step took away and a later one sends with other content as rewritten, from the block it was", () => {
+    const tool = (name: string, description: string) => ({ name, description, input_schema: {} });
+    const turn = (trace: string, count: number, tools: unknown[]) => request(trace, { model: "m", tools, messages: say(count) });
+    const at = layouts([
+      ...turn("t1", 1, [tool("Read", "Reads"), tool("Edit", "Edits")]),
+      ...turn("t2", 2, [tool("Read", "Reads")]),
+      ...turn("t3", 3, [tool("Read", "Reads"), tool("Edit", "Edits a file")]),
+    ]);
+    const edit = (step: number) => blockAt(at(step), "thread:t1/request/tools.Edit.0");
+    expect([edit(1), edit(2), edit(3)].map(({ change }) => change)).toEqual(["added", "removed", "changed"]);
+    // The step that took it away showed the block it was, which is what the rewrite is read against.
+    expect(blockOf(edit(2))).toBe(blockOf(edit(1)));
+    expect(blockOf(edit(3))).not.toEqual(blockOf(edit(1)));
+    expect(pastOf(edit(3))).toEqual([{ step: 2, change: "removed" }, { step: 3, change: "changed", before: blockOf(edit(1)), after: blockOf(edit(3)) }]);
   });
 
   it("marks a block a request stops sending inside a message it resends removed, the step it goes", () => {
@@ -120,7 +138,8 @@ describe("layout", () => {
       ...request("t1", { model: "m", messages: [...say(1), { role: "user", content: [text("Say 1."), text("Mind it.")] }] }),
       ...request("t2", { model: "m", messages: [...say(3)] }),
     ]);
-    expect(at(2).rows.find(({ key }) => key === "thread:t1/message.1/content.1")).toMatchObject({ change: "removed", block: { parts: [{ text: "Mind it." }] } });
+    const minded = blockAt(at(2), "thread:t1/message.1/content.1");
+    expect([minded.change, blockOf(minded)]).toMatchObject(["removed", { parts: [{ text: "Mind it." }] }]);
     expect(listed(at(2))).toContain("thread:t1/message.1/content.0 same");
     expect(listed(at(2))).toContain("thread:t2/message.2/content.0 added");
   });
@@ -160,6 +179,18 @@ describe("layout", () => {
     expect(again.keys).toBe(first.keys);
   });
 
+  it("keeps every row as one object at a step while a later step arrives, though it takes away a block the step shows", () => {
+    const ask = (trace: string, count: number, tools: string[]) => request(trace, { model: "m", tools: tools.map((name) => ({ name })), messages: say(count) });
+    const events = [...ask("t1", 1, ["Read", "Edit"]), ...ask("t2", 2, ["Read"])];
+    const [format, fold, layOut] = [createFormatter(), createHistory(), createLayout(shown, "stay")];
+    const after = (count: number, step: number) => layOut(fold(format(exchanges(events.slice(0, count)))), step, undefined, {});
+    const first = after(3, 1);
+    expect(after(events.length, 1).every).toBe(first.every);
+    // At the step that took it away, the row shows the same block, as one taken away, and every row is made again.
+    const [was, gone] = [first, after(events.length, 2)].map((layout) => blockAt(layout, "thread:t1/request/tools.Edit.0"));
+    expect([blockOf(gone!) === blockOf(was!), isGone(was!), isGone(gone!)]).toEqual([true, false, true]);
+  });
+
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
     const t1 = turns(1);
     const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
@@ -179,7 +210,7 @@ describe("layout", () => {
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     const row = (side: Block, gone = false): BlockRow => {
       const shown = { ...side, key: "c" };
-      return { kind: "block", key: "k", block: shown, change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
+      return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
     };
     const levels = { ...shown, user: "expanded", tools: "compact" } as const;
     expect([said, reminder, tools].map((side) => startsExpanded(row(side), levels))).toEqual([true, false, false]);
@@ -311,23 +342,24 @@ describe("branches", () => {
     const aside = [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }];
     const events = [...ask("t1", say(1), ["Read", "Edit"]), ...ask("t2", say(2), ["Read", "Edit"]), ...ask("side", aside, ["Read"]), ...ask("t3", say(3), ["Read", "Edit"])];
     const at = layouts(events, shown, "stay");
-    expect(at(3).rows.find(({ key }) => key === "thread:side/request/tools.Edit.0")).toMatchObject({ change: "removed", block: { name: "Edit" }, branch: { key: "branch:side" } });
+    const edit = blockAt(at(3), "thread:side/request/tools.Edit.0");
+    expect([edit.change, blockOf(edit), edit.branch]).toMatchObject(["removed", { name: "Edit" }, { key: "branch:side" }]);
     // The line it left sends it still, and gives it no version.
     expect(listed(at(3))).toContain("thread:t1/request/tools.Edit.0 same");
     expect(listed(at(4))).toContain("thread:t1/request/tools.Edit.0 same");
     // It stays listed where it stood while the branch does, and goes with the branch.
     expect(listed(at(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual(["thread:side/request/tools.Edit.0 same"]);
-    expect(listed(layouts(events, shown, "step")(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual(["thread:side/request/tools.Edit.0 removed"]);
+    expect(listed(layouts(events, shown, "step")(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual([]);
   });
 
-  it("lists a branch only while its requests are: the step after its last shows it removed, and later steps not at all", () => {
+  it("lists a branch only while its requests are: from the step after its last, none of its rows, which the search no longer reads", () => {
     const at = layouts(branched, shown, "step");
+    const ofBranch = (step: number) => at(step).every.rows.filter((row) => row.kind !== "fold" && row.branch !== undefined).map(({ key }) => key);
+    expect(ofBranch(3)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "thread:side/message.1/content.1"]);
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
-    const removed = at(4).rows.filter((row) => row.kind !== "fold" && row.change === "removed");
-    expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "thread:side/message.1/content.1"]);
-    expect(removed.at(-1)).toMatchObject({ block: { key: "content.1" } });
-    // What a row shows is searched, taken away or not.
-    expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(1);
-    expect(at(5).every.rows.map(({ key }) => key)).not.toContain("side");
+    expect([createSearch()(at(3).every.rows, /Aside/g).count, createSearch()(at(4).every.rows, /Aside/g).count]).toEqual([1, 0]);
+    expect([ofBranch(4), ofBranch(5)]).toEqual([[], []]);
+    // The line it left is listed as it was.
+    expect(listed(at(4)).filter((row) => row.endsWith("removed"))).toEqual([]);
   });
 });

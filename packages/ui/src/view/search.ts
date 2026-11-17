@@ -6,7 +6,7 @@ import { rowIndex, type Position } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import type { BlockRow, Keys, Row } from "./rows.ts";
+import { blockOf, type BlockRow, type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
@@ -46,7 +46,8 @@ export type Shown = { at: string } & ({ in: "line" | "content"; searched: Search
 // The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
 // away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
 // itself or a line describing it, and what a step rewrote in a block is the view's account of it, so none is searched.
-export function shownTexts({ block }: BlockRow): Shown[] {
+export function shownTexts(row: BlockRow): Shown[] {
+  const block = blockOf(row);
   return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
 }
 
@@ -127,8 +128,8 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
     // with no query that would render every text of the recording as it opens and every event of a streamed reply.
     const countOf = (row: BlockRow) => {
       if (pattern === nothing) return 0;
-      const count = counts.get(row.block) ?? shownTexts(row).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
-      counts.set(row.block, count);
+      const count = counts.get(blockOf(row)) ?? shownTexts(row).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
+      counts.set(blockOf(row), count);
       return count;
     };
     const blocks: FoundBlock[] = [];

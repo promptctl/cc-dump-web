@@ -1,6 +1,6 @@
 import { categories, type Category } from "../format/blocks.ts";
 import { cssVariables, type Theme } from "../theme/theme.ts";
-import { changeColors, markOf, type Change, type Row } from "./rows.ts";
+import { blockOf, changeColors, markOf, type Change, type Row } from "./rows.ts";
 
 // The minimap (docs/design/02-design.md, "Layout"): the conversation's rows drawn top to bottom at the minimap's height,
 // the vertical navigator. Its geometry, pure: what each row is drawn as and where, and the way back from a point on it to
@@ -21,7 +21,7 @@ export type Extent = { start: number; size: number };
 export function paintOf(row: Row): Paint {
   switch (row.kind) {
     case "block":
-      return row.block.failed ? "failed" : row.block.category;
+      return blockOf(row).failed ? "failed" : blockOf(row).category;
     case "exchange":
       return "exchange";
     case "fold":

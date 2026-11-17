@@ -42,7 +42,7 @@ function BranchesChoice({ branches }: { branches: Branches }) {
 const branchTitles: Record<Branches, string> = {
   stay: "A branch stays where it arrived, as it was.",
   fold: "A branch folds into one row once its last request is behind the step shown.",
-  step: "A branch shows only while its requests are; the step after its last shows it removed.",
+  step: "A branch shows only while its requests are; from the step after its last it is not listed.",
 };
 
 // A click moves the category to the next level, of more detail, and from the most back to none.

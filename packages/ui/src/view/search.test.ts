@@ -7,7 +7,7 @@ import { parseSettings, type SearchOptions, type Visibility } from "../settings.
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
-import { createLayout, type BlockRow, type Layout } from "./rows.ts";
+import { blockOf, createLayout, type BlockRow, type Layout } from "./rows.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -42,7 +42,7 @@ const top = { at: "start" } as const;
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
-  return { kind: "block", key: "k", block: shown, change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
+  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
 };
 
 describe("search", () => {
@@ -194,10 +194,10 @@ describe("search", () => {
     const found = createSearch()(every.rows, pattern);
     const hiddenBlocksListed = (revealed?: string) =>
       layOut(hidden, revealed)
-        .rows.filter((row) => row.kind === "block" && hidden[row.block.category] === "hidden")
+        .rows.filter((row) => row.kind === "block" && hidden[blockOf(row).category] === "hidden")
         .map(({ key }) => key);
     expect(hiddenBlocksListed()).toEqual([]);
-    const categoryOf = (key: string) => (every.rows.find((row) => row.key === key) as { block: { category: Category } }).block.category;
+    const categoryOf = (key: string) => blockOf(every.rows.find((row) => row.key === key) as BlockRow).category;
     let current: Match | undefined;
     const inHidden: string[] = [];
     for (let index = 0; index < found.count; index++) {

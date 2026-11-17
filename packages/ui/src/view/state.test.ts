@@ -100,7 +100,7 @@ describe("the search", () => {
   // A step chooses only what it changes, so a block shows after a later change of level as the reader left it.
   it("opens a match's block and the regions holding it, and records no choice for a block already open", () => {
     const read: KeyedBlock = { category: "tools", name: "Read", parts: [], key: "c" };
-    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", block: read, change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined };
+    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined };
     const { visibility } = parseSettings(undefined);
     view.goTo({ match, block, regions: ["r"] }, "t1", visibility);
     expect(useView.getState().opened).toEqual({ [block.key]: true, r: true });
