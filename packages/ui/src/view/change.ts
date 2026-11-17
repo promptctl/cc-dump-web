@@ -1,29 +1,17 @@
 import type { Block } from "../format/blocks.ts";
-import { beyondContext, diffOf, joined, lineDiff, marks, wordDiff, type Edit, type Joined } from "../format/diff.ts";
+import { beyondContext, diffOf, lineDiff, marks, wordDiff, type Edit } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
-import type { Folded } from "./rendering.ts";
 
-// What changed in a block between two moments (docs/design/02-design.md, "Two axes"): the two versions as a side-by-side
-// diff, line against line, unchanged lines level, replaced lines marked word by word, a line only one side has against an
-// empty slot on the other, and runs of unchanged lines folded as the conversation's unchanged rows are.
+// What a step rewrote in a block (docs/design/02-design.md, "Two axes"): the block before against the block after as
+// a unified diff, the lines a change removed above the lines it added, a line replaced by another marked word by word,
+// and runs of unchanged lines folded.
 
-// A line on one side: where it is among its side's lines, and its text.
-export type SideLine = { line: number; text: string };
+// A line of the diff: what the change did to it, and its words, each marked for what the change did to it: a line
+// replaced by another word by word, any other the line whole.
+export type DiffLine = { kind: "line"; change: Edit["change"]; words: Edit[] };
 
-// [LAW:types-are-the-program] Two lines side by side: one kept on both sides, one replaced by another, or a line only
-// one side has, against an empty slot.
-export type Pair =
-  | { kind: "same" | "replaced"; left: SideLine; right: SideLine }
-  | { kind: "removed"; left: SideLine; right: undefined }
-  | { kind: "added"; left: undefined; right: SideLine };
-
-// A run of unchanged pairs folded into one line, named, as a text's region is, by the line it opens on in the version
-// shown, the right.
-export type LineFold = { kind: "fold"; line: number; pairs: Pair[] };
-
-// A block's diff: its pairs in order with the unchanged runs folded; and each side's text, each line a passage, the
-// right's, the later version's, as the search reads it, with the characters of each fold.
-export type BlockDiff = { entries: (Pair | LineFold)[]; left: Joined; right: Folded };
+// A run of unchanged lines folded into one, `at` its first line's place among the diff's lines, which names it.
+export type LineFold = { kind: "fold"; at: number; lines: DiffLine[] };
 
 // [LAW:one-source-of-truth] A block as one text, so every kind of block is compared one way: its parts in order, a blank
 // line between them; a text as written, JSON as formatted, a field a line of its own, `name: value`, indented under the
@@ -68,94 +56,56 @@ function fnv1a(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-// [LAW:one-source-of-truth] Each pair of versions is diffed once, when it is first shown or searched, so neither a frame
-// nor a search that reads it again pays for it again.
-const diffs = new WeakMap<Block, WeakMap<Block, BlockDiff>>();
-export function blockDiff(before: Block, after: Block): BlockDiff {
+// [LAW:one-source-of-truth] Each pair of blocks is diffed once, when it is first shown, so a frame that shows it again
+// does not pay for it again; and only then, so a block's past never opened is never diffed.
+const diffs = new WeakMap<Block, WeakMap<Block, (DiffLine | LineFold)[]>>();
+export function blockDiff(before: Block, after: Block): (DiffLine | LineFold)[] {
   const made = diffs.get(before)?.get(after);
   if (made !== undefined) return made;
-  const afters = diffs.get(before) ?? new WeakMap<Block, BlockDiff>();
+  const afters = diffs.get(before) ?? new WeakMap<Block, (DiffLine | LineFold)[]>();
   diffs.set(before, afters);
-  const diff = diffOfTexts(blockText(before), blockText(after));
+  const diff = folded(linesOf(lineDiff(blockText(before), blockText(after))));
   afters.set(after, diff);
   return diff;
 }
 
-function diffOfTexts(before: string, after: string): BlockDiff {
-  const pairs = pairsOf(lineDiff(before, after));
-  const entries = folded(pairs);
-  const side = (lines: (SideLine | undefined)[]) => joined(lines.flatMap((line) => (line === undefined ? [] : [line.text])));
-  const right = side(pairs.map(({ right }) => right));
-  const folds = entries.flatMap((entry) =>
-    entry.kind === "fold" ? [{ start: right.passages[entry.line]!.start, end: right.passages[entry.line + entry.pairs.length - 1]!.end, line: entry.line }] : [],
-  );
-  return { entries, left: side(pairs.map(({ left }) => left)), right: { ...right, folds } };
-}
-
-// The lines side by side: a kept line against itself; and in each run of changes, the lines removed against the lines
-// added, in order, and the lines one side has more of against empty slots.
-function pairsOf(edits: Edit[]): Pair[] {
-  const pairs: Pair[] = [];
-  let left = 0;
-  let right = 0;
+// The diff's lines with their words: a kept line as it is; and of each run of changes, the lines removed, then the
+// lines added, the first removed replaced by the first added and so on in order, the lines one side has more of whole.
+function linesOf(edits: Edit[]): DiffLine[] {
+  const lines: DiffLine[] = [];
   for (let at = 0; at < edits.length; ) {
-    const edit = edits[at]!;
-    if (edit.change === "same") {
-      pairs.push({ kind: "same", left: { line: left++, text: edit.text }, right: { line: right++, text: edit.text } });
+    let end = at;
+    while (end < edits.length && edits[end]!.change !== "same") end++;
+    if (end === at) {
+      lines.push({ kind: "line", change: "same", words: [edits[at]!] });
       at++;
       continue;
     }
-    const removed: string[] = [];
-    const added: string[] = [];
-    for (; at < edits.length && edits[at]!.change !== "same"; at++) (edits[at]!.change === "removed" ? removed : added).push(edits[at]!.text);
-    for (let index = 0; index < Math.max(removed.length, added.length); index++) {
-      const [was, is] = [removed[index], added[index]];
-      if (was !== undefined && is !== undefined) pairs.push({ kind: "replaced", left: { line: left++, text: was }, right: { line: right++, text: is } });
-      else if (was !== undefined) pairs.push({ kind: "removed", left: { line: left++, text: was }, right: undefined });
-      else pairs.push({ kind: "added", left: undefined, right: { line: right++, text: is! } });
-    }
+    const of = (change: Edit["change"]) => edits.slice(at, end).filter((edit) => edit.change === change);
+    const [removed, added] = [of("removed"), of("added")];
+    const replaced = removed.slice(0, added.length).map(({ text }, index) => wordDiff(text, added[index]!.text));
+    // A replaced line's words on each side: those the change kept, and those it removed from, or added to, that side.
+    const side = (lines: Edit[], other: Edit["change"]) =>
+      lines.map((edit, index): DiffLine => ({ kind: "line", change: edit.change, words: replaced[index]?.filter(({ change }) => change !== other) ?? [edit] }));
+    lines.push(...side(removed, "added"), ...side(added, "removed"));
+    at = end;
   }
-  return pairs;
+  return lines;
 }
 
-// Each side's words of a pair of lines, each marked for what the change did to it: a replaced line's word by word, any
-// other's the line whole. [LAW:one-source-of-truth] Made once per pair, and only for a pair that is shown, so a fold
-// never opened and a block only searched are never diffed word by word.
-const pairWords = new WeakMap<Pair, { left: Edit[]; right: Edit[] }>();
-export function wordsOf(pair: Pair): { left: Edit[]; right: Edit[] } {
-  const made = pairWords.get(pair);
-  if (made !== undefined) return made;
-  const whole = (change: Edit["change"], line: SideLine | undefined): Edit[] => (line === undefined ? [] : [{ change, text: line.text }]);
-  const words = (() => {
-    switch (pair.kind) {
-      case "same":
-        return { left: whole("same", pair.left), right: whole("same", pair.right) };
-      case "replaced": {
-        const words = wordDiff(pair.left.text, pair.right.text);
-        return { left: words.filter(({ change }) => change !== "added"), right: words.filter(({ change }) => change !== "removed") };
-      }
-      case "removed":
-      case "added":
-        return { left: whole("removed", pair.left), right: whole("added", pair.right) };
-    }
-  })();
-  pairWords.set(pair, words);
-  return words;
-}
-
-// The pairs with each run of unchanged ones folded, beyond `context` pairs beside a change, as the conversation folds
-// its unchanged rows; a run of one is listed, since its fold would take the line it saves.
-function folded(pairs: Pair[]): (Pair | LineFold)[] {
-  const far = beyondContext(pairs.map(({ kind }) => kind !== "same"));
-  const entries: (Pair | LineFold)[] = [];
-  for (let at = 0; at < pairs.length; ) {
+// The lines with each run of unchanged ones folded, beyond `context` lines beside a change; a run of one is listed,
+// since its fold would take the line it saves.
+function folded(lines: DiffLine[]): (DiffLine | LineFold)[] {
+  const far = beyondContext(lines.map(({ change }) => change !== "same"));
+  const entries: (DiffLine | LineFold)[] = [];
+  for (let at = 0; at < lines.length; ) {
     let end = at;
-    while (end < pairs.length && far[end]) end++;
+    while (end < lines.length && far[end]) end++;
     if (end - at > 1) {
-      entries.push({ kind: "fold", line: pairs[at]!.right!.line, pairs: pairs.slice(at, end) });
+      entries.push({ kind: "fold", at, lines: lines.slice(at, end) });
       at = end;
     } else {
-      entries.push(pairs[at]!);
+      entries.push(lines[at]!);
       at++;
     }
   }

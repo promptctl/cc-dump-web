@@ -9,7 +9,7 @@ export type Edit = { change: Change; text: string };
 // A diff as the view shows and searches it: its lines; their text in order, joined by newlines; and each line's passage
 // of that text, its start and end, so a match is found within one line and painted where that line is.
 export type Diff = { lines: Edit[] } & Joined;
-export type Joined = { text: string; passages: { start: number; end: number }[] };
+type Joined = { text: string; passages: { start: number; end: number }[] };
 
 // [LAW:one-source-of-truth] A diff part holds the two texts; its lines are derived from them, made once per part, and
 // only for a part that is shown or searched, so a session's Edits are not diffed again by every request that resends them.
@@ -24,7 +24,7 @@ export function diffOf(part: Extract<Part, { kind: "diff" }>): Diff {
 }
 
 // Lines as one text, joined by newlines, and each line's passage of it.
-export function joined(lines: string[]): Joined {
+function joined(lines: string[]): Joined {
   let start = 0;
   const passages = lines.map((line) => {
     const passage = { start, end: start + line.length };
@@ -34,12 +34,11 @@ export function joined(lines: string[]): Joined {
   return { text: lines.join("\n"), passages };
 }
 
-// How many unchanged lines a diff lists beside a change, above and below it: its context lines; and as many unchanged
-// rows beside a changed one in the conversation.
-export const context = 3;
+// How many unchanged lines a diff lists beside a change, above and below it: its context lines.
+const context = 3;
 
 // [LAW:one-source-of-truth] Whether each item, of items each changed or not, is further than `context` items from every
-// change, above it and below it: what a diff folds, its lines or the conversation's rows.
+// change, above it and below it: what a diff folds.
 export function beyondContext(changed: boolean[]): boolean[] {
   const distances = (order: number[]) => {
     const distance: number[] = [];

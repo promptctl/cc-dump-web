@@ -1,14 +1,13 @@
-import { context } from "../format/diff.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
-import type { Branches, Unchanged, Visibility } from "../settings.ts";
+import type { Branches, Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { createSearch } from "./search.ts";
-import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, type Opened, type Row } from "./rows.ts";
+import { clockTime, compact, createLayout, describeSize, estimateHeight, foldKey, isGone, markOf, modelName, pastOf, preview, seconds, sizeOf, startsExpanded, type BlockRow, type Opened, type Row } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -28,11 +27,13 @@ const shown = Object.fromEntries(categories.map((category) => [category, "compac
 const dialogue = { ...shown, tools: "hidden", system: "hidden", metadata: "hidden", thinking: "hidden" } as const;
 
 // The layout at each step of `events`, as the view lays them out.
-function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, unchanged: Unchanged = "show", branches: Branches = "stay") {
+function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown, branches: Branches = "stay") {
   const history = createHistory()(createFormatter()(exchanges(events)));
-  const layOut = createLayout(visibility, unchanged, branches);
+  const layOut = createLayout(visibility, branches);
   return (step: number, revealed?: string, opened: Opened = {}) => layOut(history, step, revealed, opened);
 }
+// The block's row at `key` among a layout's.
+const blockAt = ({ rows }: { rows: Row[] }, key: string) => rows.find((row): row is BlockRow => row.kind === "block" && row.key === key)!;
 const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "fold" ? `${row.key} ${row.rows.length}` : row.kind === "block" ? `${row.key} ${row.change}` : row.key));
 
 describe("layout", () => {
@@ -50,21 +51,28 @@ describe("layout", () => {
     ]);
     // The second turn resends the first: only its HTTP and its new message are its, and the first's rows are unchanged.
     expect(listed(at(2)).slice(8)).toEqual(["t2", "t2/request", "t2/request/http added", "t2/message.1", "thread:t2/message.1/content.0 added"]);
-    expect(at(2).rows.slice(0, 8).every((row) => row.kind !== "block" || (row.change === "same" && row.before === row.block))).toBe(true);
+    expect(at(2).rows.slice(0, 8).every((row) => row.kind !== "block" || row.change === "same")).toBe(true);
     expect(at(2).rows.filter((row) => row.kind !== "block").map((row) => row.kind !== "fold" && row.change)).toEqual(["same", "same", "same", "added", "added", "added"]);
-    // An added row has nothing before it; a step of 0 shows nothing.
-    expect(at(2).rows.filter((row) => row.kind === "block" && row.change === "added").every((row) => row.kind === "block" && row.before === undefined)).toBe(true);
+    // A block as it arrived has no past, at its step or after; a step of 0 shows nothing.
+    expect(at(2).rows.every((row) => row.kind !== "block" || (pastOf(row).length === 0 && markOf(row) === row.change))).toBe(true);
     expect(at(0).rows).toEqual([]);
   });
 
-  it("marks a block a step gave a new version as changed, with the version before it on the left", () => {
-    // The second turn edits the system prompt in place, carrying the thread on.
-    const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
-    const at = layouts([...turns(1), ...request("t2", { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages })]);
-    const system = at(2).rows.find(({ key }) => key === "thread:t1/request/system.0");
-    expect(system).toMatchObject({ change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, block: { parts: [{ kind: "text", text: "Be briefer." }] } });
-    // At the step it arrived, the item is what it was then.
-    expect(at(1).rows.find(({ key }) => key === "thread:t1/request/system.0")).toMatchObject({ change: "added", block: { parts: [{ kind: "text", text: "Be brief." }] } });
+  it("marks a block a step rewrote as changed, and keeps what the step rewrote as its past at every step after", () => {
+    // The second turn edits the system prompt in place, carrying the thread on; the third resends it as the second left it.
+    const turn = (trace: string, count: number) => request(trace, { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages: say(count) });
+    const at = layouts([...turns(1), ...turn("t2", 2), ...turn("t3", 3)]);
+    const system = (step: number) => blockAt(at(step), "thread:t1/request/system.0");
+    const rewrite = { step: 2, change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, after: { parts: [{ kind: "text", text: "Be briefer." }] } };
+    expect(system(2)).toMatchObject({ change: "changed", block: rewrite.after });
+    expect(pastOf(system(2))).toMatchObject([rewrite]);
+    // The step after left it as it was, and its past and its mark still say the rewrite.
+    expect(system(3)).toMatchObject({ change: "same", block: rewrite.after });
+    expect(pastOf(system(3))).toEqual(pastOf(system(2)));
+    expect([system(2), system(3)].map(markOf)).toEqual(["changed", "changed"]);
+    // At the step it arrived, the item is what it was then, with no past.
+    expect(system(1)).toMatchObject({ change: "added", block: rewrite.before });
+    expect(pastOf(system(1))).toEqual([]);
   });
 
   it("marks exactly the tool a request changed, dropped or added, the rest unchanged, and a prompt block dropped as removed the step it goes", () => {
@@ -87,14 +95,24 @@ describe("layout", () => {
       "thread:t1/request/system.1 removed",
       "thread:t2/request/tools.Grep.0 added",
     ]);
-    expect(at(2).rows.find(({ key }) => key === "thread:t1/request/tools.Edit.0")).toMatchObject({ block: undefined, before: { name: "Edit" } });
-    // A removal is the step's change, so moving to the step brings it into view.
-    expect(at(2).brought).toBe("thread:t1/request/tools.Edit.0");
-    // Gone, it has no row; resent as it was, nothing is marked.
-    expect(prompt(3)).toEqual(["thread:t1/request/tools.Read.0 same", "thread:t1/request/tools.Bash.0 same", "thread:t1/request/system.0 same", "thread:t2/request/tools.Grep.0 same"]);
-    // Offered again, it comes back where it stood, as added.
-    expect(prompt(4)).toContain("thread:t1/request/tools.Edit.0 added");
+    const edit = (step: number) => blockAt(at(step), "thread:t1/request/tools.Edit.0");
+    // Its row shows the block it was.
+    expect(edit(2)).toMatchObject({ block: { name: "Edit" } });
+    expect(isGone(edit(2))).toBe(true);
+    // Taken away, it stays listed where it stood, the step after leaving it and every other row as they were; its past
+    // and its mark still say it went.
+    expect(prompt(3)).toEqual([
+      "thread:t1/request/tools.Read.0 same",
+      "thread:t1/request/tools.Edit.0 same",
+      "thread:t1/request/tools.Bash.0 same",
+      "thread:t1/request/system.0 same",
+      "thread:t1/request/system.1 same",
+      "thread:t2/request/tools.Grep.0 same",
+    ]);
+    expect([isGone(edit(3)), pastOf(edit(3)), markOf(edit(3))]).toEqual([true, [{ step: 2, change: "removed" }], "removed"]);
+    // Offered again, it is there again, added, with both steps in its past.
     expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual(["thread:t1/request/tools.Edit.0 added"]);
+    expect([isGone(edit(4)), pastOf(edit(4))]).toEqual([false, [{ step: 2, change: "removed" }, { step: 4, change: "added" }]]);
   });
 
   it("marks a block a request stops sending inside a message it resends removed, the step it goes", () => {
@@ -102,45 +120,9 @@ describe("layout", () => {
       ...request("t1", { model: "m", messages: [...say(1), { role: "user", content: [text("Say 1."), text("Mind it.")] }] }),
       ...request("t2", { model: "m", messages: [...say(3)] }),
     ]);
-    expect(at(2).rows.find(({ key }) => key === "thread:t1/message.1/content.1")).toMatchObject({ change: "removed", block: undefined, before: { parts: [{ text: "Mind it." }] } });
+    expect(at(2).rows.find(({ key }) => key === "thread:t1/message.1/content.1")).toMatchObject({ change: "removed", block: { parts: [{ text: "Mind it." }] } });
     expect(listed(at(2))).toContain("thread:t1/message.1/content.0 same");
     expect(listed(at(2))).toContain("thread:t2/message.2/content.0 added");
-  });
-
-  it("folds each run of unchanged rows beyond the context beside a change into one row, and lists an opened one", () => {
-    const at = layouts(turns(4), shown, "fold");
-    const step = at(4);
-    const fold = step.rows[0]!;
-    expect(fold).toMatchObject({ kind: "fold", key: "t1" });
-    // Every row of the steps before but the context above the change.
-    const unfolded = layouts(turns(4))(4);
-    const firstChange = unfolded.rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
-    expect(fold.kind === "fold" && fold.rows.length).toBe(firstChange - context);
-    expect(step.rows.slice(1, 1 + context)).toEqual(unfolded.rows.slice(firstChange - context, firstChange));
-    // A folded row is at its fold.
-    expect(step.keys.indexOf("thread:t1/request/system.0")).toBe(0);
-    expect(step.keys.indexOf("t1")).toBe(0);
-    // Opened, its rows are listed, the first under the key the fold had, so a place held on the fold holds.
-    const opened = at(4, undefined, { [foldKey("t1")]: true });
-    expect(listed(opened)).toEqual(listed(unfolded));
-    expect(opened.rows[opened.keys.indexOf("t1")!]).toMatchObject({ kind: "exchange", key: "t1" });
-    expect(unfolded.rows[unfolded.keys.indexOf("t1")!]).toMatchObject({ kind: "exchange", key: "t1" });
-    // A step with no step before it has nothing unchanged.
-    const two = layouts(turns(2), shown, "fold")(2);
-    expect(two.rows.some(({ kind }) => kind === "fold")).toBe(true);
-    expect(layouts(turns(1), shown, "fold")(1).rows.some(({ kind }) => kind === "fold")).toBe(false);
-  });
-
-  it("never folds the block the search revealed, hidden or not", () => {
-    const at = layouts(turns(4), shown, "fold");
-    const revealed = "thread:t1/request/tools.Read.0";
-    expect(at(4).rows.map(({ key }) => key)).not.toContain(revealed);
-    const keys = at(4, revealed).rows.map(({ key }) => key);
-    expect(keys).toContain(revealed);
-    expect(at(4, revealed).keys.indexOf(revealed)).toBe(keys.indexOf(revealed));
-    const hidden = layouts(turns(4), { ...shown, tools: "hidden" }, "fold");
-    expect(hidden(4, revealed).rows.map(({ key }) => key)).toContain(revealed);
-    expect(hidden(4).rows.map(({ key }) => key)).not.toContain(revealed);
   });
 
   it("leaves out a hidden category's blocks, and a group with none left, and puts a row not listed at the row listed before it", () => {
@@ -170,7 +152,7 @@ describe("layout", () => {
 
   it("keeps the keys while what a row shows changes and no row moves, as while a block streams", () => {
     const events = turns(3);
-    const layOut = createLayout(shown, "show", "stay");
+    const layOut = createLayout(shown, "stay");
     // Two formatters make the same rows of other block objects.
     const first = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
     const again = layOut(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
@@ -184,7 +166,7 @@ describe("layout", () => {
     const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
     const history = createHistory();
     const format = createFormatter();
-    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "show", "stay");
+    const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", metadata: "hidden" }, "stay");
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));
@@ -192,21 +174,24 @@ describe("layout", () => {
     expect(after.keys).not.toBe(before.keys);
   });
 
-  it("starts a block's row as its category's level says, of the version it shows, and what the harness injected or a hidden category's revealed block collapsed", () => {
+  it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's revealed block collapsed", () => {
     const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
-    const added = (side: Block): Extract<Row, { kind: "block" }> => ({ kind: "block", key: "k", block: { ...side, key: "c" }, before: undefined, change: "added", branch: undefined });
+    const row = (side: Block, gone = false): BlockRow => {
+      const shown = { ...side, key: "c" };
+      return { kind: "block", key: "k", block: shown, change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
+    };
     const levels = { ...shown, user: "expanded", tools: "compact" } as const;
-    expect([said, reminder, tools].map((side) => startsExpanded(added(side), levels))).toEqual([true, false, false]);
-    expect([said, reminder, tools].map((side) => startsExpanded(added(side), { ...levels, user: "compact", tools: "expanded" }))).toEqual([false, false, true]);
-    expect(startsExpanded(added(tools), { ...levels, tools: "hidden" })).toBe(false);
-    expect(startsExpanded({ kind: "block", key: "k", block: undefined, before: { ...said, key: "c" }, change: "removed", branch: undefined }, levels)).toBe(true);
-    // A changed row starts as the version it shows, and is estimated on its taller side; the reader's choice outranks the start.
-    const row: Row = { kind: "block", key: "k", block: { ...said, key: "c", parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] }, before: { ...tools, key: "c" }, change: "changed", branch: undefined };
-    expect(estimateHeight(row, {}, levels)).toBe(20 + 10 * 16);
-    expect(estimateHeight(row, { k: false }, levels)).toBe(20);
-    expect(estimateHeight(row, {}, { ...levels, user: "compact" })).toBe(20);
-    expect(estimateHeight(row, { k: true }, { ...levels, user: "compact" })).toBe(20 + 10 * 16);
+    expect([said, reminder, tools].map((side) => startsExpanded(row(side), levels))).toEqual([true, false, false]);
+    expect([said, reminder, tools].map((side) => startsExpanded(row(side), { ...levels, user: "compact", tools: "expanded" }))).toEqual([false, false, true]);
+    expect(startsExpanded(row(tools), { ...levels, tools: "hidden" })).toBe(false);
+    expect(startsExpanded(row(said, true), levels)).toBe(false);
+    // A row is estimated as it starts; the reader's choice outranks the start.
+    const long = row({ ...said, parts: [{ kind: "text", form: "markdown", text: "x".repeat(1000) }] });
+    expect(estimateHeight(long, {}, levels)).toBe(20 + 10 * 16);
+    expect(estimateHeight(long, { k: false }, levels)).toBe(20);
+    expect(estimateHeight(long, {}, { ...levels, user: "compact" })).toBe(20);
+    expect(estimateHeight(long, { k: true }, { ...levels, user: "compact" })).toBe(20 + 10 * 16);
   });
 
   it("lists a hidden category's blocks at neither level but the search's revealed one", () => {
@@ -302,14 +287,14 @@ const branched = [...turns(2), ...thread("side", [...say(1), { role: "user", con
 
 describe("branches", () => {
   it("lists a branch where it arrived, as it was, at every later step, marked as the branch it is", () => {
-    const at = layouts(branched, shown, "show", "stay");
+    const at = layouts(branched, shown, "stay");
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     expect(listed(at(5))).toContain("thread:side/message.1/content.1 same");
     expect(at(5).rows.find(({ key }) => key === "side")).toMatchObject({ kind: "exchange", branch: { key: "branch:side", from: 2 } });
   });
 
   it("folds a branch into one row once its last request is behind the step shown, opened by its flip or a block revealed in it", () => {
-    const at = layouts(branched, shown, "show", "fold");
+    const at = layouts(branched, shown, "fold");
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const folded = at(4).rows.filter(({ kind }) => kind === "fold");
     expect(folded).toMatchObject([{ kind: "fold", key: "side", branch: { key: "branch:side", from: 2 } }]);
@@ -319,43 +304,30 @@ describe("branches", () => {
     expect(at(4).keys.indexOf("thread:side/message.1/content.1")).toBe(at(4).keys.indexOf("side"));
     expect(listed(at(4, undefined, { [foldKey("side")]: true }))).toContain("thread:side/message.1/content.1 same");
     expect(listed(at(4, "thread:side/message.1/content.1"))).toContain("thread:side/message.1/content.1 same");
-    // An unchanged fold never takes a branch's rows.
-    const unchanged = layouts(branched, shown, "fold", "fold")(5);
-    expect(unchanged.rows.filter(({ kind }) => kind === "fold").map(({ key, branch }) => [key, branch?.key])).toContainEqual(["side", "branch:side"]);
-  });
-
-  it("counts a folded branch as the one row it is listed as, so the context beside a change past it stays listed", () => {
-    const { rows } = layouts(branched, shown, "fold", "fold")(4);
-    const change = rows.findIndex((row) => row.kind !== "fold" && row.change !== "same");
-    expect(rows.slice(change - context, change).map((row) => (row.kind === "fold" ? `fold ${row.branch?.key}` : row.kind))).toEqual(["group", "block", "fold branch:side"]);
   });
 
   it("marks a prompt block a branch stops sending, which the line it left still sends, removed on the branch the step it goes", () => {
     const ask = (trace: string, messages: unknown[], tools: string[]) => request(trace, { model: "m", system: [text("Be brief.")], tools: tools.map((name) => ({ name })), messages });
     const aside = [...say(1), { role: "user", content: [text("Say 1."), text("Aside.")] }];
     const events = [...ask("t1", say(1), ["Read", "Edit"]), ...ask("t2", say(2), ["Read", "Edit"]), ...ask("side", aside, ["Read"]), ...ask("t3", say(3), ["Read", "Edit"])];
-    const at = layouts(events, shown, "show", "stay");
-    expect(at(3).rows.find(({ key }) => key === "thread:side/request/tools.Edit.0")).toMatchObject({ change: "removed", block: undefined, before: { name: "Edit" }, branch: { key: "branch:side" } });
-    // It stands in the branch's own segment, under the exchange line the step brought first.
-    expect(at(3).brought).toBe("side");
+    const at = layouts(events, shown, "stay");
+    expect(at(3).rows.find(({ key }) => key === "thread:side/request/tools.Edit.0")).toMatchObject({ change: "removed", block: { name: "Edit" }, branch: { key: "branch:side" } });
     // The line it left sends it still, and gives it no version.
     expect(listed(at(3))).toContain("thread:t1/request/tools.Edit.0 same");
     expect(listed(at(4))).toContain("thread:t1/request/tools.Edit.0 same");
-    // Gone, it has no row after, whether the branch stays or is taken away.
-    expect(listed(at(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual([]);
-    expect(listed(layouts(events, shown, "show", "step")(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual([]);
+    // It stays listed where it stood while the branch does, and goes with the branch.
+    expect(listed(at(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual(["thread:side/request/tools.Edit.0 same"]);
+    expect(listed(layouts(events, shown, "step")(4)).filter((row) => row.startsWith("thread:side/request/tools"))).toEqual(["thread:side/request/tools.Edit.0 removed"]);
   });
 
-  it("lists a branch only while its requests are: the step after its last shows it removed, on the left alone, and later steps not at all", () => {
-    const at = layouts(branched, shown, "show", "step");
+  it("lists a branch only while its requests are: the step after its last shows it removed, and later steps not at all", () => {
+    const at = layouts(branched, shown, "step");
     expect(listed(at(3))).toContain("thread:side/message.1/content.1 added");
     const removed = at(4).rows.filter((row) => row.kind !== "fold" && row.change === "removed");
     expect(removed.map(({ key }) => key)).toEqual(["side", "side/request", "side/request/http", "side/message.1", "thread:side/message.1/content.1"]);
-    expect(removed.at(-1)).toMatchObject({ block: undefined, before: { key: "content.1" } });
-    // What the placement took away is not the step's change: the step brought its own exchange.
-    expect(at(4).brought).toBe("t3");
-    // What is removed is not the moment shown's, so the search does not count it.
-    expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(0);
+    expect(removed.at(-1)).toMatchObject({ block: { key: "content.1" } });
+    // What a row shows is searched, taken away or not.
+    expect(createSearch()(at(4).every.rows, /Aside/g).count).toBe(1);
     expect(at(5).every.rows.map(({ key }) => key)).not.toContain("side");
   });
 });

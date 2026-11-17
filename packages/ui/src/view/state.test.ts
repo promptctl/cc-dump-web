@@ -1,8 +1,9 @@
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
+import type { KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
 import { events, useEvents } from "../store.ts";
-import type { BlockRow } from "./search.ts";
+import type { BlockRow } from "./rows.ts";
 import { useView, view } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
@@ -98,7 +99,8 @@ describe("the search", () => {
 
   // A step chooses only what it changes, so a block shows after a later change of level as the reader left it.
   it("opens a match's block and the regions holding it, and records no choice for a block already open", () => {
-    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", block: { category: "tools", name: "Read", parts: [], key: "c" }, before: undefined, change: "added", branch: undefined };
+    const read: KeyedBlock = { category: "tools", name: "Read", parts: [], key: "c" };
+    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", block: read, change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined };
     const { visibility } = parseSettings(undefined);
     view.goTo({ match, block, regions: ["r"] }, "t1", visibility);
     expect(useView.getState().opened).toEqual({ [block.key]: true, r: true });

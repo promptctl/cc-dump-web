@@ -2,34 +2,32 @@ import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tansta
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
-import { context, diffOf, marks, type Edit } from "../format/diff.ts";
-import { blockDiff, wordsOf, type LineFold, type Pair } from "./change.ts";
+import { diffOf, marks, type Edit } from "../format/diff.ts";
+import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
-import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
+import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, modelName, preview, seconds, sizeOf, startsExpanded, statusFailed, type Change, type ChangedRow, type Layout, type Row } from "./rows.ts";
+import { changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sizeOf, startsExpanded, statusFailed, type BlockRow, type Event, type Row } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Side, unpainted, useToggle, useWhere, useWhereOn, type Where } from "./painting.ts";
-import { regionKey } from "./regions.ts";
+import { Hold, Painted, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, partKey, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 
-// The conversation side by side in time (docs/design/02-design.md, "Two axes"): two columns over one scroll, the
-// conversation at the moment shown on the right and a step before on the left, aligned, as rows of which only those on
-// screen are mounted (docs/design/01-mvp.md, F4); a window too narrow for two shows the right alone. `reading`: whether
-// the read can still bring an exchange its end. `theme`: what the minimap's canvas is painted in.
+// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, every row of it listed, of
+// which only those on screen are mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an
+// exchange its end. `theme`: what the minimap's canvas is painted in.
 export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
@@ -42,9 +40,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
-  const unchanged = useSettings((state) => state.unchanged);
   const branches = useSettings((state) => state.branches);
-  const layOut = useMemo(() => createLayout(visibility, unchanged, branches), [visibility, unchanged, branches]);
+  const layOut = useMemo(() => createLayout(visibility, branches), [visibility, branches]);
   // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
   // the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
@@ -145,7 +142,6 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
-  const painted = useMemo(() => ({ right: { pattern, current: true }, left: unpainted }), [pattern]);
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
   // is put at the match's line, a few of its lines below the top.
   const stepTo = (direction: Direction) => {
@@ -180,13 +176,14 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     latest.current("choose");
   };
 
-  // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put `context`
-  // rows above the step's first change, or, following, at the end. Committed first, so the position is put among the
-  // step's own rows.
+  // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put at the
+  // step's own exchange line, where what it brought begins, or, following, at the end. What the step did to a row
+  // above it is marked on the minimap. Committed first, so the position is put among the step's own rows.
   const toStep = (target: number) => {
     const latestStep = target === steps;
-    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : beforeChange(layOut(conversation, target, revealed, opened));
-    flushSync(() => view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace: conversation.segments[target - 1]!.formatted.exchange.trace_id }, position));
+    const trace = conversation.segments[target - 1]!.formatted.exchange.trace_id;
+    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : { at: "row", key: trace, offset: 0 };
+    flushSync(() => view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace }, position));
     latest.current("choose");
   };
   // [LAW:no-ambient-temporal-coupling] The step the last move is going to, until its update commits: a move made while a
@@ -241,7 +238,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
             <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
           ) : (
             <Hold.Provider value={onHold}>
-              <Painted.Provider value={painted}>
+              <Painted.Provider value={pattern}>
                 <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
                   {virtualizer.getVirtualItems().map((item) => (
                     <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
@@ -295,13 +292,6 @@ function stepShown(moment: Moment, { segments, stepOf }: History): number {
   return moment.at === "now" ? segments.length : (stepOf(moment.trace) ?? segments.length);
 }
 
-// The place `context` rows above the first row a layout's step brought, so what the step did is in view with what it
-// follows.
-function beforeChange({ brought, keys }: Layout): Position {
-  const first = brought === undefined ? 0 : keys.indexOf(brought)!;
-  return { at: "row", key: keys.at(Math.max(0, first - context)), offset: 0 };
-}
-
 // The keys that move in time, and whether an element takes them for its own: a field typed or chosen in.
 const arrows: Partial<Record<string, -1 | 1>> = { ArrowLeft: -1, ArrowRight: 1 };
 function takesKeys(target: EventTarget | null): boolean {
@@ -313,53 +303,35 @@ function largest(element: HTMLElement): number {
   return element.scrollHeight - element.clientHeight;
 }
 
-// A row: a fold across both columns; anything else its lines, each its two sides aligned in one grid, with a band
-// between them in the color of what the step did, none where it left the row as it was, so a line wrapping on one side
-// keeps the next level on both. Below `lg` only the right side shows. The band stands where a ground would: the theme's
-// text is promised legible on its muted grounds only in their own `text-` color, and the foreground fails on them in
-// most themes. Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not
-// render again.
+// A row: a fold; anything else what it shows beside a band at its left edge in the color of what the step shown did to
+// it, none where the step left the row as it was. The band stands where a ground would: the theme's text is promised
+// legible on its muted grounds only in their own `text-` color, and the foreground fails on them in most themes.
+// Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not render again.
 const RowView = memo(
   function RowView({ row, reading }: { row: Row; reading: boolean }) {
     if (row.kind === "fold") return <FoldLine fold={row} />;
-    // A branch's rows stand one step in, under the thread they left (docs/design/02-design.md, "Two axes").
-    const inset = row.branch === undefined ? undefined : "pl-6";
+    const band = changeColors[row.change];
     return (
-      <div className="grid grid-cols-[4px_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_4px_minmax(0,1fr)]">
-        {row.kind === "block" ? <BlockLines row={row} inset={inset} /> : <Sides change={row.change} inset={inset} {...sidesOf(row, reading)} />}
+      // A branch's rows stand one step in, under the thread they left (docs/design/02-design.md, "Two axes").
+      <div className={`border-l-4 border-transparent ${row.branch === undefined ? "" : "pl-6"}`} style={band && { borderLeftColor: `var(${band})` }}>
+        <Shown row={row} reading={reading} />
       </div>
     );
   },
   (before, after) => before.reading === after.reading && sameFields(before.row, after.row),
 );
 
-// One line of a row: what each side shows, and the band between them.
-function Sides({ left, right, change, inset }: { left: ReactNode; right: ReactNode; change: Change; inset: string | undefined }) {
-  return (
-    <>
-      <div className={`hidden lg:block ${inset ?? ""}`}>
-        <Side.Provider value="left">{left}</Side.Provider>
-      </div>
-      <div style={{ background: colorOf(changeColors[change]) }} />
-      <div className={inset}>{right}</div>
-    </>
-  );
+// What a row of each kind shows.
+function Shown({ row, reading }: { row: Exclude<Row, { kind: "fold" }>; reading: boolean }) {
+  switch (row.kind) {
+    case "exchange":
+      return <ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />;
+    case "group":
+      return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
+    case "block":
+      return <BlockView row={row} />;
+  }
 }
-
-// What each side of an exchange's or a group's row shows: the right, the moment shown; the left, the step before,
-// nothing where the step added the row, and the right nothing where it removed it.
-function sidesOf(row: Extract<Row, { kind: "exchange" | "group" }>, reading: boolean): { left: ReactNode; right: ReactNode } {
-  const line =
-    row.kind === "exchange" ? (
-      <ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />
-    ) : (
-      <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>
-    );
-  return { left: row.change === "added" ? null : line, right: row.change === "removed" ? null : line };
-}
-
-// The band between a row's sides, in the theme's color of what the step did to it, or none.
-const colorOf = (variable: `--${string}` | undefined) => (variable === undefined ? undefined : `var(${variable})`);
 
 // Whether two rows show the same: every field the same value.
 function sameFields(a: Row, b: Row): boolean {
@@ -367,8 +339,7 @@ function sameFields(a: Row, b: Row): boolean {
   return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
 }
 
-// A run of unchanged rows, or of a branch's, folded: one line saying how many, across both columns, which opens it on a
-// click.
+// A run of a branch's rows, folded: one line saying how many, which opens it on a click.
 function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
   const { toggle } = useToggle(foldKey(fold.key), false);
   return (
@@ -378,14 +349,14 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
       onClick={toggle}
     >
       <span className="w-3">▸</span>
-      {fold.branch === undefined ? `${fold.rows.length} unchanged` : `branch off ${fold.branch.from} · ${fold.rows.length} rows`}
+      {`branch off ${fold.branch.from} · ${fold.rows.length} rows`}
     </button>
   );
 }
 
 // The exchange's line (docs/design/02-design.md, "Print what varies", "Layout"): its facts in columns of fixed widths,
 // aligned down the conversation, on two rows: who answered and how it ended, then the tokens. The model's column alone
-// gives way to a narrow side, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
+// gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
 // exchange its end. `branch`: the branch its request is on, which its model's column names first, where a long model's
 // ellipsis does not reach.
@@ -463,141 +434,129 @@ function ListedRow({ item, measure, children }: { item: VirtualItem; measure: (e
 // since its status says so, and of one still in flight; a word for the rest.
 const endings = { ok: "", pending: "", unread: "no end read", error: "error", aborted: "aborted", stopped: "stopped" } as const;
 
-// A block's row: on each side, a line naming that side's version, a preview of its content and its size; expanded, its
-// content below: a changed block's diff with the version before, line against line, and any other block's parts on each
-// side. Clicking a line switches between them, on both sides, from how the version shown starts.
-function BlockLines({ row, inset }: { row: Extract<Row, { kind: "block" }>; inset: string | undefined }) {
+// A block's row, beside the bar in its category's color, which runs its whole height (docs/design/02-design.md, "One
+// bold element"): its line; under it, once its mark is clicked, what steps rewrote in it; and, expanded, its content.
+// Clicking the line switches between expanded and not, from how the block starts.
+function BlockView({ row }: { row: BlockRow }) {
   const starts = useSettings((state) => startsExpanded(row, state.visibility));
   const { open, toggle } = useToggle(row.key, starts);
-  // [LAW:dataflow-not-control-flow] Each line of the row is its two sides' versions, each in its gutter, through the
-  // same cells; a side without a version, the left where the step added the row and the right where it removed it, is
-  // empty.
-  const cells = (content: (block: KeyedBlock) => ReactNode) => ({
-    left: row.before === undefined ? null : <Gutter block={row.before}>{content(row.before)}</Gutter>,
-    right: row.block === undefined ? null : <Gutter block={row.block}>{content(row.block)}</Gutter>,
-  });
-  return (
-    <>
-      <Sides change={row.change} inset={inset} {...cells((block) => <BlockLine rowKey={row.key} block={block} open={open} toggle={toggle} />)} />
-      {open &&
-        (row.change === "changed" ? (
-          <ChangeLines row={row} inset={inset} />
-        ) : (
-          <Sides change={row.change} inset={inset} {...cells((block) => <Parts rowKey={row.key} block={block} />)} />
-        ))}
-    </>
-  );
-}
-
-// A side's version of a block, at the depth of a block, beside the bar in its category's color, which, a cell of it on
-// each of the row's lines, runs the block's whole height (docs/design/02-design.md, "One bold element").
-function Gutter({ block, children }: { block: KeyedBlock; children: ReactNode }) {
-  return (
-    <div className="ml-4 h-full border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
-      {children}
-    </div>
-  );
-}
-
-// A block's line: its name, a preview of its content while collapsed, and its size.
-function BlockLine({ rowKey: key, block, open, toggle }: { rowKey: string; block: KeyedBlock; open: boolean; toggle: () => void }) {
+  const rewrites = useToggle(pastKey(row.key), false);
+  const { block } = row;
   const size = sizeOf(block);
   return (
-    <button
-      type="button"
-      className="flex w-full items-baseline gap-3 text-left font-sans hover:bg-hover"
-      onClick={toggle}
-    >
-      <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
-      <span className="min-w-0 truncate" title={block.name}>
-        <HighlightedText blockKey={key} at={address.name} text={block.name} />
-      </span>
-      {/* Expanded, the content itself is below, so the line does not say it twice. */}
-      <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
-      <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
-        {compact(size)}
-      </span>
-    </button>
-  );
-}
-
-function Parts({ rowKey, block }: { rowKey: string; block: KeyedBlock }) {
-  return (
-    <div className="max-w-[110ch] pb-1 pl-6">
-      {block.parts.map((part, index) => (
-        <PartView key={index} part={part} blockKey={rowKey} index={index} />
-      ))}
+    <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
+      <div className="flex items-baseline gap-3 font-sans hover:bg-hover">
+        <button type="button" className="flex min-w-0 flex-1 items-baseline gap-3 text-left" onClick={toggle}>
+          <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
+          {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
+          <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>
+            <HighlightedText blockKey={row.key} at={address.name} text={block.name} />
+          </span>
+          {/* Expanded, the content itself is below, so the line does not say it twice. */}
+          <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
+        </button>
+        <PastMark row={row} open={rewrites.open} toggle={rewrites.toggle} />
+        <span className="tabular-nums text-foreground-muted" title={describeSize(size)}>
+          {compact(size)}
+        </span>
+      </div>
+      {rewrites.open && <Rewrites row={row} />}
+      {open && (
+        <div className="max-w-[110ch] pb-1 pl-6">
+          {block.parts.map((part, index) => (
+            <PartView key={index} part={part} blockKey={row.key} index={index} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// A changed block's content: its diff with the version before, a line of the row for each pair of lines, and a line
-// saying how many for each run of unchanged pairs folded, which opens it on a click, on either side. Each side is painted
-// as its side paints, the right as the search reads it (search.ts, shownTexts).
-function ChangeLines({ row, inset }: { row: ChangedRow; inset: string | undefined }) {
-  const diff = blockDiff(row.before, row.block);
-  const where = { left: useWhereOn("left", row.key, address.change, diff.left), right: useWhereOn("right", row.key, address.change, diff.right) };
-  const cell = (side: "left" | "right", block: KeyedBlock, pair: Pair) => {
-    const line = pair[side];
-    return (
-      <Gutter block={block}>
-        {line !== undefined && (
-          <DiffLineView words={wordsOf(pair)[side]} change={pair.kind === "same" ? "same" : sideChange[side]} from={diff[side].passages[line.line]!.start} where={where[side]} />
-        )}
-      </Gutter>
+// [LAW:dataflow-not-control-flow] What a block's line says a step did to it since it arrived.
+const deeds: Record<Event["change"], string> = { changed: "rewritten", removed: "taken away", added: "sent again" };
+
+// A block's past on its line: the last thing a step did to it since it arrived and at which step, and how many steps
+// did anything, where more than one; nothing for a block as it arrived. It is in the foreground where the step shown
+// did it, muted for an earlier step's. Where a step rewrote the block, a click shows what each rewrote, or hides it.
+function PastMark({ row, open, toggle }: { row: BlockRow; open: boolean; toggle: () => void }) {
+  const past = pastOf(row);
+  const last = past.at(-1);
+  if (last === undefined) return null;
+  const says = `${deeds[last.change]} at step ${last.step}${past.length > 1 ? ` · ${past.length} changes` : ""}`;
+  const color = row.change === "same" ? "text-foreground-muted" : "";
+  return past.some(({ change }) => change === "changed") ? (
+    <button
+      type="button"
+      data-past
+      aria-expanded={open}
+      title={open ? "Hide what each step rewrote" : "Show what each step rewrote"}
+      className={`shrink-0 underline decoration-dotted underline-offset-2 hover:decoration-solid ${color}`}
+      onClick={toggle}
+    >
+      {says}
+    </button>
+  ) : (
+    <span data-past className={`shrink-0 ${color}`}>
+      {says}
+    </span>
+  );
+}
+
+// What steps rewrote in a block, the latest first: under each step's line, the block before against the block after.
+function Rewrites({ row }: { row: BlockRow }) {
+  return pastOf(row)
+    .toReversed()
+    .map((event) =>
+      event.change !== "changed" ? null : (
+        <div key={event.step} data-rewrite={event.step} className="max-w-[110ch] pb-1 pl-6 font-mono break-words whitespace-pre-wrap">
+          <div className="font-sans text-foreground-muted">rewritten at step {event.step}</div>
+          <DiffLines lines={blockDiff(event.before, event.after)} foldKey={`${pastKey(row.key)}/${event.step}`} />
+        </div>
+      ),
     );
-  };
-  const pairLines = (pair: Pair, key: number) => <Sides key={key} change={row.change} inset={inset} left={cell("left", row.before, pair)} right={cell("right", row.block, pair)} />;
-  return diff.entries.map((entry, index) =>
+}
+
+// A block diff's lines, each word in the weight and color of what the change did to it, and for each run of unchanged
+// lines folded, a line saying how many, which opens and closes it on a click, kept by its place under `foldKey`;
+// opened, the lines themselves, made only then.
+function DiffLines({ lines, foldKey }: { lines: (DiffLine | LineFold)[]; foldKey: string }) {
+  return lines.map((entry, index) =>
     entry.kind === "fold" ? (
-      <DiffFold key={`fold:${entry.line}`} row={row} inset={inset} fold={entry} lines={() => entry.pairs.map((pair, offset) => pairLines(pair, entry.line + offset))} />
+      <DiffFold key={index} fold={entry} foldKey={`${foldKey}/${entry.at}`} />
     ) : (
-      pairLines(entry, index)
+      <DiffLineView key={index} change={entry.change}>
+        {entry.words.map(({ change, text }, word) => (
+          <span key={word} className={`${diffMarks[change].weight} ${diffMarks[change].color}`}>
+            {text}
+          </span>
+        ))}
+      </DiffLineView>
     ),
   );
 }
 
-// What a change did to a line a side has that the other side does not have as it is.
-const sideChange = { left: "removed", right: "added" } as const;
-
-// A line of a diff, `from` its place in its side's text, on the ground of what the change did to it, each word in the
-// weight and color of what the change did to that word. An empty line still takes a line's height, as it does in the text.
-function DiffLineView({ words, change, from, where }: { words: Edit[]; change: Edit["change"]; from: number; where: Where }) {
-  // Where each word starts: after the words before it.
-  const starts = [from];
-  for (const { text } of words) starts.push(starts.at(-1)! + text.length);
+function DiffFold({ fold, foldKey }: { fold: LineFold; foldKey: string }) {
+  const { open, toggle } = useToggle(foldKey, false);
   return (
-    <div className={`min-h-lh max-w-[110ch] pl-6 font-mono break-words whitespace-pre-wrap ${diffMarks[change].ground}`}>
-      {words.map(({ change, text }, index) => (
-        <span key={index} className={`${diffMarks[change].weight} ${diffMarks[change].color}`}>
-          <Highlighted slice={text} from={starts[index]!} where={where} />
-        </span>
-      ))}
-    </div>
+    <>
+      <button type="button" className="flex w-full items-center gap-3 text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
+        <span className="w-3">{open ? "▾" : "▸"}</span>
+        {fold.lines.length} unchanged lines
+      </button>
+      {open && <DiffLines lines={fold.lines} foldKey={foldKey} />}
+    </>
   );
 }
 
-// A run of a diff's unchanged lines, folded: a line saying how many, on both sides, which opens and closes it on a click;
-// opened, below it, the lines themselves, made only then. It is kept, as a text's region is, by the line it opens on.
-function DiffFold({ row, inset, fold, lines }: { row: ChangedRow; inset: string | undefined; fold: LineFold; lines: () => ReactNode }) {
-  const { open, toggle } = useToggle(regionKey(partKey(row.key, address.change), fold.line), false);
-  const line = (block: KeyedBlock) => (
-    <Gutter block={block}>
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 pl-6 text-left font-sans text-foreground-muted hover:bg-hover"
-        onClick={toggle}
-      >
-        <span className="w-3">{open ? "▾" : "▸"}</span>
-        {fold.pairs.length} unchanged lines
-      </button>
-    </Gutter>
-  );
+// A line of a unified diff: marked for what the change did to it and set on that mark's ground, verbatim. An empty line
+// still takes a line's height, its mark's.
+function DiffLineView({ change, children }: { change: Edit["change"]; children: ReactNode }) {
+  const { ground, color } = diffMarks[change];
   return (
-    <>
-      <Sides change={row.change} inset={inset} left={line(row.before)} right={line(row.block)} />
-      {open && lines()}
-    </>
+    <div className={`flex ${ground}`}>
+      <span className={`w-3 shrink-0 select-none ${color}`}>{marks[change]}</span>
+      <span className="min-w-0">{children}</span>
+    </div>
   );
 }
 
@@ -664,24 +623,18 @@ const diffMarks: Record<Edit["change"], { ground: string; color: string; weight:
   added: { ground: "bg-added", color: "text-success", weight: "font-semibold" },
 };
 
-// A change as a unified diff: each line marked for what the change did to it and set on that mark's ground, verbatim,
-// placed in the diff's text at its passage so the search's matches paint where they are.
+// A change as a unified diff: each line placed in the diff's text at its passage, so the search's matches paint where
+// they are.
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
   const diff = diffOf(part);
   const where = useWhere(blockKey, at, diff);
   return (
     <div className="font-mono break-words whitespace-pre-wrap">
-      {diff.lines.map((line, index) => {
-        const { ground, color } = diffMarks[line.change];
-        return (
-          <div key={index} className={`flex ${ground}`}>
-            <span className={`w-3 shrink-0 select-none ${color}`}>{marks[line.change]}</span>
-            <span className="min-w-0">
-              <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
-            </span>
-          </div>
-        );
-      })}
+      {diff.lines.map((line, index) => (
+        <DiffLineView key={index} change={line.change}>
+          <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
+        </DiffLineView>
+      ))}
     </div>
   );
 }

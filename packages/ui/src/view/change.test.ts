@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../format/blocks.ts";
-import { blockDiff, blockText, wordsOf, type LineFold, type Pair } from "./change.ts";
+import { blockDiff, blockText, type DiffLine, type LineFold } from "./change.ts";
 
 const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text }] });
 const numbered = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}`);
-const kinds = (entries: (Pair | LineFold)[]) => entries.map((entry) => (entry.kind === "fold" ? `fold ${entry.line}+${entry.pairs.length}` : entry.kind));
+const kinds = (entries: (DiffLine | LineFold)[]) => entries.map((entry) => (entry.kind === "fold" ? `fold ${entry.at}+${entry.lines.length}` : entry.change));
+const line = (change: DiffLine["change"], ...words: [DiffLine["change"], string][]): DiffLine => ({ kind: "line", change, words: words.map(([change, text]) => ({ change, text })) });
 
 describe("blockText", () => {
   it("writes each part as the diff compares it, a blank line between them, and no labels", () => {
@@ -30,54 +31,36 @@ describe("blockText", () => {
 });
 
 describe("blockDiff", () => {
-  it("sets a replaced line against its replacement, marked word by word, and a line one side has more of against an empty slot", () => {
-    const { entries } = blockDiff(block("keep\nmodel: a\ngone"), block("keep\nmodel: b"));
-    expect(entries).toEqual([
-      { kind: "same", left: { line: 0, text: "keep" }, right: { line: 0, text: "keep" } },
-      { kind: "replaced", left: { line: 1, text: "model: a" }, right: { line: 1, text: "model: b" } },
-      { kind: "removed", left: { line: 2, text: "gone" }, right: undefined },
-    ]);
-    expect(entries.map((entry) => wordsOf(entry as Pair))).toEqual([
-      { left: [{ change: "same", text: "keep" }], right: [{ change: "same", text: "keep" }] },
-      { left: [{ change: "same", text: "model: " }, { change: "removed", text: "a" }], right: [{ change: "same", text: "model: " }, { change: "added", text: "b" }] },
-      { left: [{ change: "removed", text: "gone" }], right: [] },
+  it("lists the lines a change removed above the lines it added, a replaced line marked word by word and any other whole", () => {
+    expect(blockDiff(block("keep\nmodel: a\ngone\nlast"), block("keep\nmodel: b\nlast\nnew"))).toEqual([
+      line("same", ["same", "keep"]),
+      line("removed", ["same", "model: "], ["removed", "a"]),
+      line("removed", ["removed", "gone"]),
+      line("added", ["same", "model: "], ["added", "b"]),
+      line("same", ["same", "last"]),
+      line("added", ["added", "new"]),
     ]);
   });
 
   it("folds each run of unchanged lines beyond the three beside a change, and lists a run of one", () => {
     const before = numbered(20);
     const after = before.map((line, index) => (index === 10 ? "changed" : line));
-    expect(kinds(blockDiff(block(before.join("\n")), block(after.join("\n"))).entries)).toEqual([
+    // The fold after the change is named by its place among the diff's lines, one further for the line replaced.
+    expect(kinds(blockDiff(block(before.join("\n")), block(after.join("\n"))))).toEqual([
       "fold 0+7",
       ...Array<string>(3).fill("same"),
-      "replaced",
+      "removed",
+      "added",
       ...Array<string>(3).fill("same"),
-      "fold 14+6",
+      "fold 15+6",
     ]);
     // Eight lines between two changes leave two beyond their context, folded; seven leave one, listed.
     const twice = (gap: number) => numbered(gap + 2).map((line, index) => (index === 0 || index === gap + 1 ? `${line}!` : line));
-    expect(kinds(blockDiff(block(numbered(10).join("\n")), block(twice(8).join("\n"))).entries)).toContain("fold 4+2");
-    expect(kinds(blockDiff(block(numbered(9).join("\n")), block(twice(7).join("\n"))).entries)).not.toContainEqual(expect.stringMatching(/fold/));
+    expect(kinds(blockDiff(block(numbered(10).join("\n")), block(twice(8).join("\n"))))).toContain("fold 5+2");
+    expect(kinds(blockDiff(block(numbered(9).join("\n")), block(twice(7).join("\n"))))).not.toContainEqual(expect.stringMatching(/fold/));
   });
 
-  it("gives the right side's text, a passage a line, and each fold's characters, as the search reads it", () => {
-    const after = ["new", ...numbered(9)].join("\n");
-    const { right } = blockDiff(block(["old", ...numbered(9)].join("\n")), block(after));
-    expect(right.text).toBe(after);
-    expect(right.passages.map(({ start, end }) => right.text.slice(start, end))).toEqual(after.split("\n"));
-    // Lines 4 to 9 of the right, after the change and the three beside it, are folded.
-    expect(right.folds).toEqual([{ start: after.indexOf("line 3"), end: after.length, line: 4 }]);
-  });
-
-  it("names a fold by the line it opens on in the version shown, and gives the left side's text a passage a line", () => {
-    // Two lines removed above the run shift its place among the pairs, not its line on the right.
-    const after = ["new", ...numbered(9)];
-    const { entries, left } = blockDiff(block(["old", "gone", "gone too", ...numbered(9)].join("\n")), block(after.join("\n")));
-    expect(kinds(entries).at(-1)).toBe("fold 4+6");
-    expect(left.passages.map(({ start, end }) => left.text.slice(start, end))).toEqual(["old", "gone", "gone too", ...numbered(9)]);
-  });
-
-  it("diffs each pair of versions once", () => {
+  it("diffs each pair of blocks once", () => {
     const [before, after] = [block("a"), block("b")];
     expect(blockDiff(before, after)).toBe(blockDiff(before, after));
   });

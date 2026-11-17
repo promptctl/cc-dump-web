@@ -1,8 +1,8 @@
 # cc-dump: design
 
-**Owner:** Brandon · **Status:** agreed 2026-11-14 · **Builds on:** `01-mvp.md`
+**Owner:** Brandon · **Status:** agreed 2026-11-14, one column 2026-11-16 · **Builds on:** `01-mvp.md`
 
-The MVP works and looks like nothing: one weight, one gray, one typeface, the word "metadata" forty times an exchange. This document is the design the app is built to from here. It is driven by what the screen is for, then made handsome. It is built in four tickets under the epic `dump-design-59q`, in order: foundation, the conversation side by side in time, minimap, keyboard.
+The MVP works and looks like nothing: one weight, one gray, one typeface, the word "metadata" forty times an exchange. This document is the design the app is built to from here. It is driven by what the screen is for, then made handsome. It is built in tickets under the epic `dump-design-ajl`, in order: foundation, the conversation in time, minimap, keyboard.
 
 ## What the screen is for
 
@@ -12,11 +12,12 @@ The reader is watching an agent work, or reading a run after, and asks three que
 
 The web is a far more expressive canvas than a terminal, so the view uses its dimensions to say where the reader is.
 
-- **Vertical is position within the conversation.** Top is the earliest content, bottom the most recent.
-- **Horizontal is time.** Each side shows the entire conversation of the recording at a moment: left as it was a step earlier, right as it is at the moment shown. A step is something arriving in the conversation: stepping forward in time adds it, stepping back removes it. Every exchange is an addition to the one conversation, a quota probe or a title request as much as a turn; none starts a conversation of its own. The two sides are aligned like a side-by-side diff: unchanged content level, changed content marked, what only the right has against an empty slot on the left. Runs of unchanged content fold into one row. A request that resends a thread and goes its own way, a side question, a compaction, a prompt suggestion, a twin subagent, is a branch: an addition of its own, one step in, that never marks the thread's content changed.
-- **Moving in time is one motion.** The right side slides to the left slot and the next moment fades in on the right. Follow mode's moment is now.
+- **Vertical is position within the conversation.** One column the width of the view, top the earliest content, bottom the most recent. Every row of the conversation at the moment shown is listed, none behind a count; a collapsed block's one line is what keeps a long run scannable.
+- **Time is the turn strip's.** The strip above the conversation has a mark per step, the earliest at its left, and the conversation shown is the conversation as it was at the step chosen. A step is something arriving in the conversation: stepping forward in time adds it, stepping back removes it. Every exchange is an addition to the one conversation, a quota probe or a title request as much as a turn; none starts a conversation of its own. A request that resends a thread and goes its own way, a side question, a compaction, a prompt suggestion, a twin subagent, is a branch: an addition of its own, one step in, that never marks the thread's content changed.
+- **What changed is a fact of the block.** A block says what was done to it where it stands, at the step that did it and at every step after. One the harness rewrote names the step of its last rewrite and opens, in place, to a diff of each rewrite it had: the lines taken out above the lines put in, the words that differ marked, runs of lines left as they were folded. One taken away leaves one struck line where it stood, naming the step. A band at a row's left edge is for the step shown alone, in the color of what that step did to the row, so the step's own doing stands out from what is older.
+- **Moving in time is one motion.** The conversation slides away the way the strip's steps run and the moment chosen comes in from the other side. Follow mode's moment is now.
 
-The diff answers the first two questions at once: what is new on the right is what just happened, and what the harness changed is the only other thing marked.
+The marks answer the first two questions at once: what the band marks is what just happened, and what the harness changed stays marked on the block it changed, however many steps ago.
 
 ## Principles
 
@@ -46,28 +47,26 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 ## Layout
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────────────────────┐
 │ cc-dump  ● connected  1 in flight  last 4s ago     Recording ▾  Launch  Theme │
 │ ▮ user  ▮ assistant  ▮ tools  ▮ system  ▮ metadata  ▮ thinking   search… 3/41 │
 │ ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ·  ▣  ·  ·     turn strip     │
-├────────────────────────────────────┬────────────────────────────────────┬──┬──┤
-│ 11  14:03:19  opus-5-5  2.1s  200  │ 12  14:03:22  opus-5-5  3.4s  200  │▒▒│  │
-│ in 46k cache 44k written 2k out 390│ in 48k cache 46k written 2k out 812│▒▒│  │
-│ ▌▸ HTTP request              929   │ ▌▸ HTTP request              929   │░░│  │
-│ ▌▸ parameters              12.5k   │ ▌▸ parameters              12.5k   │░░│  │
-│ ▌▸ Agent  Launch a new agent… 7.1k │ ▌▸ Agent  Launch a new agent… 7.1k │▒▒│  │
-│   103 blocks unchanged             │   103 blocks unchanged             │░░│  │
-│ ▌▾ user  proxy ok               8  │ ▌▾ user  proxy ok               8  │░░│  │
-│                                    │ ▌▾ tool_result                569  │▒▒│  │
-│                                    │ ▌  <system-reminder> …             │  │  │
-│                                    │ ▌▾ assistant  Reading…         210  │  │  │
-│                                       ● Following                       │  │  │
-└────────────────────────────────────┴────────────────────────────────────┴──┴──┘
+├─────────────────────────────────────────────────────────────────────────┬──┬──┤
+│  11  14:03:19  opus-5-5  2.1s  200                                      │▒▒│  │
+│  in 46k  cache 44k  written 2k  out 390                                 │▒▒│  │
+│  ▌▸ HTTP request                                                    929 │░░│  │
+│┃ ▌▸ parameters                             rewritten at step 12   12.5k │▒▒│  │
+│  ▌▸ Agent  Launch a new agent…                                     7.1k │░░│  │
+│  ▌▸ Edit  Performs exact string…           taken away at step 9    1.2k │░░│  │
+│  ▌▾ user  proxy ok                                                    8 │░░│  │
+│┃ 12  14:03:22  opus-5-5  3.4s  200                                      │▒▒│  │
+│┃ in 48k  cache 46k  written 2k  out 812                                 │▒▒│  │
+│┃ ▌▾ tool_result                                                     569 │▒▒│  │
+│┃ ▌  <system-reminder> …                                                 │  │  │
+│┃ ▌▾ assistant  Reading…                                             210 │  │  │
+│                                                             ● Following │  │  │
+└─────────────────────────────────────────────────────────────────────────┴──┴──┘
                                                                  minimap ─┘  └─ panels
 ```
 
 Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info and logs panels (F8, F9) open at the right.
-
-## Not decided here
-
-The fold's context size and the minimap's marks for changes are the implementing tickets' to settle against real recordings.

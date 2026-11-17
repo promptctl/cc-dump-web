@@ -18,7 +18,7 @@ import type { Match, Step } from "./search.ts";
 // under the view at the first step.
 export type View = { open: OpenRecording; window: TmuxWindow | null; opened: Opened; position: Position; moment: Moment; search: Search };
 
-// The moment shown on the right (docs/design/02-design.md, "Two axes"), by its step's exchange: `now`, the latest step,
+// The moment shown (docs/design/02-design.md, "Two axes"), by its step's exchange: `now`, the latest step,
 // whichever it is as exchanges arrive; `left`, the step that was now when the reader's own act (a scroll, a click on a
 // block or a fold, a step of the search) took them away from it; or `chosen`, a step the reader moved to in time.
 // [LAW:types-are-the-program] The last two are told apart because only `left` resumes: scrolling back to the end with
