@@ -129,7 +129,7 @@ describe("format", () => {
       end("a"),
     ]);
 
-    expect(lines(group(formatted, "request"))).toEqual(["metadata HTTP request", "metadata parameters", "tools Read", "tools web_search_20250305", "system system prompt", "metadata cache breakpoints: 1"]);
+    expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters", "tools Read", "tools web_search_20250305", "system system prompt", "parameters cache breakpoints: 1"]);
     expect(lines(group(formatted, "user"))).toEqual(["user user", "user image", "user document"]);
     expect(lines(group(formatted, "assistant"))).toEqual([
       "thinking thinking",
@@ -142,13 +142,13 @@ describe("format", () => {
     expect(lines(group(formatted, "user", 1))).toEqual(["tools tool_result"]);
     expect(lines(group(formatted, "system"))).toEqual(["system system reminder"]);
     expect(lines(group(formatted, "response"))).toEqual([
-      "metadata HTTP response",
+      "http HTTP response",
       "thinking thinking",
       "assistant assistant",
       "tools tool_use: Bash",
-      "metadata stop reason: tool_use",
-      "metadata usage",
-      "metadata message",
+      "usage stop reason: tool_use",
+      "usage usage",
+      "usage message",
     ]);
 
     // The content each shows: the image, the text document, the tool result's text and image, the streamed message.
@@ -218,7 +218,7 @@ describe("format", () => {
     const request_ = group(formatted, "request");
     expect(request_.at(-1)).toEqual({
       key: "cache",
-      category: "metadata",
+      category: "parameters",
       name: "cache breakpoints: 3",
       parts: [{ kind: "fields", fields: [["tools.Bash.0", shown], ["system.0", shown], ["message.0/content.1", shown]] }],
       // Its line previews where they are.
@@ -334,7 +334,7 @@ describe("format", () => {
     const blocks = group(formatted, "response");
     expect(blocks).toContainEqual({ key: "content.0", place: { in: "reply" }, category: "assistant", name: "hologram", parts: [{ kind: "json", value: hologram }] });
     // The events it cannot apply are shown too, each raw under its event name with why.
-    expect(lines(blocks)).toEqual(expect.arrayContaining(["metadata content_block_delta event", "metadata sparkle event"]));
+    expect(lines(blocks)).toEqual(expect.arrayContaining(["http content_block_delta event", "http sparkle event"]));
     expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", label: "not applied", text: "sparkle is not an event this view applies" });
   });
 
@@ -375,7 +375,7 @@ describe("format", () => {
     expect(responses[0]!.slice(1)).toEqual([
       { key: "error", category: "assistant", name: "error", parts: [{ kind: "json", value: overloaded.error }, { kind: "fields", label: "fields", fields: [["request_id", '"req_1"']] }] },
     ]);
-    expect(lines(responses[1]!)).toEqual(["metadata HTTP response", "assistant assistant", "metadata stop reason: null", "metadata usage", "metadata message", "assistant error"]);
+    expect(lines(responses[1]!)).toEqual(["http HTTP response", "assistant assistant", "usage stop reason: null", "usage usage", "usage message", "assistant error"]);
     expect(responses[2]).toEqual([{ key: "end", category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: "connect ECONNREFUSED 160.79.104.10:443" }] }]);
   });
 
@@ -392,7 +392,7 @@ describe("format", () => {
     expect(blocks.find(({ name }) => name === "tool_use: Bash")!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "input so far", text: '{"command": "l' });
     expect(blocks.map(({ key }) => key)).not.toContain("tail");
     const cutShort = group(one([...arriving, end("a")]), "response");
-    expect(cutShort.find(({ key }) => key === "tail")).toEqual({ key: "tail", category: "metadata", name: "stream tail", parts: [{ kind: "text", form: "verbatim", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
+    expect(cutShort.find(({ key }) => key === "tail")).toEqual({ key: "tail", category: "http", name: "stream tail", parts: [{ kind: "text", form: "verbatim", text: 'event: content_block_delta\ndata: {"type":"content_bl' }] });
   });
 
   it("shows why a body is not decoded yet, and what is left of a request body not complete", () => {
@@ -402,7 +402,7 @@ describe("format", () => {
     expect(group(formatted, "request").map(({ name }) => name)).toEqual(["HTTP request", "request body so far"]);
     expect(group(formatted, "response")[1]).toEqual({
       key: "undecoded",
-      category: "metadata",
+      category: "http",
       name: "body not decoded",
       parts: [{ kind: "text", form: "verbatim", text: expect.stringMatching(/^\d+ bytes wait for the body to complete: br is decoded whole$/) }],
     });
@@ -416,7 +416,7 @@ describe("format", () => {
       ...response("unrecorded", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, stop_reason: "end_turn" }))),
     ]);
     expect(formatted.map(({ exchange }) => exchange.trace_id)).toEqual(["messages", "unrecorded"]);
-    expect(lines(group(formatted[1]!, "request"))).toEqual(["metadata HTTP request"]);
+    expect(lines(group(formatted[1]!, "request"))).toEqual(["http HTTP request"]);
   });
 
   it("numbers an exchange by its place among those shown, as one shown before its request head leaves them", () => {
@@ -594,7 +594,7 @@ describe("format", () => {
       ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "br"]], brotliCompressSync(JSON.stringify(message)), false),
       end("a"),
     ]);
-    expect(lines(group(formatted, "response"))).toEqual(["metadata HTTP response", "metadata stop reason: end_turn", "metadata usage", "metadata message"]);
+    expect(lines(group(formatted, "response"))).toEqual(["http HTTP response", "usage stop reason: end_turn", "usage usage", "usage message"]);
   });
 
   it("shows no text for a body it cannot decode: a coding it does not know, or a chunk that is not base64", () => {
@@ -607,9 +607,9 @@ describe("format", () => {
       { ...at("base64"), type: "response_trailers", headers: [] },
     ]);
     const [coding, base64] = formatted.map((exchange) => group(exchange, "response").slice(1));
-    expect(coding).toEqual([{ key: "undecoded", category: "metadata", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: "content-encoding compress is not one this view decodes" }] }]);
+    expect(coding).toEqual([{ key: "undecoded", category: "http", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: "content-encoding compress is not one this view decodes" }] }]);
     // A body that did not decode is not parsed, so its one failure is shown once.
-    expect(lines(base64!)).toEqual(["metadata body not decoded"]);
+    expect(lines(base64!)).toEqual(["http body not decoded"]);
   });
 
   it("does not show a request whose target is no URL", () => {
@@ -666,7 +666,7 @@ describe("format", () => {
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {
     const [, ...body] = response("a", 200, [], gzipSync("{}"));
     const blocks = group(one([...body, end("a")]), "response");
-    expect(lines(blocks)).toEqual(["metadata HTTP response", "metadata body not decoded", "metadata response body so far"]);
+    expect(lines(blocks)).toEqual(["http HTTP response", "http body not decoded", "http response body so far"]);
     expect(blocks[1]!.parts).toEqual([{ kind: "text", form: "verbatim", text: "the body is not UTF-8: what is not is shown as U+FFFD" }]);
   });
 
@@ -688,7 +688,7 @@ describe("format", () => {
       "response",
     );
     // A ping before the message begins builds nothing and is nothing wrong.
-    expect(lines(blocks)).toEqual(["metadata HTTP response", "thinking thinking", "metadata stop reason: null", "metadata usage", "metadata message"]);
+    expect(lines(blocks)).toEqual(["http HTTP response", "thinking thinking", "usage stop reason: null", "usage usage", "usage message"]);
     expect(blocks[1]!.parts).toEqual([{ kind: "text", form: "markdown", text: "Let me think" }, { kind: "fields", fields: [["signature", "none"]] }]);
   });
 
@@ -729,7 +729,7 @@ describe("format", () => {
       ...response("a", 200, [["Content-Type", "text/event-stream"], ["Content-Encoding", "deflate"]], deflated.subarray(0, deflated.length - 6), false),
       end("a"),
     ]);
-    expect(lines(group(formatted, "response")).slice(0, 4)).toEqual(["metadata HTTP response", "metadata body not decoded", "assistant assistant", "metadata stop reason: null"]);
+    expect(lines(group(formatted, "response")).slice(0, 4)).toEqual(["http HTTP response", "http body not decoded", "assistant assistant", "usage stop reason: null"]);
   });
 
   it("shows each field of a source of a type it does not know once", () => {

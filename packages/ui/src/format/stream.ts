@@ -87,7 +87,7 @@ export function createReassembly(): Reassembly {
         return;
       // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
-        blocks.push(...restBlock(event, "ping event"));
+        blocks.push(...restBlock(event, "http", "ping event"));
         return;
       // The stream's end, which the trailers already mark: it carries no content.
       case "message_stop":
@@ -109,7 +109,7 @@ export function createReassembly(): Reassembly {
           () => apply(parseJson(data, "its data")),
           (reason) =>
             void blocks.push({
-              category: "metadata",
+              category: "http",
               name: `${name} event`,
               parts: [
                 { kind: "text", form: "verbatim", label: "not applied", text: reason },

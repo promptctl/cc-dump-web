@@ -1,15 +1,16 @@
 import { ColorRgba, ensureContrast, ensureContrastToward, hslToRgb, rgbToHsl, type Palette, type PaletteRole } from "@promptctl/rich-js";
 import { categories, type Category } from "../format/blocks.ts";
 
-// The six category colors of a theme (docs/design/02-design.md, "Themes"): the bar in the gutter beside a block, the
+// The category colors of a theme (docs/design/02-design.md, "Themes"): the bar in the gutter beside a block, the
 // chip in the filter bar's legend, and the text on the chip.
 export type CategoryColors = { bar: ColorRgba; chip: ColorRgba; chipText: ColorRgba };
 
 // Each category's place among the hues, the original cc-dump's (its filter_registry's FILTER_SPECS), so that a theme
-// gives each category the color the original gave it.
-const hueIndex: Record<Category, number> = { tools: 0, system: 1, metadata: 2, user: 3, assistant: 4, thinking: 5 };
+// gives each category the color the original gave it: `http` has the place of the original's metadata, which it was the
+// most of, and the two split from it the next places.
+const hueIndex: Record<Category, number> = { tools: 0, system: 1, http: 2, user: 3, assistant: 4, thinking: 5, parameters: 6, usage: 7 };
 
-// Consecutive hues this far apart are as far from each other as six hues on a circle get: at least 32.5° between any two.
+// Consecutive hues this far apart keep the eight at least 32.5° from each other.
 const goldenAngle = 137.508;
 // A theme color less saturated than this is a gray, and holds no hue to keep the categories away from.
 const chromaticFloor = 0.05;

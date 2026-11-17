@@ -5,7 +5,7 @@ import { categories } from "../format/blocks.ts";
 import { categoryColors } from "./categories.ts";
 
 describe("a theme's category colors", () => {
-  it.each(listThemePalettes())("%s: six colors that read on the theme and apart from each other, each keeping its hue", (name) => {
+  it.each(listThemePalettes())("%s: colors that read on the theme and apart from each other, each keeping its hue", (name) => {
     const palette = getThemePalette(name);
     const colors = categoryColors(palette);
     const background = palette.get("background");
@@ -25,8 +25,8 @@ describe("a theme's category colors", () => {
 
   it("gives textual-dark the original cc-dump's hues, so an eye trained on it carries over", () => {
     const colors = categoryColors(getThemePalette("textual-dark"));
-    const original = { tools: 301, system: 78, metadata: 216, user: 353, assistant: 131, thinking: 268 };
-    for (const category of categories) expect(apart(rgbToHsl(colors[category].chip).h, original[category]), category).toBeLessThanOrEqual(2);
+    const original = { tools: 301, system: 78, http: 216, user: 353, assistant: 131, thinking: 268 } as const;
+    for (const [category, hue] of Object.entries(original)) expect(apart(rgbToHsl(colors[category as keyof typeof original].chip).h, hue), category).toBeLessThanOrEqual(2);
   });
 });
 
