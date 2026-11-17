@@ -15,6 +15,7 @@ function keydown(key: string, held: Held = {}, target: object | null = { tagName
     ctrlKey: false,
     metaKey: false,
     shiftKey: false,
+    repeat: false,
     isComposing: false,
     keyCode: 0,
     defaultPrevented: false,
@@ -88,6 +89,22 @@ describe("the keys", () => {
     pressEach(heard.conversation.keys, conversationPresses, ({ conversation }) => conversation);
     pressEach(heard.field.keys, fieldPresses, ({ field }) => field);
     pressEach(heard.app.keys, appPresses, ({ app }) => app);
+  });
+
+  it("acts again while a move is held, and once for any other key, whose held press it takes all the same", () => {
+    const moves = ["n", "N", "j", "k", "←", "→", "Alt+N", "Alt+P", "Enter", "Shift+Enter"];
+    function holdEach<Acts>(keys: readonly Key<Acts>[], presses: Press[], acts: (all: ReturnType<typeof recorded>) => Acts) {
+      for (const [key, held, call] of presses) {
+        const all = recorded();
+        const event = keydown(key, { ...held, repeat: true });
+        press(keys, event, acts(all));
+        expect(all.calls).toEqual(moves.includes(chordOf(event)) ? [call] : []);
+        expect(event.defaultPrevented).toBe(true);
+      }
+    }
+    holdEach(heard.conversation.keys, conversationPresses, ({ conversation }) => conversation);
+    holdEach(heard.field.keys, fieldPresses, ({ field }) => field);
+    holdEach(heard.app.keys, appPresses, ({ app }) => app);
   });
 
   it("leaves a press that is no key to the browser", () => {

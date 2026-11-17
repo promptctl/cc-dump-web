@@ -131,6 +131,11 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
       resized.disconnect();
     };
   }, []);
+  // [LAW:single-enforcer] The reader choosing `position`: the view is put there at once, as their latest act.
+  const choose = (position: Position) => {
+    view.place(position, "reader", now);
+    latest.current("choose");
+  };
   // Following, a click stops; paused or off, it follows from the end, now, whichever moment was shown.
   const toggleFollow = () => {
     settings.setFollow(following !== "on");
@@ -153,8 +158,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     // view had resolved the offset against the height the row had: its height is committed now.
     flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
     const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
-    view.place({ at: "row", key, offset: Math.max(0, target.getBoundingClientRect().top - rowBox.top - lead) }, "reader", now);
-    latest.current("choose");
+    choose({ at: "row", key, offset: Math.max(0, target.getBoundingClientRect().top - rowBox.top - lead) });
   };
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
   // is put at the match's line.
@@ -181,16 +185,10 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
 
   // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
   // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
-  const hold = () => {
-    view.place(positionAt(scroller.current!.scrollTop, rowAt), "reader", now);
-    latest.current("choose");
-  };
+  const hold = () => choose(positionAt(scroller.current!.scrollTop, rowAt));
   // The reader moving the view to `offset` from the minimap, as a scroll there would: the place there, so following
   // pauses, or the end, where following resumes.
-  const placeAt = (offset: number) => {
-    view.place(readAt(offset, largest(scroller.current!), useSettings.getState().follow, useView.getState().moment.at !== "chosen", rowAt), "reader", now);
-    latest.current("choose");
-  };
+  const placeAt = (offset: number) => choose(readAt(offset, largest(scroller.current!), useSettings.getState().follow, useView.getState().moment.at !== "chosen", rowAt));
 
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put at the
   // step's own exchange line, where what it brought begins, or, following, at the end. What the step did to a row
@@ -229,12 +227,14 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
 
   // A move to the block the harness injected that is listed next after the view's position, or before it: the view is
-  // put at the block's line, which the position then is, so the move after goes on from it.
+  // put at the block's line, which the position then is, so the move after goes on from it. The line takes the focus,
+  // which marks the block where the view is at the end and cannot move, and opens it at Enter. Committed first, so the
+  // block's row is mounted, as the position's is.
   const toInjected = (direction: Direction) => {
     const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
     if (key === undefined) return;
-    view.place({ at: "row", key, offset: 0 }, "reader", now);
-    latest.current("choose");
+    flushSync(() => choose({ at: "row", key, offset: 0 }));
+    scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] button`)!.focus({ preventScroll: true });
   };
   const field = useRef<HTMLInputElement>(null);
   // The conversation's keys (keyboard.ts). The keys that scroll move the scroller as a wheel does, so the step that reads a
