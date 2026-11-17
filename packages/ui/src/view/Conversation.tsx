@@ -17,7 +17,7 @@ import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Sections, useToggle, useWhere } from "./painting.ts";
+import { Hold, Painted, Sections, ToHeading, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
 import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
@@ -142,8 +142,20 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
+  // [LAW:single-enforcer] The view put at `target`, drawn in the element `text` of the row `key`, a few of the text's
+  // lines below the top: what ends a move to something a commit has just shown, a match or a heading.
+  const putAt = (key: string, text: HTMLElement, target: Range | HTMLElement) => {
+    const row = text.closest<HTMLElement>("[data-index]")!;
+    const rowBox = row.getBoundingClientRect();
+    // The move opened the row in this commit, which the virtualizer would see only once a resize is observed, after the
+    // view had resolved the offset against the height the row had: its height is committed now.
+    flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
+    const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
+    view.place({ at: "row", key, offset: Math.max(0, target.getBoundingClientRect().top - rowBox.top - lead) }, "reader", now);
+    latest.current("choose");
+  };
   // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
-  // is put at the match's line, a few of its lines below the top.
+  // is put at the match's line.
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
@@ -152,15 +164,17 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     // [LAW:no-silent-failure] A step goes to a match found in a block, which the step lists if its category is hidden, so
     // it is painted once committed.
     if (match === undefined) throw new Error(`The match stepped to is not on screen: ${JSON.stringify(next.match)}`);
-    const text = match.startContainer.parentElement!;
-    const row = text.closest<HTMLElement>("[data-index]")!;
-    const rowBox = row.getBoundingClientRect();
-    // The step opened the row in this commit, which the virtualizer would see only once a resize is observed, after the
-    // view had resolved the offset against the height the row had: its height is committed now.
-    flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
-    const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
-    view.place({ at: "row", key: next.match.key, offset: Math.max(0, match.getBoundingClientRect().top - rowBox.top - lead) }, "reader", now);
-    latest.current("choose");
+    putAt(next.match.key, match.startContainer.parentElement!, match);
+  };
+  // A click on an entry of a text's contents, as one act: it is committed with the folds around its heading open, then
+  // the view is put at the heading's line.
+  const toHeading = (blockKey: string, heading: string, folds: string[]) => {
+    flushSync(() => view.toHeading(blockKey, folds, now));
+    const line = document.getElementById(heading);
+    // [LAW:no-silent-failure] The entry is drawn in its block's row, which the commit keeps mounted, and every fold
+    // around its heading shows open, so the heading is drawn once committed.
+    if (line === null) throw new Error(`The heading gone to is not on screen: ${heading}`);
+    putAt(blockKey, line, line);
   };
 
   // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
@@ -202,12 +216,13 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const goBy = (by: -1 | 1) => go(Math.min(steps, Math.max(1, (aimed.current ?? shown) + by)));
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
   // as what they show changes.
-  const moves = useRef({ go, goBy, toStep, hold, placeAt });
+  const moves = useRef({ go, goBy, toStep, hold, placeAt, toHeading });
   useLayoutEffect(() => {
-    moves.current = { go, goBy, toStep, hold, placeAt };
+    moves.current = { go, goBy, toStep, hold, placeAt, toHeading };
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
   const onHold = useCallback(() => moves.current.hold(), []);
+  const onHeading = useCallback((blockKey: string, heading: string, folds: string[]) => moves.current.toHeading(blockKey, heading, folds), []);
   const onPlace = useCallback((offset: number) => moves.current.placeAt(offset), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
   // ← and → move one step, unless a field takes the keys or what they were pressed in handled them.
@@ -238,15 +253,17 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
             <p className="flex flex-1 items-center justify-center text-sm text-foreground-muted">No Messages API exchanges yet</p>
           ) : (
             <Hold.Provider value={onHold}>
-              <Painted.Provider value={pattern}>
-                <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
-                  {virtualizer.getVirtualItems().map((item) => (
-                    <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
-                      <RowView row={rows[item.index]!} reading={reading} />
-                    </ListedRow>
-                  ))}
-                </div>
-              </Painted.Provider>
+              <ToHeading.Provider value={onHeading}>
+                <Painted.Provider value={pattern}>
+                  <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
+                    {virtualizer.getVirtualItems().map((item) => (
+                      <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
+                        <RowView row={rows[item.index]!} reading={reading} />
+                      </ListedRow>
+                    ))}
+                  </div>
+                </Painted.Provider>
+              </ToHeading.Provider>
             </Hold.Provider>
           )}
           {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row

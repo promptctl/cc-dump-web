@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import type { Part } from "../format/parts.ts";
+import { contentsKey, contentsOf, farApart, type Entry } from "./contents.ts";
 import { Highlighted } from "./Highlighted.tsx";
-import { useSection, useToggle, useWhere, type Where } from "./painting.ts";
+import { ToHeading, useSection, useToggle, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
 import { renderingOf, type Block, type Fold, type Heading, type Inline, type Leaf, type Run } from "./rendering.ts";
 import { partKey } from "./search.ts";
@@ -10,10 +11,61 @@ import { partKey } from "./search.ts";
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
 // A Markdown text's prose is set in the sans, its code and tags in the mono; a verbatim text is all mono, as it came.
 // Its long regions collapse and expand as a block does, and each of its headings hides and shows what stands under it
-// (docs/design/01-mvp.md, F4), and every leaf paints the search's matches.
+// (docs/design/01-mvp.md, F4), and every leaf paints the search's matches. Headings that stand far apart are listed
+// above it, as its contents.
 export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
   const rendering = renderingOf(part);
-  return <div>{runViews(rendering.runs, useWhere(blockKey, at, rendering))}</div>;
+  const where = useWhere(blockKey, at, rendering);
+  const contents = useMemo(() => contentsOf(rendering.runs), [rendering]);
+  return (
+    <div>
+      {farApart(contents) && <ContentsView entries={contents} where={where} />}
+      {runViews(rendering.runs, where)}
+    </div>
+  );
+}
+
+// [LAW:one-source-of-truth] What opens on `line` of the text at `where` is kept by this key, a region or a heading's
+// section, and a heading on that line is drawn with it as its id: one name keeps a section and finds its heading.
+const keyAt = (where: Where, line: number) => regionKey(partKey(where.blockKey, where.at), line);
+
+// [LAW:one-source-of-truth] How a line of the view says how many of its text's lines it holds: a long region's, a
+// closed heading's and an entry of the contents'.
+const holding = (lines: number) => ` · ${lines} ${lines === 1 ? "line" : "lines"}`;
+
+// A text's contents (contents.ts): a line in the view's words, which starts closed, as a long region does, and open
+// lists the text's headings, each set in under the one whose section it stands in, with how many lines stand under it.
+// A click on an entry shows its heading, with what stands under it, and goes to it. The entries say the headings again
+// in the view's words, so no match is painted in them: a match in a heading is the heading's alone (search.ts).
+function ContentsView({ entries, where }: { entries: Entry[]; where: Where }) {
+  const { open, toggle } = useToggle(contentsKey(partKey(where.blockKey, where.at)), false);
+  const toHeading = useContext(ToHeading);
+  return (
+    <nav className="flex flex-col items-start pb-1 font-sans text-[13px] leading-relaxed">
+      <button type="button" className="text-foreground-muted hover:bg-hover" aria-expanded={open} onClick={toggle}>
+        <span className={beside}>{open ? "▾" : "▸"}</span> contents<span className={beside}> · {entries.length} headings</span>
+      </button>
+      {open &&
+        entries.map((entry) => (
+          <button
+            key={entry.line}
+            type="button"
+            className="text-left hover:bg-hover"
+            style={{ marginLeft: `${(entry.level + 1) * 2}ch` }}
+            onClick={() =>
+              toHeading(
+                where.blockKey,
+                keyAt(where, entry.line),
+                entry.folds.map((line) => keyAt(where, line)),
+              )
+            }
+          >
+            {entry.title}
+            <span className={beside}>{holding(entry.lines)}</span>
+          </button>
+        ))}
+    </nav>
+  );
 }
 
 function runViews(runs: Run[], where: Where): ReactNode[] {
@@ -46,7 +98,7 @@ function leafView(leaf: Leaf, where: Where, key?: number): ReactNode {
 // A long region starts collapsed: its line names it and how many lines it shows, and expanded it shows `children`. It
 // is kept by its part's key and the line it opens on.
 function RegionView({ fold, where, children }: { fold: Fold; where: Where; children: ReactNode }) {
-  const { open, toggle } = useToggle(regionKey(partKey(where.blockKey, where.at), fold.line), false);
+  const { open, toggle } = useToggle(keyAt(where, fold.line), false);
   return (
     <div>
       <button
@@ -54,7 +106,8 @@ function RegionView({ fold, where, children }: { fold: Fold; where: Where; child
         className="font-mono text-foreground-muted hover:bg-hover"
         onClick={toggle}
       >
-        {open ? "▾" : "▸"} {fold.label} · {fold.lines} lines
+        {open ? "▾" : "▸"} {fold.label}
+        {holding(fold.lines)}
       </button>
       {open && children}
     </div>
@@ -81,9 +134,9 @@ const tag = "font-mono text-xs text-foreground-muted";
 // What a heading's line says beside the heading: which way its section shows, and how much is under it.
 const beside = "font-mono text-xs font-normal text-foreground-muted";
 
-function headingView({ depth }: Heading, children: ReactNode) {
+function headingView({ depth, line }: Heading, where: Where, children: ReactNode) {
   return (
-    <p className={`font-semibold ${headings[depth].size}`} style={{ color: headings[depth].color }}>
+    <p id={keyAt(where, line)} className={`font-semibold ${headings[depth].size}`} style={{ color: headings[depth].color }}>
       {children}
     </p>
   );
@@ -93,14 +146,15 @@ function headingView({ depth }: Heading, children: ReactNode) {
 // starts as its block says its sections do, and is kept as a region is, by its part's key and the line its heading is
 // on. Its blocks are its text's own, set among them as they are with it open or with no heading over them.
 function HeadedView({ block, where }: { block: Extract<Block, { kind: "headed" }>; where: Where }) {
-  const { open, toggle } = useSection(regionKey(partKey(where.blockKey, where.at), block.line));
+  const { open, toggle } = useSection(keyAt(where, block.heading.line));
   return (
     <>
       {headingView(
         block.heading,
+        where,
         <button type="button" className="text-left hover:bg-hover" aria-expanded={open} onClick={toggle}>
           <span className={beside}>{open ? "▾" : "▸"}</span> {inlineViews(block.heading.children, where)}
-          {!open && <span className={beside}> · {block.lines} lines</span>}
+          {!open && <span className={beside}>{holding(block.lines)}</span>}
         </button>,
       )}
       {open && blockViews(block.body, where)}
@@ -114,7 +168,7 @@ function BlockView({ block, where }: { block: Block; where: Where }) {
       // A line break typed in a paragraph shows as one, as it does in the terminal.
       return <p className="break-words whitespace-pre-wrap">{inlineViews(block.children, where)}</p>;
     case "heading":
-      return headingView(block, inlineViews(block.children, where));
+      return headingView(block, where, inlineViews(block.children, where));
     case "headed":
       return <HeadedView block={block} where={where} />;
     case "code":

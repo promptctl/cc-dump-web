@@ -45,7 +45,8 @@ export type Shown = { at: string } & ({ in: "line" | "content"; searched: Search
 
 // The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
 // away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
-// itself or a line describing it, and what a step rewrote in a block is the view's account of it, so none is searched.
+// itself or a line describing it, what a step rewrote in a block is the view's account of it, and a text's contents
+// say its headings again (contents.ts), so none is searched.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
   return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];

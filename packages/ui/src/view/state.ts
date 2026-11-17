@@ -90,17 +90,28 @@ export const view = {
   // open, as the levels `visibility` start it or as the reader chose, is left as it is, and so is a region the choices
   // hold open, so a step among the matches of what is open leaves the choices the record they were.
   goTo: ({ match, row, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
-    useView.setState(({ opened, moment, search }) => {
-      const set = closedSetOf(row, visibility, opened);
-      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, opened) ? [] : [row.key]), ...regions.filter((key) => opened[key] !== true)];
-      return {
-        opened: opens.length === 0 ? opened : { ...opened, ...Object.fromEntries(opens.map((key) => [key, true] as const)) },
-        position: { at: "row", key: match.key, offset: 0 },
-        moment: leave(moment, now),
-        search: { ...search, current: match },
-      };
+    useView.setState((state) => {
+      const set = closedSetOf(row, visibility, state.opened);
+      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, state.opened) ? [] : [row.key]), ...regions];
+      return { ...movedTo(state, match.key, opens, now), search: { ...state.search, current: match } };
     }),
+  // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show
+  // the entry's heading and what stands under it, `folds`, show open, and the view moves to the row of its block,
+  // `key`, which the click then refines to the heading's line.
+  toHeading: (key: string, folds: string[], now: string | undefined) => useView.setState((state) => movedTo(state, key, folds, now)),
 };
+
+// [LAW:single-enforcer] The reader's move to something in the row `key`, with now's step `now`: each of `opens` the
+// choices do not hold open is chosen open, the choices the record they were if they hold all of them open, the view is
+// at the row's top, and now is left.
+function movedTo({ opened, moment }: View, key: string, opens: string[], now: string | undefined): Pick<View, "opened" | "position" | "moment"> {
+  const closed = opens.filter((open) => opened[open] !== true);
+  return {
+    opened: closed.length === 0 ? opened : { ...opened, ...Object.fromEntries(closed.map((open) => [open, true] as const)) },
+    position: { at: "row", key, offset: 0 },
+    moment: leave(moment, now),
+  };
+}
 
 // The moment once the reader's own act takes them away from now's step, `now`: left there, or, if it is not now, as it
 // was. Before any exchange there is no step to leave.

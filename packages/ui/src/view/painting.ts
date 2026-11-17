@@ -4,8 +4,8 @@ import { isOpen } from "./rows.ts";
 import { find, type Searched } from "./search.ts";
 import { useView, view } from "./state.ts";
 
-// How a text shown in the conversation paints the search's matches (docs/design/01-mvp.md, F6), and what a block or a
-// region calls when clicked. The Conversation provides both.
+// How a text shown in the conversation paints the search's matches (docs/design/01-mvp.md, F6), and what a block, a
+// region or an entry of a text's contents calls when clicked. The Conversation provides each.
 
 // The pattern the conversation's texts paint the matches of: the search's, so what is painted is what it counts.
 export const Painted = createContext<RegExp | undefined>(undefined);
@@ -27,6 +27,12 @@ export function useWhere(blockKey: string, at: string, searched: Searched): Wher
 // What a block or region calls when clicked, before it shows the other way: the view holds where it is.
 export const Hold = createContext<() => void>(() => {
   throw new Error("A block is shown outside a Conversation");
+});
+
+// What an entry of a text's contents calls when clicked (contents.ts): the view goes to the heading drawn with the id
+// `heading`, in the row of the block `blockKey`, with each of `folds` shown open.
+export const ToHeading = createContext<(blockKey: string, heading: string, folds: string[]) => void>(() => {
+  throw new Error("A text is shown outside a Conversation");
 });
 
 // Whether the sections under the headings of a block's texts start open (rows.ts, sectionsStartOpen): the block's to

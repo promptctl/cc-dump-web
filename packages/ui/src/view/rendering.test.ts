@@ -159,19 +159,18 @@ describe("render", () => {
   });
 
   it("holds under a heading what stands up to the next heading of its depth or a shallower one, the sections of deeper headings among it", () => {
-    expect(blocksOf(corpus[0]!)).toMatchObject([{ kind: "headed", line: 0, lines: 2, heading: { depth: 1 }, body: [{ kind: "paragraph" }] }]);
+    expect(blocksOf(corpus[0]!)).toMatchObject([{ kind: "headed", lines: 2, heading: { depth: 1, line: 0 }, body: [{ kind: "paragraph" }] }]);
     // What stands before the first heading is in no section, and a heading nothing stands under is a heading alone.
     expect(blocksOf(corpus[12]!)).toEqual([
       { kind: "paragraph", children: [expect.anything()] },
       {
         kind: "headed",
-        line: 2,
         lines: 12,
-        heading: expect.objectContaining({ depth: 1 }),
+        heading: expect.objectContaining({ depth: 1, line: 2 }),
         body: [
           expect.objectContaining({ kind: "paragraph" }),
-          { kind: "headed", line: 6, lines: 4, heading: expect.objectContaining({ depth: 2 }), body: [expect.objectContaining({ kind: "paragraph" }), expect.objectContaining({ kind: "heading", depth: 3 })] },
-          { kind: "headed", line: 12, lines: 2, heading: expect.objectContaining({ depth: 2 }), body: [expect.objectContaining({ kind: "paragraph" })] },
+          { kind: "headed", lines: 4, heading: expect.objectContaining({ depth: 2, line: 6 }), body: [expect.objectContaining({ kind: "paragraph" }), expect.objectContaining({ kind: "heading", depth: 3 })] },
+          { kind: "headed", lines: 2, heading: expect.objectContaining({ depth: 2, line: 12 }), body: [expect.objectContaining({ kind: "paragraph" })] },
         ],
       },
       expect.objectContaining({ kind: "heading", depth: 1 }),
@@ -189,10 +188,10 @@ describe("render", () => {
 
   it("ends a heading's section where the container holding it does, a tagged section or a quote, each whole under the heading before it", () => {
     expect(blocksOf("# Rules\n\n<notes>\n## Inside\n\nx\n</notes>\n\nafter\n")).toMatchObject([
-      { kind: "headed", line: 0, body: [{ kind: "section", body: [{ kind: "headed", line: 3, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
+      { kind: "headed", heading: { line: 0 }, body: [{ kind: "section", body: [{ kind: "headed", heading: { line: 3 }, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
     ]);
     expect(blocksOf("# Rules\n\n> ## Quoted\n> x\n\nafter\n")).toMatchObject([
-      { kind: "headed", line: 0, body: [{ kind: "quote", children: [{ kind: "headed", line: 2, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
+      { kind: "headed", heading: { line: 0 }, body: [{ kind: "quote", children: [{ kind: "headed", heading: { line: 2 }, body: [{ kind: "paragraph" }] }] }, { kind: "paragraph" }] },
     ]);
   });
 
