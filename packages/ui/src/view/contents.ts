@@ -65,11 +65,12 @@ function ofBlock(block: Block, around: Around): Entry[] {
   }
 }
 
+// An entry is one line: a line break in its heading, as written or forced, is a space.
 function entry({ children, line }: Heading, lines: number, { folds, level }: Around): Entry {
-  return { title: words(children), line, level, lines, folds };
+  return { title: words(children).replaceAll("\n", " "), line, level, lines, folds };
 }
 
-// What a heading says, as its line reads: a line break in it is a space.
+// What a heading says, as its lines read.
 function words(inlines: Inline[]): string {
   return inlines
     .map((inline): string => {
@@ -84,7 +85,7 @@ function words(inlines: Inline[]): string {
         case "link":
           return words(inline.children);
         case "break":
-          return " ";
+          return "\n";
       }
     })
     .join("");

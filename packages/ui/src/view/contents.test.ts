@@ -17,6 +17,10 @@ describe("contentsOf", () => {
     ]);
   });
 
+  it("says a heading written on two lines as one line, whichever way its line breaks", () => {
+    expect(contents("Release\nnotes\n===\n\nForced  \nbreak\n---\n").map(({ title }) => title)).toEqual(["Release notes", "Forced break"]);
+  });
+
   it("says of each heading how many sections it stands in, whatever its depth", () => {
     expect(contents("### Deep first\n\na\n\n# Top\n\nb\n\n#### Far under\n\nc\n").map(({ title, level }) => [title, level])).toEqual([
       ["Deep first", 0],
