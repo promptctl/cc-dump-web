@@ -1,5 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import type { Segment } from "./history.ts";
+import { conversationKeys, withKeys } from "./keyboard.ts";
 import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
 
 // The steps of the conversation, above it (docs/design/02-design.md, "Two axes"): one mark per step, in the order
@@ -24,13 +25,13 @@ export const TurnStrip = memo(function TurnStrip({
   const failures = useMemo(() => failuresOf(segments), [segments]);
   return (
     <nav aria-label="Steps" className="flex h-7 items-center gap-2 bg-surface px-4 font-sans text-xs">
-      <button type="button" className="control" disabled={shown <= 1} title="The step before (←)" onClick={() => onStep(-1)}>
+      <button type="button" className="control" disabled={shown <= 1} title={withKeys("The step before", conversationKeys.back)} onClick={() => onStep(-1)}>
         ←
       </button>
       <span className="w-[11ch] text-center tabular-nums text-foreground-muted">
         {shown} / {segments.length}
       </span>
-      <button type="button" className="control" disabled={shown >= segments.length} title="The step after (→)" onClick={() => onStep(1)}>
+      <button type="button" className="control" disabled={shown >= segments.length} title={withKeys("The step after", conversationKeys.forward)} onClick={() => onStep(1)}>
         →
       </button>
       <ol className="flex h-4 min-w-0 flex-1 items-end gap-px overflow-x-auto [scrollbar-width:none]">

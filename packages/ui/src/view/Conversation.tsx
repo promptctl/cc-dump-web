@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
@@ -9,6 +9,8 @@ import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
 import { createHistory, sameFields, type Branch, type History } from "./history.ts";
+import { injectedFrom } from "./injected.ts";
+import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
 import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
@@ -225,24 +227,39 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const onHeading = useCallback((blockKey: string, heading: string, folds: string[]) => moves.current.toHeading(blockKey, heading, folds), []);
   const onPlace = useCallback((offset: number) => moves.current.placeAt(offset), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
-  // ← and → move one step, unless a field takes the keys or what they were pressed in handled them.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const by = arrows[event.key];
-      if (by === undefined || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || takesKeys(event.target)) return;
-      event.preventDefault();
-      onStep(by);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onStep]);
+
+  // A move to the block the harness injected that is listed next after the view's position, or before it: the view is
+  // put at the block's line, which the position then is, so the move after goes on from it.
+  const toInjected = (direction: Direction) => {
+    const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
+    if (key === undefined) return;
+    view.place({ at: "row", key, offset: 0 }, "reader", now);
+    latest.current("choose");
+  };
+  const field = useRef<HTMLInputElement>(null);
+  // The conversation's keys (keyboard.ts). The keys that scroll move the scroller as a wheel does, so the step that reads a
+  // reader's scroll (scroll.ts) says what follows: at the bottom following resumes, and anywhere else it pauses.
+  useKeys(heard.conversation.keys, {
+    search: () => {
+      field.current!.focus();
+      field.current!.select();
+    },
+    match: stepTo,
+    edge: (edge) => scroller.current!.scrollTo({ top: edge === "top" ? 0 : scroller.current!.scrollHeight }),
+    // A line of the rows' text: the rows are the scroller's first child.
+    lines: (by) => scroller.current!.scrollBy({ top: by * parseFloat(getComputedStyle(scroller.current!.firstElementChild!).lineHeight) }),
+    inTime: goBy,
+    injected: toInjected,
+    follow: toggleFollow,
+    level: settings.stepVisibility,
+  });
 
   return (
     <>
       {/* The filter, the gutter's legend, and the search share one bar (docs/design/02-design.md, "Layout"). */}
       <div className="flex min-h-9 flex-wrap items-center justify-between gap-x-6 gap-y-1.5 bg-surface px-4 py-1.5 text-xs">
         <FilterBar />
-        <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} />
+        <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} field={field} />
       </div>
       <TurnStrip segments={conversation.segments} shown={shown} onGo={onGo} onStep={onStep} />
       <div className="flex min-h-0 flex-1">
@@ -272,7 +289,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
             <Toggle
               data-follow={following}
               pressed={control.pressed}
-              title={control.title}
+              title={withKeys(control.title, conversationKeys.follow)}
               className="pointer-events-auto rounded-full bg-panel px-3 py-1 text-xs hover:bg-raised-hover"
               onClick={toggleFollow}
             >
@@ -307,12 +324,6 @@ const followStates = {
 // as the read has come.
 function stepShown(moment: Moment, { segments, stepOf }: History): number {
   return moment.at === "now" ? segments.length : (stepOf(moment.trace) ?? segments.length);
-}
-
-// The keys that move in time, and whether an element takes them for its own: a field typed or chosen in.
-const arrows: Partial<Record<string, -1 | 1>> = { ArrowLeft: -1, ArrowRight: 1 };
-function takesKeys(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
 // The largest scroll offset: the one that shows the end of the conversation.

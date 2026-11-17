@@ -1,13 +1,28 @@
+import type { Ref } from "react";
 import { useSettings, type SearchOptions } from "../settings.ts";
+import { conversationKeys, fieldKeys, heard, press, withKeys } from "./keyboard.ts";
 import type { Direction } from "./search.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 
 // The search bar (docs/design/01-mvp.md, F6): the query, the options that say how it is read, how many matches it has and
 // which is current, and the steps to the next and the previous. Typing counts and highlights; only a step moves the
-// view. Enter steps to the next match, Shift+Enter to the previous. `error`: why the query is not a valid regular
-// expression, when it is not; it matches nothing, and the bar says so.
-export function SearchBar({ count, ordinal, error, onStep }: { count: number; ordinal: number | undefined; error: string | undefined; onStep: (direction: Direction) => void }) {
+// view. The field hears its own keys (keyboard.ts). `error`: why the query is not a valid regular expression, when it is
+// not; it matches nothing, and the bar says so. `field`: the query's field, which the conversation's search key puts
+// the cursor in.
+export function SearchBar({
+  count,
+  ordinal,
+  error,
+  onStep,
+  field,
+}: {
+  count: number;
+  ordinal: number | undefined;
+  error: string | undefined;
+  onStep: (direction: Direction) => void;
+  field: Ref<HTMLInputElement>;
+}) {
   const query = useView((state) => state.search.query);
   const chosen = useSettings((state) => state.search);
   const tally =
@@ -15,21 +30,16 @@ export function SearchBar({ count, ordinal, error, onStep }: { count: number; or
   return (
     <search className="flex items-center gap-2">
       <input
+        ref={field}
         type="search"
         aria-label="Search the conversation"
         aria-invalid={error !== undefined}
         title={error}
-        placeholder="Search"
+        placeholder={withKeys("Search", conversationKeys.search)}
         className="field w-64 aria-invalid:text-error"
         value={query}
         onChange={(event) => view.search(event.target.value)}
-        onKeyDown={(event) => {
-          // The Enter that commits an input method's composition is typing, not a step. Safari ends the composition before
-          // that Enter's keydown, which it reports with keyCode 229.
-          if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
-          event.preventDefault();
-          onStep(event.shiftKey ? "previous" : "next");
-        }}
+        onKeyDown={(event) => press(heard.field.keys, event.nativeEvent, { match: onStep, leave: () => event.currentTarget.blur() })}
       />
       <div role="group" aria-label="Search options" className="flex items-center gap-1">
         {optionControls.map(({ option, label, name }) => (
@@ -75,6 +85,6 @@ const optionControls: { option: keyof SearchOptions; label: string; name: string
 ];
 
 const steps: { direction: Direction; label: string; title: string }[] = [
-  { direction: "previous", label: "↑", title: "Previous match (Shift+Enter)" },
-  { direction: "next", label: "↓", title: "Next match (Enter)" },
+  { direction: "previous", label: "↑", title: withKeys("Previous match", fieldKeys.previous, conversationKeys.previous) },
+  { direction: "next", label: "↓", title: withKeys("Next match", fieldKeys.next, conversationKeys.next) },
 ];
