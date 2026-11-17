@@ -60,7 +60,7 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
         <p className="min-w-0 flex-1 truncate text-error" title={error && describe(error.cause)}>
           {error && `${error.seam} failed: ${describe(error.cause)}`}
         </p>
-        <button type="button" data-terminal-put-away onClick={view.putAway} className="control">
+        <button type="button" data-terminal-put-away onClick={() => view.showTerminal(false)} className="control">
           Put away
         </button>
       </header>

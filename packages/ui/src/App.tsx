@@ -15,14 +15,14 @@ import { Launch } from "./view/Launch.tsx";
 import { LogsPanel } from "./view/LogsPanel.tsx";
 import { Recordings } from "./view/Recordings.tsx";
 import { Terminal } from "./view/Terminal.tsx";
-import { useView } from "./view/state.ts";
+import { useView, view } from "./view/state.ts";
 import { ThemePicker } from "./view/ThemePicker.tsx";
 import { Toggle } from "./view/Toggle.tsx";
 
 export function App({ connection }: { connection: Connection }) {
   const theme = useTheme();
   const open = useView((state) => state.open);
-  const tmuxWindow = useView((state) => state.window);
+  const terminal = useView((state) => state.terminal);
   const reading = useRecording(connection, open);
   const status = useProxyStatus(connection);
   const events = useEvents((store) => store.events);
@@ -47,6 +47,12 @@ export function App({ connection }: { connection: Connection }) {
           <Recordings connection={connection} reading={reading} />
           <Launch connection={connection} />
           <ThemePicker />
+          {/* While the launched agent's window is known, its terminal is shown and put away here, as the panels are. */}
+          {terminal === null ? null : (
+            <Toggle pressed={terminal.shown} data-terminal-toggle className="control aria-pressed:font-semibold" onClick={() => view.showTerminal(!terminal.shown)}>
+              Terminal
+            </Toggle>
+          )}
           <Toggle pressed={info} data-info-toggle className="control aria-pressed:font-semibold" onClick={() => settings.setInfo(!info)}>
             Info
           </Toggle>
@@ -66,7 +72,7 @@ export function App({ connection }: { connection: Connection }) {
             <Conversation key={read} formatted={shown} reading={reading.state === "reading"} theme={theme} />
           )}
         </div>
-        {tmuxWindow === null ? null : <Terminal key={`${tmuxWindow.start_time} ${tmuxWindow.session_id} ${tmuxWindow.window_id}`} connection={connection} window={tmuxWindow} theme={theme} />}
+        {terminal?.shown ? <Terminal key={`${terminal.window.start_time} ${terminal.window.session_id} ${terminal.window.window_id}`} connection={connection} window={terminal.window} theme={theme} /> : null}
         {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
         {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
         {logs ? <LogsPanel connection={connection} /> : null}
