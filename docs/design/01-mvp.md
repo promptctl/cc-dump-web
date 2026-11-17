@@ -94,6 +94,7 @@ Added 2026-11-14, from using the app: the agent is watched and used in the same 
 - The agent's tmux pane is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the agent, as in their own terminal.
 - A launch (F1) shows the pane it opened.
 - After a reload the pane is shown again as it is now.
+- The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
 - It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it (by Unicode 11's table; tmux-control-mode-js tmux-terminal-444.8s9 for later emoji and those written with VS16). A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, any other scheme (a statusline's cc-candybar://) by the app the OS has for it. The pointer over a link shows where it goes.
 

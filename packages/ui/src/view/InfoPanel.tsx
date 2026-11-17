@@ -15,7 +15,7 @@ type Informing = Pick<Connection, "agentRecording" | "launcher">;
 // says what the proxy is, so the panel follows the proxy across its restarts. `open`: the recording open, by name.
 // `session`: the agent's session, as the latest request that names one says it.
 export function InfoPanel({ connection, status, open, session }: { connection: Informing; status: StatusReading; open: string | null; session: string | undefined }) {
-  const launched = useView((state) => state.window);
+  const launched = useView((state) => state.terminal?.window ?? null);
   return (
     <aside aria-label="Info" data-info className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l bg-surface p-3 text-xs">
       <h2 className="font-semibold">Info</h2>

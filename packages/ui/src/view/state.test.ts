@@ -60,21 +60,30 @@ describe("a launch", () => {
   });
 
   it("opens a tab with no window", () => {
-    expect(useView.getState().window).toBeNull();
+    expect(useView.getState().terminal).toBeNull();
   });
 
   it("opens its agent's recording and shows its window, which stays shown when another recording is opened", () => {
     view.launched({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: agent });
-    expect(useView.getState()).toMatchObject({ open: agent, window: { start_time: 1794801953, session_id: "$2", window_id: "@7" }, position: { at: "end" } });
+    const shown = { window: { start_time: 1794801953, session_id: "$2", window_id: "@7" }, shown: true };
+    expect(useView.getState()).toMatchObject({ open: agent, terminal: shown, position: { at: "end" } });
 
     view.open("20261113T090000.000Z.jsonl");
-    expect(useView.getState().window).toEqual({ start_time: 1794801953, session_id: "$2", window_id: "@7" });
+    expect(useView.getState().terminal).toEqual(shown);
   });
 
-  it("puts its window away, leaving the recording open", () => {
+  it("puts its terminal away, leaving the recording open and the window known, and shows it again", () => {
     view.launched({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: agent });
-    view.putAway();
-    expect(useView.getState()).toMatchObject({ open: agent, window: null });
+    const { window } = useView.getState().terminal!;
+    view.showTerminal(false);
+    expect(useView.getState()).toMatchObject({ open: agent, terminal: { window, shown: false } });
+    view.showTerminal(true);
+    expect(useView.getState().terminal).toEqual({ window, shown: true });
+  });
+
+  it("has no terminal to show before a launch", () => {
+    view.showTerminal(true);
+    expect(useView.getState().terminal).toBeNull();
   });
 });
 

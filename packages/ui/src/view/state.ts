@@ -11,12 +11,16 @@ import { isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
-// launch opened (F13), each block, region or fold they opened or closed (rows.ts), where they are, the moment
-// shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
+// launch opened and whether its terminal is shown (F13), each block, region or fold they opened or closed (rows.ts),
+// where they are, the moment shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
 // tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab
 // opens at the end, now, which follows the conversation while follow is on. While it is off, the end becomes the place
 // under the view at the first step.
-export type View = { open: OpenRecording; window: TmuxWindow | null; opened: Opened; position: Position; moment: Moment; search: Search };
+export type View = { open: OpenRecording; terminal: Terminal | null; opened: Opened; position: Position; moment: Moment; search: Search };
+
+// [LAW:types-are-the-program] The agent's window, and whether its terminal is shown beside the conversation: two facts,
+// so a terminal put away is still its window's, and is shown again without another launch.
+export type Terminal = { window: TmuxWindow; shown: boolean };
 
 // The moment shown (docs/design/02-design.md, "Two axes"), by its step's exchange: `now`, the latest step,
 // whichever it is as exchanges arrive; `left`, the step that was now when the reader's own act (a scroll, a click on a
@@ -31,7 +35,7 @@ export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chos
 export type Search = { query: string; current: Match | undefined };
 
 // A tab opens with no recording: the person launches an agent, or opens one.
-const initial: View = { open: null, window: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
+const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
 // The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
 // this one does not read, so the tab opens as a new one.
@@ -39,7 +43,7 @@ export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 4,
+    version: 5,
     migrate: () => initial,
   }),
 );
@@ -59,10 +63,10 @@ export const view = {
   // another recording is opened, since the agent goes on running there.
   launched: ({ recording, start_time, session_id, window_id }: Launched) => {
     view.open(recording);
-    useView.setState({ window: { start_time, session_id, window_id } });
+    useView.setState({ terminal: { window: { start_time, session_id, window_id }, shown: true } });
   },
-  // The terminal put away; the agent runs on in its window, and the next launch shows its own.
-  putAway: () => useView.setState({ window: null }),
+  // The terminal shown, or put away: the agent runs on in its window either way, and the next launch shows its own.
+  showTerminal: (shown: boolean) => useView.setState(({ terminal }) => ({ terminal: terminal && { ...terminal, shown } })),
   // What is kept at `key`, which starts open or not as `starts` says, chosen to show the other way from how it shows.
   toggle: (key: string, starts: boolean) => useView.setState(({ opened }) => ({ opened: { ...opened, [key]: !isOpen(opened, key, starts) } })),
   // The position moved, by `by`. At the end it is following, so the moment is now; a reader's move anywhere else, while

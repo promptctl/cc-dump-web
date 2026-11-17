@@ -101,7 +101,7 @@ Stable selectors (from `packages/ui/src/view/`):
 | Search box / match count / next-prev | `[aria-label="Search the conversation"]`, `[data-tally]`, `[data-step]` |
 | Step strip / step back, forward | `[aria-label="Steps"]`, `[title="The step before (←)"]`, `[title="The step after (→)"]` |
 | Launch form | `[data-launch-session]`, `[data-launch-command]`, `[data-launch]` |
-| Terminal of the launched window / its phase / its screen / put away | `[aria-label=Terminal]`, `[data-terminal-phase=live]`, `[aria-label=Terminal] .xterm` — click it, then `press` keys to type into the pane; `[data-terminal-put-away]` |
+| Terminal of the launched window / its phase / its screen / put away / shown again | `[aria-label=Terminal]`, `[data-terminal-phase=live]`, `[aria-label=Terminal] .xterm` — click it, then `press` keys to type into the pane; `[data-terminal-put-away]`, `[data-terminal-toggle]` in the header |
 
 ### Proxy only, beside a stack that holds the ports
 
