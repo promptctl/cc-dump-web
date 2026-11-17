@@ -8,7 +8,7 @@ import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
-import { createHistory, type Branch, type History } from "./history.ts";
+import { createHistory, sameFields, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
 import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
@@ -333,12 +333,6 @@ function Shown({ row, reading }: { row: Exclude<Row, { kind: "fold" }>; reading:
     case "block":
       return <BlockView row={row} />;
   }
-}
-
-// Whether two rows show the same: every field the same value.
-function sameFields(a: Row, b: Row): boolean {
-  const fields = Object.entries(a);
-  return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
 }
 
 // A set's line (rows.ts, SetRow), a heading that is a control: its title where a group's is, then how many blocks the

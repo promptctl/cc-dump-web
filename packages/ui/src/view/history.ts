@@ -28,12 +28,13 @@ export type Item = { key: string; versions: readonly Version[] };
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, and, for
 // a request on a branch of its thread (view/lines.ts), the branch's key and the step it left from.
-export type Segment = { formatted: FormattedExchange; groups: { key: string; title: Group["title"]; items: Item[] }[]; branch: Branch | undefined };
+export type Segment = { formatted: FormattedExchange; groups: readonly ItemGroup[]; branch: Branch | undefined };
+export type ItemGroup = { key: string; title: Group["title"]; items: readonly Item[] };
 export type Branch = { key: string; from: number };
 
 // The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, and the
 // step of each branch's last request, by its key.
-export type History = { segments: Segment[]; stepOf: (trace: string) => number | undefined; branches: ReadonlyMap<string, number> };
+export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; branches: ReadonlyMap<string, number> };
 
 // A thread: the first message every request of it sends, the tree of the paths its requests have sent, and its lines,
 // by key, each with where its places' items are.
@@ -54,17 +55,25 @@ type Read = { formatted: FormattedExchange; thread: Thread | undefined; fact: Fa
 type Folded = { segment: Segment; role: Role | undefined; undo: (() => void)[] };
 
 // The history of the exchanges. [LAW:no-shared-mutable-globals] Its state is its own, and what it returns is never
-// changed after: an item a later step gives a version is a new item, in a new segment. The formatter returns an
-// unchanged exchange as the same object, so the history is read again only from the first exchange that is not the
-// one read before, which, while an exchange streams, is the last; and folded again from there, or from the first step
-// whose line the steps read again decide anew (view/lines.ts), whichever is earlier. The steps after are undone, then
-// read and folded again.
+// changed after: an item a later step gives a version is a new item, in a new segment, and whatever it says again, a
+// step folded again or not, is the object it returned before (keptSegment). The formatter returns an unchanged exchange
+// as the same object, so the history is read again only from the first exchange that is not the one read before, which,
+// while an exchange streams, is the last; and folded again from there, or from the first step whose line the steps read
+// again decide anew (view/lines.ts), whichever is earlier. The steps after are undone, then read and folded again.
 export function createHistory(): (formatted: FormattedExchange[]) => History {
   const alike = createComparison();
   const threads: Thread[] = [];
   const read: Read[] = [];
   const folded: Folded[] = [];
   let last: History = { segments: [], stepOf: () => undefined, branches: new Map() };
+  // A block's line alone: its name where it stands, in its category, with no content to open or to read. One block's is
+  // one object, so a step folded again says the same of it.
+  const linesAlone = new WeakMap<KeyedBlock, KeyedBlock>();
+  const lineAlone = (block: KeyedBlock): KeyedBlock => {
+    const line = linesAlone.get(block) ?? { ...block, parts: [], preview: [] };
+    linesAlone.set(block, line);
+    return line;
+  };
 
   const itemAt = ({ step, group, index }: Location) => folded[step - 1]!.segment.groups[group]!.items[index]!;
   const replace = ({ step, group, index }: Location, item: Item) => {
@@ -191,7 +200,12 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     for (let index = refold; index < read.length; index++) folded.push(fold(read[index]!, roleOf.get(index + 1), index + 1));
     const steps = new Map(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
     const branches = new Map(folded.flatMap(({ segment: { branch } }, index) => (branch === undefined ? [] : [[branch.key, index + 1] as const])));
-    last = { segments: folded.map(({ segment }) => segment), stepOf: (trace) => steps.get(trace), branches };
+    const made = folded.map(({ segment }) => segment);
+    const segments = keptEach(last.segments, made, keptSegment);
+    // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares
+    // only what it folds again.
+    folded.forEach((step, index) => (step.segment = segments[index]!));
+    last = { segments, stepOf: (trace) => steps.get(trace), branches };
     return last;
   };
 }
@@ -222,10 +236,28 @@ function* resent(line: Line, upTo = Infinity): Generator<{ line: Line; at: strin
   if (line.base !== undefined) yield* resent(line.base.line, Math.min(upTo, line.base.from));
 }
 
-const isSent = (version: Version): version is Exclude<Version, Gone> => version.block !== undefined;
+// [LAW:single-enforcer] What a history says again, it says with the objects it returned before, decided here alone,
+// where it is handed out: a step folded again makes its items anew, as each event of a reply still arriving does to the
+// last step and to every item that step gave a version, and a row is the one drawn before only while its fields are the
+// same objects (view/Conversation.tsx). Each of these is what was made with, at each place, the part of `before` that
+// says the same, and is `before` where every part is.
+const keptAs = <T extends object>(before: T | undefined, made: T): T => (before !== undefined && sameFields(before, made) ? before : made);
+const keptEach = <T>(before: readonly T[] | undefined, made: readonly T[], kept: (before: T | undefined, made: T) => T): readonly T[] => {
+  const each = made.map((one, index) => (one === before?.[index] ? one : kept(before?.[index], one)));
+  return keptAs(before, each);
+};
+const keptItem = (before: Item | undefined, made: Item): Item => keptAs(before, { ...made, versions: keptEach(before?.versions, made.versions, keptAs) });
+const keptGroup = (before: ItemGroup | undefined, made: ItemGroup): ItemGroup => keptAs(before, { ...made, items: keptEach(before?.items, made.items, keptItem) });
+const keptSegment = (before: Segment | undefined, made: Segment): Segment =>
+  keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), branch: made.branch && keptAs(before?.branch, made.branch) });
 
-// A block's line alone: its name where it stands, in its category, with no content to open or to read.
-const lineAlone = (block: KeyedBlock): KeyedBlock => ({ ...block, parts: [], preview: [] });
+// Whether two objects say the same: every field the same value.
+export function sameFields(a: object, b: object): boolean {
+  const fields = Object.entries(a);
+  return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
+}
+
+const isSent = (version: Version): version is Exclude<Version, Gone> => version.block !== undefined;
 
 const sameRole = (a: Role | undefined, b: Role | undefined) => a?.line === b?.line && a?.branch?.base === b?.branch?.base && a?.branch?.from === b?.branch?.from;
 
