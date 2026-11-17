@@ -479,7 +479,8 @@ function BlockView({ row }: { row: BlockRow }) {
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
       <div className="flex items-baseline gap-3 font-sans hover:bg-hover">
         <button type="button" className="flex min-w-0 flex-1 items-baseline gap-3 text-left" onClick={toggle}>
-          <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
+          {/* A block with no content has nothing to open: a branch's line for what it does not send (view/history.ts). */}
+          <span className="w-3 text-foreground-muted">{block.parts.length === 0 ? "" : open ? "▾" : "▸"}</span>
           {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
           <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>
             <HighlightedText blockKey={row.key} at={address.name} text={block.name} />

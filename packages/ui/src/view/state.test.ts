@@ -9,7 +9,7 @@ import { useView, view } from "./state.ts";
 const agent = "20261113T080000.000Z.jsonl";
 // A tool definition's row, in no set.
 const read: KeyedBlock = { category: "tools", name: "Read", parts: [], key: "c" };
-const row: BlockRow = { kind: "block", key: "thread:t1/tools/tools.Read.0", change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined, set: undefined };
+const row: BlockRow = { kind: "block", key: "thread:t1/tools/tools.Read.0", change: "added", versions: [{ step: 1, block: read, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined };
 
 describe("opening a recording", () => {
   beforeEach(() => {

@@ -3,7 +3,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
 import type { Branches, Visibility } from "../settings.ts";
-import { sameContent, type Branch, type History, type Item, type Segment, type Version } from "./history.ts";
+import type { Branch, History, Item, Segment, Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -54,25 +54,24 @@ export const blockOf = ({ versions, at }: BlockRow): KeyedBlock => blockIn(versi
 // into the block after.
 export type Event = { step: number } & ({ change: "added" | "removed" } | { change: "changed"; before: KeyedBlock; after: KeyedBlock });
 
-// [LAW:one-source-of-truth] What the version at `index` did to its item: took it away; brought it, the first, or one
-// sent again as it was after a step took it away; or gave it other content than it last had, sent again or not.
-function eventAt(versions: readonly Version[], index: number): Event {
-  const { step, block } = versions[index]!;
-  const last = versions[index - 1];
+// [LAW:one-source-of-truth] What a version did to its item, as the history says it of the version (view/history.ts):
+// took it away; brought it, the first, or one sent again as it was after a step took it away; or gave it other content
+// than it last had, sent again or not.
+function eventOf(version: Version): Event {
+  const { step, block } = version;
   if (block === undefined) return { step, change: "removed" };
-  if (last === undefined || (last.block === undefined && sameContent(last.was, block))) return { step, change: "added" };
-  return { step, change: "changed", before: blockIn(last), after: block };
+  return version.rewrote === undefined ? { step, change: "added" } : { step, change: "changed", before: version.rewrote, after: block };
 }
 
 // A block's past at the step shown: what each step did to its item since it arrived, in order. None for a block as it
 // arrived, which is nearly every one.
 export function pastOf({ versions, at }: BlockRow): Event[] {
-  const events = versions.slice(0, at + 1).map((_, index) => eventAt(versions, index));
+  const events = versions.slice(0, at + 1).map(eventOf);
   return events[0]!.change === "added" ? events.slice(1) : events;
 }
 
 // The last of a block's past, read without listing it: what the version shown did, but for a block as it arrived.
-export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at === 0 && versions[0]!.block !== undefined ? undefined : eventAt(versions, at));
+export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at === 0 && versions[0]!.block !== undefined ? undefined : eventOf(versions[at]!));
 
 // Whether a step took a block's item away by the step shown: its row shows the block it was.
 export const isGone = ({ versions, at }: BlockRow): boolean => versions[at]!.block === undefined;
@@ -240,7 +239,7 @@ function segmentRows({ formatted, groups, branch }: Segment, own: number, step: 
 // it if that version is the step's. `set`: the key of the set's line it is listed under, if any.
 function itemRow({ key, versions }: Item, step: number, branch: Branch | undefined, set: string | undefined): BlockRow {
   const at = versions.findLastIndex((version) => version.step <= step);
-  return { kind: "block", key, change: versions[at]!.step === step ? eventAt(versions, at).change : "same", versions, at, branch, set };
+  return { kind: "block", key, change: versions[at]!.step === step ? eventOf(versions[at]!).change : "same", versions, at, branch, set };
 }
 
 // The version a row shows, which only a block's row does.

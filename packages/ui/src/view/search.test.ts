@@ -42,7 +42,7 @@ const top = { at: "start" } as const;
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
-  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined, set: undefined };
+  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined };
 };
 
 describe("search", () => {

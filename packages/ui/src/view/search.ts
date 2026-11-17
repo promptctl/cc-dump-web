@@ -135,8 +135,9 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
     const blocks: FoundBlock[] = [];
     let count = 0;
     rows.forEach((row, index) => {
-      const own = row.kind === "block" ? countOf(row) : 0;
-      if (row.kind !== "block" || own === 0) return;
+      if (row.kind !== "block") return;
+      const own = countOf(row);
+      if (own === 0) return;
       blocks.push({ row, index, count: own, before: count });
       count += own;
     });

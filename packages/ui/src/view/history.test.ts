@@ -129,6 +129,25 @@ describe("history", () => {
     expect(changed.segments[0]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/message.1/content.1")!.versions).toHaveLength(2);
   });
 
+  it("says of a version what it rewrote: nothing for a reply's block a request took away and a later one resends as a client does, the block it was for one sent with other content", () => {
+    const read = { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/a" } };
+    // The second turn drops the reply's tool use and what followed it, carrying the thread on; the third sends the tool
+    // use again, without the field the API reported of it.
+    const versions = (again: unknown) =>
+      history([
+        ...request("t1", { ...main, messages: [hi] }),
+        ...reply("t1", [text("Hello."), { ...read, caller: { type: "direct" } }, text("Done.")]),
+        ...request("t2", { ...main, messages: [hi, assistant(text("Hello.")), user(text("More."))] }),
+        ...request("t3", { ...main, messages: [hi, assistant(text("Hello."), again), user(text("More.")), user(text("Again."))] }),
+      ])
+        .segments[0]!.groups.flatMap(({ items }) => items)
+        .find(({ key }) => key === "thread:t1/message.1/content.1")!.versions;
+    expect(versions(read)).toMatchObject([{ step: 1, reply: true, rewrote: undefined }, { step: 2, block: undefined }, { step: 3, reply: false, rewrote: undefined }]);
+    const rewritten = versions({ ...read, input: { file_path: "/b" } });
+    expect(rewritten.map(({ step }) => step)).toEqual([1, 2, 3]);
+    expect(rewritten[2]).toMatchObject({ rewrote: rewritten[0]!.block });
+  });
+
   it("adds nothing for a reply that quotes a reminder when it is resent, since an assistant's text is never split", () => {
     const quoting = [text("It said:\n<system-reminder>\nUse the tool.\n</system-reminder>")];
     const { segments } = history([

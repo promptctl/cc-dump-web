@@ -9,11 +9,11 @@ const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", 
 const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
 const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", branch: undefined };
 // A set of one block, which step 1 brought and step 2 took away, at the step after.
-const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", branch: undefined, items: [{ key: "t1/c", versions: [{ step: 1, block: block(), reply: false }, { step: 2, block: undefined, was: block() }] }], step: 3 };
+const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", branch: undefined, items: [{ key: "t1/c", versions: [{ step: 1, block: block(), reply: false, rewrote: undefined }, { step: 2, block: undefined, was: block() }] }], step: 3 };
 const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: { key: "branch:side", from: 2 } });
-const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined, set: undefined });
+const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.
-const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false }, { step: 2, block: undefined, was }], at: 1, branch: undefined, set: undefined });
+const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false, rewrote: undefined }, { step: 2, block: undefined, was }], at: 1, branch: undefined, set: undefined });
 
 describe("paintOf", () => {
   it("paints a block its category, a failed tool's result the error, a removed block as it was", () => {
