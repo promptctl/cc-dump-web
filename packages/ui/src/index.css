@@ -85,17 +85,9 @@
   color: var(--match-current-foreground);
 }
 
-/* Moving in time (view/motion.ts): the conversation area the moment leaves slides toward the side it leaves for, by half
-   its width, or its whole width when it is one column, while the next moment fades in: forward, the right side into the
-   left slot; back, the left side into the right. Under reduced motion nothing moves. */
-:root {
-  --slide: 100%;
-}
-@media (width >= 64rem) {
-  :root {
-    --slide: 50%;
-  }
-}
+/* Moving in time (view/motion.ts): the conversation the moment leaves slides away by half its width while the next
+   moment fades in, the way the steps run in the strip above it: forward, to the left, as the strip's marks pass; back,
+   to the right. Under reduced motion nothing moves. */
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-group(conversation) {
     animation-duration: 200ms;
@@ -109,13 +101,13 @@
 }
 @keyframes slide-out-left {
   to {
-    translate: calc(-1 * var(--slide));
+    translate: -50%;
     opacity: 0;
   }
 }
 @keyframes slide-out-right {
   to {
-    translate: var(--slide);
+    translate: 50%;
     opacity: 0;
   }
 }

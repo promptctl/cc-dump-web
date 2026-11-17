@@ -1,6 +1,6 @@
 import { categories, type Category } from "../format/blocks.ts";
 import { cssVariables, type Theme } from "../theme/theme.ts";
-import { changeColors, type Change, type Row } from "./rows.ts";
+import { changeColors, markOf, type Change, type Row } from "./rows.ts";
 
 // The minimap (docs/design/02-design.md, "Layout"): the conversation's rows drawn top to bottom at the minimap's height,
 // the vertical navigator. Its geometry, pure: what each row is drawn as and where, and the way back from a point on it to
@@ -11,8 +11,8 @@ import { changeColors, type Change, type Row } from "./rows.ts";
 // group's title not at all.
 export type Paint = Category | "failed" | "exchange" | "fold" | "none";
 
-// A row as the minimap draws it: from `y`, `height` minimap pixels tall, painted `paint`, beside the mark of what the
-// step did to it.
+// A row as the minimap draws it: from `y`, `height` minimap pixels tall, painted `paint`, beside its mark, `change`
+// (rows.ts, markOf).
 export type Sliver = { y: number; height: number; paint: Paint; change: Change };
 
 // Where a row is in the conversation, in its pixels: its start and its height, measured or estimated.
@@ -20,10 +20,8 @@ export type Extent = { start: number; size: number };
 
 export function paintOf(row: Row): Paint {
   switch (row.kind) {
-    case "block": {
-      const block = row.block ?? row.before;
-      return block.failed ? "failed" : block.category;
-    }
+    case "block":
+      return row.block.failed ? "failed" : row.block.category;
     case "exchange":
       return "exchange";
     case "fold":
@@ -46,7 +44,7 @@ export function slivers(rows: readonly Row[], extents: readonly Extent[], scale:
   return rows
     .map((row, index): Sliver => {
       const { start, size } = extents[index]!;
-      return { y: start * scale, height: Math.max(1, size * scale), paint: paintOf(row), change: row.kind === "fold" ? "same" : row.change };
+      return { y: start * scale, height: Math.max(1, size * scale), paint: paintOf(row), change: markOf(row) };
     })
     .sort((a, b) => Number(a.paint === "failed") - Number(b.paint === "failed"));
 }
@@ -57,9 +55,9 @@ export function viewBox(offset: number, viewport: number, scale: number): { y: n
 }
 
 // [LAW:one-source-of-truth] The minimap's colors, the theme's variables the rows are painted in: each category its
-// gutter's, a failed tool's result the error, the exchange's line and a fold muted, as the rows' text is; what the step
-// did as the bands between the rows' sides are (changeColors); the view's box in the foreground. Read from the theme, not
-// the document, as the terminal's canvas reads it.
+// gutter's, a failed tool's result the error, the exchange's line and a fold muted, as the rows' text is; what a step
+// did as the band at a row's edge is (changeColors); the view's box in the foreground. Read from the theme, not the
+// document, as the terminal's canvas reads it.
 export function colorsOf(theme: Theme): { paint: Record<Paint, string>; change: Record<Change, string>; view: string } {
   const vars = cssVariables(theme);
   const variable = (name: `--${string}`) => {

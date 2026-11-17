@@ -2,7 +2,7 @@ import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import type { Segment } from "./history.ts";
 import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
 
-// The conversation's steps, above the columns (docs/design/02-design.md, "Two axes"): one mark per step, in the order
+// The steps of the conversation, above it (docs/design/02-design.md, "Two axes"): one mark per step, in the order
 // they began, as tall as what it wrote and as strong as how long it took (strip.ts), the step shown marked in the theme's
 // primary and a step that failed, or brought a tool's failed result, in its error color, each titled with the facts of
 // its exchange line; a click on a mark goes to that step. Previous and next move one step, and say where the moment is

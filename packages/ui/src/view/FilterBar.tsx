@@ -1,13 +1,11 @@
 import { categories, type Category } from "../format/blocks.ts";
-import { branchPlacements, settings, useSettings, visibilities, type Branches, type Unchanged, type Visibility } from "../settings.ts";
+import { branchPlacements, settings, useSettings, visibilities, type Branches, type Visibility } from "../settings.ts";
 import { categoryVars } from "../theme/theme.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter (docs/design/01-mvp.md, F5): each category's level, always on screen, and the control that changes it;
-// and whether the rows a step left unchanged fold.
+// The filter (docs/design/01-mvp.md, F5): each category's level, always on screen, and the control that changes it.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
-  const unchanged = useSettings((state) => state.unchanged);
   const branches = useSettings((state) => state.branches);
   return (
     <div className="flex flex-wrap items-center gap-4">
@@ -16,7 +14,6 @@ export function FilterBar() {
           <CategoryToggle key={category} category={category} visibility={visibility[category]} />
         ))}
       </div>
-      <UnchangedToggle unchanged={unchanged} />
       <BranchesChoice branches={branches} />
     </div>
   );
@@ -46,23 +43,6 @@ const branchTitles: Record<Branches, string> = {
   stay: "A branch stays where it arrived, as it was.",
   fold: "A branch folds into one row once its last request is behind the step shown.",
   step: "A branch shows only while its requests are; the step after its last shows it removed.",
-};
-
-// A click shows every unchanged row, or folds them again.
-function UnchangedToggle({ unchanged }: { unchanged: Unchanged }) {
-  const { next, pressed, now, does } = unchangedStates[unchanged];
-  return (
-    <Toggle pressed={pressed} title={`Unchanged rows: ${now}. Click to ${does}.`} className="control" onClick={() => settings.setUnchanged(next)}>
-      unchanged
-    </Toggle>
-  );
-}
-
-// Each way unchanged rows are listed: the one a click moves to, whether the toggle is pressed, what it is and what a
-// click does.
-const unchangedStates: Record<Unchanged, { next: Unchanged; pressed: boolean; now: string; does: string }> = {
-  fold: { next: "show", pressed: false, now: "folded", does: "show them all" },
-  show: { next: "fold", pressed: true, now: "shown", does: "fold them" },
 };
 
 // A click moves the category to the next level, of more detail, and from the most back to none.

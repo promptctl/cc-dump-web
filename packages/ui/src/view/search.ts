@@ -2,18 +2,14 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
-import { blockDiff, type BlockDiff } from "./change.ts";
 import { rowIndex, type Position } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import { type Keys, type Row } from "./rows.ts";
+import type { BlockRow, Keys, Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
-
-// A block row the search reads: one showing a block on the right, the moment shown, which a removed row does not.
-export type BlockRow = Extract<Row, { kind: "block"; block: KeyedBlock }>;
 
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text
 // that changes at its address names by that offset whichever match starts there now, or none: a tool's input so far
@@ -21,10 +17,9 @@ export type BlockRow = Extract<Row, { kind: "block"; block: KeyedBlock }>;
 export type Match = { key: string; at: string; start: number };
 
 // [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON, the name or value
-// of a part's field, and in place of its parts, a changed block's diff. The search and the view both name a text by them.
+// of a part's field. The search and the view both name a text by them.
 export const address = {
   name: "name",
-  change: "change",
   part: (part: number) => String(part),
   field: (part: number, field: number, side: "name" | "value") => `${part}/${field}/${side}`,
 };
@@ -45,23 +40,14 @@ export function whole(text: string): Searched {
 
 // A text a block shows: its address, the text, and where it shows: on the block's line, always on screen; in its
 // content, while it is expanded; or in its content and inside the folds of it holding the match, while they are
-// expanded too: a text part's rendering, what the reader sees, not the text as sent, or a changed block's diff.
+// expanded too: a text part's rendering, what the reader sees, not the text as sent.
 export type Shown = { at: string } & ({ in: "line" | "content"; searched: Searched } | { in: "regions"; searched: Folded });
 
-// What a block row shows on the right, under which the search keeps its count: a changed block, its diff with the
-// version before, made once per pair of versions; any other, the block.
-function shownOf(row: BlockRow): KeyedBlock | BlockDiff {
-  return row.change === "changed" ? blockDiff(row.before, row.block) : row.block;
-}
-
-// The texts a block row shows on the right, in the order it shows them: the block's name, then its parts, or a changed
-// block's diff in their place. Labels are the view's words, not the traffic's, and media is shown as itself or a line
-// describing it, so neither is searched.
-export function shownTexts(row: BlockRow): Shown[] {
-  const name: Shown = { at: address.name, searched: whole(row.block.name), in: "line" };
-  return row.change === "changed"
-    ? [name, { at: address.change, searched: blockDiff(row.before, row.block).right, in: "regions" }]
-    : [name, ...row.block.parts.flatMap((part, index) => partTexts(part, index))];
+// The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
+// away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
+// itself or a line describing it, and what a step rewrote in a block is the view's account of it, so none is searched.
+export function shownTexts({ block }: BlockRow): Shown[] {
+  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
 }
 
 function partTexts(part: Part, index: number): Shown[] {
@@ -133,25 +119,24 @@ export type Found = { count: number; blocks: FoundBlock[]; byKey: Map<string, Fo
 // pattern, kept under the block, which the formatter returns as the same object while its side of the exchange is
 // unchanged, so a frame counts only the blocks of the side it changed.
 export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
-  const counted = new WeakMap<RegExp, WeakMap<KeyedBlock | BlockDiff, number>>();
+  const counted = new WeakMap<RegExp, WeakMap<KeyedBlock, number>>();
   return (rows, pattern) => {
-    const counts = counted.get(pattern) ?? new WeakMap<KeyedBlock | BlockDiff, number>();
+    const counts = counted.get(pattern) ?? new WeakMap<KeyedBlock, number>();
     counted.set(pattern, counts);
     // The pattern that matches nothing finds nothing in any text, so it reads none: reading a text part renders it, and
     // with no query that would render every text of the recording as it opens and every event of a streamed reply.
     const countOf = (row: BlockRow) => {
       if (pattern === nothing) return 0;
-      const shown = shownOf(row);
-      const count = counts.get(shown) ?? shownTexts(row).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
-      counts.set(shown, count);
+      const count = counts.get(row.block) ?? shownTexts(row).reduce((sum, { searched }) => sum + find(pattern, searched).length, 0);
+      counts.set(row.block, count);
       return count;
     };
     const blocks: FoundBlock[] = [];
     let count = 0;
     rows.forEach((row, index) => {
-      const own = row.kind === "block" && row.change !== "removed" ? countOf(row) : 0;
-      if (own === 0) return;
-      blocks.push({ row: row as BlockRow, index, count: own, before: count });
+      const own = row.kind === "block" ? countOf(row) : 0;
+      if (row.kind !== "block" || own === 0) return;
+      blocks.push({ row, index, count: own, before: count });
       count += own;
     });
     return { count, blocks, byKey: new Map(blocks.map((block) => [block.row.key, block])) };

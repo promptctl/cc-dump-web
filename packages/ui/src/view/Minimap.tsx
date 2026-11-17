@@ -3,8 +3,8 @@ import type { Theme } from "../theme/theme.ts";
 import { colorsOf, offsetAt, scaleOf, slivers, viewBox, type Extent } from "./minimap.ts";
 import type { Row } from "./rows.ts";
 
-// The minimap (docs/design/02-design.md, "Layout"), beside the columns: the conversation's rows top to bottom at its
-// height, each a sliver in its category's color with the mark of what the step did to it at its right edge, and the
+// The minimap (docs/design/02-design.md, "Layout"), beside the conversation: its rows top to bottom at the minimap's
+// height, each a sliver in its category's color with the mark of what a step did to it at its right edge, and the
 // view's box over them. A press or a drag on it puts the view there, through `onPlace`, the view's own placing, so the
 // view stays the scroll offset's one writer. `extents`: each row's start and height, measured or estimated, as the
 // virtualizer holds them; `scroller`: the view, whose content, the rows and what follows them, is the conversation's
@@ -102,5 +102,5 @@ export function Minimap({
   );
 }
 
-// How wide the column of what the step did is, at the minimap's right edge, in pixels.
+// How wide the column of the rows' marks is, at the minimap's right edge, in pixels.
 const markWidth = 3;

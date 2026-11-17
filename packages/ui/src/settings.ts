@@ -21,11 +21,6 @@ export const defaultVisibility: Record<Category, Visibility> = {
   thinking: "compact",
 };
 
-// Whether the runs of rows a step left unchanged fold into one row each, or are all shown (docs/design/02-design.md, "Two
-// axes").
-export const unchangedRows = ["fold", "show"] as const;
-export type Unchanged = (typeof unchangedRows)[number];
-
 // Where a branch of a thread (view/lines.ts), a side question or a compaction, is listed once its last request is behind
 // the step shown: where it arrived, as it was (`stay`); there, folded into one row (`fold`); or not at all, gone the step
 // after its last (`step`). [LAW:no-mode-explosion] Three, for Brandon to choose between by seeing each
@@ -41,15 +36,14 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
-// is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6). `unchanged`:
-// whether unchanged rows fold. `branches`: where a branch is listed after its last request. `info`: whether the info
+// is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6).
+// `branches`: where a branch is listed after its last request. `info`: whether the info
 // panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a line it lists asks (F9).
 export type Settings = {
   follow: boolean;
   visibility: Record<Category, Visibility>;
   theme: ThemeChoice;
   search: SearchOptions;
-  unchanged: Unchanged;
   branches: Branches;
   info: boolean;
   logs: boolean;
@@ -63,7 +57,6 @@ const name = "cc-dump.settings";
 export function parseSettings(stored: unknown): Settings {
   const follow = fieldOf(stored, "follow");
   const theme = fieldOf(stored, "theme");
-  const unchanged = fieldOf(stored, "unchanged");
   const branches = fieldOf(stored, "branches");
   const info = fieldOf(stored, "info");
   const logs = fieldOf(stored, "logs");
@@ -82,7 +75,6 @@ export function parseSettings(stored: unknown): Settings {
     visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
     theme: isThemeChoice(theme) ? theme : "system",
     search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
-    unchanged: isOneOf(unchangedRows)(unchanged) ? unchanged : "fold",
     branches: isOneOf(branchPlacements)(branches) ? branches : "stay",
     info: typeof info === "boolean" ? info : false,
     logs: typeof logs === "boolean" ? logs : false,
@@ -101,7 +93,6 @@ export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
   setSearchOption: (option: keyof SearchOptions, on: boolean) => useSettings.setState((state) => ({ search: { ...state.search, [option]: on } })),
   setTheme: (theme: ThemeChoice) => useSettings.setState({ theme }),
-  setUnchanged: (unchanged: Unchanged) => useSettings.setState({ unchanged }),
   setBranches: (branches: Branches) => useSettings.setState({ branches }),
   setInfo: (info: boolean) => useSettings.setState({ info }),
   setLogs: (logs: boolean) => useSettings.setState({ logs }),

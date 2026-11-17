@@ -2,13 +2,13 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
-import { createFormatter, type KeyedBlock } from "../format/format.ts";
+import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
-import { createLayout, type Layout } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type BlockRow, type Match, type Searched } from "./search.ts";
+import { createLayout, type BlockRow, type Layout } from "./rows.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -33,14 +33,17 @@ const { search: defaults } = parseSettings(undefined);
 // Every category listed.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
 const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
-  createLayout(visibility, "show", "stay")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
+  createLayout(visibility, "stay")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
 // A query read under the default options, with those given changed.
 const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(query, { ...defaults, ...options });
 const { pattern } = read("needle");
 // The view at its start, where a step with no current match goes on from.
 const top = { at: "start" } as const;
-// A row the step shown added, of `block` alone.
-const added = (block: Block): BlockRow => ({ kind: "block", key: "k", block: { ...block, key: "k" }, before: undefined, change: "added", branch: undefined });
+// A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
+const added = (block: Block, gone = false): BlockRow => {
+  const shown = { ...block, key: "k" };
+  return { kind: "block", key: "k", block: shown, change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false }], at: 0, branch: undefined };
+};
 
 describe("search", () => {
   it("names each text a block shows by its address, and where it shows", () => {
@@ -123,19 +126,9 @@ describe("search", () => {
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
   });
 
-  it("reads a changed block as its diff shows it on the right, and steps into the fold of unchanged lines holding a match", () => {
-    const text = (first: string) => [first, ...lines(19, 14, "the needle")].join("\n");
-    const version = (first: string): KeyedBlock => ({ key: "k", category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text: text(first) }] });
-    const row: BlockRow = { kind: "block", key: "k", block: version("needle, now"), before: version("then"), change: "changed", branch: undefined };
-    expect(shownTexts(row)[1]).toMatchObject({ at: address.change, searched: { text: text("needle, now") }, in: "regions" });
-    const found = createSearch()([row], pattern);
-    // The needle the later version added, and the one both versions hold, but not what only the earlier one held.
-    expect(found.count).toBe(2);
-    const keys = { at: () => "k", indexOf: (key: string) => (key === "k" ? 0 : undefined) };
-    const first = adjacent(found, undefined, top, "next", pattern, keys)!;
-    expect(first).toMatchObject({ match: { at: address.change, start: 0 }, regions: [] });
-    // The unchanged lines after the three beside the change fold, from the fifth on, the needle's among them.
-    expect(adjacent(found, first.match, top, "next", pattern, keys)!.regions).toEqual([regionKey(partKey("k", address.change), 4)]);
+  it("searches a block a step took away as the block it was, which its row shows", () => {
+    const row = added({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text: "the needle" }] }, true);
+    expect(createSearch()([row], pattern).count).toBe(1);
   });
 
   it("finds no match where an expression matches nothing", () => {
@@ -201,7 +194,7 @@ describe("search", () => {
     const found = createSearch()(every.rows, pattern);
     const hiddenBlocksListed = (revealed?: string) =>
       layOut(hidden, revealed)
-        .rows.filter((row) => row.kind === "block" && row.change !== "removed" && hidden[row.block.category] === "hidden")
+        .rows.filter((row) => row.kind === "block" && hidden[row.block.category] === "hidden")
         .map(({ key }) => key);
     expect(hiddenBlocksListed()).toEqual([]);
     const categoryOf = (key: string) => (every.rows.find((row) => row.key === key) as { block: { category: Category } }).block.category;
