@@ -251,10 +251,11 @@ const keptGroup = (before: ItemGroup | undefined, made: ItemGroup): ItemGroup =>
 const keptSegment = (before: Segment | undefined, made: Segment): Segment =>
   keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), branch: made.branch && keptAs(before?.branch, made.branch) });
 
-// Whether two objects say the same: every field the same value.
+// Whether two objects say the same: the same fields, each the same value. A field that holds undefined is a field, so
+// it does not stand for one the other does not have.
 export function sameFields(a: object, b: object): boolean {
   const fields = Object.entries(a);
-  return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
+  return fields.length === Object.keys(b).length && fields.every(([name, value]) => Object.hasOwn(b, name) && (b as Record<string, unknown>)[name] === value);
 }
 
 const isSent = (version: Version): version is Exclude<Version, Gone> => version.block !== undefined;
