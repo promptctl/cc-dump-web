@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import type { Part } from "../format/parts.ts";
 import { Highlighted } from "./Highlighted.tsx";
-import { useToggle, useWhere, type Where } from "./painting.ts";
+import { useSection, useToggle, useWhere, type Where } from "./painting.ts";
 import { regionKey } from "./regions.ts";
-import { renderingOf, type Block, type Fold, type Inline, type Leaf, type Run } from "./rendering.ts";
+import { renderingOf, type Block, type Fold, type Heading, type Inline, type Leaf, type Run } from "./rendering.ts";
 import { partKey } from "./search.ts";
 
 // A text part as its rendering shows it (view/rendering.ts): the one view of every text, whoever's it is. It knows
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
 // A Markdown text's prose is set in the sans, its code and tags in the mono; a verbatim text is all mono, as it came.
-// Its long regions collapse and expand as a block does (docs/design/01-mvp.md, F4), and every leaf paints the search's
-// matches.
+// Its long regions collapse and expand as a block does, and each of its headings hides and shows what stands under it
+// (docs/design/01-mvp.md, F4), and every leaf paints the search's matches.
 export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
   const rendering = renderingOf(part);
   return <div>{runViews(rendering.runs, useWhere(blockKey, at, rendering))}</div>;
@@ -65,10 +65,11 @@ function blockViews(blocks: Block[], where: Where): ReactNode[] {
   return blocks.map((block, index) => <BlockView key={index} block={block} where={where} />);
 }
 
-// Each heading level by size, in the theme's own color for it, Textual's Markdown's.
+// Each heading level by size, in the theme's own color for it, Textual's Markdown's. A heading is a line among its
+// text's, so the largest is little larger than the prose.
 const headings = {
-  1: { size: "text-lg", color: "var(--markdown-h1-color)" },
-  2: { size: "text-base", color: "var(--markdown-h2-color)" },
+  1: { size: "text-base", color: "var(--markdown-h1-color)" },
+  2: { size: "text-sm", color: "var(--markdown-h2-color)" },
   3: { size: "text-[13px]", color: "var(--markdown-h3-color)" },
   4: { size: "text-[13px]", color: "var(--markdown-h4-color)" },
   5: { size: "text-[13px]", color: "var(--markdown-h5-color)" },
@@ -77,6 +78,35 @@ const headings = {
 
 const code = "font-mono text-xs break-words whitespace-pre-wrap";
 const tag = "font-mono text-xs text-foreground-muted";
+// What a heading's line says beside the heading: which way its section shows, and how much is under it.
+const beside = "font-mono text-xs font-normal text-foreground-muted";
+
+function headingView({ depth }: Heading, children: ReactNode) {
+  return (
+    <p className={`font-semibold ${headings[depth].size}`} style={{ color: headings[depth].color }}>
+      {children}
+    </p>
+  );
+}
+
+// A heading's section: the heading is its line, and a click on it hides what stands under it, or shows it again. It
+// starts as its block says its sections do, and is kept as a region is, by its part's key and the line its heading is
+// on. Its blocks are its text's own, set among them as they are with it open or with no heading over them.
+function HeadedView({ block, where }: { block: Extract<Block, { kind: "headed" }>; where: Where }) {
+  const { open, toggle } = useSection(regionKey(partKey(where.blockKey, where.at), block.line));
+  return (
+    <>
+      {headingView(
+        block.heading,
+        <button type="button" className="text-left hover:bg-hover" aria-expanded={open} onClick={toggle}>
+          <span className={beside}>{open ? "▾" : "▸"}</span> {inlineViews(block.heading.children, where)}
+          {!open && <span className={beside}> · {block.lines} lines</span>}
+        </button>,
+      )}
+      {open && blockViews(block.body, where)}
+    </>
+  );
+}
 
 function BlockView({ block, where }: { block: Block; where: Where }) {
   switch (block.kind) {
@@ -84,11 +114,9 @@ function BlockView({ block, where }: { block: Block; where: Where }) {
       // A line break typed in a paragraph shows as one, as it does in the terminal.
       return <p className="break-words whitespace-pre-wrap">{inlineViews(block.children, where)}</p>;
     case "heading":
-      return (
-        <p className={`font-semibold ${headings[block.depth].size}`} style={{ color: headings[block.depth].color }}>
-          {inlineViews(block.children, where)}
-        </p>
-      );
+      return headingView(block, inlineViews(block.children, where));
+    case "headed":
+      return <HeadedView block={block} where={where} />;
     case "code":
       return <pre className={code}>{leafView(block.leaf, where)}</pre>;
     case "rule":
@@ -173,8 +201,18 @@ function inlineView(inline: Inline, where: Where, key: number): ReactNode {
     case "delete":
       return <del key={key}>{inlineViews(inline.children, where)}</del>;
     case "link":
+      // A click on a link opens it alone: it is no click on a heading the link stands in.
       return (
-        <a key={key} className="underline" style={{ color: "var(--link-color)" }} href={inline.url} target="_blank" rel="noreferrer noopener" title={inline.url}>
+        <a
+          key={key}
+          className="underline"
+          style={{ color: "var(--link-color)" }}
+          href={inline.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          title={inline.url}
+          onClick={(event) => event.stopPropagation()}
+        >
           {inlineViews(inline.children, where)}
         </a>
       );

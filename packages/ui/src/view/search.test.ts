@@ -246,6 +246,15 @@ describe("search", () => {
     expect(name).toMatchObject({ row: { key: "thread:a/message.1/content.0" }, inContent: false, regions: [] });
   });
 
+  it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {
+    const row = added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "markdown", text: "# Needle plan\n\n## Steps\n\nfind the needle\n" }] });
+    const found = createSearch()([row], pattern);
+    const part = partKey("k", address.part(0));
+    const heading = adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!;
+    expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, inContent: true, regions: [] });
+    expect(adjacent(found, heading.match, top, "next", pattern, layOut().every.keys)!.regions).toEqual([regionKey(part, 0), regionKey(part, 2)]);
+  });
+
   it("gives the matches holding any of a slice of a text", () => {
     const ranges = [
       { start: 2, end: 4 },
