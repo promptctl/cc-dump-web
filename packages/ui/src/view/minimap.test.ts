@@ -9,9 +9,9 @@ const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", 
 const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
 const group: Row = { kind: "group", key: "t1/request", title: "request", change: "same", branch: undefined };
 const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: { key: "branch:side", from: 2 } });
-const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", block: shown, change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined });
+const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.
-const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", block: was, change, versions: [{ step: 1, block: was, reply: false }, { step: 2, block: undefined, was }], at: 1, branch: undefined });
+const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false }, { step: 2, block: undefined, was }], at: 1, branch: undefined });
 
 describe("paintOf", () => {
   it("paints a block its category, a failed tool's result the error, a removed block as it was", () => {

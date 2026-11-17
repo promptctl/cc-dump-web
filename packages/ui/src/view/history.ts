@@ -262,7 +262,7 @@ function createComparison(): Comparison {
     own.set(b, known);
     return known;
   };
-  const blocks = (a: KeyedBlock, b: KeyedBlock) => cached(a, b, () => equal(content(a), content(b)));
+  const blocks = (a: KeyedBlock, b: KeyedBlock) => cached(a, b, () => sameContent(a, b));
   // A reply is compared as it is resent: a request resends a reply's content block, and only the client knows which of
   // the fields the API reported about it (a thinking block's estimated_tokens, a tool use's caller) it keeps, so of the
   // fields no read asked for, only those the resent block has.
@@ -274,6 +274,9 @@ function createComparison(): Comparison {
         : blocks(version.block, block);
   return Object.assign(compare, { blocks });
 }
+
+// Whether two blocks show the same, whatever their key and place.
+export const sameContent = (a: Block, b: Block): boolean => equal(content(a), content(b));
 
 // What a block shows, without its key and place, which name where it is.
 function content({ category, name, parts, injected }: Block): unknown {

@@ -11,7 +11,7 @@ import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sizeOf, startsExpanded, statusFailed, type BlockRow, type Event, type Row } from "./rows.ts";
+import { blockOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sizeOf, startsExpanded, statusFailed, type BlockRow, type Event, type Row } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -441,7 +441,7 @@ function BlockView({ row }: { row: BlockRow }) {
   const starts = useSettings((state) => startsExpanded(row, state.visibility));
   const { open, toggle } = useToggle(row.key, starts);
   const rewrites = useToggle(pastKey(row.key), false);
-  const { block } = row;
+  const block = blockOf(row);
   const size = sizeOf(block);
   return (
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
