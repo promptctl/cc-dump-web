@@ -36,6 +36,17 @@ describe("the injected blocks", () => {
     expect(from(at("e"), "previous")).toBe("d");
   });
 
+  it("goes back to the start of an injected block the position is some way into", () => {
+    expect(from(at("d", 40), "previous")).toBe("d");
+    expect(from(at("d", 40), "next")).toBe("e");
+  });
+
+  it("counts a position in a row not listed from the end of the row listed before it", () => {
+    // `d/hidden` is not listed: `d` stands for it, and the view is at d's end.
+    expect(from(at("d/hidden"), "previous")).toBe("d");
+    expect(from(at("d/hidden"), "next")).toBe("e");
+  });
+
   it("goes around the ends", () => {
     expect(from(at("e"), "next")).toBe("b");
     expect(from(at("f"), "next")).toBe("b");

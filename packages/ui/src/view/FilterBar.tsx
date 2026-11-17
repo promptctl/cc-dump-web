@@ -46,7 +46,7 @@ const branchTitles: Record<Branches, string> = {
   step: "A branch shows only while its requests are; from the step after its last it is not listed.",
 };
 
-// A click moves the category to its next level (settings.ts, levelAfter), as a press of its key does.
+// A click moves the category to its next level, as a press of its key does.
 function CategoryToggle({ category, visibility }: { category: Category; visibility: Visibility }) {
   const { pressed, look, shows } = visibilityStates[visibility];
   return (
