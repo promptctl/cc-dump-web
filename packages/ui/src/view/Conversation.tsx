@@ -11,7 +11,7 @@ import { Minimap } from "./Minimap.tsx";
 import { createHistory, type Branch, type History } from "./history.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, sizeOf, startsExpanded, statusFailed, type BlockRow, type Event, type Row } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, modelName, pastKey, pastOf, preview, seconds, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -328,6 +328,8 @@ function Shown({ row, reading }: { row: Exclude<Row, { kind: "fold" }>; reading:
       return <ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />;
     case "group":
       return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
+    case "set":
+      return <SetLine row={row} />;
     case "block":
       return <BlockView row={row} />;
   }
@@ -337,6 +339,36 @@ function Shown({ row, reading }: { row: Exclude<Row, { kind: "fold" }>; reading:
 function sameFields(a: Row, b: Row): boolean {
   const fields = Object.entries(a);
   return fields.length === Object.keys(b).length && fields.every(([name, value]) => (b as Record<string, unknown>)[name] === value);
+}
+
+// A set's line (rows.ts, SetRow), a heading that is a control: its title where a group's is, then how many blocks the
+// set holds and their names, as many as the line has room for, the last thing a step did to one of them, in the
+// foreground where the step shown did it, and their size together. A click lists the blocks under it, or takes them
+// back into the line, from how the set starts.
+function SetLine({ row }: { row: SetRow }) {
+  const starts = useSettings((state) => setStartsOpen(categoryOf(row), state.visibility));
+  const { open, toggle } = useToggle(row.key, starts);
+  const { count, names, size, last, touched } = summaryOf(row);
+  return (
+    <div className="flex items-baseline gap-3 pt-2 pr-4 pl-2 font-sans text-foreground-muted hover:bg-hover">
+      <button type="button" aria-expanded={open} className="flex min-w-0 flex-1 items-baseline gap-2 text-left" onClick={toggle}>
+        <span className="w-3">{open ? "▾" : "▸"}</span>
+        <h2 className="text-[11px] tracking-wider uppercase">{row.title}</h2>
+        <span className="tabular-nums">{count}</span>
+        <span className="min-w-0 flex-1 truncate" title={names.join(", ")}>
+          {names.join(", ")}
+        </span>
+      </button>
+      {last === undefined ? null : (
+        <span data-past className={`shrink-0 ${row.change === "same" ? "" : "text-foreground"}`}>
+          {`${last.name} ${deeds[last.event.change]} at step ${last.event.step}${touched > 1 ? ` · ${touched - 1} more` : ""}`}
+        </span>
+      )}
+      <span className="tabular-nums" title={describeSize(size)}>
+        {compact(size)}
+      </span>
+    </div>
+  );
 }
 
 // A run of a branch's rows, folded: one line saying how many, which opens it on a click.

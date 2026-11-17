@@ -56,9 +56,7 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
 │  in 46k  cache 44k  written 2k  out 390                                 │▒▒│  │
 │  ▌▸ HTTP request                                                    929 │░░│  │
 │┃ ▌▸ parameters                             rewritten at step 12   12.5k │▒▒│  │
-│  TOOLS                                                                  │░░│  │
-│  ▌▸ Agent  Launch a new agent…                                     7.1k │░░│  │
-│  ▌▸ Edit  Performs exact string…           taken away at step 9    1.2k │░░│  │
+│▸ TOOLS  95  Agent, Bash, Edit, Read…    Edit taken away at step 9  172k │░░│  │
 │  USER                                                                   │░░│  │
 │  ▌▾ text  proxy ok                                                    8 │░░│  │
 │┃ 12  14:03:22  opus-5-5  3.4s  200                                      │▒▒│  │
@@ -73,4 +71,4 @@ IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. One superfamily, 
                                                                  minimap ─┘  └─ panels
 ```
 
-Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. Under it stands the exchange's envelope, with no heading, then each run of blocks under a heading that says whose it is (`01-mvp.md`, "Vocabulary"). The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info and logs panels (F8, F9) open at the right.
+Left-aligned throughout. The exchange line's facts sit in aligned columns, not joined by punctuation. Under it stands the exchange's envelope, with no heading, then each run of blocks under a heading that says whose it is (`01-mvp.md`, "Vocabulary"). The tool definitions are a set: `TOOLS` is their one line, closed here, which a click opens to a line each. The minimap is the vertical navigator, the turn strip, a mark per step in time, the horizontal one. The info and logs panels (F8, F9) open at the right.

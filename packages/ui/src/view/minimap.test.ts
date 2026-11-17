@@ -3,23 +3,25 @@ import type { Block } from "../format/blocks.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { themeNames, themeOf } from "../theme/theme.ts";
 import { colorsOf, offsetAt, paintOf, scaleOf, slivers, viewBox } from "./minimap.ts";
-import type { Change, Row } from "./rows.ts";
+import type { Change, Row, SetRow } from "./rows.ts";
 
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
 const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
 const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", branch: undefined };
+// A set of one block, which step 1 brought and step 2 took away, at the step after.
+const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", branch: undefined, items: [{ key: "t1/c", versions: [{ step: 1, block: block(), reply: false }, { step: 2, block: undefined, was: block() }] }], step: 3 };
 const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: { key: "branch:side", from: 2 } });
-const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined });
+const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false }], at: 0, branch: undefined, set: undefined });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.
-const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false }, { step: 2, block: undefined, was }], at: 1, branch: undefined });
+const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false }, { step: 2, block: undefined, was }], at: 1, branch: undefined, set: undefined });
 
 describe("paintOf", () => {
   it("paints a block its category, a failed tool's result the error, a removed block as it was", () => {
     expect([paintOf(added(block({ category: "user" }))), paintOf(added(block({ failed: true }))), paintOf(removed(block({ category: "thinking" })))]).toEqual(["user", "failed", "thinking"]);
   });
 
-  it("paints an exchange's line and a fold muted, and a group's title not at all", () => {
-    expect([exchange, fold([exchange, added(block())]), group].map(paintOf)).toEqual(["exchange", "fold", "none"]);
+  it("paints an exchange's line and a fold muted, a set's line its blocks' category, and a group's title not at all", () => {
+    expect([exchange, fold([exchange, added(block())]), set, group].map(paintOf)).toEqual(["exchange", "fold", "tools", "none"]);
   });
 
   it("paints a fold that holds a failed tool's result the error, so a folded branch never hides a failure", () => {
@@ -49,9 +51,9 @@ describe("slivers", () => {
   });
 
   it("marks a row a step left as it was by the last thing a step did to it", () => {
-    const rows = [removed(block()), removed(block(), "same"), group];
-    const extents = [0, 40, 80].map((start) => ({ start, size: 40 }));
-    expect(slivers(rows, extents, 1).map(({ change }) => change)).toEqual(["removed", "removed", "same"]);
+    const rows = [removed(block()), removed(block(), "same"), group, set];
+    const extents = [0, 40, 80, 120].map((start) => ({ start, size: 40 }));
+    expect(slivers(rows, extents, 1).map(({ change }) => change)).toEqual(["removed", "removed", "same", "removed"]);
   });
 
   it("draws a failed row over the rows that share its pixels", () => {

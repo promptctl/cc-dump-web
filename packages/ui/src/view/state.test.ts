@@ -7,6 +7,9 @@ import type { BlockRow } from "./rows.ts";
 import { useView, view } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
+// A tool definition's row, in no set.
+const read: KeyedBlock = { category: "tools", name: "Read", parts: [], key: "c" };
+const row: BlockRow = { kind: "block", key: "thread:t1/tools/tools.Read.0", change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined, set: undefined };
 
 describe("opening a recording", () => {
   beforeEach(() => {
@@ -108,17 +111,31 @@ describe("the search", () => {
 
   // A step chooses only what it changes, so a block shows after a later change of level as the reader left it.
   it("opens a match's block and the regions holding it, and records no choice for a block already open", () => {
-    const read: KeyedBlock = { category: "tools", name: "Read", parts: [], key: "c" };
-    const block: BlockRow = { kind: "block", key: "t1/request/tools.Read.0", change: "added", versions: [{ step: 1, block: read, reply: false }], at: 0, branch: undefined };
     const { visibility } = parseSettings(undefined);
-    view.goTo({ match, block, regions: ["r"] }, "t1", visibility);
-    expect(useView.getState().opened).toEqual({ [block.key]: true, r: true });
+    view.goTo({ match, row, inContent: true, regions: ["r"] }, "t1", visibility);
+    expect(useView.getState().opened).toEqual({ [row.key]: true, r: true });
     useView.setState({ opened: {} });
-    view.goTo({ match, block, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    view.goTo({ match, row, inContent: true, regions: [] }, "t1", { ...visibility, tools: "expanded" });
     expect(useView.getState().opened).toEqual({});
-    useView.setState({ opened: { [block.key]: false } });
-    view.goTo({ match, block, regions: [] }, "t1", { ...visibility, tools: "expanded" });
-    expect(useView.getState().opened).toEqual({ [block.key]: true });
+    useView.setState({ opened: { [row.key]: false } });
+    view.goTo({ match, row, inContent: true, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    expect(useView.getState().opened).toEqual({ [row.key]: true });
+  });
+
+  // A match on a block's line needs its row listed, and no more: the set's line opens, the block stays as it is.
+  it("opens the closed set a match's block is in, and records no choice for a set already open", () => {
+    const { visibility } = parseSettings(undefined);
+    const inSet = { ...row, set: "t1/tools" };
+    view.goTo({ match, row: inSet, inContent: false, regions: [] }, "t1", visibility);
+    expect(useView.getState().opened).toEqual({ "t1/tools": true });
+    view.goTo({ match, row: inSet, inContent: true, regions: [] }, "t1", visibility);
+    expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true });
+    useView.setState({ opened: {} });
+    view.goTo({ match, row: inSet, inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    expect(useView.getState().opened).toEqual({});
+    useView.setState({ opened: { "t1/tools": false } });
+    view.goTo({ match, row: inSet, inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    expect(useView.getState().opened).toEqual({ "t1/tools": true });
   });
 });
 
@@ -163,12 +180,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10", parseSettings(undefined).visibility);
+    view.goTo({ match: { key: row.key, at: "name", start: 0 }, row, inContent: false, regions: [] }, "t10", parseSettings(undefined).visibility);
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: "t1/request/http", at: "name", start: 0 }, block: undefined, regions: [] }, "t10", parseSettings(undefined).visibility);
+    view.goTo({ match: { key: row.key, at: "name", start: 0 }, row, inContent: false, regions: [] }, "t10", parseSettings(undefined).visibility);
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();

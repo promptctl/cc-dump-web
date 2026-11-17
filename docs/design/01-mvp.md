@@ -13,6 +13,7 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Exchange | One API request and its response. |
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
 | Heading | The word over a run of an exchange's blocks, saying whose they are: `tools`, the tools the model is offered; `system`, its system prompt, and a message in the system's role; `user` and `assistant`, a message by who speaks, the reply as much as an assistant's message sent again; `message`, a message that is not the shape a message has. The exchange's envelope has no heading: it stands under the exchange's line. |
+| Set | A heading's blocks that are one line while closed: the tool definitions, under `tools`. The heading is the set's line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, thinking, and the exchange's envelope by where it is from: parameters (what a request asks beside its prompt and messages, its cache breakpoints among them), usage (what the API reported about its reply: why it stopped, what it counted) and http (the wire as received: each side's head, a body or event not read, how the connection ended). |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
 | Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
@@ -55,16 +56,17 @@ Each feature is stated as what the person using the app can do and see.
 - **Expanding:** every block has a collapsed form (one line naming the block and its size) and an expanded form (all of its content). Clicking the block switches between them.
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
 - A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
+- A set is one line while closed, and its blocks are listed under that line while open; a click on the line switches between them. The line says how many blocks the set holds, their names, as many as fit, and their size together, and the last thing a step did to one of them, so a tool a step rewrote or took away is found from the closed line. A set starts closed at its category's compact level and open at its expanded level, and one the user opened or closed stays that way when the level changes.
 
 ### F5. Filter
-- Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line) or expanded (each block is expanded).
+- Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line, and a set is its one line) or expanded (each block is expanded, and a set is open).
 - The levels start as in cc-dump: user and assistant expanded; tools, system and thinking compact; parameters, usage and http, which cc-dump lists as one category, metadata, hidden (Brandon, 2026-11-16: "metadata is too broad of a category").
 - A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
 - The query is a regular expression, matched without regard to case. Each of case, whole word and regular expression can be switched.
-- Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, and moving to a match in a hidden category shows its block.
+- Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match in a closed set opens the set, and moving to a match in a hidden category shows its block.
 
 ### F7. Record and reopen
 - Every exchange is written to its process's recording as it happens, with no action from the user.
