@@ -528,15 +528,34 @@ describe("the column", () => {
     expect([2, 3, 4, 5].map((step) => markOf(nest(at(step))))).toEqual(["added", "changed", "changed", "same"]);
   });
 
-  it("says what a subagent last did until its reply hands its report back, though its turn is not ended", () => {
-    const calling = (name: string) => [
+  it("says what a subagent last did while a reply of its waits on a tool or is still coming, wherever its newest step stands", () => {
+    // A subagent that reads, then searches, then hands its report back. While each tool runs the harness asks it what
+    // it is doing, in a request that stands beside the step waiting on the tool: the first is answered and ends its
+    // turn, the second the harness leaves when the subagent is done.
+    const use = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
+    const read = [task, assistant(use("toolu_2", "Read")), user(result("toolu_2", "A."))];
+    const searched = [...read, assistant(use("toolu_3", "Grep")), user(result("toolu_3", "B."))];
+    const asked = (messages: { role: string; content: unknown[] }[]) => [...messages.slice(0, -1), user(...messages.at(-1)!.content, text("What are you doing?"))];
+    const working = [
       ...request("t1", { ...main, messages: [hi] }),
       ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
       ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("Looking."), { type: "tool_use", id: "toolu_2", name, input: { message: "Done." } }], "tool_use"),
+      ...reply("s1", [use("toolu_2", "Read")], "tool_use"),
+      ...request("s2", { ...agent, messages: read }),
+      ...reply("s2", [use("toolu_3", "Grep")], "tool_use"),
+      ...request("asked", { ...agent, messages: asked(read) }),
+      ...reply("asked", [text("Searching.")]),
+      ...request("s3", { ...agent, messages: searched }),
+      ...reply("s3", [use("toolu_4", "SubagentHandback")], "tool_use"),
+      ...request("left", { ...agent, messages: asked(searched) }),
+      { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
     ];
-    const latest = (name: string) => nest(layouts(calling(name))(2), "thread:t1/message.1/content.0/nest").latest?.name;
-    expect(["Read", "SubagentHandback"].map(latest)).toEqual(["tool_use: Read", undefined]);
+    const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
+    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
+    // A reply still coming says what it has by now, the events of its exchange recorded so far: nothing before its
+    // first block, and no step waits on the tool its request answers.
+    const coming = (events: number) => latest(working.slice(0, working.findIndex(({ trace_id }) => trace_id === "s2") + events), 3);
+    expect([3, 6].map(coming)).toEqual([undefined, "tool_use: Grep"]);
   });
 
   it("puts the line where subagents of one call part first inside the call's nest", () => {

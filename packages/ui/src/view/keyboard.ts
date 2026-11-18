@@ -6,8 +6,8 @@ import type { Direction } from "./search.ts";
 // one table. What hears a key, the keys panel and the controls' titles all read it, so none names a key another does not.
 
 // A key: its `chord`, as it is written for a reader (chordOf); what it `does`, in the keys panel's words; whether it
-// `repeats`, acting again and again while it is held, as a move does and a switch, which its next act would undo, does
-// not; and its `act`, on what the place it is heard in offers its keys.
+// `repeats`, acting again and again while it is held, as a move does and a key whose next act would undo its last, as
+// follow's, does not; and its `act`, on what the place it is heard in offers its keys.
 export type Key<Acts> = { chord: string; does: string; repeats: boolean; act: (acts: Acts) => void };
 
 // What the search field offers its keys: a step of the search, and the cursor taken out of the field.
@@ -83,14 +83,17 @@ export type Pressed = Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" 
 const written: Partial<Record<string, string>> = { ArrowLeft: "←", ArrowRight: "→", Escape: "Esc" };
 
 // The chord a press says, as the table writes one: the character the key types (`n`, `N`, `?`), or its name (`Enter`,
-// `←`), after each of Ctrl, Meta, Alt and Shift held with it. With Alt a key types another character, or on macOS none
-// yet, so its letter is read from where the key is. Shift is part of a character typed, so it is said only of a key
-// that types none, and with Alt. Ctrl and Meta are always said, so a browser's own shortcut is no key of the table.
+// `←`), after each of Ctrl, Meta, Alt and Shift held with it. With Alt a letter's key types another character, or on
+// macOS none yet, so its letter is read from where the key is. Shift is part of a character typed, so it is said only
+// of a key that types none, and of a letter's with Alt. Alt is part of a symbol typed, as `[` is with Option or AltGr on
+// a keyboard that has no key for it, and so is the Ctrl that Windows reports with AltGr: of a symbol neither is said.
+// Of anything else Ctrl, Meta and Alt are, so a browser's own shortcut, as Alt with a digit, is no key of the table.
 export function chordOf({ key, code, altKey, ctrlKey, metaKey, shiftKey }: Pick<Pressed, "key" | "code" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">): string {
-  const base = altKey ? code.replace(/^Key/, "") : (written[key] ?? key);
+  const letter = altKey ? /^Key(.)$/.exec(code)?.[1] : undefined;
   // A key that types a character says it as `key`, one character long; one that types none says its name.
-  const shift = shiftKey && (altKey || key.length > 1);
-  return [ctrlKey && "Ctrl", metaKey && "Meta", altKey && "Alt", shift && "Shift", base].filter((part) => part !== false).join("+");
+  const typed = letter === undefined && key.length === 1;
+  const symbol = typed && altKey && !/[\p{L}\p{N}]/u.test(key);
+  return [ctrlKey && !symbol && "Ctrl", metaKey && "Meta", altKey && !symbol && "Alt", shiftKey && !typed && "Shift", letter ?? written[key] ?? key].filter((part) => part !== false).join("+");
 }
 
 // [LAW:single-enforcer] A press where `keys` are heard: the key of its chord acts, on `acts`, and the press does nothing
