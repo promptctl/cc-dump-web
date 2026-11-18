@@ -379,19 +379,22 @@ function doingOf(arrived: readonly Segment[], levelOf: readonly string[]): Map<s
   const runs = new Map<string, boolean>();
   const did = new Map<string, KeyedBlock>();
   const levels = new Map<string, string>();
-  arrived.forEach(({ formatted: { groups, facts }, groups: brought }, index) => {
+  const told = new Set<string>();
+  arrived.forEach(({ formatted: { groups, facts } }, index) => {
     const level = levelOf[index + 1]!;
+    const blocks = groups.flatMap(({ blocks }) => blocks);
     if (level !== top) {
-      const reply = groups.flatMap(({ blocks }) => blocks).filter(({ place }) => place?.in === "reply");
+      const reply = blocks.filter(({ place }) => place?.in === "reply");
       if (facts.agent !== undefined) levels.set(facts.agent, level);
       if (reply.length > 0) {
         runs.set(level, !reply.some(({ handback }) => handback));
         did.set(level, reply.at(-1)!);
       }
     }
-    // What arrived with the step, once: a notification is sent again with every request after.
-    const stops = brought.flatMap(({ items }) => items.flatMap(({ versions }) => blockIn(versions[0]!).stops ?? []));
-    for (const { agent } of stops) {
+    // Each notification once, at the step that first sends it: it is sent again with every request after.
+    for (const { agent, notification } of blocks.flatMap(({ stops }) => stops ?? [])) {
+      if (told.has(notification)) continue;
+      told.add(notification);
       const stopped = levels.get(agent);
       if (stopped !== undefined) runs.set(stopped, false);
     }

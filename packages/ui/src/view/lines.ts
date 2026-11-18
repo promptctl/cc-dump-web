@@ -6,7 +6,8 @@
 // Where a request leaves the requests of its thread before it: after the whole of `step`'s, its reply included
 // (`whole`), or inside what `step` added, and at which of the messages it sends it first differs, `message`, the
 // reply's index for one that differs in none. None for a thread's first request. `messages`: how many messages it sends.
-export type Fact = { step: number; left: { step: number; whole: boolean; message: number } | undefined; messages: number };
+// `thread`: the thread it is of, by the order threads begin in.
+export type Fact = { step: number; thread: number; left: { step: number; whole: boolean; message: number } | undefined; messages: number };
 
 // The step each fact's request follows, in the facts' order, none for one that follows nothing: one thread's requests,
 // or several threads' interleaved, since a request is placed by the step it left.
@@ -14,8 +15,8 @@ export type Fact = { step: number; left: { step: number; whole: boolean; message
 // - a thread's first request follows nothing;
 // - a request after the whole of `X` follows it;
 // - a request that leaves inside what `X` added carries on what it edited (old tool results cleared, a changed message)
-//   when it sends more messages than the newest step that carries `X` on, `X` itself where none does: it follows that
-//   step;
+//   when it sends more messages than the newest step of `X`'s thread that carries `X` on, `X` itself where none does:
+//   it follows that step. A fork's steps carry on the step it resends, but they are another thread's;
 // - any other that leaves inside what `X` added follows the nearest of the steps `X` follows, and so on up, whose reply
 //   comes before the message it leaves in (a compaction, a probe, a side question, a reply regenerated).
 // [LAW:no-ambient-temporal-coupling] What a request follows is decided by the requests before it alone, so a request
@@ -31,7 +32,10 @@ export function followsOf(facts: readonly Fact[]): (number | undefined)[] {
     if (left === undefined) return void follows.set(step, undefined);
     if (left.whole) return void follows.set(step, left.step);
     // Searched from the end, where the step it edits almost always is.
-    const carrier = facts.slice(0, index).findLast((before) => carries(before.step, left.step))!;
+    const { thread } = factOf.get(left.step)!;
+    let at = index - 1;
+    while (facts[at]!.thread !== thread || !carries(facts[at]!.step, left.step)) at--;
+    const carrier = facts[at]!;
     if (messages > carrier.messages) return void follows.set(step, carrier.step);
     let followed = follows.get(left.step);
     while (followed !== undefined && factOf.get(followed)!.messages >= left.message) followed = follows.get(followed);

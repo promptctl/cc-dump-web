@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { followsOf, type Fact } from "./lines.ts";
 
-// A fact: step `step`, sending `messages` messages, leaving step `from` after the whole of it or inside what it added, at
-// the message `message`, which is the last it sends where none is said.
-const first = (step: number, messages = 1): Fact => ({ step, left: undefined, messages });
-const whole = (step: number, from: number, messages: number): Fact => ({ step, left: { step: from, whole: true, message: messages - 1 }, messages });
-const inside = (step: number, from: number, messages: number, message = messages - 1): Fact => ({ step, left: { step: from, whole: false, message }, messages });
+// A fact: step `step` of thread 0, sending `messages` messages, leaving step `from` after the whole of it or inside what
+// it added, at the message `message`, which is the last it sends where none is said. `of` puts it in another thread.
+const first = (step: number, messages = 1): Fact => ({ step, thread: 0, left: undefined, messages });
+const whole = (step: number, from: number, messages: number): Fact => ({ step, thread: 0, left: { step: from, whole: true, message: messages - 1 }, messages });
+const inside = (step: number, from: number, messages: number, message = messages - 1): Fact => ({ step, thread: 0, left: { step: from, whole: false, message }, messages });
+const of = (thread: number, fact: Fact): Fact => ({ ...fact, thread });
 
 describe("followsOf", () => {
   it("has each request of a thread that resends the whole of the last follow it", () => {
@@ -32,11 +33,6 @@ describe("followsOf", () => {
     expect(followsOf([first(1), whole(2, 1, 3), whole(3, 2, 5), inside(4, 2, 5, 3)])).toEqual([undefined, 1, 2, 1]);
   });
 
-  it("has a twin, which leaves in the thread's second message, follow nothing, whichever arrives first", () => {
-    expect(followsOf([first(1), inside(2, 1, 1, 1), whole(3, 1, 3), whole(4, 2, 3)])).toEqual([undefined, undefined, 1, 2]);
-    expect(followsOf([first(1), whole(2, 1, 3), inside(3, 1, 1, 1), whole(4, 3, 3)])).toEqual([undefined, 1, undefined, 3]);
-  });
-
   it("has a request that edits its line's history and sends more than the line's last follow that last", () => {
     expect(followsOf([first(1), whole(2, 1, 3), inside(3, 1, 5, 0), whole(4, 3, 7)])).toEqual([undefined, 1, 2, 3]);
     // The line went on without it: the turn after step 2 follows step 2, as the edit does.
@@ -57,6 +53,14 @@ describe("followsOf", () => {
   });
 
   it("places each thread's requests among its own, the threads interleaved", () => {
-    expect(followsOf([first(1), first(2), whole(3, 1, 3), inside(4, 2, 1, 1), whole(5, 3, 5)])).toEqual([undefined, undefined, 1, undefined, 3]);
+    expect(followsOf([first(1), of(1, first(2)), whole(3, 1, 3), of(1, whole(4, 2, 3)), whole(5, 3, 5)])).toEqual([undefined, undefined, 1, 2, 3]);
+  });
+
+  it("has an edit carry on its own thread, not a fork's, whose steps carry on the step the fork resends", () => {
+    // Step 3 forks step 2 and step 5 goes on in the fork; step 6 clears old tool results in step 1's message.
+    const facts = [first(1), whole(2, 1, 3), of(1, whole(3, 2, 4)), whole(4, 2, 5), of(1, whole(5, 3, 6))];
+    expect(followsOf([...facts, inside(6, 1, 7, 0)])).toEqual([undefined, 1, 2, 2, 3, 4]);
+    // A fork that edits what it resends carries on the thread it forks.
+    expect(followsOf([...facts, of(2, inside(6, 2, 7, 1))])).toEqual([undefined, 1, 2, 2, 3, 4]);
   });
 });

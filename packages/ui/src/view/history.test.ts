@@ -262,6 +262,21 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
+  it("hangs a twin on its own call while the other has no reply yet, and an agent whose first message changes on its call still", () => {
+    const call = (id: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt: "Find the longest word.", subagent_type: "Explore" } });
+    const task = (reminder: string) => user(text(`<system-reminder>\n${reminder}\n</system-reminder>\nFind the longest word.\n`));
+    const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("On it."), call("toolu_1"), call("toolu_2")]),
+      ...request("s1", { ...agent, messages: [task("Be brief.")] }, "a1"),
+      ...request("s2", { ...agent, messages: [task("Be brief.")] }, "a2"),
+      ...request("s3", { ...agent, messages: [task("Be terse.")] }, "a1"),
+    ]);
+    const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
+    expect(afters(after)).toEqual([undefined, under(1), under(2), under(1)]);
+  });
+
   it("has a fork, which resends the main agent's conversation for another agent, follow the step it resends and go on in a thread of its own", () => {
     const fork = (trace: string, ...more: unknown[]) => request(trace, { ...main, messages: [hi, assistant(...hello), user(text("You are a worker fork.")), ...more] }, "f1");
     const after = history([...process, ...fork("f1"), ...reply("f1", [text("Forked.")]), ...t3, ...fork("f2", assistant(text("Forked.")), user(text("Go on.")))]);

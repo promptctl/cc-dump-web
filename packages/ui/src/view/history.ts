@@ -121,7 +121,8 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
 
   // Reading a step walks its path down its thread's tree as far as an earlier request sent the same, which is where it
   // leaves them, and adds the rest of its path, as its own. A thread's first request leaves nothing of its own; it
-  // leaves the thread of another agent's whose first message it sends, if any, as a fork resends what it forks.
+  // leaves the thread of another agent's whose first message it sends, if any, as a fork resends what it forks. One
+  // that sends that message alone, as a twin does, resends nothing of the other's, so it leaves none.
   const readStep = (formatted: FormattedExchange, step: number): Read => {
     const undo: (() => void)[] = [];
     const thread = threadOf(formatted, threads, alike, step, undo);
@@ -129,7 +130,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const path = pathOf(formatted);
     const own = walk(thread.root, path);
     const begun = thread.root.owner === step;
-    const other = begun ? threads.find((one) => one.agent !== thread.agent && sameFirst(one.first, thread.first, alike)) : thread;
+    const other = !begun ? thread : formatted.messages > 1 ? threads.find((one) => one.agent !== thread.agent && sameFirst(one.first, thread.first, alike)) : undefined;
     const leaves = other === thread ? own : other === undefined ? undefined : walk(other.root, path);
     const message = (at: number) => path[at]?.message ?? formatted.messages;
     const left =
@@ -149,7 +150,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const end = node;
     end.ends.push(step);
     undo.push(() => end.ends.pop());
-    return { formatted, thread, fact: { step, left, messages: formatted.messages }, undo };
+    return { formatted, thread, fact: { step, thread: threads.indexOf(thread), left, messages: formatted.messages }, undo };
   };
 
   // The chain of a step that follows `followed`: that step's, while it is its last, or one begun on it.
@@ -163,13 +164,15 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
 
   // What a thread's request that follows nothing hangs on, the same for each of them: a probe of a subagent resends
   // its first message alone. A subagent's thread hangs on a call that launched it with the prompt its first message
-  // says: the i-th thread to arrive that says it on the i-th such call, and one past the last call on the last. That is
-  // the order the subagents first sent in, the one fact there is when the first of them arrives, and a call's result
-  // that names its agent later moves none (check/column.ts holds the order against it). Any other hangs on the last
-  // summary its first message holds, or on nothing.
+  // says: the i-th agent to send it on the i-th such call, and one past the last call on the last. That is the order
+  // the subagents first sent in, the one fact there is when the first of them arrives, and a call's result that names
+  // its agent later moves none (check/column.ts holds the order against it). An agent whose first message the harness
+  // changes begins another thread and is still the one agent. Any other hangs on the last summary its first message
+  // holds, or on nothing.
   const hungOn = (thread: Thread): After | undefined => {
     const calls = launches.filter(({ prompt }) => prompt === thread.said);
-    const call = calls[Math.min(threads.filter(({ said }) => said === thread.said).indexOf(thread), calls.length - 1)];
+    const agents = [...new Set(threads.filter(({ said }) => said === thread.said).map(({ agent }) => agent))];
+    const call = calls[Math.min(agents.indexOf(thread.agent), calls.length - 1)];
     if (call !== undefined) return { step: call.step, on: "block", key: call.key, as: "nest" };
     const summary = summaries.findLast(({ summary }) => thread.said.includes(summary));
     return summary === undefined ? undefined : { step: summary.step, on: "block", key: summary.key, as: "thread" };

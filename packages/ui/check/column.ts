@@ -35,7 +35,7 @@ const firstMessage = ({ segments }: History, step: number): string =>
 // What Claude Code's Agent call's result says of the subagent it launched, and what it tells its main agent as one
 // stops, each notification once (seen on its traffic, 2026-11-18).
 const launched = /^Async agent launched successfully[\s\S]*?\nagentId: ([0-9a-z]+)/;
-const notifying = /<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<\/task-notification>/g;
+const notifying = /<task-notification>(?:(?!<\/task-notification>)[\s\S])*?<task-id>([^<]+)<\/task-id>[\s\S]*?<\/task-notification>/g;
 const sameList = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((one, index) => one === b[index]);
 const kindOf =
   <Kind extends Row["kind"]>(kind: Kind) =>

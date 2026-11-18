@@ -475,6 +475,9 @@ describe("the column", () => {
   // the first subagent's next request; and the thread's next turn, with the call's result.
   const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
   const result = (id: string, content: string) => ({ type: "tool_result", tool_use_id: id, content });
+  // An Agent call's result as Claude Code sends it: every subagent runs in the background, so it names the agent
+  // launched, which runs on until its caller is told it stopped.
+  const launched = (id: string, agent: string) => result(id, `Async agent launched successfully.\nagentId: ${agent}`);
   const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read" }] };
   const task = user(text("Find the longest word."));
   const nested = [
@@ -484,9 +487,9 @@ describe("the column", () => {
     ...reply("s1", [text("Looking."), call("toolu_2", "Count the words.")], "tool_use"),
     ...request("inner", { ...agent, messages: [user(text("Count the words."))] }, "a2"),
     ...reply("inner", [text("Three.")]),
-    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }, "a1"),
+    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(launched("toolu_2", "a2"))] }, "a1"),
     ...reply("s2", [text("Done.")]),
-    ...request("t2", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done."))] }),
+    ...request("t2", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(launched("toolu_1", "a1"))] }),
   ];
   const [outer, inner] = ["thread:t1/message.1/content.1/nest", "thread:s1/message.1/content.1/nest"];
   const nest = (layout: { rows: Row[] }, key = outer): NestRow => rowAt(layout, "nest", key);
@@ -498,7 +501,7 @@ describe("the column", () => {
     expect(keysOf(at(5))).toEqual([...above, ...below]);
     // What it holds is still the search's, and stands where its line does.
     const { every, keys } = at(5);
-    expect(createSearch()(every.rows, /Three/g).count).toBe(2);
+    expect(createSearch()(every.rows, /Three/g).count).toBe(1);
     expect(["s1", "thread:inner/message.1/content.0", "thread:s2/message.3/content.0"].map((key) => keys.at(keys.indexOf(key)!))).toEqual([outer, outer, outer]);
     // Open, it lists its subagent's steps in the order they arrived, one level in, between the call and its result; a
     // subagent's own subagent is a nest under its call there, closed.
@@ -520,7 +523,7 @@ describe("the column", () => {
   const notification = (agent: string) => text(`<system-reminder>\n<task-notification>\n<task-id>${agent}</task-id>\n<status>completed</status>\n</task-notification>\n</system-reminder>`);
 
   it("says on a nest's line what it launched, how many steps it holds, and what it last did until its caller is told it stopped", () => {
-    const told = [...nested, ...reply("t2", [text("Found.")]), ...request("t3", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done.")), assistant(text("Found.")), user(notification("a1"))] })];
+    const told = [...nested, ...reply("t2", [text("Found.")]), ...request("t3", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(launched("toolu_1", "a1")), assistant(text("Found.")), user(notification("a1"))] })];
     const at = layouts(told);
     // A turn that ends is no stop: a subagent ends one to wait, and is woken.
     expect([2, 3, 4, 5, 6].map((step) => nest(at(step)))).toMatchObject([

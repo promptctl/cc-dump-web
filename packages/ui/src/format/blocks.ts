@@ -27,8 +27,9 @@ export type Block = { category: Category; name: string; parts: Part[]; injected?
 export type Stated = { launch?: Launch; summary?: string; handback?: true; stops?: Stop[] };
 
 // A subagent the harness says has stopped: the `agent` it names, as the requests sent for it are named
-// (format/format.ts, `agent`), and the `status` it gives, "completed" in every recording so far.
-export type Stop = { agent: string; status: string };
+// (format/format.ts, `agent`), and the `notification` that says so, whole, which is how one sent again with every
+// request after is told from another.
+export type Stop = { agent: string; notification: string };
 
 // What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
 // agent `type` it names, where it names one.
@@ -139,10 +140,15 @@ const summarized = (block: unknown, role: Role): Stated => {
 
 // The subagents a text says have stopped: each `<task-notification>` in it, which Claude Code sends its main agent as a
 // subagent stops, inside a system reminder of a user's message or bare in a system-role one, several to a text where
-// several stopped (seen on its traffic, 2026-11-18), with the agent's name as `task-id` and its `status`.
-const notification = /<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<status>([^<]+)<\/status>[\s\S]*?<\/task-notification>/g;
+// several stopped (seen on its traffic, 2026-11-18), with the agent's name as `task-id`. Each is read within its own
+// tags, so one never takes the next one's agent.
+const notifications = /<task-notification>[\s\S]*?<\/task-notification>/g;
+const taskId = /<task-id>([^<]+)<\/task-id>/;
 const stopped = (text: string): Stated => {
-  const stops = [...text.matchAll(notification)].map(([, agent, status]) => ({ agent: agent!, status: status! }));
+  const stops = [...text.matchAll(notifications)].flatMap(([notification]) => {
+    const agent = taskId.exec(notification)?.[1];
+    return agent === undefined ? [] : [{ agent, notification }];
+  });
   return stops.length === 0 ? {} : { stops };
 };
 

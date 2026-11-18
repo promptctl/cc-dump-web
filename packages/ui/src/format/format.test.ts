@@ -648,6 +648,28 @@ describe("format", () => {
     expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
   });
 
+  it("states the subagents a text's task notifications say stopped, each by its own task-id, bare or in a system reminder", () => {
+    const notice = (agent: string, status = "<status>completed</status>") => `<task-notification>\n<task-id>${agent}</task-id>\n${status}\n</task-notification>`;
+    const said = (role: string, text: string) => one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })).groups.flatMap(({ blocks }) => blocks.flatMap(({ stops }) => stops ?? []));
+    const two = `<system-reminder>\n${notice("a1", "")}\n${notice("a2")}\n</system-reminder>`;
+    // The first gives no status, which takes nothing of the second's.
+    expect(said("user", two)).toEqual([
+      { agent: "a1", notification: notice("a1", "") },
+      { agent: "a2", notification: notice("a2") },
+    ]);
+    expect(said("system", notice("a3")).map(({ agent }) => agent)).toEqual(["a3"]);
+    expect(said("user", "<task-notification>\n<status>completed</status>\n</task-notification>")).toEqual([]);
+  });
+
+  it("states the agent a request is sent for by its x-claude-code-agent-id, and none for the main agent's", () => {
+    const sent = (headers: Header[]) => {
+      const [head, ...rest] = request("a", { model: "m", messages: [] });
+      return one([{ ...head!, headers } as RecordedEvent, ...rest]).facts.agent;
+    };
+    expect(sent([["X-Claude-Code-Agent-Id", "a1"]])).toBe("a1");
+    expect(sent([["Content-Type", "application/json"]])).toBeUndefined();
+  });
+
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
     const said = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ summary }) => summary);
     expect(said("assistant", "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Did it.\n</summary>\n")).toEqual(["1. Did it."]);
