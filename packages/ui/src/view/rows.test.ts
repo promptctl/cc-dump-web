@@ -11,8 +11,9 @@ import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, descri
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
+// A request, sent for the subagent `agent` names as Claude Code sends one, or for the main agent.
+const request = (trace_id: string, body: unknown, agent?: string): RecordedEvent[] => [
+  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: agent === undefined ? [] : [["x-claude-code-agent-id", agent]] },
   { timestamp, trace_id, type: "request_body", base64: base64(body) },
   { timestamp, trace_id, type: "request_trailers", headers: [] },
 ];
@@ -479,11 +480,11 @@ describe("the column", () => {
   const nested = [
     ...request("t1", { ...main, messages: [hi] }),
     ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word.")], "tool_use"),
-    ...request("s1", { ...agent, messages: [task] }),
+    ...request("s1", { ...agent, messages: [task] }, "a1"),
     ...reply("s1", [text("Looking."), call("toolu_2", "Count the words.")], "tool_use"),
-    ...request("inner", { ...agent, messages: [user(text("Count the words."))] }),
+    ...request("inner", { ...agent, messages: [user(text("Count the words."))] }, "a2"),
     ...reply("inner", [text("Three.")]),
-    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }),
+    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }, "a1"),
     ...reply("s2", [text("Done.")]),
     ...request("t2", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done."))] }),
   ];
@@ -515,20 +516,26 @@ describe("the column", () => {
     expect(["thread:inner/message.1/content.0", inner, "s2", outer, "t2"].map(nestsAt)).toEqual([[inner, outer], [outer], [outer], [], []]);
   });
 
-  it("says on a nest's line what it launched, how many steps it holds, and what it last did while its turn is not ended", () => {
-    const at = layouts(nested);
-    expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([
+  // What Claude Code tells its main agent as a subagent stops, in a system reminder.
+  const notification = (agent: string) => text(`<system-reminder>\n<task-notification>\n<task-id>${agent}</task-id>\n<status>completed</status>\n</task-notification>\n</system-reminder>`);
+
+  it("says on a nest's line what it launched, how many steps it holds, and what it last did until its caller is told it stopped", () => {
+    const told = [...nested, ...reply("t2", [text("Found.")]), ...request("t3", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done.")), assistant(text("Found.")), user(notification("a1"))] })];
+    const at = layouts(told);
+    // A turn that ends is no stop: a subagent ends one to wait, and is woken.
+    expect([2, 3, 4, 5, 6].map((step) => nest(at(step)))).toMatchObject([
       { change: "added", type: "Explore", prompt: "Find the longest word.", count: 1, latest: { name: "tool_use: Agent" }, depth: 0 },
       { change: "changed", count: 1, latest: { name: "tool_use: Agent" } },
-      { change: "changed", count: 2, latest: undefined },
+      { change: "changed", count: 2, latest: { parts: [{ text: "Done." }] } },
+      { change: "same", count: 2, latest: { parts: [{ text: "Done." }] } },
       { change: "same", count: 2, latest: undefined },
     ]);
     expect(keysOf(at(1))).not.toContain(outer);
-    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, latest: undefined, depth: 1 });
+    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, latest: { parts: [{ text: "Three." }] }, depth: 1 });
     expect([2, 3, 4, 5].map((step) => markOf(nest(at(step))))).toEqual(["added", "changed", "changed", "same"]);
   });
 
-  it("says what a subagent last did while a reply of its waits on a tool or is still coming, wherever its newest step stands", () => {
+  it("says what a subagent last did until it hands its report back, the harness's asking's answer too", () => {
     // A subagent that reads, then searches, then hands its report back. While each tool runs the harness asks it what
     // it is doing, in a request that stands beside the step waiting on the tool: the first is answered and ends its
     // turn, the second the harness leaves when the subagent is done.
@@ -551,7 +558,7 @@ describe("the column", () => {
       { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
     ];
     const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
-    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
+    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "text", undefined, undefined]);
     // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
     // the line says what the subagent did last, the tool its request answers.
     const from = working.findIndex(({ trace_id }) => trace_id === "s2");

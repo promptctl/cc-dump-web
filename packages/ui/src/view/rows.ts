@@ -367,29 +367,36 @@ function columnOf({ segments }: History, step: number): Column {
   return { steps, levels, inside, forks: forksOf(segments), shown, hung, dimmed, doing: doingOf(arrived, levelOf) };
 }
 
-// The last thing each subagent that runs did, by its level: the last block of a reply of the level that waits. A reply
-// waits while it stopped for a tool no step has answered, unless the tool hands the subagent's report back
-// (format/blocks.ts, `handback`); with none such, while it is still coming. A step answers the one it follows once its
-// own reply has a block or its exchange has ended, so what a subagent last did is said until it does the next thing.
-// A reply with no block yet says nothing, so one sent beside a reply still coming does not take the line from it. The
-// newest that waits and has a block says it, and a level with none does not run.
-// [LAW:one-source-of-truth] It reads every step of the level that has arrived, not the path's last: the harness asks a
-// subagent what it is doing in a request that stands beside the step waiting on the tool and ends its turn at once, so
-// the newest step under a subagent at work is most often one that says its turn is over (Claude Code, 2026-11-17).
+// The last thing each subagent that runs did, by its level: the last block of its newest reply that has one. A
+// subagent runs from a reply of its level until it stops, which it does when a reply of its hands its report back
+// (format/blocks.ts, `handback`) or when its caller is told it has (`stops`, by the agent its requests are sent for),
+// and a reply after either runs it again. A request whose reply has no block yet has done nothing, so the harness's
+// asking, left unanswered as the subagent hands back, runs nothing. Its answer, which says in a few words what the
+// subagent is doing, is said as the last thing it did, as Claude Code itself shows it.
+// [LAW:one-source-of-truth] It reads every step that has arrived, not the path's: what a subagent did and whether it
+// stopped is what it and its caller were sent, whichever history the column lists.
 function doingOf(arrived: readonly Segment[], levelOf: readonly string[]): Map<string, KeyedBlock> {
-  const did = ({ formatted: { groups } }: Segment) => groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
-  const answers = (segment: Segment) => segment.formatted.exchange.end !== undefined || did(segment) !== undefined;
-  const answered = new Set(arrived.flatMap((segment) => (segment.after?.on === "step" && answers(segment) ? [segment.after.step] : [])));
-  const coming = new Map<string, KeyedBlock>();
-  const onTool = new Map<string, KeyedBlock>();
-  arrived.forEach((segment, index) => {
-    const { exchange, facts } = segment.formatted;
-    const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && !answered.has(index + 1) ? onTool : undefined;
-    if (waits === undefined) return;
-    const last = did(segment);
-    if (last !== undefined && !last.handback) waits.set(levelOf[index + 1]!, last);
+  const runs = new Map<string, boolean>();
+  const did = new Map<string, KeyedBlock>();
+  const levels = new Map<string, string>();
+  arrived.forEach(({ formatted: { groups, facts }, groups: brought }, index) => {
+    const level = levelOf[index + 1]!;
+    if (level !== top) {
+      const reply = groups.flatMap(({ blocks }) => blocks).filter(({ place }) => place?.in === "reply");
+      if (facts.agent !== undefined) levels.set(facts.agent, level);
+      if (reply.length > 0) {
+        runs.set(level, !reply.some(({ handback }) => handback));
+        did.set(level, reply.at(-1)!);
+      }
+    }
+    // What arrived with the step, once: a notification is sent again with every request after.
+    const stops = brought.flatMap(({ items }) => items.flatMap(({ versions }) => blockIn(versions[0]!).stops ?? []));
+    for (const { agent } of stops) {
+      const stopped = levels.get(agent);
+      if (stopped !== undefined) runs.set(stopped, false);
+    }
   });
-  return new Map([...coming, ...onTool]);
+  return new Map([...did].filter(([level]) => runs.get(level)));
 }
 
 // A row a step lists of its own: its exchange's line, a group's title, a set's line, or a block.

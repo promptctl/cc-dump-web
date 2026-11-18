@@ -21,9 +21,14 @@ export type Category = (typeof categories)[number];
 // `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
 // reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
 // it (view/history.ts), which reads them here and never back out of a block's parts. `handback`: a subagent's call of
-// the tool that hands its report back to its caller, after which it does nothing more until it is told more.
+// the tool that hands its report back to its caller, after which it does nothing more until it is told more. `stops`:
+// the subagents the harness tells their caller have stopped, in a text that holds its notifications.
 export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; summary?: string; handback?: true };
+export type Stated = { launch?: Launch; summary?: string; handback?: true; stops?: Stop[] };
+
+// A subagent the harness says has stopped: the `agent` it names, as the requests sent for it are named
+// (format/format.ts, `agent`), and the `status` it gives, "completed" in every recording so far.
+export type Stop = { agent: string; status: string };
 
 // What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
 // agent `type` it names, where it names one.
@@ -130,6 +135,15 @@ const summarized = (block: unknown, role: Role): Stated => {
   const text = sentField(block, "text");
   const summary = role === "assistant" && typeof text === "string" ? summaryEnding.exec(text)?.[1]!.trim() : undefined;
   return summary === undefined || summary === "" ? {} : { summary };
+};
+
+// The subagents a text says have stopped: each `<task-notification>` in it, which Claude Code sends its main agent as a
+// subagent stops, inside a system reminder of a user's message or bare in a system-role one, several to a text where
+// several stopped (seen on its traffic, 2026-11-18), with the agent's name as `task-id` and its `status`.
+const notification = /<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<status>([^<]+)<\/status>[\s\S]*?<\/task-notification>/g;
+const stopped = (text: string): Stated => {
+  const stops = [...text.matchAll(notification)].map(([, agent, status]) => ({ agent: agent!, status: status! }));
+  return stops.length === 0 ? {} : { stops };
 };
 
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
@@ -240,7 +254,7 @@ export function formatContent(block: unknown, role: Role): Block[] {
     const rest = last ? fields : [];
     const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...stopped(piece.text), ...(last ? stated : {}) };
   });
 }
 
