@@ -552,10 +552,10 @@ describe("the column", () => {
     ];
     const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
     expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
-    // A reply still coming says what it has by now, the events of its exchange recorded so far: nothing before its
-    // first block, and no step waits on the tool its request answers.
+    // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
+    // the line says what the subagent did last, the tool its request answers.
     const coming = (events: number) => latest(working.slice(0, working.findIndex(({ trace_id }) => trace_id === "s2") + events), 3);
-    expect([3, 6].map(coming)).toEqual([undefined, "tool_use: Grep"]);
+    expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
   });
 
   it("puts the line where subagents of one call part first inside the call's nest", () => {

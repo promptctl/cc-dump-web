@@ -185,16 +185,17 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       if (nest.count !== level.length) say(`${nest.key} counts ${nest.count} steps of ${level.length}`);
       // Its line says the last thing the subagent did while it runs. That is decided here by what the layout does not
       // read: the subagent's steps are those sent under its agent's id, less the harness's asking, and it runs while
-      // the newest of them by now has a reply that stopped for a tool other than the one that hands its report back,
-      // or that has not ended.
+      // the newest of them by now whose reply has begun stopped for a tool, or has not ended, and does not hand its
+      // report back.
       const agent = agentOf(root);
-      const newest = agent === undefined ? undefined : arrived.findLast((own) => agentOf(own) === agent && !asks(own));
-      if (newest === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
+      if (agent === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
       else {
-        const { exchange, facts, groups } = segments[newest - 1]!.formatted;
-        const last = groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
-        const runs = exchange.end === undefined || (facts.stopReason === "tool_use" && last?.handback === undefined);
-        if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest}`);
+        const replied = (own: number) => segments[own - 1]!.formatted.groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
+        const ended = (own: number) => segments[own - 1]!.formatted.exchange.end !== undefined;
+        const newest = arrived.findLast((own) => agentOf(own) === agent && !asks(own) && (ended(own) || replied(own) !== undefined));
+        const last = newest === undefined ? undefined : replied(newest);
+        const runs = newest !== undefined && last?.handback === undefined && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
+        if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest ?? root}`);
       }
       const id = fieldOf(first(call), "id");
       rows.forEach((row, index) => {
