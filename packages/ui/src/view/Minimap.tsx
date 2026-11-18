@@ -1,26 +1,30 @@
 import { useLayoutEffect, useMemo, useRef, type PointerEvent, type RefObject } from "react";
 import type { Theme } from "../theme/theme.ts";
-import { colorsOf, offsetAt, scaleOf, slivers, viewBox, type Extent } from "./minimap.ts";
-import type { Row } from "./rows.ts";
+import { colorsOf, gutter, notchAt, offsetAt, scaleOf, slivers, viewBox, type Extent } from "./minimap.ts";
+import type { ForkRow, Row } from "./rows.ts";
 
 // The minimap (docs/design/02-design.md, "Layout"), beside the conversation: its rows top to bottom at the minimap's
 // height, each a sliver in its category's color with the mark of what a step did to it at its right edge, and the
-// view's box over them. A press or a drag on it puts the view there, through `onPlace`, the view's own placing, so the
-// view stays the scroll offset's one writer. `extents`: each row's start and height, measured or estimated, as the
-// virtualizer holds them; `scroller`: the view, whose content, the rows and what follows them, is the conversation's
-// height, and what the view's box is read from.
+// view's box over them. In the gutter at its left, the conversation's structure: a bar along the rows under an Agent
+// call, a second along those under a call of a subagent's, and a notch at a line where histories part. A press on a
+// notch is the next history at that fork, through `onFork`; any other press, or a drag, puts the view there, through
+// `onPlace`, the view's own placing, so the view stays the scroll offset's one writer. `extents`: each row's start and
+// height, measured or estimated, as the virtualizer holds them; `scroller`: the view, whose content, the rows and what
+// follows them, is the conversation's height, and what the view's box is read from.
 export function Minimap({
   rows,
   extents,
   scroller,
   theme,
   onPlace,
+  onFork,
 }: {
   rows: readonly Row[];
   extents: readonly Extent[];
   scroller: RefObject<HTMLElement | null>;
   theme: Theme;
   onPlace: (offset: number) => void;
+  onFork: (fork: ForkRow) => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const colors = useMemo(() => colorsOf(theme), [theme]);
@@ -36,11 +40,26 @@ export function Minimap({
     const context = element.getContext("2d")!;
     context.scale(ratio, ratio);
     const scale = scaleOf(view.scrollHeight, height);
-    for (const { y, height: tall, paint, change } of slivers(rows, extents, scale)) {
+    const drawn = slivers(rows, extents, scale);
+    for (const { y, height: tall, paint, change, bars } of drawn) {
       context.fillStyle = colors.paint[paint];
-      context.fillRect(0, y, width - markWidth - 1, tall);
+      context.fillRect(gutter.width, y, width - gutter.width - markWidth - 1, tall);
       context.fillStyle = colors.change[change];
       context.fillRect(width - markWidth, y, markWidth, tall);
+      context.fillStyle = colors.gutter;
+      for (let bar = 0; bar < bars; bar++) context.fillRect(bar * gutter.pitch, y, gutter.bar, tall);
+    }
+    // The notches last, over the bars: each a diamond at the middle of its fork's line.
+    context.fillStyle = colors.gutter;
+    for (const { y, height: tall, fork } of drawn) {
+      if (fork === undefined) continue;
+      const [x, middle] = [gutter.width / 2, y + tall / 2];
+      context.beginPath();
+      context.moveTo(x, middle - gutter.notch);
+      context.lineTo(x + gutter.notch, middle);
+      context.lineTo(x, middle + gutter.notch);
+      context.lineTo(x - gutter.notch, middle);
+      context.fill();
     }
     const box = viewBox(view.scrollTop, view.clientHeight, scale);
     context.fillStyle = colors.view;
@@ -82,7 +101,7 @@ export function Minimap({
   };
   return (
     // The canvas fills a box of its own: its size set to draw it is not a size the layout reads.
-    <div className="relative w-10 shrink-0 bg-surface">
+    <div className="relative w-12 shrink-0 bg-surface">
       <canvas
         ref={canvas}
         data-minimap
@@ -91,6 +110,9 @@ export function Minimap({
         onPointerDown={(event) => {
           // A press of the main button, as a click is; another is the browser's, a context menu's or a paste's.
           if (event.button !== 0) return;
+          const { left, top, height } = event.currentTarget.getBoundingClientRect();
+          const fork = notchAt(slivers(rows, extents, scaleOf(scroller.current!.scrollHeight, height)), event.clientX - left, event.clientY - top);
+          if (fork !== undefined) return onFork(fork);
           event.currentTarget.setPointerCapture(event.pointerId);
           place(event);
         }}

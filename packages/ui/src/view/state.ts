@@ -11,11 +11,11 @@ import { closedSetOf, isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
-// launch opened and whether its terminal is shown (F13), each block, set, region or fold they opened or closed (rows.ts),
-// where they are, the moment shown, and their search. Everything else on screen is derived from the events and the settings. It is kept for the
-// tab in sessionStorage, so after a hot reload or a page reload the view is the same (docs/design/01-mvp.md, F12). A tab
-// opens at the end, now, which follows the conversation while follow is on. While it is off, the end becomes the place
-// under the view at the first step.
+// launch opened and whether its terminal is shown (F13), each block, set, nest, region or fold they opened or closed
+// (rows.ts), where they are, the moment shown, and their search. Everything else on screen is derived from the events
+// and the settings. It is kept for the tab in sessionStorage, so after a hot reload or a page reload the view is the
+// same (docs/design/01-mvp.md, F12). A tab opens at the end, now, which follows the conversation while follow is on.
+// While it is off, the end becomes the place under the view at the first step.
 export type View = { open: OpenRecording; terminal: Terminal | null; opened: Opened; position: Position; moment: Moment; search: Search };
 
 // [LAW:types-are-the-program] The agent's window, and whether its terminal is shown beside the conversation: two facts,
@@ -84,17 +84,17 @@ export const view = {
     settings.setSearchOption(option, on);
     useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
   },
-  // A step to a match, the reader's act, with now's step `now`: it becomes current, the set its block is in shows open,
-  // its block, unless the match is on its line, and the regions holding it show expanded, and the view moves to its row,
-  // which the step then refines to the match's line. The step chooses only what it changes: a set or a block already
-  // open, as the levels `visibility` start it or as the reader chose, is left as it is, and so is a region or a section
-  // the choices hold open, so a step among the matches of what they hold open leaves the choices the record they were.
-  // A section that starts open is chosen open by the first step into it, which shows nothing new: a step is told which
-  // folds hold its match, not how each starts.
-  goTo: ({ match, row, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
+  // A step to a match, the reader's act, with now's step `now`: it becomes current, the nests its block is inside and
+  // the set it is in show open, its block, unless the match is on its line, and the regions holding it show expanded,
+  // and the view moves to its row, which the step then refines to the match's line. The step chooses only what it
+  // changes: a set or a block already open, as the levels `visibility` start it or as the reader chose, is left as it
+  // is, and so is a nest, a region or a section the choices hold open, so a step among the matches of what they hold
+  // open leaves the choices the record they were. A section that starts open is chosen open by the first step into it,
+  // which shows nothing new: a step is told which folds hold its match, not how each starts.
+  goTo: ({ match, row, nests, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
     useView.setState((state) => {
       const set = closedSetOf(row, visibility, state.opened);
-      const opens = [...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, state.opened) ? [] : [row.key]), ...regions];
+      const opens = [...nests, ...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, state.opened) ? [] : [row.key]), ...regions];
       return { ...movedTo(state, match.key, opens, now), search: { ...state.search, current: match } };
     }),
   // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show

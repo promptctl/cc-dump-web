@@ -28,13 +28,6 @@ export const defaultVisibility: Record<Category, Visibility> = {
   http: "hidden",
 };
 
-// Where a branch of a thread (view/lines.ts), a side question or a compaction, is listed once its last request is behind
-// the step shown: where it arrived, as it was (`stay`); there, folded into one row (`fold`); or not at all, gone the step
-// after its last (`step`). [LAW:no-mode-explosion] Three, for Brandon to choose between by seeing each
-// (dump-design-ajl.m1g); the setting and the placements not chosen are deleted once he has.
-export const branchPlacements = ["stay", "fold", "step"] as const;
-export type Branches = (typeof branchPlacements)[number];
-
 // How a search reads its query (docs/design/01-mvp.md, F6). `caseSensitive`: letters match only in the case typed.
 // `wholeWord`: a match is not part of a longer word. `regex`: the query is a regular expression, not the characters it
 // says. Each is on or off and no other, so the choices are independent.
@@ -44,15 +37,13 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6).
-// `branches`: where a branch is listed after its last request. `info`: whether the info
-// panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a line it lists asks (F9).
-// `keys`: whether the keys panel is open (view/keyboard.ts).
+// `info`: whether the info panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a
+// line it lists asks (F9). `keys`: whether the keys panel is open (view/keyboard.ts).
 export type Settings = {
   follow: boolean;
   visibility: Record<Category, Visibility>;
   theme: ThemeChoice;
   search: SearchOptions;
-  branches: Branches;
   info: boolean;
   logs: boolean;
   logLevel: Level;
@@ -66,7 +57,6 @@ const name = "cc-dump.settings";
 export function parseSettings(stored: unknown): Settings {
   const follow = fieldOf(stored, "follow");
   const theme = fieldOf(stored, "theme");
-  const branches = fieldOf(stored, "branches");
   const info = fieldOf(stored, "info");
   const logs = fieldOf(stored, "logs");
   const logLevel = fieldOf(stored, "logLevel");
@@ -85,7 +75,6 @@ export function parseSettings(stored: unknown): Settings {
     visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
     theme: isThemeChoice(theme) ? theme : "system",
     search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
-    branches: isOneOf(branchPlacements)(branches) ? branches : "stay",
     info: typeof info === "boolean" ? info : false,
     logs: typeof logs === "boolean" ? logs : false,
     logLevel: isOneOf(levels)(logLevel) ? logLevel : "info",
@@ -104,7 +93,6 @@ export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
   setSearchOption: (option: keyof SearchOptions, on: boolean) => useSettings.setState((state) => ({ search: { ...state.search, [option]: on } })),
   setTheme: (theme: ThemeChoice) => useSettings.setState({ theme }),
-  setBranches: (branches: Branches) => useSettings.setState({ branches }),
   setInfo: (info: boolean) => useSettings.setState({ info }),
   setLogs: (logs: boolean) => useSettings.setState({ logs }),
   setLogLevel: (logLevel: Level) => useSettings.setState({ logLevel }),

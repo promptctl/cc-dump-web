@@ -7,7 +7,7 @@ import { parseSettings, type SearchOptions, type Visibility } from "../settings.
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
-import { blockOf, createLayout, type BlockRow, type Layout } from "./rows.ts";
+import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -33,7 +33,7 @@ const { search: defaults } = parseSettings(undefined);
 // Every category listed.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
 const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
-  createLayout(visibility, "stay")(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
+  createLayout(visibility)(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
 // A query read under the default options, with those given changed.
 const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(query, { ...defaults, ...options });
 const { pattern } = read("needle");
@@ -42,7 +42,8 @@ const top = { at: "start" } as const;
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
-  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions: [gone ? { step: 1, block: undefined, was: shown } : { step: 1, block: shown, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined };
+  const versions: BlockRow["versions"] = [{ step: 1, block: shown, reply: false, rewrote: undefined, previous: undefined }, ...(gone ? [{ step: 2, block: undefined, was: shown, previous: 0 }] : [])];
+  return { kind: "block", key: "k", change: gone ? "removed" : "added", versions, at: versions.length - 1, set: undefined, depth: 0, dimmed: false };
 };
 
 describe("search", () => {
@@ -239,11 +240,19 @@ describe("search", () => {
     expect(result).toEqual({
       match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
       row: rows.find((row) => row.key === "thread:a/message.2/content.0"),
+      nests: [],
       inContent: true,
       regions: [regionKey(part, 1), regionKey(part, 3)],
     });
     const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
     expect(name).toMatchObject({ row: { key: "thread:a/message.1/content.0" }, inContent: false, regions: [] });
+  });
+
+  it("opens the nests a match's block is inside, the innermost first", () => {
+    const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
+    const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
+    const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
+    expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.nests).toEqual(["inner/nest", "outer/nest"]);
   });
 
   it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {

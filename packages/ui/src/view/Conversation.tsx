@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
@@ -8,18 +8,19 @@ import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
-import { createHistory, sameFields, type Branch, type History } from "./history.ts";
+import { forkAbove, siblingFrom } from "./forks.ts";
+import { createHistory, sameFields, type History } from "./history.ts";
 import { injectedFrom } from "./injected.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, foldKey, isGone, lineOpens, modelName, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type Row, type SetRow } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type ForkRow, type NestRow, type Row, type SetRow } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
-import { Hold, Painted, Sections, ToHeading, useToggle, useWhere } from "./painting.ts";
+import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
 import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
@@ -42,14 +43,13 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
-  const branches = useSettings((state) => state.branches);
-  const layOut = useMemo(() => createLayout(visibility, branches), [visibility, branches]);
+  const layOut = useMemo(() => createLayout(visibility), [visibility]);
   // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
   // the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
   const revealed = current?.key;
   const opened = useView((state) => state.opened);
-  const { rows, keys, every } = useMemo(() => layOut(conversation, shown, revealed, opened), [layOut, conversation, shown, revealed, opened]);
+  const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, revealed, opened), [layOut, conversation, shown, revealed, opened]);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -160,8 +160,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
     choose({ at: "row", key, offset: Math.max(0, target.getBoundingClientRect().top - rowBox.top - lead) });
   };
-  // A step to a match, as one act: it is committed with its block and regions open and its row mounted, then the view
-  // is put at the match's line.
+  // A step to a match, as one act: it is committed with the nests around its block, its block and its regions open and
+  // its row mounted, then the view is put at the match's line.
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
@@ -183,48 +183,74 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     putAt(blockKey, line, line);
   };
 
-  // A click on a block, region or fold is reading where the view is: the position becomes the place under the view, so
+  // A click on a block, nest, region or fold is reading where the view is: the position becomes the place under the view, so
   // following pauses, and the line clicked stays where it is as what it opens grows or shrinks below it.
   const hold = () => choose(positionAt(scroller.current!.scrollTop, rowAt));
   // The reader moving the view to `offset` from the minimap, as a scroll there would: the place there, so following
   // pauses, or the end, where following resumes.
   const placeAt = (offset: number) => choose(readAt(offset, largest(scroller.current!), useSettings.getState().follow, useView.getState().moment.at !== "chosen", rowAt));
 
+  // How far below the view's top the line of the fork at `key` ends, while any of the line is in the view: undefined
+  // while none of it is, or the line is not listed.
+  const forkInView = (key: string): number | undefined => {
+    const element = scroller.current!;
+    const index = keys.indexOf(key);
+    const line = index === undefined ? undefined : placedAt(virtualizer.measurementsCache[index]);
+    if (line === undefined || line.key !== key) return undefined;
+    const end = line.start + line.size - element.scrollTop;
+    return end > 0 && end - line.size < element.clientHeight ? end : undefined;
+  };
   // A move in time to step `target`: the moment becomes that step, now if it is the latest, and the view is put at the
   // step's own exchange line, where what it brought begins, or, following, at the end. What the step did to a row
-  // above it is marked on the minimap. Committed first, so the position is put among the step's own rows.
-  const toStep = (target: number) => {
+  // above it is marked on the minimap. A switch of histories, at the fork whose line is at `fork`, leaves the view
+  // where it is while the line is in it, so the line and the rows above it stay in place as the rows under it change,
+  // and puts it at the line otherwise. Committed first, so the position is put among the rows the step lists.
+  const toStep = (target: number, fork: string | undefined) => {
     const latestStep = target === steps;
     const trace = conversation.segments[target - 1]!.formatted.exchange.trace_id;
-    const position: Position = latestStep && useSettings.getState().follow ? { at: "end" } : { at: "row", key: trace, offset: 0 };
+    const arrival: Position = latestStep && useSettings.getState().follow ? { at: "end" } : { at: "row", key: trace, offset: 0 };
+    const position: Position = fork === undefined ? arrival : forkInView(fork) === undefined ? { at: "row", key: fork, offset: 0 } : positionAt(scroller.current!.scrollTop, rowAt);
     flushSync(() => view.moveInTime(latestStep ? { at: "now" } : { at: "chosen", trace }, position));
     latest.current("choose");
   };
   // [LAW:no-ambient-temporal-coupling] The step the last move is going to, until its update commits: a move made while a
   // motion runs goes on from there, so three quick presses move three steps. It is cleared however the update ends. A
   // move to the step it would leave from is none. The update runs once the motion has taken the page as it was, so it
-  // moves through the render last committed then, not the one pressed in.
+  // moves through the render last committed then, not the one pressed in. A switch at a fork whose line is in the view
+  // keeps what is above the line's end in place, and only what is under it slides (motion.ts).
   const aimed = useRef<number | undefined>(undefined);
-  const go = (target: number) => {
+  const go = (target: number, fork?: string) => {
     const from = aimed.current ?? shown;
     if (target === from) return;
     aimed.current = target;
-    void inMotion(target < from ? "back" : "forward", () => moves.current.toStep(target)).finally(() => {
+    const kept = fork === undefined ? 0 : (forkInView(fork) ?? 0);
+    void inMotion(target < from ? "back" : "forward", kept, () => moves.current.toStep(target, fork)).finally(() => {
       if (aimed.current === target) aimed.current = undefined;
     });
   };
   const goBy = (by: -1 | 1) => go(Math.min(steps, Math.max(1, (aimed.current ?? shown) + by)));
+  // The reader choosing another history at `fork`: the one before or after the one the view is at (forks.ts), by a move
+  // to its first step.
+  const switchAt = (fork: ForkRow, direction: Direction) => go(siblingFrom(fork, aimed.current, direction), fork.key);
+  // A switch at the nearest fork above the view; nothing where the column lists no fork.
+  const sibling = (direction: Direction) => {
+    const fork = forkAbove(rows, keys.indexOf, positionAt(scroller.current!.scrollTop, rowAt));
+    if (fork !== undefined) switchAt(fork, direction);
+  };
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
   // as what they show changes.
-  const moves = useRef({ go, goBy, toStep, hold, placeAt, toHeading });
+  const moves = useRef({ go, goBy, toStep, switchAt, hold, placeAt, toHeading });
   useLayoutEffect(() => {
-    moves.current = { go, goBy, toStep, hold, placeAt, toHeading };
+    moves.current = { go, goBy, toStep, switchAt, hold, placeAt, toHeading };
   });
   const onGo = useCallback((target: number) => moves.current.go(target), []);
   const onHold = useCallback(() => moves.current.hold(), []);
   const onHeading = useCallback((blockKey: string, heading: string, folds: string[]) => moves.current.toHeading(blockKey, heading, folds), []);
   const onPlace = useCallback((offset: number) => moves.current.placeAt(offset), []);
   const onStep = useCallback((by: -1 | 1) => moves.current.goBy(by), []);
+  const onSibling = useCallback((fork: string, step: number) => moves.current.go(step, fork), []);
+  // A press on a fork's notch in the minimap is the next history there, as ] is at the nearest fork above the view.
+  const onFork = useCallback((fork: ForkRow) => moves.current.switchAt(fork, "next"), []);
 
   // A move to the block the harness injected that is listed next after the view's position, or before it: the view is
   // put at the block's line, which the position then is, so the move after goes on from it. The line takes the focus,
@@ -255,6 +281,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     // A line of the rows' text: the rows are the scroller's first child.
     lines: (by) => scroller.current!.scrollBy({ top: by * parseFloat(getComputedStyle(scroller.current!.firstElementChild!).lineHeight) }),
     inTime: goBy,
+    sibling,
     injected: toInjected,
     follow: toggleFollow,
     level: settings.stepVisibility,
@@ -267,7 +294,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
         <FilterBar />
         <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} field={field} />
       </div>
-      <TurnStrip segments={conversation.segments} shown={shown} onGo={onGo} onStep={onStep} />
+      <TurnStrip segments={conversation.segments} shown={shown} listed={listed} onGo={onGo} onStep={onStep} />
       <div className="flex min-h-0 flex-1">
         {/* The browser's own scroll anchoring would be a second writer of the offset. The area is what a move in time
             slides (index.css). */}
@@ -277,15 +304,17 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           ) : (
             <Hold.Provider value={onHold}>
               <ToHeading.Provider value={onHeading}>
-                <Painted.Provider value={pattern}>
-                  <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
-                    {virtualizer.getVirtualItems().map((item) => (
-                      <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
-                        <RowView row={rows[item.index]!} reading={reading} />
-                      </ListedRow>
-                    ))}
-                  </div>
-                </Painted.Provider>
+                <ToSibling.Provider value={onSibling}>
+                  <Painted.Provider value={pattern}>
+                    <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
+                      {virtualizer.getVirtualItems().map((item) => (
+                        <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
+                          <RowView row={rows[item.index]!} reading={reading} />
+                        </ListedRow>
+                      ))}
+                    </div>
+                  </Painted.Provider>
+                </ToSibling.Provider>
               </ToHeading.Provider>
             </Hold.Provider>
           )}
@@ -303,7 +332,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
             </Toggle>
           </div>
         </main>
-        <Minimap rows={rows} extents={extents} scroller={scroller} theme={theme} onPlace={onPlace} />
+        <Minimap rows={rows} extents={extents} scroller={scroller} theme={theme} onPlace={onPlace} onFork={onFork} />
       </div>
     </>
   );
@@ -337,18 +366,24 @@ function largest(element: HTMLElement): number {
   return element.scrollHeight - element.clientHeight;
 }
 
-// A row: a fold; anything else what it shows beside a band at its left edge in the color of what the step shown did to
-// it, none where the step left the row as it was. The band stands where a ground would: the theme's text is promised
-// legible on its muted grounds only in their own `text-` color, and the foreground fails on them in most themes.
-// Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not render again.
+// A row: what it shows beside a band at its left edge in the color of what the step shown did to it, none where the
+// step left the row as it was. The band stands where a ground would: the theme's text is promised legible on its muted
+// grounds only in their own `text-` color, and the foreground fails on them in most themes. A subagent's row stands
+// one step in for each Agent call it is under, beside a bar for each, which runs down the nest's rows as the bar in
+// the minimap's gutter does; a row of a thread a compaction summarized is dimmed (docs/design/02-design.md, "Two
+// axes"). Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not render
+// again.
 const RowView = memo(
   function RowView({ row, reading }: { row: Row; reading: boolean }) {
-    if (row.kind === "fold") return <FoldLine fold={row} />;
     const band = changeColors[row.change];
     return (
-      // A branch's rows stand one step in, under the thread they left (docs/design/02-design.md, "Two axes").
-      <div className={`border-l-4 border-transparent ${row.branch === undefined ? "" : "pl-6"}`} style={band && { borderLeftColor: `var(${band})` }}>
-        <Shown row={row} reading={reading} />
+      <div className="flex border-l-4 border-transparent" style={band && { borderLeftColor: `var(${band})` }}>
+        {Array.from({ length: row.depth }, (_, level) => (
+          <span key={level} aria-hidden className="mr-1.5 ml-3.5 w-0.5 shrink-0 bg-foreground-disabled" />
+        ))}
+        <div className={`min-w-0 flex-1 ${row.dimmed ? "opacity-60" : ""}`}>
+          <Shown row={row} reading={reading} />
+        </div>
       </div>
     );
   },
@@ -356,16 +391,23 @@ const RowView = memo(
 );
 
 // What a row of each kind shows.
-function Shown({ row, reading }: { row: Exclude<Row, { kind: "fold" }>; reading: boolean }) {
+function Shown({ row, reading }: { row: Row; reading: boolean }) {
   switch (row.kind) {
     case "exchange":
-      return <ExchangeLine exchange={row.exchange} branch={row.branch} reading={reading} />;
+      return <ExchangeLine exchange={row.exchange} reading={reading} />;
     case "group":
       return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
     case "set":
       return <SetLine row={row} />;
     case "block":
       return <BlockView row={row} />;
+    case "fork":
+      return <ForkLine row={row} />;
+    case "nest":
+      return <NestLine row={row} />;
+    // A thread's line (rows.ts, ThreadRow): the thread above it, dimmed, is what the summary it stands under was made of.
+    case "thread":
+      return <p className="py-1 pl-7 font-sans text-foreground-muted">⌇ compacted here: the conversation goes on from this summary</p>;
   }
 }
 
@@ -399,17 +441,48 @@ function SetLine({ row }: { row: SetRow }) {
   );
 }
 
-// A run of a branch's rows, folded: one line saying how many, which opens it on a click.
-function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
-  const { toggle } = useToggle(foldKey(fold.key), false);
+// A fork's line (rows.ts, ForkRow), where histories part: how many do, then each by its first step and what it first
+// says, the one the column shows in the foreground. A click on one chooses its first step, so the column shows that
+// history under the line, which stays where it is.
+function ForkLine({ row }: { row: ForkRow }) {
+  const toSibling = useContext(ToSibling);
   return (
-    <button
-      type="button"
-      className="flex w-full items-center gap-3 py-0.5 pl-7 text-left font-sans text-foreground-muted hover:bg-hover"
-      onClick={toggle}
-    >
-      <span className="w-3">▸</span>
-      {`branch off ${fold.branch.from} · ${fold.rows.length} rows`}
+    <div className="flex flex-wrap items-baseline gap-x-2 py-1 pr-4 pl-7 font-sans text-foreground-muted">
+      <span title={withKeys("The histories that part here: a click on one shows it", conversationKeys.previousSibling, conversationKeys.nextSibling)}>
+        ⑂ {row.siblings.length} histories here:
+      </span>
+      {row.siblings.map(({ step, preview: says }) => (
+        <button
+          key={step}
+          type="button"
+          aria-pressed={step === row.shown}
+          title={`The history that begins at step ${step}`}
+          className={`flex max-w-[44ch] items-baseline gap-1.5 rounded-sm px-1.5 hover:text-foreground ${step === row.shown ? "bg-panel font-semibold text-foreground" : ""}`}
+          onClick={() => toSibling(row.key, step)}
+        >
+          <span className="tabular-nums">{step}</span>
+          <span className="min-w-0 truncate font-mono">{says}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// A nest's line (rows.ts, NestRow), under the Agent call that launched the subagent: its type, the prompt's first
+// words, how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
+// lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the reader
+// left it. Its arrow and its words stand under those of the call's line.
+function NestLine({ row }: { row: NestRow }) {
+  const { open, toggle } = useToggle(row.key, nestStartsOpen);
+  return (
+    <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
+      <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
+      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
+      <span className="min-w-0 truncate" title={row.prompt}>
+        {row.prompt}
+      </span>
+      <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
+      {row.latest === undefined ? null : <span className="min-w-0 flex-1 truncate text-success">{`● ${row.latest.name} ${preview(row.latest)}`}</span>}
     </button>
   );
 }
@@ -418,9 +491,8 @@ function FoldLine({ fold }: { fold: Extract<Row, { kind: "fold" }> }) {
 // aligned down the conversation, on two rows: who answered and how it ended, then the tokens. The model's column alone
 // gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
-// exchange its end. `branch`: the branch its request is on, which its model's column names first, where a long model's
-// ellipsis does not reach.
-function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exchange: FormattedExchange; branch: Branch | undefined; reading: boolean }) {
+// exchange its end.
+function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
@@ -434,11 +506,6 @@ function ExchangeLine({ exchange: { exchange, facts }, branch, reading }: { exch
         <span className="text-foreground-muted">request not recorded</span>
       ) : (
         <span className="font-mono" title={facts.model}>
-          {branch === undefined ? null : (
-            <span className="font-sans text-foreground-muted" title={`On a branch off step ${branch.from}: its blocks are its own, not the thread's`}>
-              ↳ off {branch.from}{" "}
-            </span>
-          )}
           {facts.model === undefined ? null : modelName(facts.model)}
         </span>
       )}
@@ -499,18 +566,15 @@ const endings = { ok: "", pending: "", unread: "no end read", error: "error", ab
 // Clicking the line switches between expanded and not, from how the block starts.
 function BlockView({ row }: { row: BlockRow }) {
   const starts = useSettings((state) => startsExpanded(row, state.visibility));
-  const { open: chosen, toggle } = useToggle(row.key, starts);
+  const { open, toggle } = useToggle(row.key, starts);
   const rewrites = useToggle(pastKey(row.key), false);
   const block = blockOf(row);
-  // A line with nothing to open is no control, and it shows open under no choice or level.
-  const opens = lineOpens(block);
-  const open = opens && chosen;
   const size = sizeOf(block);
   return (
     <div className="ml-4 border-l-[3px] border-l-(--category) pr-4 pl-3" style={categoryVars(block.category)}>
       <div className="flex items-baseline gap-3 font-sans hover:bg-hover">
-        <button type="button" data-line className="flex min-w-0 flex-1 items-baseline gap-3 text-left" disabled={!opens} onClick={toggle}>
-          <span className="w-3 text-foreground-muted">{!opens ? "" : open ? "▾" : "▸"}</span>
+        <button type="button" data-line className="flex min-w-0 flex-1 items-baseline gap-3 text-left" onClick={toggle}>
+          <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
           {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
           <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>
             <HighlightedText blockKey={row.key} at={address.name} text={block.name} />

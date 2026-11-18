@@ -2,30 +2,30 @@ import { describe, expect, it } from "vitest";
 import type { Block } from "../format/blocks.ts";
 import type { FormattedExchange, KeyedBlock } from "../format/format.ts";
 import { themeNames, themeOf } from "../theme/theme.ts";
-import { colorsOf, offsetAt, paintOf, scaleOf, slivers, viewBox } from "./minimap.ts";
-import type { Change, Row, SetRow } from "./rows.ts";
+import { colorsOf, notchAt, offsetAt, paintOf, scaleOf, slivers, viewBox } from "./minimap.ts";
+import type { Change, ForkRow, Row, SetRow } from "./rows.ts";
 
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
-const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", branch: undefined };
-const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", branch: undefined };
+const standing = { depth: 0, dimmed: false };
+const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", ...standing };
+const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", ...standing };
+const brought = (shown: KeyedBlock) => ({ step: 1, block: shown, reply: false, rewrote: undefined, previous: undefined });
 // A set of one block, which step 1 brought and step 2 took away, at the step after.
-const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", branch: undefined, items: [{ key: "t1/c", versions: [{ step: 1, block: block(), reply: false, rewrote: undefined }, { step: 2, block: undefined, was: block() }] }], step: 3 };
-const fold = (rows: Row[] = []): Row => ({ kind: "fold", key: "t1/a", rows, branch: { key: "branch:side", from: 2 } });
-const added = (shown: KeyedBlock): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [{ step: 1, block: shown, reply: false, rewrote: undefined }], at: 0, branch: undefined, set: undefined });
+const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", items: [{ key: "t1/c", versions: [brought(block()), { step: 2, block: undefined, was: block(), previous: 0 }] }], step: 3, steps: new Set([1, 2, 3]), ...standing };
+const fork = (key: string, depth = 0): ForkRow => ({ kind: "fork", key, change: "same", siblings: [], shown: undefined, depth, dimmed: false });
+const nest = (depth: number): Row => ({ kind: "nest", key: "t1/b/nest", change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
+const thread: Row = { kind: "thread", key: "t1/b/thread", change: "same", ...standing };
+const added = (shown: KeyedBlock, depth = 0): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [brought(shown)], at: 0, set: undefined, depth, dimmed: false });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.
-const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [{ step: 1, block: was, reply: false, rewrote: undefined }, { step: 2, block: undefined, was }], at: 1, branch: undefined, set: undefined });
+const removed = (was: KeyedBlock, change: Change = "removed"): Row => ({ kind: "block", key: "t1/c", change, versions: [brought(was), { step: 2, block: undefined, was, previous: 0 }], at: 1, set: undefined, ...standing });
 
 describe("paintOf", () => {
   it("paints a block its category, a failed tool's result the error, a removed block as it was", () => {
     expect([paintOf(added(block({ category: "user" }))), paintOf(added(block({ failed: true }))), paintOf(removed(block({ category: "thinking" })))]).toEqual(["user", "failed", "thinking"]);
   });
 
-  it("paints an exchange's line and a fold muted, a set's line its blocks' category, and a group's title not at all", () => {
-    expect([exchange, fold([exchange, added(block())]), set, group].map(paintOf)).toEqual(["exchange", "fold", "tools", "none"]);
-  });
-
-  it("paints a fold that holds a failed tool's result the error, so a folded branch never hides a failure", () => {
-    expect(paintOf(fold([exchange, added(block({ failed: true }))]))).toBe("failed");
+  it("paints the line of an exchange, a fork, a nest and a thread muted, a set's line its blocks' category, and a group's title not at all", () => {
+    expect([exchange, fork("t1/fork"), nest(0), thread, set, group].map(paintOf)).toEqual(["line", "line", "line", "line", "tools", "none"]);
   });
 });
 
@@ -37,16 +37,29 @@ describe("scaleOf", () => {
 
 describe("slivers", () => {
   it("places each row by its extent, scaled, at least a pixel tall, beside what the step did to it", () => {
-    const rows = [exchange, added(block()), fold()];
+    const rows = [exchange, added(block()), nest(0)];
     const extents = [
       { start: 0, size: 40 },
       { start: 40, size: 10 },
       { start: 50, size: 950 },
     ];
     expect(slivers(rows, extents, 0.05)).toEqual([
-      { y: 0, height: 2, paint: "exchange", change: "added" },
-      { y: 2, height: 1, paint: "tools", change: "added" },
-      { y: 2.5, height: 47.5, paint: "fold", change: "same" },
+      { y: 0, height: 2, paint: "line", change: "added", bars: 0, fork: undefined },
+      { y: 2, height: 1, paint: "tools", change: "added", bars: 0, fork: undefined },
+      { y: 2.5, height: 47.5, paint: "line", change: "same", bars: 0, fork: undefined },
+    ]);
+  });
+
+  it("says how far in a row stands, as a bar for each level up to two, and the fork a fork's line is of", () => {
+    const rows = [nest(0), added(block(), 1), nest(1), added(block(), 2), fork("t9/fork", 2), added(block(), 3)];
+    const extents = rows.map((_, index) => ({ start: index * 20, size: 20 }));
+    expect(slivers(rows, extents, 1).map(({ bars, fork }) => [bars, fork?.key])).toEqual([
+      [0, undefined],
+      [1, undefined],
+      [1, undefined],
+      [2, undefined],
+      [2, "t9/fork"],
+      [2, undefined],
     ]);
   });
 
@@ -67,11 +80,26 @@ describe("slivers", () => {
   });
 });
 
+describe("notchAt", () => {
+  // Two forks' lines, one after the other, each drawn 5 pixels tall: their middles at 102.5 and 107.5.
+  const rows = Array.from({ length: 60 }, (_, index) => (index === 20 ? fork("a/fork") : index === 21 ? fork("b/fork") : added(block())));
+  const drawn = slivers(rows, rows.map((_, index) => ({ start: index * 100, size: 100 })), 0.05);
+
+  it("is the fork whose notch a point of the gutter is on, the nearer of two", () => {
+    const at = (x: number, y: number) => notchAt(drawn, x, y)?.key;
+    expect([at(4, 102), at(0, 98), at(4, 104), at(4, 106), at(7, 112)]).toEqual(["a/fork", "a/fork", "a/fork", "b/fork", "b/fork"]);
+  });
+
+  it("is none away from every notch, and none beside the gutter, where a press places the view", () => {
+    expect([notchAt(drawn, 4, 90), notchAt(drawn, 4, 120), notchAt(drawn, 8, 105), notchAt(drawn, 30, 105)]).toEqual([undefined, undefined, undefined, undefined]);
+  });
+});
+
 describe("colorsOf", () => {
   it("has a color for every paint and every change in every theme", () => {
     for (const name of themeNames) {
-      const { paint, change, view } = colorsOf(themeOf(name));
-      expect([...Object.values(paint), ...Object.values(change), view].every((color) => /^#[0-9a-f]{6}$|^transparent$/i.test(color)), name).toBe(true);
+      const { paint, change, view, gutter } = colorsOf(themeOf(name));
+      expect([...Object.values(paint), ...Object.values(change), view, gutter].every((color) => /^#[0-9a-f]{6}$|^transparent$/i.test(color)), name).toBe(true);
     }
   });
 });

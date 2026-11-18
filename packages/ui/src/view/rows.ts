@@ -2,8 +2,8 @@ import type { Block, Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
-import type { Branches, Visibility } from "../settings.ts";
-import type { Branch, History, Item, Segment, Version } from "./history.ts";
+import type { Visibility } from "../settings.ts";
+import { forksOf, placeOf, sameFields, type After, type History, type Item, type Segment, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -17,29 +17,51 @@ export type Change = "added" | "same" | "changed" | "removed";
 export const changeColors: Record<Change, `--${string}` | undefined> = { added: "--success", changed: "--warning", removed: "--error", same: undefined };
 
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title or a
-// set's line `<trace_id>/<group key>`, a block its item's key (view/history.ts), so it is the same row at every moment
-// and however many rows arrive around it. `change`: what the step shown did to the row, which brings an exchange's line
-// and a group's title or leaves them, and rewrites or takes away a block alone. A block's row shows one version of its
-// item, the one at the step shown, `versions[at]`: its block, or, once a step took the item away, the block it was,
-// which stays listed at its place (blockOf). `versions` is the item's own, the same array while the item gets no
-// version, so a row made again as it was has the fields it had. `set`: the key of the set's line a block is listed
-// under, for one of a set. A fold stands for a run of a branch's rows, the `rows` it holds, keyed by the first: that row
-// is listed exactly when the fold is not, so a place held at it holds whether the fold is closed, opened, or gone.
-// `branch`: the branch a row is part of.
+// set's line `<trace_id>/<group key>`, a block its item's key (view/history.ts), and a fork's, a nest's or a thread's
+// line the key of what it stands after and its kind (`<trace_id>/fork`, `<item's key>/nest`), so it is the same row at
+// every moment and however many rows arrive around it. `change`: what the step shown did to the row, which brings an
+// exchange's line and a group's title or leaves them, and rewrites or takes away a block alone. A block's row shows
+// one version of its item, the last a step the column lists gave it, `versions[at]`: its block, or, once a step took
+// the item away, the block it was, which stays listed at its place (blockOf). `versions` is the item's own, the same
+// array while the item gets no version, so a row made again as it was has the fields it had. `set`: the key of the
+// set's line a block is listed under, for one of a set. Every row says how it stands in the column (Standing).
 export type Row =
-  | { kind: "exchange"; key: string; exchange: FormattedExchange; change: "added" | "same"; branch: Branch | undefined }
-  | { kind: "group"; key: string; title: Heading; change: "added" | "same"; branch: Branch | undefined }
+  | ({ kind: "exchange"; key: string; exchange: FormattedExchange; change: "added" | "same" } & Standing)
+  | ({ kind: "group"; key: string; title: Heading; change: "added" | "same" } & Standing)
   | SetRow
   | BlockRow
-  | { kind: "fold"; key: string; rows: Row[]; branch: Branch };
-export type BlockRow = { kind: "block"; key: string; change: Change; versions: readonly Version[]; at: number; branch: Branch | undefined; set: string | undefined };
+  | ForkRow
+  | NestRow
+  | ThreadRow;
+export type BlockRow = { kind: "block"; key: string; change: Change; versions: readonly Version[]; at: number; set: string | undefined } & Standing;
+// How a row stands in the column: `depth`, how many Agent calls it is under, each a level in; and whether it is
+// `dimmed`, as a row of the steps a compaction's summary replaced is once the thread that carries the summary on is
+// listed (columnOf).
+export type Standing = { depth: number; dimmed: boolean };
 // [LAW:types-are-the-program] A set's line: the title of a group whose blocks are a set, blocks of one kind and one
 // category that read as one thing, as a request's tool definitions do. It stands for them while it is closed, when
 // none of them is listed, and over them while it is open (docs/design/01-mvp.md, F4). It holds the group's `items`,
-// the history's own array, and the step shown, which its blocks' rows are read from (blocksOf), so it is the same
-// fields while none of its items gets a version. `change`: what the step shown did to the set, which brings it, leaves
-// it, or changes it, by doing anything to a block of it.
-export type SetRow = { kind: "set"; key: string; title: Heading; change: "added" | "same" | "changed"; branch: Branch | undefined; items: readonly Item[]; step: number };
+// the history's own array, and the step shown and the `steps` the column lists, which its blocks' rows are read from
+// (blocksOf), so it is the same fields while none of its items gets a version. `change`: what the step shown did to
+// the set, which brings it, leaves it, or changes it, by doing anything to a block of it.
+export type SetRow = { kind: "set"; key: string; title: Heading; change: "added" | "same" | "changed"; items: readonly Item[]; step: number; steps: ReadonlySet<number> } & Standing;
+// [LAW:types-are-the-program] The line where histories part (docs/design/02-design.md, "Two axes"): it stands after
+// what two or more steps of the recording stand after, a step's rows or the line of a nest or a thread, and lists
+// those siblings, each by its step, with the one the column lists, `shown`: none before the first of them arrives.
+// It stands above every sibling's rows, so no row above it moves when the reader switches. No step brings or changes
+// it: it says what the recording holds.
+export type ForkRow = { kind: "fork"; key: string; change: "same"; siblings: readonly Sibling[]; shown: number | undefined } & Standing;
+export type Sibling = { step: number; preview: string };
+// [LAW:types-are-the-program] A nest's line: the subagent an Agent tool's call launched, which stands right after the
+// call and holds the subagent's rows, one level in, closed until the reader opens it (Opened, by this row's key). It
+// says the subagent's `type`, where the call says one, the `prompt` it was launched with, the `count` of its steps the
+// column lists, and, while its last step's reply did not end its turn, the `latest` thing it did, that reply's last
+// block. `change`: the step shown brought the subagent's first step, is another step inside the nest, or neither.
+export type NestRow = { kind: "nest"; key: string; change: "added" | "same" | "changed"; type: string | undefined; prompt: string; count: number; latest: KeyedBlock | undefined } & Standing;
+// A thread's line: after the block whose summary a compaction's next thread begins with, where the thread above, now
+// dimmed, ends and the thread that carries it on begins, at the same depth. `change`: whether the step shown is the
+// new thread's first.
+export type ThreadRow = { kind: "thread"; key: string; change: "added" | "same" } & Standing;
 
 // [LAW:dataflow-not-control-flow] The headings whose blocks are a set. Another set is another entry.
 const sets: ReadonlySet<Heading> = new Set<Heading>(["tools"]);
@@ -63,33 +85,30 @@ function eventOf(version: Version): Event {
   return version.rewrote === undefined ? { step, change: "added" } : { step, change: "changed", before: version.rewrote, after: block };
 }
 
-// A block's past at the step shown: what each step did to its item since it arrived, in order. None for a block as it
-// arrived, which is nearly every one.
+// A block's past at the step shown: what each step on the path to the version shown did to its item since it arrived,
+// in order, each version saying the one it came after (view/history.ts). None for a block as it arrived, which is
+// nearly every one.
 export function pastOf({ versions, at }: BlockRow): Event[] {
-  const events = versions.slice(0, at + 1).map(eventOf);
-  return events[0]!.change === "added" ? events.slice(1) : events;
+  const events: Event[] = [];
+  for (let index: number | undefined = at; index !== undefined && index > 0; index = versions[index]!.previous) events.unshift(eventOf(versions[index]!));
+  return events;
 }
 
 // The last of a block's past, read without listing it: what the version shown did, but for a block as it arrived.
-export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at === 0 && versions[0]!.block !== undefined ? undefined : eventOf(versions[at]!));
+export const lastOf = ({ versions, at }: BlockRow): Event | undefined => (at === 0 ? undefined : eventOf(versions[at]!));
 
 // Whether a step took a block's item away by the step shown: its row shows the block it was.
 export const isGone = ({ versions, at }: BlockRow): boolean => versions[at]!.block === undefined;
 
-// [LAW:one-source-of-truth] Whether a block's line opens: one with no content, a branch's line for what it does not
-// send (view/history.ts), has nothing to open, so it is no control and no stop of a move among the blocks.
-export const lineOpens = (block: Block): boolean => block.parts.length > 0;
-
 // A row's mark on the minimap: what the step shown did to it, or, where it left it as it was, the last thing a step did
 // to it since it arrived, so a block rewritten or taken away is marked at every step after.
 export function markOf(row: Row): Change {
-  if (row.kind === "fold") return "same";
   if (row.change !== "same") return row.change;
   return row.kind === "block" ? (lastOf(row)?.change ?? "same") : row.kind === "set" ? (summaryOf(row).last?.event.change ?? "same") : "same";
 }
 
 // The rows of a set's blocks at the step it shows, in order: listed under its line while it is open.
-export const blocksOf = ({ key, items, step, branch }: SetRow): BlockRow[] => items.map((item) => itemRow(item, step, branch, key));
+export const blocksOf = ({ key, items, step, steps, depth, dimmed }: SetRow): BlockRow[] => items.map((item) => itemRow(item, step, steps, key, { depth, dimmed }));
 
 // The category of a set's blocks, which is one.
 export const categoryOf = ({ items }: SetRow): Category => blockIn(items[0]!.versions[0]!).category;
@@ -116,86 +135,142 @@ export function summaryOf(set: SetRow): Summary {
 }
 
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
-// category and of a closed set, and the titles over none a level lists, the block revealed always among them; and
-// `every` row, listed or not, which the search reads, since a hidden category's blocks and a closed set's are searched
-// (docs/design/01-mvp.md, F6).
-export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys } };
+// category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block revealed
+// among them wherever no closed nest holds it; `every` row, listed or not, which the search reads, since a hidden
+// category's blocks, a closed set's and a closed nest's are searched (docs/design/01-mvp.md, F6); and the `steps` the
+// column lists, whose rows these are (columnOf).
+export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// fold it is in, or else the row listed before it, whose end is where it stands. [LAW:types-are-the-program] The same
-// object while no row, listed or not, arrives, goes or moves, so what reads rows by key reads them again only when one
-// did.
+// row listed before it, whose end is where it stands: a closed nest's line, for a row the nest holds.
+// [LAW:types-are-the-program] The same object while no row, listed or not, arrives, goes or moves, so what reads rows
+// by key reads them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
 // The keys of the rows listed, which the virtualizer places, and the key it keeps each one's measured height by
 // (measuredBy): the same object, too, while no row's height is measured by another key.
 export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 
-// [LAW:one-source-of-truth] What the reader chose to show of each block, region or fold they opened or closed, by key:
+// [LAW:one-source-of-truth] What the reader chose to show of each block, region or nest they opened or closed, by key:
 // open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts now
 // or not, since how a block starts moves with its category's level and the choice outlasts a change of level
 // (docs/design/01-mvp.md, F4).
 export type Opened = Record<string, boolean>;
 export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
 
-// The key a fold is opened by, among the choices, by its first row's key: a choice of its own, apart from that row's.
-export const foldKey = (first: string) => `fold:${first}`;
-// The key a block's past is opened by, by its row's key: a choice of its own, too, which starts closed whatever the
-// block's level, since a block rewritten at most steps holds as many diffs.
+// The key a block's past is opened by, by its row's key: a choice of its own, which starts closed whatever the block's
+// level, since a block rewritten at most steps holds as many diffs.
 export const pastKey = (key: string) => `past:${key}`;
 
-// Lays out the conversation at step `step` of `history`, leaving out the blocks of each category `visibility` hides
+// Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
+// level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
+// closed until the reader opens it (`opened`). It leaves out the blocks of each category `visibility` hides
 // (docs/design/01-mvp.md, F5) and of each set that shows closed (F4) but the one at the key `revealed`, which the
-// search has stepped to (F6), and a group or a set with no block a level lists, rather than a title over nothing. The
-// revealed block is never folded, so a step of the search lists it in the layout that reveals it. A step of 0 is the
-// conversation before anything arrived.
-// A branch's segment is listed by `branches` once the branch's last request is behind the step shown (settings.ts).
-export function createLayout(
-  visibility: Record<Category, Visibility>,
-  branches: Branches,
-): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
-  let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) } };
-  const place = placements[branches];
+// search has stepped to (F6), and a group or a set with no block a level lists, rather than a title over nothing. A
+// step of 0 is the conversation before anything arrived.
+export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
+  let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, steps: new Set() };
+  // Each fork's siblings as its line last listed them, by its key.
+  let forks = new Map<string, readonly Sibling[]>();
   return (history, step, revealed, opened) => {
-    // The keys of the branches folded into one row each.
-    const collapsed = new Set<string>();
-    const placed = history.segments.slice(0, step).map((segment, index) => {
-      const past = segment.branch === undefined ? 0 : Math.max(0, step - history.branches.get(segment.branch.key)!);
-      const { listed, collapses } = place(past);
-      if (collapses) collapsed.add(segment.branch!.key);
-      return listed ? segmentRows(segment, index + 1, step) : [];
-    });
-    const every = placed.flat();
-    // A title, a group's or a set's, is listed over a block of it a level lists: read from the end, whether one follows
-    // before the next title. A set's block is listed under its line only while the set is open.
-    const isShown = every.map(() => true);
-    let titled = false;
-    for (let index = every.length - 1; index >= 0; index--) {
-      const row = every[index]!;
-      if (row.kind === "block") {
-        const levelLists = levels[visibility[blockOf(row).category]].listed;
-        isShown[index] = row.key === revealed || (levelLists && closedSetOf(row, visibility, opened) === undefined);
-        titled ||= levelLists || row.key === revealed;
-        continue;
+    const { segments } = history;
+    const column = columnOf(history, step);
+    // [LAW:one-source-of-truth] The steps listed are the set they were while they are the same steps, and a fork's
+    // siblings the array they were while each says the same, so a row that holds either is made again with the fields
+    // it had.
+    const steps = column.steps.size === last.steps.size && [...column.steps].every((own) => last.steps.has(own)) ? last.steps : column.steps;
+    const listedForks = new Map<string, readonly Sibling[]>();
+    const every: Row[] = [];
+    const isShown: boolean[] = [];
+    const list = (row: Row, shown: boolean) => {
+      every.push(row);
+      isShown.push(shown);
+    };
+    // Whether each row of a step's is listed. A title, a group's or a set's, is listed over a block of it a level
+    // lists: read from the end, whether one follows before the next title. A set's block is listed under its line only
+    // while the set is open.
+    const shownOf = (rows: Own[]): boolean[] => {
+      const shown = rows.map(() => true);
+      let titled = false;
+      for (let index = rows.length - 1; index >= 0; index--) {
+        const row = rows[index]!;
+        if (row.kind === "block") {
+          const levelLists = levels[visibility[blockOf(row).category]].listed;
+          shown[index] = row.key === revealed || (levelLists && closedSetOf(row, visibility, opened) === undefined);
+          titled ||= levelLists || row.key === revealed;
+          continue;
+        }
+        if (row.kind !== "exchange") shown[index] = titled;
+        titled = false;
       }
-      if (row.kind !== "exchange") isShown[index] = titled;
-      titled = false;
-    }
-    const listed = every.filter((_, index) => isShown[index]);
-    const folding = fold(listed, revealed, opened, collapsed);
-    // Each row's place among those listed: its own, the fold it is in, or the place of the row listed before it.
-    const places = folding.placeOf;
+      return shown;
+    };
+    // The line of the fork at `place`, where the recording has siblings part there.
+    const fork = (place: string, standing: Standing, open: boolean) => {
+      const siblings = column.forks.get(place);
+      if (siblings === undefined) return;
+      const key = `${place}/fork`;
+      const made = siblings.map((own) => siblingOf(segments[own - 1]!, own));
+      const before = forks.get(key);
+      const kept = before !== undefined && before.length === made.length && made.every((one, index) => sameFields(one, before[index]!)) ? before : made;
+      listedForks.set(key, kept);
+      list({ kind: "fork", key, change: "same", siblings: kept, shown: column.shown.get(place), ...standing }, open);
+    };
+    // [LAW:dataflow-not-control-flow] What stands after a block that steps hang on, by how they hang: a nest's line,
+    // which stands as its call's step does, then, one level in and listed while the nest is open, the fork of the
+    // subagents that call launched and the rows of the one listed; or a thread's line and the fork of the threads that
+    // carry the summary on, which stand as the level does, the thread's line being where what is dimmed ends, and
+    // whose rows are their level's, in the order they arrived.
+    const hang: Record<Hung, (block: BlockRow, standing: Standing, around: Standing, open: boolean) => void> = {
+      nest: (call, standing, _, open) => {
+        const key = nestKey(call.key);
+        const inside = { ...standing, depth: standing.depth + 1 };
+        const within = open && isOpen(opened, key, nestStartsOpen);
+        list(nestRow(call, key, column, segments, step, standing), open);
+        fork(call.key, inside, within);
+        level(key, inside, within);
+      },
+      thread: (block, _, around, open) => {
+        list({ kind: "thread", key: `${block.key}/thread`, change: column.shown.get(block.key) === step ? "added" : "same", ...around }, open);
+        fork(block.key, around, open);
+      },
+    };
+    // The rows of a level's steps, in the order the steps arrived: each step's own, what hangs on a block of them after
+    // that block's row, and the fork of the steps that follow it after them all. `open`: whether no nest they are in is
+    // closed.
+    const level = (key: string, around: Standing, open: boolean) => {
+      for (const own of column.levels.get(key) ?? []) {
+        const segment = segments[own - 1]!;
+        const standing = { depth: around.depth, dimmed: around.dimmed || column.dimmed.has(own) };
+        const rows = segmentRows(segment, own, step, steps, standing);
+        const shown = shownOf(rows);
+        rows.forEach((row, index) => {
+          list(row, open && shown[index]!);
+          if (row.kind !== "block") return;
+          const hung = column.hung.get(row.key);
+          if (hung !== undefined) hang[hung](row, standing, around, open);
+        });
+        fork(segment.formatted.exchange.trace_id, standing, open);
+      }
+    };
+    level(top, { depth: 0, dimmed: false }, true);
+    forks = listedForks;
+
+    const rows = every.filter((_, index) => isShown[index]);
+    // Each row's place among those listed: its own, or the place of the row listed before it.
+    const places = new Map<string, number>();
     let before = 0;
+    let count = 0;
     every.forEach((row, index) => {
-      if (isShown[index]) before = places.get(row.key)!;
-      else places.set(row.key, before);
+      if (isShown[index]) before = count++;
+      places.set(row.key, before);
     });
-    const listedKeys = folding.rows.map(({ key }) => key);
-    const listedMeasured = folding.rows.map((row) => measuredBy(row, visibility, opened));
+    const listedKeys = rows.map(({ key }) => key);
+    const listedMeasured = rows.map((row) => measuredBy(row, visibility, opened));
     const everyKeys = every.map(({ key }) => key);
     const sameKeys = same(everyKeys, last.every.rows.map(({ key }) => key));
     const sameEvery = sameKeys && every.every((row, index) => versionOf(row) === versionOf(last.every.rows[index]!));
     last = {
-      rows: folding.rows,
+      rows,
       // What a row shows changing, as a streaming block does, moves no row, so the keys are the ones before.
       keys:
         sameKeys && same(listedKeys, last.rows.map(({ key }) => key)) && listedMeasured.every((key, index) => key === last.keys.measuredBy(index))
@@ -205,93 +280,162 @@ export function createLayout(
       // step took it away, so the same versions are the same `every`, and what memoizes on it is not run again by a
       // step of the search or of time that changed none.
       every: sameEvery ? last.every : { rows: every, keys: keysOf(everyKeys, new Map(everyKeys.map((key, index) => [key, index]))) },
+      steps,
     };
     return last;
   };
 }
 
-// [LAW:dataflow-not-control-flow] What each placement does with a branch's segment `past` steps after the branch's last
-// request, 0 while it is not behind the step shown: whether its rows are listed, and whether they fold into one.
-const placements: Record<Branches, (past: number) => { listed: boolean; collapses: boolean }> = {
-  stay: () => ({ listed: true, collapses: false }),
-  fold: (past) => ({ listed: true, collapses: past > 0 }),
-  step: (past) => ({ listed: past === 0, collapses: false }),
+// The column at a moment (docs/design/02-design.md, "Two axes"). Every step stands after one thing, a step or a block
+// (view/history.ts), and the steps after one thing are siblings: histories that part there. The column lists one
+// history, so of the siblings that have arrived by the moment at each place it lists one, the one under which the
+// latest step by the moment stands, which is the chosen step's own wherever its path passes; and a step is listed when
+// it is the one listed at its place and what it stands after is listed. A step that stands after nothing is always
+// listed. `steps`: those listed. `levels`: each level's, in the order they arrived: a level is the steps that hang on
+// nothing with what follows and carries them on, or those under one Agent call, by the key of its nest's line.
+// `inside`: the nests the chosen step is in. `forks`: the siblings at each place where the recording has two or more,
+// arrived or not, as the strip marks every step (view/strip.ts), so a line where histories part lists each it can
+// switch to. `shown`: the sibling listed at each place. `hung`: how the listed steps that hang on a block hang on it,
+// by the block's key. `dimmed`: the listed steps a thread that is listed carries on from, which its summary replaced.
+type Column = {
+  steps: Set<number>;
+  levels: Map<string, number[]>;
+  inside: Set<string>;
+  forks: Map<string, number[]>;
+  shown: Map<string, number>;
+  hung: Map<string, Hung>;
+  dimmed: Set<number>;
 };
+type Hung = Extract<After, { on: "block" }>["as"];
 
-// A row a segment lists while it is shown: any but a fold.
-type Shown = Exclude<Row, { kind: "fold" }>;
+// The level of the steps that hang on nothing.
+const top = "";
+// The key of the line of the nest under an Agent call, by the call's row's key.
+const nestKey = (call: string) => `${call}/nest`;
+// [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
+export const nestStartsOpen = false;
+
+function columnOf({ segments }: History, step: number): Column {
+  const places = segments.map(({ after }) => (after === undefined ? undefined : placeOf(after, segments)));
+  const add = <K>(lists: Map<K, number[]>, key: K, own: number) => lists.set(key, lists.get(key) ?? []).get(key)!.push(own);
+  const arrived = segments.slice(0, step);
+  // The latest step by the moment under each step, itself or one that stands after it or after a block of it and so
+  // on: those are all later than it, so, read from the last, each has its own before it is counted for the one it
+  // stands after.
+  const latest = [0, ...arrived.map((_, index) => index + 1)];
+  arrived.forEach((_, index, { length }) => {
+    const own = length - index;
+    const after = arrived[own - 1]!.after;
+    if (after !== undefined) latest[after.step] = Math.max(latest[after.step]!, latest[own]!);
+  });
+  const shown = new Map<string, number>();
+  arrived.forEach((_, index) => {
+    const place = places[index];
+    if (place !== undefined && latest[index + 1]! > latest[shown.get(place) ?? 0]!) shown.set(place, index + 1);
+  });
+  const steps = new Set<number>();
+  const levels = new Map<string, number[]>();
+  const hung = new Map<string, Hung>();
+  const dimmed = new Set<number>();
+  // Each step's level, and the level each nest's line stands in.
+  const levelOf = [top];
+  const outside = new Map<string, string>();
+  arrived.forEach(({ after }, index) => {
+    const own = index + 1;
+    const nests = after?.on === "block" && after.as === "nest";
+    const level = after === undefined ? top : nests ? nestKey(after.key) : levelOf[after.step]!;
+    levelOf.push(level);
+    if (after === undefined) return void (steps.add(own), add(levels, level, own));
+    if (nests) outside.set(level, levelOf[after.step]!);
+    if (!steps.has(after.step) || shown.get(places[index]!) !== own) return;
+    steps.add(own);
+    add(levels, level, own);
+    if (after.on !== "block") return;
+    hung.set(after.key, after.as);
+    // What a thread carries on: the step whose summary it begins with, and each that one follows or carries on, up
+    // to the first of its level.
+    for (let on: After | undefined = after.as === "thread" ? after : undefined; on !== undefined && !dimmed.has(on.step); ) {
+      dimmed.add(on.step);
+      const up: After | undefined = arrived[on.step - 1]!.after;
+      on = up?.on === "block" && up.as === "nest" ? undefined : up;
+    }
+  });
+  const inside = new Set<string>();
+  for (let level = levelOf[step] ?? top; level !== top; level = outside.get(level)!) inside.add(level);
+  return { steps, levels, inside, forks: forksOf(segments), shown, hung, dimmed };
+}
+
+// A row a step lists of its own: its exchange's line, a group's title, a set's line, or a block.
+type Own = Extract<Row, { kind: "exchange" | "group" | "set" | "block" }>;
 
 // The rows of step `own`'s segment at step `step`: its exchange's line, then each group's items' rows, under its title
 // where it has one and an item: a set's line, for a group whose blocks are a set.
-function segmentRows({ formatted, groups, branch }: Segment, own: number, step: number): Shown[] {
+function segmentRows({ formatted, groups }: Segment, own: number, step: number, steps: ReadonlySet<number>, standing: Standing): Own[] {
   const change = own === step ? "added" : "same";
   const trace = formatted.exchange.trace_id;
   return [
-    { kind: "exchange", key: trace, exchange: formatted, change, branch },
-    ...groups.flatMap(({ key: group, title, items }): Shown[] => {
+    { kind: "exchange", key: trace, exchange: formatted, change, ...standing },
+    ...groups.flatMap(({ key: group, title, items }): Own[] => {
       const key = `${trace}/${group}`;
-      if (title === undefined || items.length === 0) return items.map((item) => itemRow(item, step, branch, undefined));
-      if (!sets.has(title)) return [{ kind: "group", key, title, change, branch }, ...items.map((item) => itemRow(item, step, branch, undefined))];
-      const set: SetRow = { kind: "set", key, title, change, branch, items, step };
+      if (title === undefined || items.length === 0) return items.map((item) => itemRow(item, step, steps, undefined, standing));
+      if (!sets.has(title)) return [{ kind: "group", key, title, change, ...standing }, ...items.map((item) => itemRow(item, step, steps, undefined, standing))];
+      const set: SetRow = { kind: "set", key, title, change, items, step, steps, ...standing };
       const blocks = blocksOf(set);
       return [{ ...set, change: change === "same" && blocks.some((block) => block.change !== "same") ? "changed" : change }, ...blocks];
     }),
   ];
 }
 
-// An item's row at step `step`, a step at or after the one it arrived at: its version then, and what the step did to
-// it if that version is the step's. `set`: the key of the set's line it is listed under, if any.
-function itemRow({ key, versions }: Item, step: number, branch: Branch | undefined, set: string | undefined): BlockRow {
-  const at = versions.findLastIndex((version) => version.step <= step);
-  return { kind: "block", key, change: versions[at]!.step === step ? eventOf(versions[at]!).change : "same", versions, at, branch, set };
+// An item's row at step `step`, a step at or after the one it arrived at, in a column that lists `steps`: the last
+// version a step listed gave it, and what the step shown did to it if that version is the step's. A version of a
+// sibling's is of a step not listed, so no row shows it. `set`: the key of the set's line it is listed under, if any.
+function itemRow({ key, versions }: Item, step: number, steps: ReadonlySet<number>, set: string | undefined, standing: Standing): BlockRow {
+  const at = versions.findLastIndex((version) => steps.has(version.step));
+  return { kind: "block", key, change: versions[at]!.step === step ? eventOf(versions[at]!).change : "same", versions, at, set, ...standing };
+}
+
+// The line of the nest under the Agent call at `call`'s row, at step `step`. The call's item is one a subagent hangs
+// on, so its first version says what it launches (view/history.ts).
+function nestRow(call: BlockRow, key: string, column: Column, segments: readonly Segment[], step: number, standing: Standing): NestRow {
+  const steps = column.levels.get(key)!;
+  const { type, prompt } = blockIn(call.versions[0]!).launch!;
+  const { facts, groups } = segments[steps.at(-1)! - 1]!.formatted;
+  return {
+    kind: "nest",
+    key,
+    change: steps[0] === step ? "added" : column.inside.has(key) ? "changed" : "same",
+    type,
+    prompt,
+    count: steps.length,
+    latest: facts.stopReason === "end_turn" ? undefined : groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply"),
+    ...standing,
+  };
+}
+
+// A sibling as its fork's line lists it: its step, and the start of the first thing it says of its own, what the user
+// said where it brought that, or else the first block it brought to a message or as its reply.
+function siblingOf({ groups }: Segment, step: number): Sibling {
+  const own = groups.flatMap(({ items }) => items.map(({ versions }) => blockIn(versions[0]!))).filter(({ place }) => place?.in === "message" || place?.in === "reply");
+  const said = own.find(({ category, injected }) => category === "user" && injected === undefined) ?? own[0];
+  return { step, preview: said === undefined ? "" : preview(said) };
+}
+
+// The nests the row at `index` of `rows` is inside, by their lines' keys, the innermost first: going back, each is the
+// first nest's line that stands further out than the last.
+export function nestsOf(rows: readonly Row[], index: number): string[] {
+  const keys: string[] = [];
+  let depth = rows[index]!.depth;
+  for (let at = index - 1; at >= 0 && depth > 0; at--) {
+    const row = rows[at]!;
+    if (row.kind !== "nest" || row.depth >= depth) continue;
+    keys.push(row.key);
+    depth = row.depth;
+  }
+  return keys;
 }
 
 // The version a row shows, which only a block's row does.
 const versionOf = (row: Row) => (row.kind === "block" ? row.versions[row.at] : undefined);
-
-// The listed rows with each run of rows of a branch in `collapsed` folded, unless opened in `opened` or the block
-// revealed is in it. `placeOf`: each listed row's place among the rows.
-function fold(
-  listed: Row[],
-  revealed: string | undefined,
-  opened: Opened,
-  collapsed: ReadonlySet<string>,
-): { rows: Row[]; placeOf: Map<string, number> } {
-  const isOpened = (run: Row[]) => isOpen(opened, foldKey(run[0]!.key), false);
-  const branchOf = ({ branch }: Row) => (branch !== undefined && collapsed.has(branch.key) ? branch : undefined);
-  return foldRuns(
-    listed,
-    (at, first) => branchOf(listed[first]!) !== undefined && branchOf(listed[at]!)?.key === branchOf(listed[first]!)!.key,
-    (run) => isOpened(run) || run.some(({ key }) => key === revealed),
-    (row) => branchOf(row)!,
-  );
-}
-
-// The rows with each run of them `inRun` takes from its first row, at `first`, folded into one row of `branch`, unless
-// `open` keeps it listed. A row in no run is a run of its own, and a run of one row is listed as itself, which is what its
-// fold would take the room of. `placeOf`: each row's place among those listed, a folded row's its fold's.
-function foldRuns(
-  rows: Row[],
-  inRun: (at: number, first: number) => boolean,
-  open: (run: Row[]) => boolean,
-  branch: (first: Row) => Branch,
-): { rows: Row[]; placeOf: Map<string, number> } {
-  const listed: Row[] = [];
-  const placeOf = new Map<string, number>();
-  for (let index = 0; index < rows.length; ) {
-    let end = index;
-    while (end < rows.length && inRun(end, index)) end++;
-    const run = rows.slice(index, Math.max(end, index + 1));
-    const folded = run.length > 1 && !open(run);
-    for (const row of run) {
-      placeOf.set(row.key, listed.length);
-      if (!folded) listed.push(row);
-    }
-    if (folded) listed.push({ kind: "fold", key: run[0]!.key, rows: run, branch: branch(run[0]!) });
-    index += run.length;
-  }
-  return { rows: listed, placeOf };
-}
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((key, at) => key === b[at]);
 
@@ -469,7 +613,9 @@ export function estimateHeight(row: Row, opened: Opened, visibility: Record<Cate
       return 52;
     case "group":
     case "set":
-    case "fold":
+    case "fork":
+    case "nest":
+    case "thread":
       return line;
     case "block":
       return showsOpen(row, visibility, opened) ? line + Math.ceil(sizeOf(blockOf(row)) / 100) * 16 : line;

@@ -38,7 +38,7 @@ function recorded() {
     (name: string) =>
     (...args: unknown[]) =>
       void calls.push([name, ...args]);
-  const conversation: ConversationActs = { search: say("search"), match: say("match"), edge: say("edge"), lines: say("lines"), inTime: say("inTime"), injected: say("injected"), follow: say("follow"), level: say("level") };
+  const conversation: ConversationActs = { search: say("search"), match: say("match"), edge: say("edge"), lines: say("lines"), inTime: say("inTime"), sibling: say("sibling"), injected: say("injected"), follow: say("follow"), level: say("level") };
   const field: FieldActs = { match: say("match"), leave: say("leave") };
   const app: AppActs = { help: say("help") };
   return { calls, conversation, field, app };
@@ -56,6 +56,8 @@ const conversationPresses: Press[] = [
   ["k", {}, ["lines", -1]],
   ["ArrowLeft", {}, ["inTime", -1]],
   ["ArrowRight", {}, ["inTime", 1]],
+  ["[", {}, ["sibling", "previous"]],
+  ["]", {}, ["sibling", "next"]],
   [...alt("N"), ["injected", "next"]],
   [...alt("P"), ["injected", "previous"]],
   ["f", {}, ["follow"]],
@@ -92,7 +94,7 @@ describe("the keys", () => {
   });
 
   it("acts again while a move is held, and once for any other key, whose held press it takes all the same", () => {
-    const moves = ["n", "N", "j", "k", "←", "→", "Alt+N", "Alt+P", "Enter", "Shift+Enter"];
+    const moves = ["n", "N", "j", "k", "←", "→", "[", "]", "Alt+N", "Alt+P", "Enter", "Shift+Enter"];
     function holdEach<Acts>(keys: readonly Key<Acts>[], presses: Press[], acts: (all: ReturnType<typeof recorded>) => Acts) {
       for (const [key, held, call] of presses) {
         const all = recorded();

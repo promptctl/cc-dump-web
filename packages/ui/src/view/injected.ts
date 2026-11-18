@@ -1,5 +1,5 @@
 import { rowIndex, type Position } from "./position.ts";
-import { blockOf, lineOpens, type Keys, type Row } from "./rows.ts";
+import { blockOf, type Keys, type Row } from "./rows.ts";
 import type { Direction } from "./search.ts";
 
 // The block the harness injected (format/blocks.ts) that is listed next after the view's `position`, or before it, by
@@ -7,9 +7,8 @@ import type { Direction } from "./search.ts";
 // last one the one at the other end, as a step of the search goes around. A block the position is at the very start
 // of is neither, so a move after a move goes on from it. Undefined when none is listed. `rows`: the rows listed, each
 // at the place `indexOf` gives its key. A position whose row has not arrived, as after a reload, is before them all.
-// A branch's line for an injected block it does not send is no stop: the block is where its own line stands.
 export function injectedFrom(rows: readonly Row[], indexOf: Keys["indexOf"], position: Position, direction: Direction): string | undefined {
-  const stop = (row: Row) => row.kind === "block" && blockOf(row).injected !== undefined && lineOpens(blockOf(row));
+  const stop = (row: Row) => row.kind === "block" && blockOf(row).injected !== undefined;
   const injected = rows.flatMap((row, index) => (stop(row) ? [{ key: row.key, index }] : []));
   // The row the position is in, and whether it is `past` that row's start: some way into it, or in a row not listed,
   // for which the row listed before it stands (rowIndex), at whose end the view then is (resolve).

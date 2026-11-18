@@ -1,5 +1,5 @@
 import type { FormattedExchange } from "../format/format.ts";
-import type { Segment } from "./history.ts";
+import { forksOf, type Segment } from "./history.ts";
 import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
 
 // The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's shape and what it
@@ -20,6 +20,10 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
   }));
 }
 
+// The steps of the recording that have a sibling, a step that stands after what they do (view/history.ts): each is
+// where a history parts from another, which its mark says with a notch.
+export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => new Set([...forksOf(segments).values()].flat());
+
 // The largest output and duration among the steps, which a mark's shape is relative to; 0 while none is known.
 export type Most = { output: number; duration: number };
 
@@ -38,9 +42,9 @@ export function shapeOf({ output, duration }: Pick<FormattedExchange["facts"], "
   return { height: 0.25 + 0.75 * share(output, most.output), opacity: 0.4 + 0.6 * share(duration, most.duration) };
 }
 
-// What a mark says on hover: the exchange line's facts (view/Conversation.tsx's ExchangeLine), then where the step stands
-// and what went wrong.
-export function titleOf(step: number, { facts }: FormattedExchange, off: number | undefined, failure: Failure): string {
+// What a mark says on hover: the exchange line's facts (view/Conversation.tsx's ExchangeLine), then whether the column
+// lists the step, where it does not, and what went wrong.
+export function titleOf(step: number, { facts }: FormattedExchange, listed: boolean, failure: Failure): string {
   const counts = countsOf(facts).flatMap(([label, count]) => (count === undefined ? [] : [`${label} ${compact(count)}`]));
   return [
     `${step}`,
@@ -49,7 +53,7 @@ export function titleOf(step: number, { facts }: FormattedExchange, off: number 
     facts.duration === undefined ? undefined : seconds(facts.duration),
     facts.status === undefined ? undefined : `${facts.status}`,
     counts.join(" ") || undefined,
-    off === undefined ? undefined : `branch off ${off}`,
+    listed ? undefined : "not in the column",
     failure.exchange ? "failed" : undefined,
     failure.tool ? "a tool failed" : undefined,
   ]

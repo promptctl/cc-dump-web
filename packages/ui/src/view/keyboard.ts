@@ -14,14 +14,16 @@ export type Key<Acts> = { chord: string; does: string; repeats: boolean; act: (a
 export type FieldActs = { match: (direction: Direction) => void; leave: () => void };
 
 // What the conversation offers its keys: the cursor put in the search field; a step of the search; a scroll to an end of
-// the conversation, or by lines of its text, down or, below zero, up; a step in time, back or forward; a move to the
-// next or the previous block the harness injected; follow turned on or off; and a category moved to its next level.
+// the conversation, or by lines of its text, down or, below zero, up; a step in time, back or forward; a switch to the
+// previous or the next history at the nearest fork above the view; a move to the next or the previous block the
+// harness injected; follow turned on or off; and a category moved to its next level.
 export type ConversationActs = {
   search: () => void;
   match: (direction: Direction) => void;
   edge: (edge: Edge) => void;
   lines: (by: number) => void;
   inTime: (by: -1 | 1) => void;
+  sibling: (direction: Direction) => void;
   injected: (direction: Direction) => void;
   follow: () => void;
   level: (category: Category) => void;
@@ -48,6 +50,8 @@ export const conversationKeys = {
   up: { chord: "k", does: "Up a line", repeats: true, act: (acts) => acts.lines(-1) },
   back: { chord: "←", does: "The step before", repeats: true, act: (acts) => acts.inTime(-1) },
   forward: { chord: "→", does: "The step after", repeats: true, act: (acts) => acts.inTime(1) },
+  previousSibling: { chord: "[", does: "The previous history at the nearest fork above", repeats: true, act: (acts) => acts.sibling("previous") },
+  nextSibling: { chord: "]", does: "The next history at the nearest fork above", repeats: true, act: (acts) => acts.sibling("next") },
   nextInjected: { chord: "Alt+N", does: "The next block the harness injected", repeats: true, act: (acts) => acts.injected("next") },
   previousInjected: { chord: "Alt+P", does: "The previous block the harness injected", repeats: true, act: (acts) => acts.injected("previous") },
   follow: { chord: "f", does: "Follow the newest content, or stop following", repeats: false, act: (acts) => acts.follow() },

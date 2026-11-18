@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
 import { createHistory } from "./history.ts";
-import { failuresOf, mostOf, shapeOf, titleOf } from "./strip.ts";
+import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
 const timestamp = "2026-11-16T16:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -50,9 +50,26 @@ describe("a mark's shape", () => {
 });
 
 describe("titleOf", () => {
-  it("says the exchange line's facts known, the branch it is on, and what failed", () => {
+  it("says the exchange line's facts known, that the column does not list the step, and what failed", () => {
     const [segment] = segmentsOf(request("t1", [ask]));
-    const title = titleOf(3, segment!.formatted, 2, { exchange: false, tool: true });
-    expect(title.split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5", "branch off 2", "a tool failed"]);
+    const title = titleOf(3, segment!.formatted, false, { exchange: false, tool: true });
+    expect(title.split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5", "not in the column", "a tool failed"]);
+    expect(titleOf(3, segment!.formatted, true, { exchange: false, tool: false }).split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5"]);
+  });
+});
+
+describe("partedOf", () => {
+  it("is the steps that stand after what another step stands after, and no step that alone follows one", () => {
+    const answer = { role: "assistant", content: [{ type: "text", text: "Read." }] };
+    const again = { role: "user", content: [{ type: "text", text: "Again." }] };
+    const other = { role: "user", content: [{ type: "text", text: "Another way." }] };
+    // The second and the third each resend the first and go on their own way; the fourth follows the third alone.
+    const segments = segmentsOf([
+      ...request("t1", [ask]),
+      ...request("t2", [ask, answer, again]),
+      ...request("t3", [ask, answer, other]),
+      ...request("t4", [ask, answer, other, answer, again]),
+    ]);
+    expect([...partedOf(segments)]).toEqual([2, 3]);
   });
 });
