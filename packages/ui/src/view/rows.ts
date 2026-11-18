@@ -368,20 +368,24 @@ function columnOf({ segments }: History, step: number): Column {
 }
 
 // The last thing each subagent that runs did, by its level: the last block of a reply of the level that waits. A reply
-// waits while it stopped for a tool no step has answered, which a step that follows it does, unless the tool hands the
-// subagent's report back (format/blocks.ts, `handback`); with none such, while it is still coming. The newest that
-// waits says it, and a level with none does not run.
+// waits while it stopped for a tool no step has answered, unless the tool hands the subagent's report back
+// (format/blocks.ts, `handback`); with none such, while it is still coming. A step answers the one it follows once its
+// own reply has a block or its exchange has ended, so what a subagent last did is said until it does the next thing.
+// The newest that waits says it, and a level with none does not run.
 // [LAW:one-source-of-truth] It reads every step of the level that has arrived, not the path's last: the harness asks a
 // subagent what it is doing in a request that stands beside the step waiting on the tool and ends its turn at once, so
 // the newest step under a subagent at work is most often one that says its turn is over (Claude Code, 2026-11-17).
 function doingOf(arrived: readonly Segment[], levelOf: readonly string[]): Map<string, KeyedBlock | undefined> {
-  const answered = new Set(arrived.flatMap(({ after }) => (after?.on === "step" ? [after.step] : [])));
+  const did = ({ formatted: { groups } }: Segment) => groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
+  const answers = (segment: Segment) => segment.formatted.exchange.end !== undefined || did(segment) !== undefined;
+  const answered = new Set(arrived.flatMap((segment) => (segment.after?.on === "step" && answers(segment) ? [segment.after.step] : [])));
   const coming = new Map<string, KeyedBlock | undefined>();
   const onTool = new Map<string, KeyedBlock | undefined>();
-  arrived.forEach(({ formatted: { exchange, facts, groups } }, index) => {
+  arrived.forEach((segment, index) => {
+    const { exchange, facts } = segment.formatted;
     const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && !answered.has(index + 1) ? onTool : undefined;
     if (waits === undefined) return;
-    const last = groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
+    const last = did(segment);
     if (!last?.handback) waits.set(levelOf[index + 1]!, last);
   });
   return new Map([...coming, ...onTool]);
