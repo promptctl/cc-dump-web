@@ -554,8 +554,11 @@ describe("the column", () => {
     expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
     // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
     // the line says what the subagent did last, the tool its request answers.
-    const coming = (events: number) => latest(working.slice(0, working.findIndex(({ trace_id }) => trace_id === "s2") + events), 3);
+    const from = working.findIndex(({ trace_id }) => trace_id === "s2");
+    const coming = (events: number) => latest(working.slice(0, from + events), 3);
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
+    // The harness may ask while a reply is still coming: its asking, with no block of a reply yet, says nothing.
+    expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read) })], 4)).toBe("tool_use: Grep");
   });
 
   it("puts the line where subagents of one call part first inside the call's nest", () => {
