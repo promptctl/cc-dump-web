@@ -52,8 +52,8 @@ describe("followsOf", () => {
     const facts = [first(1), whole(2, 1, 3), whole(3, 2, 5), inside(4, 3, 5), whole(5, 4, 7)];
     // The turn, step 4, is continued while the question, step 3, is still the line's last: the line is the turn's.
     expect(followsOf([...facts, inside(6, 2, 9, 2)])).toEqual([undefined, 1, 2, 2, 4, 5]);
-    // Continued after the line went on past the question, the turn's requests are a line of their own.
-    expect(followsOf([first(1), whole(2, 1, 3), whole(3, 2, 5), inside(4, 3, 5), whole(5, 3, 7), whole(6, 4, 7), inside(7, 2, 9, 2)])).toEqual([undefined, 1, 2, 2, 3, 4, 5]);
+    // With the question and the turn each carried on, the edit carries on the newest of them.
+    expect(followsOf([first(1), whole(2, 1, 3), whole(3, 2, 5), inside(4, 3, 5), whole(5, 3, 7), whole(6, 4, 7), inside(7, 2, 9, 2)])).toEqual([undefined, 1, 2, 2, 3, 4, 6]);
   });
 
   it("places each thread's requests among its own, the threads interleaved", () => {
