@@ -20,13 +20,23 @@ export type KeyedBlock = Block & { key: string; place?: Place };
 
 // Where a block stands in the thread its exchange is part of (view/history.ts), which every request of the thread
 // resends: among what the request sends besides its messages, its parameters, its tools or its system prompt; in the
-// message at `index`; or in the reply, the message the response adds after the request's. A block with no place is the
-// exchange's own, as its HTTP, its cache breakpoints and its usage are.
-export type Place = { in: "parameters" } | { in: "tools" } | { in: "system" } | { in: "message"; index: number } | { in: "reply" };
+// message at `index` among those a speaker sent, the user, the assistant or a role this view does not know; in a
+// system-role message, the one at `index` among those standing before the speakers' message `before`; or in the reply,
+// the message the response adds after the request's. [LAW:types-are-the-program] A place is where a block stands in the
+// conversation, not in the request's list: Claude Code sends system-role messages among the others and leaves a
+// trailing one out of the next request, which moves no speaker's message. A block with no place is the exchange's own,
+// as its HTTP, its cache breakpoints and its usage are.
+export type Place =
+  | { in: "parameters" }
+  | { in: "tools" }
+  | { in: "system" }
+  | { in: "message"; index: number }
+  | { in: "system message"; before: number; index: number }
+  | { in: "reply" };
 
 // One exchange of the conversation (docs/design/01-mvp.md, F3): its envelope, then what its request sends, the tools,
-// the system prompt and each message, then the reply; the facts its line prints; and how many messages the request
-// sends, which is the reply's index among the thread's messages.
+// the system prompt and each message, then the reply; the facts its line prints; and how many messages of a speaker's
+// the request sends, which is the reply's index among them.
 export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
@@ -196,7 +206,18 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // A tool's breakpoint is named by its block's key, as every other block's is.
       const tools = toolBlocks(lift(body.value("tools"), (index, list) => toolKeys(list)[index]!, breakpoints));
       const system = systemBlocks(lift(body.value("system"), (index) => `system.${index}`, breakpoints));
-      const messages = body.array("messages").map((message, index) => messageGroup(liftContent(message, `message.${index}`, breakpoints), index));
+      // Each message at its place: a speaker's numbered among the speakers', a system-role one among those standing
+      // before the same speaker's message.
+      let speakers = 0;
+      let standing = 0;
+      const messages = body.array("messages").map((message) => {
+        const system = fieldOf(message, "role") === "system";
+        const key = system ? `message.${speakers}.system.${standing}` : `message.${speakers}`;
+        const place: Place = system ? { in: "system message", before: speakers, index: standing } : { in: "message", index: speakers };
+        standing = system ? standing + 1 : 0;
+        speakers += system ? 0 : 1;
+        return messageGroup(liftContent(message, key, breakpoints), key, place);
+      });
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
@@ -211,7 +232,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
           { key: "system", title: "system", blocks: placed({ in: "system" }, each("system", system)) },
           ...messages,
         ],
-        messages: messages.length,
+        messages: speakers,
         model: typeof rest.model === "string" ? rest.model : undefined,
         session: sessionOf(rest.metadata),
       };
@@ -253,9 +274,7 @@ function liftContent(message: unknown, at: string, breakpoints: Field[]): unknow
 // how many tokens it may write, how it thinks and with what effort, and how it samples.
 const varied = ["model", "max_tokens", "thinking", "output_config.effort", "temperature"];
 
-function messageGroup(message: unknown, index: number): Group {
-  const key = `message.${index}`;
-  const place: Place = { in: "message", index };
+function messageGroup(message: unknown, key: string, place: Place): Group {
   return fitting(
     (): Group => {
       const fields = readObject(message, "message");

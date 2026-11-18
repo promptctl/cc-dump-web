@@ -10,15 +10,19 @@ export type Way = "back" | "forward";
 // could not tell the stylesheet which way to slide, so there the update is made with no motion.
 const typed = typeof document.startViewTransition === "function" && typeof ViewTransition !== "undefined" && "types" in ViewTransition.prototype;
 
-// Runs `update`, which must change the page before it returns, as a motion `way`. Gives when the update is done, or
-// why it failed. [LAW:no-silent-failure] A transition another move skips, or a hidden document, still makes its update,
-// so its motion not running is expected and nothing to report; the update failing is reported, by what this gives.
-export function inMotion(way: Way, update: () => void): Promise<void> {
+// Runs `update`, which must change the page before it returns, as a motion `way`. `kept`: how much of the
+// conversation's box, from its top, the move leaves as it is, in pixels, which stays in place while what is under it
+// slides away: none of it in a step in time, and what is above the fork's line in a switch of histories there. Gives
+// when the update is done, or why it failed. [LAW:no-silent-failure] A transition another move skips, or a hidden
+// document, still makes its update, so its motion not running is expected and nothing to report; the update failing
+// is reported, by what this gives.
+export function inMotion(way: Way, kept: number, update: () => void): Promise<void> {
   if (!typed) {
     update();
     return Promise.resolve();
   }
-  const transition = document.startViewTransition({ update, types: [way] });
+  document.documentElement.style.setProperty("--motion-kept", `${kept}px`);
+  const transition = document.startViewTransition({ update, types: kept > 0 ? [way, "kept"] : [way] });
   transition.ready.catch(() => {});
   transition.finished.catch(() => {});
   return transition.updateCallbackDone;

@@ -183,70 +183,132 @@ describe("history", () => {
   });
 });
 
-// Branches, shaped as a recording made through the app has them (dump-design-ajl.m1g): after `process`'s second turn,
-// t2 (step 4), a side question resends it with its reply and asks its own; a compaction resends t2's messages without
-// its reply, its last message given the summary instruction; and the thread's next turn resends t2 with its reply.
+// Requests that part ways, shaped as a recording made through the app has them (dump-design-ajl.m1g): after
+// `process`'s second turn, t2 (step 4), a side question resends it with its reply and asks its own; a compaction
+// resends t2's messages without its reply, its last message given the summary instruction; and the thread's next turn
+// resends t2 with its reply.
 const more = [hi, assistant(...hello), user(text("More."))];
 const answered = [...more, assistant(text("More hello."))];
 const btw = [...request("btw", { ...main, messages: [...answered, user(text("Aside?"))] }), ...reply("btw", [text("Aside.")])];
-const compact = [...request("compact", { ...main, messages: [hi, assistant(...hello), user(text("More."), text("Summarize."))] }), ...reply("compact", [text("Summary.")])];
+const compact = [
+  ...request("compact", { ...main, messages: [hi, assistant(...hello), user(text("More."), text("Summarize."))] }),
+  ...reply("compact", [text("<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Said hello.\n</summary>\n")]),
+];
 const t3 = [...request("t3", { ...main, messages: [...answered, user(text("Again."))] }), ...reply("t3", [text("Again hello.")])];
-// Every key of a thread's main line that has more than one version.
+// Every item of a thread's that has more than one version, by key.
 const versioned = ({ segments }: History) =>
   segments.flatMap(({ groups }) => groups.flatMap(({ items }) => items.filter(({ key, versions }) => key.startsWith("thread:") && versions.length > 1).map(({ key }) => key)));
 const keysAt = ({ segments }: History, step: number) => segments[step - 1]!.groups.flatMap(({ items }) => items.map(({ key }) => key));
+const afters = ({ segments }: History) => segments.map(({ after }) => after);
+const follows = (step: number) => ({ step, on: "step" });
+const itemAt = ({ segments }: History, key: string) => segments.flatMap(({ groups }) => groups.flatMap(({ items }) => items)).find((item) => item.key === key)!;
 
-describe("branches", () => {
-  it("keeps a side question on the thread until the thread's next turn leaves it out, then makes it a branch of its own", () => {
-    const asked = history([...process, ...btw]);
-    expect(keysAt(asked, 5)).toContain("thread:btw/message.4/content.0");
+describe("what a step stands after", () => {
+  it("has a side question and the thread's next turn both stand after the turn they resend, each with its own message and reply", () => {
     const after = history([...process, ...btw, ...t3]);
+    expect(afters(after)).toEqual([undefined, undefined, undefined, follows(2), follows(4), follows(4)]);
     expect(keysAt(after, 5)).toEqual(["btw/request/http", "btw/response/http", "btw/response/stop reason", "btw/response/usage", "btw/response/fields", "thread:btw/message.4/content.0", "thread:btw/message.5/content.0"]);
-    expect(after.segments[4]!.branch).toEqual({ key: "branch:btw", from: 4 });
-    // The turn's message and reply are the thread's own, not versions of the question's.
-    expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
+    // The turn's message and reply are its own, not versions of the question's.
+    expect(keysAt(after, 6)).toEqual(expect.arrayContaining(["thread:t3/message.4/content.0", "thread:t3/message.5/content.0"]));
     expect(versioned(after)).toEqual([]);
-    expect([...after.branches]).toEqual([["branch:btw", 5]]);
   });
 
-  it("makes a compaction a branch, and the thread goes on past it with nothing of the thread changed", () => {
-    const after = history([...process, ...compact, ...t3]);
+  it("has a compaction stand after the turn before the one whose message it rewrites, and the thread that begins with its summary hang on its reply", () => {
+    const continued = request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] });
+    const after = history([...process, ...compact, ...t3, ...continued]);
+    // The compaction resends t1 whole and t2's message with the instruction, never t2's reply: its message is its own.
+    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "block", key: "thread:compact/message.3/content.0", as: "thread" }]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
       "compact/response/http",
       "compact/response/stop reason",
       "compact/response/usage",
       "compact/response/fields",
+      "thread:compact/message.2/content.0",
       "thread:compact/message.2/content.1",
       "thread:compact/message.3/content.0",
     ]);
     expect(keysAt(after, 6)).toContain("thread:t3/message.4/content.0");
-    expect(after.segments[5]!.branch).toBeUndefined();
+    // A thread hung on a block is a history of its own: every block it sends is its item.
+    expect(keysAt(after, 7)).toEqual(["c1/request/http", "thread:c1/request/parameters", "thread:c1/tools/tools.Read.0", "thread:c1/system/system.0", "thread:c1/message.0/content.0"]);
     expect(versioned(after)).toEqual([]);
   });
 
-  it("puts twins, two requests that send the same first message, on lines of their own", () => {
-    const task = user(text("Find the longest word."));
+  it("hangs each subagent on the Agent tool's call that launched it, twins on the calls of their one prompt in order, and a probe of one on the last", () => {
+    const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
+    const task = user(text("<system-reminder>\nBe brief.\n</system-reminder>\nFind the longest word.\n"));
     const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
     const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")]),
       ...request("s1", { ...agent, messages: [task] }),
       ...reply("s1", [text("A.")]),
       ...request("s2", { ...agent, messages: [task] }),
       ...reply("s2", [text("B.")]),
+      ...request("other", { ...agent, messages: [user(text("Count the words."))] }),
       ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
       ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
+      ...request("probe", { ...agent, messages: [task] }),
+      ...reply("probe", [text("Reading.")]),
     ]);
-    expect(keysAt(after, 2)).toContain("thread:s2/message.1/content.0");
-    expect(keysAt(after, 3)).toContain("thread:s3/message.2/content.0");
-    expect(keysAt(after, 4)).toContain("thread:s4/message.2/content.0");
+    const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
+    expect(afters(after)).toEqual([undefined, under(1), under(2), under(3), follows(2), follows(3), under(2)]);
+    // Twins send the same first message and are each a history of their own.
+    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s2/message.0/content.0.0", "thread:s2/message.0/content.0.1", "thread:s2/message.1/content.0"]));
+    expect(keysAt(after, 5)).toContain("thread:s3/message.2/content.0");
+    expect(keysAt(after, 6)).toContain("thread:s4/message.2/content.0");
     expect(versioned(after)).toEqual([]);
   });
 
-  it("makes a side request with the thread's first message and a system prompt of its own a branch, never a version of the thread's", () => {
+  it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {
     const side = [...request("side", { model: "m", system: [text("Is this a new topic?")], messages: [hi] }), ...reply("side", [text("Yes.")])];
     const after = history([...process, ...side, ...t3]);
-    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/system/system.0", "thread:side/message.1/content.0"]));
+    expect(afters(after).slice(4)).toEqual([undefined, follows(4)]);
+    expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/system/system.0", "thread:side/message.0/content.0", "thread:side/message.1/content.0"]));
     expect(versioned(after)).toEqual([]);
+  });
+
+  it("gives an item a version by the step that sends it differently, which comes after the item's version on that step's path, never a sibling's", () => {
+    // Two side questions after t1, each with a system prompt of its own, the first answered, and the thread's turn after
+    // t2, with the thread's.
+    const aside = (trace: string, prompt: string) => request(trace, { ...main, system: [text(prompt)], messages: [hi, assistant(...hello), user(text("Aside?"))] });
+    const after = history([...process, ...aside("a1", "Answer briefly."), ...reply("a1", [text("Aside.")]), ...t3, ...aside("a2", "Answer at length.")]);
+    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), follows(2)]);
+    const { versions } = itemAt(after, "thread:t1/system/system.0");
+    expect(versions.map(({ step, previous }) => [step, previous])).toEqual([
+      [2, undefined],
+      [5, 0],
+      [7, 0],
+    ]);
+    // Each rewrote the thread's prompt, not the other question's; and the turn, which sends the thread's, gave it none.
+    expect(versions[1]).toMatchObject({ rewrote: versions[0]!.block });
+    expect(versions[2]).toMatchObject({ rewrote: versions[0]!.block });
+    // The questions' messages are alike and each its own item, since neither is on the other's path.
+    expect(keysAt(after, 5)).toContain("thread:a1/message.2/content.0");
+    expect(keysAt(after, 7)).toContain("thread:a2/message.2/content.0");
+  });
+
+  it("strikes what a step's path holds and it does not send, at that step, for the steps that follow it alone", () => {
+    const edit = { name: "Edit", input_schema: {} };
+    const first = [...request("t1", { ...main, tools: [...main.tools, edit], messages: [hi] }), ...reply("t1", hello)];
+    const turn = (trace: string, tools: unknown[], said: string) => request(trace, { ...main, tools, messages: [hi, assistant(...hello), user(text(said))] });
+    const after = history([...first, ...turn("t2", main.tools, "More."), ...turn("a1", [...main.tools, edit], "Aside?")]);
+    expect(afters(after)).toEqual([undefined, follows(1), follows(1)]);
+    // The question's path is t1 alone, which holds the tool, so the tool is as it was to it.
+    expect(itemAt(after, "thread:t1/tools/tools.Edit.0").versions).toMatchObject([{ step: 1 }, { step: 2, block: undefined, previous: 0 }]);
+  });
+
+  it("numbers a system's message by the speaker's it stands before, so dropping one moves no place after it", () => {
+    const reminder = { role: "system", content: "Stay on task." };
+    const after = history([
+      ...request("t1", { ...main, messages: [hi, reminder] }),
+      ...reply("t1", hello),
+      ...request("t2", { ...main, messages: [hi, assistant(...hello), user(text("More."))] }),
+    ]);
+    expect(afters(after)).toEqual([undefined, follows(1)]);
+    expect(keysAt(after, 2)).toEqual(["t2/request/http", "thread:t2/message.2/content.0"]);
+    expect(versioned(after)).toEqual(["thread:t1/message.1.system.0/content.0"]);
+    expect(itemAt(after, "thread:t1/message.1.system.0/content.0").versions).toMatchObject([{ step: 1 }, { step: 2, block: undefined }]);
   });
 
   it("returns the groups it returned before wherever a step read again changed nothing, as each event of a reply still arriving reads its step again", () => {
@@ -258,26 +320,17 @@ describe("branches", () => {
       const after = read([...events, ...reply(trace, [text("Done.")])]);
       return { after, keys: groupsOf(after).flatMap(([key, group]) => (before.get(key) === group ? [] : [key])) };
     };
-    const first = [...request("t1", { ...main, tools: [...main.tools, { name: "Edit", input_schema: {} }], messages: [hi] }), ...reply("t1", hello)];
+    const first = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", hello)];
     // A turn that rewrites the prompt, a version of the first's item: what its reply brought is its own groups' alone.
     const turn = changed([...first, ...request("t2", { ...main, system: [text("You are an agent.")], messages: [hi, assistant(...hello), user(text("More."))] })], "t2");
     expect(turn.keys).toEqual(["t2/response", "t2/reply"]);
     expect(turn.after.segments[0]!.groups.find(({ key }) => key === "system")!.items[0]!.versions.map(({ step }) => step)).toEqual([1, 2]);
-    // A branch that does not send a tool the line it left sends, whose line for it is the tool's name alone.
-    const side = changed([...first, ...request("side", { ...main, system: [text("Is this a new topic?")], messages: [hi] })], "side");
-    expect(side.keys).toEqual(["side/response", "side/reply"]);
-    expect(side.after.segments[1]!.groups.find(({ key }) => key === "tools")!.items).toMatchObject([{ key: "thread:side/tools/tools.Edit.0", versions: [{ step: 2, block: undefined }] }]);
   });
 
-  it("reads exchanges as they arrive to what a full read of them gives, a branch decided again included", () => {
+  it("reads exchanges as they arrive to what a full read of them gives", () => {
     const events = [...process, ...btw, ...compact, ...t3];
     const read = reader();
-    for (let count = 1; count <= 7; count++) {
-      const now = read(exchangesUpTo(events, count));
-      const full = history(exchangesUpTo(events, count));
-      expect(now.segments).toEqual(full.segments);
-      expect(now.branches).toEqual(full.branches);
-    }
+    for (let count = 1; count <= 7; count++) expect(read(exchangesUpTo(events, count)).segments).toEqual(history(exchangesUpTo(events, count)).segments);
   });
 });
 

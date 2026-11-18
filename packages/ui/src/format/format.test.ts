@@ -143,7 +143,7 @@ describe("format", () => {
       ["message.0", "user"],
       ["message.1", "assistant"],
       ["message.2", "user"],
-      ["message.3", "system"],
+      ["message.3.system.0", "system"],
       ["reply", "assistant"],
     ]);
     expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters", "parameters cache breakpoints: 1"]);
@@ -162,7 +162,7 @@ describe("format", () => {
       "tools web_search_tool_result",
     ]);
     expect(lines(group(formatted, "message.2"))).toEqual(["tools tool_result"]);
-    expect(lines(group(formatted, "message.3"))).toEqual(["system system reminder"]);
+    expect(lines(group(formatted, "message.3.system.0"))).toEqual(["system system reminder"]);
     expect(lines(group(formatted, "reply"))).toEqual(["usage thinking", "assistant text", "tools tool_use: Bash"]);
 
     // The content each shows: the image, the text document, the tool result's text and image, the streamed message.
@@ -270,6 +270,27 @@ describe("format", () => {
     expect(places("system")).toEqual([["system.0", { in: "system" }]]);
     expect(group(formatted, "message.1").map(({ place }) => place)).toEqual([{ in: "message", index: 1 }]);
     expect(formatted.messages).toBe(2);
+  });
+
+  it("numbers the speakers' messages among themselves, a system-role message standing before one and moving none", () => {
+    const system = (text: string) => ({ role: "system", content: text });
+    const messages = [system("First."), { role: "user", content: "Hi." }, system("Second."), system("Third."), { role: "assistant", content: "Hello." }, { role: "narrator", content: "Later." }, system("Last.")];
+    const formatted = one([...request("a", { model: "m", messages: [...messages, { role: "user", content: [{ type: "text", text: "Go.", cache_control: { type: "ephemeral" } }] }, { role: "system", content: [{ type: "text", text: "End.", cache_control: { type: "ephemeral" } }] }] })]);
+    // A role this view does not know is a speaker's, so the messages after it keep their places.
+    expect(formatted.groups.filter(({ key }) => key.startsWith("message")).map(({ key, title, blocks }) => [key, title, blocks[0]!.place])).toEqual([
+      ["message.0.system.0", "system", { in: "system message", before: 0, index: 0 }],
+      ["message.0", "user", { in: "message", index: 0 }],
+      ["message.1.system.0", "system", { in: "system message", before: 1, index: 0 }],
+      ["message.1.system.1", "system", { in: "system message", before: 1, index: 1 }],
+      ["message.1", "assistant", { in: "message", index: 1 }],
+      ["message.2", "message", { in: "message", index: 2 }],
+      ["message.3.system.0", "system", { in: "system message", before: 3, index: 0 }],
+      ["message.3", "user", { in: "message", index: 3 }],
+      ["message.4.system.0", "system", { in: "system message", before: 4, index: 0 }],
+    ]);
+    // The reply's index is the count of the speakers' messages, and a breakpoint is named by its message's key.
+    expect(formatted.messages).toBe(4);
+    expect(group(formatted, "request")[2]!.preview).toEqual([{ kind: "text", form: "verbatim", text: "message.3/content.0  message.4.system.0/content.0" }]);
   });
 
   it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
@@ -602,6 +623,34 @@ describe("format", () => {
         failed: true,
       },
     ]);
+  });
+
+  it("states the subagent an Agent tool's call launches, in a message and in the reply, and none while its input streams", () => {
+    const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
+    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
+    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
+      { prompt: "Find the bug.\n", type: "Explore" },
+      { prompt: "Go.", type: undefined },
+    ]);
+    // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
+    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
+    const start = { type: "content_block_start", index: 0, content_block: call("Agent", {}) };
+    const delta = (partial_json: string) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } });
+    const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
+    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
+    expect(reply(4)).toEqual([undefined]);
+    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
+  });
+
+  it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
+    const said = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ summary }) => summary);
+    expect(said("assistant", "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Did it.\n</summary>\n")).toEqual(["1. Did it."]);
+    // The summary runs to the tag that ends the text, whatever it quotes.
+    expect(said("assistant", "<summary>The reply held <summary>x</summary> once.</summary>")).toEqual(["The reply held <summary>x</summary> once."]);
+    expect(said("assistant", "<details><summary>More</summary>\nText.\n</details>")).toEqual([undefined]);
+    expect(said("assistant", "<summary>Done.</summary>\nAnd then more.")).toEqual([undefined]);
+    expect(said("assistant", "<summary>  </summary>")).toEqual([undefined]);
+    expect(said("user", "<summary>Done.</summary>")).toEqual([undefined]);
   });
 
   it("marks no tool result failed whose is_error is not true", () => {

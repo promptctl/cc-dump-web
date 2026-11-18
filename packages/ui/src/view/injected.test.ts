@@ -3,23 +3,24 @@ import { injectedFrom } from "./injected.ts";
 import type { Position } from "./position.ts";
 import type { Row } from "./rows.ts";
 
-// A block's row at `key`: what was said, or, `injected`, what the harness put into the message. `sent`: whether the
-// row holds the block's content, which a branch's line for a block it does not send does not.
-const block = (key: string, injected: boolean, sent = true): Row => ({
+// A block's row at `key`: what was said, or, `injected`, what the harness put into the message.
+const block = (key: string, injected: boolean): Row => ({
   kind: "block",
   key,
   change: "same",
   versions: [
     {
       step: 1,
-      block: { key, category: "user", name: injected ? "system reminder" : "text", parts: sent ? [{ kind: "text", form: "verbatim", text: key }] : [], ...(injected ? { injected: true as const } : {}) },
+      block: { key, category: "user", name: injected ? "system reminder" : "text", parts: [{ kind: "text", form: "verbatim", text: key }], ...(injected ? { injected: true as const } : {}) },
       reply: false,
       rewrote: undefined,
+      previous: undefined,
     },
   ],
   at: 0,
-  branch: undefined,
   set: undefined,
+  depth: 0,
+  dimmed: false,
 });
 // Said, injected, said, injected, injected, said.
 const rows = [block("a", false), block("b", true), block("c", false), block("d", true), block("e", true), block("f", false)];
@@ -72,13 +73,6 @@ describe("the injected blocks", () => {
   it("counts from the row a position inside it is nearest, and from before every row while that has not arrived", () => {
     expect(from(at("c/body"), "next")).toBe("d");
     expect(from(at("z"), "next")).toBe("b");
-  });
-
-  it("passes a branch's line for an injected block it does not send, which has nothing to open", () => {
-    const listed = [block("a", false), block("b", true), block("c", true, false), block("d", true)];
-    expect(from(at("b"), "next", listed)).toBe("d");
-    expect(from(at("d"), "previous", listed)).toBe("b");
-    expect(from(at("c"), "next", listed)).toBe("d");
   });
 
   it("goes nowhere when no injected block is listed", () => {

@@ -18,7 +18,15 @@ export type Category = (typeof categories)[number];
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true };
+// `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
+// reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
+// it (view/history.ts), which reads them here and never back out of a block's parts.
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
+export type Stated = { launch?: Launch; summary?: string };
+
+// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
+// agent `type` it names, where it names one.
+export type Launch = { prompt: string; type: string | undefined };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -63,12 +71,14 @@ export function restBlock(fields: Fields, category: Category, name: string): Blo
 // block its entry cannot read has the same one; `name`, where it is not the block's type, and `parts` from its fields.
 // Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text block's text
 // reads where the block is: Markdown in a message, verbatim in what a tool or a document returned. `failed`: whether a
-// tool's result says its tool failed, read off the block as sent, so one its entry cannot read says so too.
+// tool's result says its tool failed, read off the block as sent, so one its entry cannot read says so too. `stated`:
+// what the block states that a thread stands after (Stated), read off the block as sent too.
 type Entry = {
   category: (role: Role, block: unknown) => Category;
   name?: (fields: Fields, role: Role) => string;
   parts: (fields: Fields, role: Role, form: Form) => Part[];
   failed?: (block: unknown) => boolean;
+  stated?: (block: unknown, role: Role) => Stated;
 };
 
 // A field of what was sent, if it is an object that has it.
@@ -97,6 +107,27 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
     return [...parts, { kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
+// The subagent a client tool's call launches: Claude Code's Agent tool sends its input's `prompt` as the subagent's
+// first message, to the agent its `subagent_type` names (seen on Claude Code's traffic, 2026-11-17). An input still
+// streaming is text, and launches none yet.
+const launched = (block: unknown): Stated => {
+  const input = sentField(block, "input");
+  const prompt = sentField(input, "prompt");
+  const type = sentField(input, "subagent_type");
+  return sentField(block, "name") === "Agent" && typeof prompt === "string" ? { launch: { prompt, type: typeof type === "string" ? type : undefined } } : {};
+};
+
+// The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the
+// `</summary>` that ends the text, as Claude Code's compaction asks for it (seen on its traffic, 2026-11-17), less the
+// space around it, which the harness drops as it sends the summary on. A Markdown `<details>` holds its
+// `<summary>` inside a line and ends after it, so it is none; nor is a summary of nothing.
+const summaryEnding = /(?<![^\n])<summary>([\s\S]*)<\/summary>\s*$/;
+const summarized = (block: unknown, role: Role): Stated => {
+  const text = sentField(block, "text");
+  const summary = role === "assistant" && typeof text === "string" ? summaryEnding.exec(text)?.[1]!.trim() : undefined;
+  return summary === undefined || summary === "" ? {} : { summary };
+};
+
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
 // what it holds: it is how the two refer to each other, not what either says. Its tool failed as its is_error says,
 // which follows the id where it was sent.
@@ -125,7 +156,7 @@ const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, rol
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
-  ["text", { category: byRole, parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }] }],
+  ["text", { category: byRole, parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }], stated: summarized }],
   // A streamed thinking block has no signature until its signature delta, just before its stop.
   [
     "thinking",
@@ -142,7 +173,7 @@ const entries = new Map<string, Entry>([
     },
   ],
   ["redacted_thinking", { category: thought, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
-  ["tool_use", toolUse(inputParts)],
+  ["tool_use", { ...toolUse(inputParts), stated: launched }],
   ["server_tool_use", toolUse((_, input) => jsonInput(input))],
   ["mcp_tool_use", toolUse((_, input) => jsonInput(input))],
   ["tool_result", toolResult],
@@ -184,24 +215,28 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
     },
     (reason) => raw(entry.category(role, block), type, reason, { kind: "json", value: block }),
   );
+  const stating = { ...shown, ...entry.stated?.(block, role) };
   // A tool's result that says its tool failed is named for it.
-  return entry.failed?.(block) ? { ...shown, name: `${shown.name}: error`, failed: true } : shown;
+  return entry.failed?.(block) ? { ...stating, name: `${stating.name}: error`, failed: true } : stating;
 }
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
-// shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields follow its last piece.
+// shown as what was said (docs/design/01-mvp.md, F3). A text block's other fields follow its last piece, which states
+// what the text ends with.
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
   const [, ...fields] = formatted.parts;
+  const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
     const form = pieceForm[piece.kind];
-    const rest = index === textPieces.length - 1 ? fields : [];
+    const last = index === textPieces.length - 1;
+    const rest = last ? fields : [];
     const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest] };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
   });
 }
 

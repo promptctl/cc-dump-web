@@ -5,7 +5,6 @@ describe("settings", () => {
   const defaults = { follow: true, visibility: { user: "expanded", assistant: "expanded", tools: "compact", system: "compact", thinking: "compact", parameters: "hidden", usage: "hidden", http: "hidden" },
     theme: "system",
     search: { caseSensitive: false, wholeWord: false, regex: true },
-    branches: "stay",
     info: false,
     logs: false,
     logLevel: "info",
@@ -19,21 +18,20 @@ describe("settings", () => {
 
   it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
     expect(
-      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, branches: "fold", info: true, logs: true, logLevel: "warn", keys: true }),
+      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, info: true, logs: true, logLevel: "warn", keys: true }),
     ).toEqual({
       follow: false,
       // A level the last build stored, "shown", is not one this build has.
       visibility: { ...defaults.visibility, user: "compact", tools: "hidden", thinking: "expanded" },
       theme: "nord",
       search: { caseSensitive: true, wholeWord: false, regex: false },
-      branches: "fold",
       info: true,
       logs: true,
       logLevel: "warn",
       keys: true,
     });
     expect(
-      parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], branches: "everywhere", info: "open", logs: 1, logLevel: "debug", keys: "?" }),
+      parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], info: "open", logs: 1, logLevel: "debug", keys: "?" }),
     ).toEqual(defaults);
   });
 

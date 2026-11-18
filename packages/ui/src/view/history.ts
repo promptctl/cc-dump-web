@@ -1,7 +1,7 @@
 import { unreadLabel, type Block } from "../format/blocks.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
-import { linesOf, type Fact, type Role } from "./lines.ts";
+import { followsOf, type Fact } from "./lines.ts";
 
 // The conversation through time (docs/design/02-design.md, "Two axes"). A step is an exchange, in the order exchanges
 // began, a turn, a quota probe, a title request and a subagent's request alike, and the conversation at step k is what
@@ -13,80 +13,94 @@ import { linesOf, type Fact, type Role } from "./lines.ts";
 // the block the next request resends as that block is, and the block it `rewrote`, the one its place last held, where
 // this one's content is another's: none for the item's first, and for one sent again as it was after a step took it
 // away. [LAW:one-source-of-truth] So what a version did to its item is said here alone, by the comparison that made it
-// a version. Or none once a request no longer sends it, `was` what its struck row shows: the block it stopped sending,
-// or, of a branch's item for a place the line it left sends, that block's line alone (lineAlone).
+// a version. Or none once a request no longer sends it, `was` the block it stopped sending.
+// [LAW:types-are-the-program] The requests of a thread part ways (view/lines.ts), so an item's versions are not one
+// line either: each says the one it came after, `previous`, its index among them, which is the item's version on the
+// path of the step that made it, the steps that step follows. None for the item's first, which is always a block sent.
 export type Version = (Sent & { rewrote: KeyedBlock | undefined }) | Gone;
-type Sent = { step: number; block: KeyedBlock; reply: boolean };
-type Gone = { step: number; block: undefined; was: KeyedBlock };
+type Sent = { step: number; block: KeyedBlock; reply: boolean; previous: number | undefined };
+type Gone = { step: number; block: undefined; was: KeyedBlock; previous: number };
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
 // [LAW:types-are-the-program] The key names the item, so it is the same at every moment: a thread's item is
 // `thread:<trace>/tools/<block>` or `thread:<trace>/message.<i>/<block>`, by the exchange that first sent it and its
-// place, never by its line, which a later request can decide again; named apart from any exchange's rows, since a key's
-// `/` prefixes are the rows it stands inside (position.ts) and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was, `<trace>/<group>/<block>`.
+// place; named apart from any exchange's rows, since a key's `/` prefixes are the rows it stands inside (position.ts)
+// and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was,
+// `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
 
-// A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, and, for
-// a request on a branch of its thread (view/lines.ts), the branch's key and the step it left from.
-export type Segment = { formatted: FormattedExchange; groups: readonly ItemGroup[]; branch: Branch | undefined };
+// A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, and
+// what it stands `after`.
+export type Segment = { formatted: FormattedExchange; groups: readonly ItemGroup[]; after: After | undefined };
 export type ItemGroup = { key: string; title: Group["title"]; items: readonly Item[] };
-export type Branch = { key: string; from: number };
 
-// The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, and the
-// step of each branch's last request, by its key.
-export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; branches: ReadonlyMap<string, number> };
+// [LAW:types-are-the-program] What a step stands after, which is one thing: the step its request follows
+// (view/lines.ts), or, for one whose request follows nothing, the block its thread hangs on, the item at `key` in
+// `step`'s segment: the Agent tool's call that launched it, under which it is a `nest`, or the reply's text whose
+// summary it begins with, which it carries on as the `thread` after a compaction. None for one that hangs on nothing.
+// The steps that stand after one thing are siblings: the column lists one of them (view/rows.ts).
+export type After = { step: number; on: "step" } | { step: number; on: "block"; key: string; as: "nest" | "thread" };
 
-// A thread: the first message every request of it sends, the tree of the paths its requests have sent, and its lines,
-// by key, each with where its places' items are.
-type Thread = { first: KeyedBlock[]; root: Root; lines: Map<string, Line> };
+// The place a step stands after, by name: the trace_id of the step it follows, or the key of the block it hangs on.
+export const placeOf = (after: After, segments: readonly Segment[]): string => (after.on === "step" ? segments[after.step - 1]!.formatted.exchange.trace_id : after.key);
+
+// [LAW:one-source-of-truth] The recording's forks: each place two or more of its steps stand after, with those steps,
+// the siblings there, in the order they arrived. Of the whole recording, whatever step is shown, so the column's line
+// where histories part and the strip's notches (view/rows.ts, view/strip.ts) say the same of it.
+export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
+  const siblings = new Map<string, number[]>();
+  segments.forEach(({ after }, index) => {
+    if (after === undefined) return;
+    const place = placeOf(after, segments);
+    siblings.set(place, [...(siblings.get(place) ?? []), index + 1]);
+  });
+  return new Map([...siblings].filter(([, steps]) => steps.length > 1));
+}
+
+// The conversation's history: each step's segment, step k's at k - 1, and the step of an exchange, by its trace_id.
+export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined };
+
+// A thread: the first message every request of it sends, what that message says, how many of its requests follow
+// nothing, and the tree of the paths its requests have sent.
+type Thread = { first: KeyedBlock[]; said: string; roots: number; root: Root };
 // The root of a thread's tree, before any block, which the request that began the thread owns; a node, a block at its
 // place, `at`, as the request that first sent it there, `owner`, sent it. Each has the nodes after it on the paths that
 // pass it, and the steps whose path, reply included, ends at it.
 type Root = { owner: number; children: Node[]; ends: number[] };
-type Node = Root & { at: string; version: Sent };
-// A line's places, and the line it left, whose places it resends.
-type Line = { places: Map<string, Location>; base: { line: Line; from: number } | undefined };
+type Node = Root & { at: string; held: Held };
+// A chain: a step, the first step that follows it, and so on, the last of them `last`, with where the items of the
+// places they brought are; and, for one begun by a later sibling, the chain of the step it follows, whose places it
+// resends as they were at that step.
+type Chain = { places: Map<string, Location>; base: { chain: Chain; from: number } | undefined; last: number };
 type Location = { step: number; group: number; index: number };
 
 // A step read: its exchange, its thread, where it leaves the requests before it, and what undoes what reading it did to
-// the threads. A step folded: its segment as it now stands, its role, and what undoes what folding it did, in the order
-// it did it.
+// the threads. A step folded: its segment as it now stands, its chain, and what undoes what folding it did, in the
+// order it did it.
 type Read = { formatted: FormattedExchange; thread: Thread | undefined; fact: Fact | undefined; undo: (() => void)[] };
-type Folded = { segment: Segment; role: Role | undefined; undo: (() => void)[] };
+type Folded = { segment: Segment; chain: Chain | undefined; undo: (() => void)[] };
 
 // The history of the exchanges. [LAW:no-shared-mutable-globals] Its state is its own, and what it returns is never
 // changed after: an item a later step gives a version is a new item, in a new segment, and whatever it says again, a
 // step folded again or not, is the object it returned before (keptSegment). The formatter returns an unchanged exchange
-// as the same object, so the history is read again only from the first exchange that is not the one read before, which,
-// while an exchange streams, is the last; and folded again from there, or from the first step whose line the steps read
-// again decide anew (view/lines.ts), whichever is earlier. The steps after are undone, then read and folded again.
+// as the same object, and what a step follows is decided by the steps before it (view/lines.ts), so the history is read
+// and folded again only from the first exchange that is not the one read before, which, while an exchange streams, is
+// the last. The steps after are undone, then read and folded again.
 export function createHistory(): (formatted: FormattedExchange[]) => History {
   const alike = createComparison();
   const threads: Thread[] = [];
   const read: Read[] = [];
   const folded: Folded[] = [];
-  let last: History = { segments: [], stepOf: () => undefined, branches: new Map() };
-  // A block's line alone: its name where it stands, in its category, with no content to open or to read. One block's is
-  // one object, so a step folded again says the same of it.
-  const linesAlone = new WeakMap<KeyedBlock, KeyedBlock>();
-  const lineAlone = (block: KeyedBlock): KeyedBlock => {
-    const line = linesAlone.get(block) ?? { ...block, parts: [], preview: [] };
-    linesAlone.set(block, line);
-    return line;
-  };
+  // What a thread can hang on, in the order it arrived: each Agent tool's call, by its item's key, with the prompt it
+  // launches a subagent with, and each summary a reply's text ends with.
+  const launches: { step: number; key: string; prompt: string }[] = [];
+  const summaries: { step: number; key: string; summary: string }[] = [];
+  let last: History = { segments: [], stepOf: () => undefined };
 
   const itemAt = ({ step, group, index }: Location) => folded[step - 1]!.segment.groups[group]!.items[index]!;
   const replace = ({ step, group, index }: Location, item: Item) => {
     const own = folded[step - 1]!;
     own.segment = { ...own.segment, groups: own.segment.groups.with(group, { ...own.segment.groups[group]!, items: own.segment.groups[group]!.items.with(index, item) }) };
-  };
-  // The version that last brought a block to a place a line resends: its item's last with one, or, for a branch's item
-  // that arrived gone, the one of the line it left, as `find` reads it.
-  const lastSent = (line: Line, at: string, upTo = Infinity): Sent | undefined => {
-    const found = find(line, at, upTo);
-    if (found === undefined) return undefined;
-    const sent = itemAt(found.location).versions.filter(isSent).findLast(({ step }) => step <= found.upTo);
-    return sent ?? (found.line.base === undefined ? undefined : lastSent(found.line.base.line, at, Math.min(found.upTo, found.line.base.from)));
   };
 
   // Reading a step walks its path down its thread's tree as far as an earlier request sent the same, which is where it
@@ -97,17 +111,18 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     if (thread === undefined) return { formatted, thread, fact: undefined, undo };
     const begun = thread.root.owner === step;
     let node: Root = thread.root;
-    const path = pathOf(formatted, step);
+    const path = pathOf(formatted);
     let index = 0;
     for (; index < path.length; index++) {
-      const { at, version } = path[index]!;
-      const next = node.children.find((child) => child.at === at && alike(child.version, version.block));
+      const { at, held } = path[index]!;
+      const next = node.children.find((child) => child.at === at && alike(child.held, held.block));
       if (next === undefined) break;
       node = next;
     }
-    const left = begun ? undefined : node.ends.length > 0 ? { step: node.ends.at(-1)!, whole: true } : { step: node.owner, whole: false };
-    for (const { at, version } of path.slice(index)) {
-      const added: Node = { at, version, owner: step, children: [], ends: [] };
+    const message = path[index]?.message ?? formatted.messages;
+    const left = begun ? undefined : node.ends.length > 0 ? { step: node.ends.at(-1)!, whole: true, message } : { step: node.owner, whole: false, message };
+    for (const { at, held } of path.slice(index)) {
+      const added: Node = { at, held, owner: step, children: [], ends: [] };
       const parent = node;
       parent.children.push(added);
       undo.push(() => parent.children.pop());
@@ -116,70 +131,98 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const end = node;
     end.ends.push(step);
     undo.push(() => end.ends.pop());
-    return { formatted, thread, fact: { step, trace: formatted.exchange.trace_id, left, messages: formatted.messages }, undo };
+    return { formatted, thread, fact: { step, left, messages: formatted.messages }, undo };
   };
 
-  // Folding a step lists its blocks as items on its line: a block at a place the line has resent, or at one its base
-  // has, adds nothing; different at a place of the line's own, it is the item's next version, where the item stands;
-  // anywhere else it is a new item of the line's. [LAW:one-source-of-truth] So a branch never gives the line it left a
-  // version: what it sends differently is its own.
-  const fold = ({ formatted, thread }: Read, role: Role | undefined, step: number): Folded => {
+  // The chain of a step that follows `followed`: that step's, while it is its last, or one begun on it.
+  const chainOf = (followed: number | undefined, step: number, undo: (() => void)[]): Chain => {
+    const base = followed === undefined ? undefined : { chain: folded[followed - 1]!.chain!, from: followed };
+    if (base === undefined || base.chain.last !== followed) return { places: new Map(), base, last: step };
+    base.chain.last = step;
+    undo.push(() => (base.chain.last = followed));
+    return base.chain;
+  };
+
+  // What a thread's request that follows nothing hangs on. The requests of the subagents that calls of one prompt
+  // launch are one thread's, each following nothing, so the i-th of them hangs on the i-th call with that prompt, and
+  // one past the last call on the last: a probe of a subagent, which resends its first message alone. Any other hangs
+  // on the last summary its first message holds, or on nothing.
+  const hungOn = (thread: Thread, undo: (() => void)[]): After | undefined => {
+    const calls = launches.filter(({ prompt }) => prompt === thread.said);
+    const call = calls[Math.min(thread.roots, calls.length - 1)];
+    thread.roots++;
+    undo.push(() => thread.roots--);
+    if (call !== undefined) return { step: call.step, on: "block", key: call.key, as: "nest" };
+    const summary = summaries.findLast(({ summary }) => thread.said.includes(summary));
+    return summary === undefined ? undefined : { step: summary.step, on: "block", key: summary.key, as: "thread" };
+  };
+
+  // Folding a step lists its blocks as items against the conversation on its path, the steps it follows up to the one
+  // that follows nothing: a block as its place holds on the path adds nothing; different there, it is the item's next
+  // version, where the item stands; at a place the path has not held, it is a new item, in the step's own segment; and
+  // a place the path holds that the step does not send is gone from it. [LAW:dataflow-not-control-flow] Every step is
+  // folded the same, whatever it follows: a sibling's versions of an item are off the path, so they are not what the
+  // step's blocks are compared with.
+  const fold = ({ formatted, thread }: Read, follows: ReadonlyMap<number, number | undefined>, step: number): Folded => {
     const undo: (() => void)[] = [];
     const trace = formatted.exchange.trace_id;
-    const line = thread === undefined || role === undefined ? undefined : lineOf(thread, role, undo);
+    const followed = follows.get(step);
+    const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread, undo);
+    const chain = thread === undefined ? undefined : chainOf(followed, step, undo);
+    const path = new Set<number>();
+    for (let on: number | undefined = step; on !== undefined; on = follows.get(on)) path.add(on);
+    // An item's version on the path, by its index: the last a step of the path gave it.
+    const current = ({ versions }: Item) => versions.findLastIndex(({ step }) => path.has(step));
     const sent = new Set<string>();
     const groups = formatted.groups.map((group, groupIndex) => {
       const items: Item[] = [];
       for (const block of group.blocks) {
-        const arrived = (key: string, reply: boolean): Item => ({ key, versions: [{ step, block, reply, rewrote: undefined }] });
-        if (block.place === undefined || line === undefined) {
+        const arrived = (key: string, reply: boolean): Item => ({ key, versions: [{ step, block, reply, rewrote: undefined, previous: undefined }] });
+        if (block.place === undefined || chain === undefined) {
           items.push(arrived(`${trace}/${group.key}/${block.key}`, false));
           continue;
         }
         const at = `${placeName(block.place, formatted.messages)}/${block.key}`;
         const reply = block.place.in === "reply";
         sent.add(at);
-        const found = find(line, at);
-        if (found !== undefined && alike(itemAt(found.location).versions.findLast(({ step }) => step <= found.upTo)!, block)) continue;
-        if (found?.line === line) {
-          const item = itemAt(found.location);
-          // Sent again as it was after a step took it away, it rewrote nothing: a reply's block resent, too.
-          const before = lastSent(line, at)!;
-          replace(found.location, { ...item, versions: [...item.versions, { step, block, reply, rewrote: alike(before, block) ? undefined : before.block }] });
-          undo.push(() => replace(found.location, item));
+        const location = find(chain, at);
+        if (location === undefined) {
+          const key = `thread:${trace}/${at}`;
+          chain.places.set(at, { step, group: groupIndex, index: items.length });
+          undo.push(() => chain.places.delete(at));
+          items.push(arrived(key, reply));
+          if (block.launch !== undefined) {
+            launches.push({ step, key, prompt: block.launch.prompt.trim() });
+            undo.push(() => launches.pop());
+          }
+          if (block.summary !== undefined) {
+            summaries.push({ step, key, summary: block.summary });
+            undo.push(() => summaries.pop());
+          }
           continue;
         }
-        line.places.set(at, { step, group: groupIndex, index: items.length });
-        undo.push(() => line.places.delete(at));
-        items.push(arrived(`thread:${trace}/${at}`, reply));
+        const item = itemAt(location);
+        const previous = current(item);
+        if (alike(item.versions[previous]!, block)) continue;
+        // Sent again as it was after a step took it away, it rewrote nothing: a reply's block resent, too.
+        const before = lastSent(item.versions, previous);
+        replace(location, { ...item, versions: [...item.versions, { step, block, reply, rewrote: alike(before, block) ? undefined : before.block, previous }] });
+        undo.push(() => replace(location, item));
       }
       return { key: group.key, title: group.title, items };
     });
-    // A request resends what its line holds at each place it sends, its prompt, parameters and messages, so one there it
-    // did not send is gone from the step on: an item of the line's own, its next version; one its base sent, an item of
-    // the line's, gone as it arrives, which holds the block's line alone, since the block is the base's item's, where it
-    // is shown and searched. A place is named for the group a request sends it in (format.ts), so the request sends a
-    // place when it has that group; a message past its last is the line's after it, which it leaves as a branch.
-    const groupOf = new Map(groups.map(({ key }, index) => [key, index]));
-    for (const { line: holder, at, location, upTo } of line === undefined ? [] : resent(line)) {
+    // A request resends what its path holds at each place, its tools, prompt, parameters and messages, so one there it
+    // did not send is gone from the step on.
+    for (const { at, location } of chain === undefined ? [] : resent(chain)) {
       if (sent.has(at)) continue;
-      sent.add(at);
       const item = itemAt(location);
-      const was = item.versions.findLast(({ step }) => step <= upTo)!.block;
+      const previous = current(item);
+      const was = item.versions[previous]!.block;
       if (was === undefined) continue;
-      const group = groupOf.get(placeName(was.place!, folded[location.step - 1]!.segment.formatted.messages));
-      if (group === undefined) continue;
-      if (holder === line) {
-        replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was }] });
-        undo.push(() => replace(location, item));
-        continue;
-      }
-      line!.places.set(at, { step, group, index: groups[group]!.items.length });
-      undo.push(() => line!.places.delete(at));
-      groups[group]!.items.push({ key: `thread:${trace}/${at}`, versions: [{ step, block: undefined, was: lineAlone(was) }] });
+      replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was, previous }] });
+      undo.push(() => replace(location, item));
     }
-    const branch = role?.branch === undefined ? undefined : { key: role.line, from: role.branch.from };
-    return { segment: { formatted, groups, branch }, role, undo };
+    return { segment: { formatted, groups, after }, chain, undo };
   };
 
   return (formatted) => {
@@ -193,47 +236,38 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     undoTo(read, from);
     for (let index = from; index < formatted.length; index++) read.push(readStep(formatted[index]!, index + 1));
     const facts = read.flatMap(({ fact }) => (fact === undefined ? [] : [fact]));
-    const roleOf = new Map(linesOf(facts).map((role, index) => [facts[index]!.step, role]));
-    let refold = 0;
-    while (refold < folded.length && sameRole(folded[refold]!.role, roleOf.get(refold + 1))) refold++;
-    undoTo(folded, refold);
-    for (let index = refold; index < read.length; index++) folded.push(fold(read[index]!, roleOf.get(index + 1), index + 1));
+    const follows = new Map(followsOf(facts).map((followed, index) => [facts[index]!.step, followed]));
+    for (let index = from; index < read.length; index++) folded.push(fold(read[index]!, follows, index + 1));
     const steps = new Map(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
-    const branches = new Map(folded.flatMap(({ segment: { branch } }, index) => (branch === undefined ? [] : [[branch.key, index + 1] as const])));
     const made = folded.map(({ segment }) => segment);
     const segments = keptEach(last.segments, made, keptSegment);
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares
     // only what it folds again.
     folded.forEach((step, index) => (step.segment = segments[index]!));
-    last = { segments, stepOf: (trace) => steps.get(trace), branches };
+    last = { segments, stepOf: (trace) => steps.get(trace) };
     return last;
   };
 }
 
-// A thread's line by its role: the one it has, or a new one, which `undo` drops, resending the line its branch left as
-// it was at the step it left from.
-function lineOf(thread: Thread, role: Role, undo: (() => void)[]): Line {
-  const known = thread.lines.get(role.line);
-  if (known !== undefined) return known;
-  const line: Line = { places: new Map(), base: role.branch === undefined ? undefined : { line: thread.lines.get(role.branch.base)!, from: role.branch.from } };
-  thread.lines.set(role.line, line);
-  undo.push(() => thread.lines.delete(role.line));
-  return line;
+// Where the item at a place a chain resends is: its own, or else the chain's it began on, one that arrived by the step
+// it follows there, and so on. What that chain's later steps brought is not on its path.
+function find(chain: Chain, at: string, upTo = Infinity): Location | undefined {
+  const location = chain.places.get(at);
+  if (location !== undefined && location.step <= upTo) return location;
+  return chain.base === undefined ? undefined : find(chain.base.chain, at, Math.min(upTo, chain.base.from));
 }
 
-// Where the item at a place is, and the last step whose version of it counts: on the line, any; or else on the line it
-// left, one that arrived by the step it left from, and so on. What its base sent after it left is not what it resends.
-function find(line: Line, at: string, upTo = Infinity): { line: Line; location: Location; upTo: number } | undefined {
-  const location = line.places.get(at);
-  if (location !== undefined && location.step <= upTo) return { line, location, upTo };
-  return line.base === undefined ? undefined : find(line.base.line, at, Math.min(upTo, line.base.from));
+// Each place a chain resends, with where its item is, as `find` reads them: its own, then those of the chain it began
+// on that arrived by the step it follows there, and so on.
+function* resent(chain: Chain, upTo = Infinity): Generator<{ at: string; location: Location }> {
+  for (const [at, location] of chain.places) if (location.step <= upTo) yield { at, location };
+  if (chain.base !== undefined) yield* resent(chain.base.chain, Math.min(upTo, chain.base.from));
 }
 
-// Each place a line resends, with where its item is and the last step whose version of it counts, as `find` reads them:
-// the line's own, then its base's that arrived by the step it left from, and so on.
-function* resent(line: Line, upTo = Infinity): Generator<{ line: Line; at: string; location: Location; upTo: number }> {
-  for (const [at, location] of line.places) if (location.step <= upTo) yield { line, at, location, upTo };
-  if (line.base !== undefined) yield* resent(line.base.line, Math.min(upTo, line.base.from));
+// The last version that brought a block, from the one at `index` back along what each came after.
+function lastSent(versions: readonly Version[], index: number): Sent {
+  const version = versions[index]!;
+  return version.block === undefined ? lastSent(versions, version.previous) : version;
 }
 
 // [LAW:single-enforcer] What a history says again, it says with the objects it returned before, decided here alone,
@@ -249,7 +283,7 @@ const keptEach = <T>(before: readonly T[] | undefined, made: readonly T[], kept:
 const keptItem = (before: Item | undefined, made: Item): Item => keptAs(before, { ...made, versions: keptEach(before?.versions, made.versions, keptAs) });
 const keptGroup = (before: ItemGroup | undefined, made: ItemGroup): ItemGroup => keptAs(before, { ...made, items: keptEach(before?.items, made.items, keptItem) });
 const keptSegment = (before: Segment | undefined, made: Segment): Segment =>
-  keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), branch: made.branch && keptAs(before?.branch, made.branch) });
+  keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), after: made.after && keptAs(before?.after, made.after) });
 
 // Whether two objects say the same: the same fields, each the same value. A field that holds undefined is a field, so
 // it does not stand for one the other does not have.
@@ -258,20 +292,16 @@ export function sameFields(a: object, b: object): boolean {
   return fields.length === Object.keys(b).length && fields.every(([name, value]) => Object.hasOwn(b, name) && (b as Record<string, unknown>)[name] === value);
 }
 
-const isSent = (version: Version): version is Exclude<Version, Gone> => version.block !== undefined;
-
-const sameRole = (a: Role | undefined, b: Role | undefined) => a?.line === b?.line && a?.branch?.base === b?.branch?.base && a?.branch?.from === b?.branch?.from;
-
-// A request's path through its thread: the blocks of its prompt, then of each message it sends, then of its reply, each
-// at its place, in the order a request sends them, which is the order the cache builds its prefix in. Its parameters are
-// not on it, since a client changes them on any request.
-function pathOf(formatted: FormattedExchange, step: number): { at: string; version: Sent }[] {
+// A request's path through its thread: the blocks of each message a speaker sent, then of its reply, each at its place
+// and with the message it is in, the reply's index for the reply's. What a client sends around them is not on it, since
+// it changes them on any request and a request of the thread can send its own: its parameters, its tools, its system
+// prompt and the system's messages.
+function pathOf(formatted: FormattedExchange): { at: string; message: number; held: Extract<Held, { reply: boolean }> }[] {
   return formatted.groups.flatMap(({ blocks }) =>
-    blocks.flatMap((block) =>
-      block.place === undefined || block.place.in === "parameters"
-        ? []
-        : [{ at: `${placeName(block.place, formatted.messages)}/${block.key}`, version: { step, block, reply: block.place.in === "reply" } }],
-    ),
+    blocks.flatMap((block) => {
+      const message = block.place?.in === "message" ? block.place.index : block.place?.in === "reply" ? formatted.messages : undefined;
+      return message === undefined ? [] : [{ at: `message.${message}/${block.key}`, message, held: { block, reply: block.place!.in === "reply" } }];
+    }),
   );
 }
 
@@ -282,14 +312,21 @@ function threadOf(formatted: FormattedExchange, threads: Thread[], alike: Compar
   if (first.length === 0) return undefined;
   const found = threads.find((thread) => thread.first.length === first.length && thread.first.every((block, index) => alike.blocks(block, first[index]!)));
   if (found !== undefined) return found;
-  const begun: Thread = { first, root: { owner: step, children: [], ends: [] }, lines: new Map() };
+  const begun: Thread = { first, said: saidIn(first), roots: 0, root: { owner: step, children: [], ends: [] } };
   threads.push(begun);
   undo.push(() => threads.pop());
   return begun;
 }
 
-// A place's name in its thread, which is the key of the group a request sends it in (format/format.ts): the request's
-// own for its parameters, its tools, its system prompt, or a message, the reply the one after the request's.
+// What a message says: the texts of its blocks that the harness did not inject, less the space around them. A
+// subagent's first message so says the prompt it was launched with.
+function saidIn(blocks: KeyedBlock[]): string {
+  const texts = blocks.flatMap(({ injected, parts }) => (injected === undefined ? parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])) : []));
+  return texts.join("").trim();
+}
+
+// A place's name in its thread: the request's own for its parameters, its tools, its system prompt; a speaker's
+// message, the reply the one after the request's; or a system's message, by the speaker's it stands before.
 function placeName(place: Place, messages: number): string {
   switch (place.in) {
     case "parameters":
@@ -299,6 +336,8 @@ function placeName(place: Place, messages: number): string {
       return place.in;
     case "message":
       return `message.${place.index}`;
+    case "system message":
+      return `message.${place.before}.system.${place.index}`;
     case "reply":
       return `message.${messages}`;
   }
@@ -307,7 +346,9 @@ function placeName(place: Place, messages: number): string {
 // Whether a block is an item's version, and whether two blocks are alike. [LAW:no-shared-mutable-globals] Its cache is
 // its own: each pair's answer, kept under the blocks, which the formatter keeps the same objects while their side of the
 // exchange is unchanged, so folding again from a streaming exchange compares only its blocks, and each once.
-type Comparison = ((version: Sent | Gone, block: KeyedBlock) => boolean) & { blocks: (a: KeyedBlock, b: KeyedBlock) => boolean };
+type Comparison = ((held: Held, block: KeyedBlock) => boolean) & { blocks: (a: KeyedBlock, b: KeyedBlock) => boolean };
+// What a place holds: a block, and whether it arrived as a reply, or none.
+type Held = { block: KeyedBlock; reply: boolean } | { block: undefined };
 function createComparison(): Comparison {
   const answers = new WeakMap<Block, WeakMap<Block, boolean>>();
   const cached = (a: Block, b: Block, answer: () => boolean) => {
@@ -321,12 +362,12 @@ function createComparison(): Comparison {
   // A reply is compared as it is resent: a request resends a reply's content block, and only the client knows which of
   // the fields the API reported about it (a thinking block's estimated_tokens, a tool use's caller) it keeps, so of the
   // fields no read asked for, only those the resent block has.
-  const compare = (version: Sent | Gone, block: KeyedBlock) =>
-    version.block === undefined
+  const compare = (held: Held, block: KeyedBlock) =>
+    held.block === undefined
       ? false
-      : version.reply && block.place?.in !== "reply"
-        ? cached(version.block, block, () => equal(content(asResent(version.block, block)), content(block)))
-        : blocks(version.block, block);
+      : held.reply && block.place?.in !== "reply"
+        ? cached(held.block, block, () => equal(content(asResent(held.block, block)), content(block)))
+        : blocks(held.block, block);
   return Object.assign(compare, { blocks });
 }
 

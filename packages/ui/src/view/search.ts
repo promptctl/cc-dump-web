@@ -6,7 +6,7 @@ import { rowIndex, type Position } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import { blockOf, type BlockRow, type Keys, type Row } from "./rows.ts";
+import { blockOf, nestsOf, type BlockRow, type Keys, type Row } from "./rows.ts";
 
 // Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
@@ -118,9 +118,9 @@ export function find(pattern: RegExp, { text, passages }: Searched): Range[] {
 // A block with matches: its row, the row's index among the rows, how many matches it holds, and how many come before.
 export type FoundBlock = { row: BlockRow; index: number; count: number; before: number };
 
-// The matches among the rows: how many, and the blocks holding them, in order and by key. It holds counts, not the
+// The matches among the `rows`: how many, and the blocks holding them, in order and by key. It holds counts, not the
 // matches: a one-letter query over a long recording matches millions of times.
-export type Found = { count: number; blocks: FoundBlock[]; byKey: Map<string, FoundBlock> };
+export type Found = { count: number; blocks: FoundBlock[]; byKey: Map<string, FoundBlock>; rows: readonly Row[] };
 
 // A search of rows for a pattern. [LAW:no-shared-mutable-globals] Its cache is its own: each block's count for each
 // pattern, kept under the block, which the formatter returns as the same object while its side of the exchange is
@@ -147,7 +147,7 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
       blocks.push({ row, index, count: own, before: count });
       count += own;
     });
-    return { count, blocks, byKey: new Map(blocks.map((block) => [block.row.key, block])) };
+    return { count, blocks, byKey: new Map(blocks.map((block) => [block.row.key, block])), rows };
   };
 }
 
@@ -167,10 +167,10 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
   return index === -1 ? undefined : block.before + index + 1;
 }
 
-// A step to a match, and what must show for it to be on screen: its block's `row`, listed, so the set it is in open;
-// the row expanded, when the match is `inContent`, not on the block's line; and the regions and the headings' sections
-// holding it, by key, open.
-export type Step = { match: Match; row: BlockRow; inContent: boolean; regions: string[] };
+// A step to a match, and what must show for it to be on screen: its block's `row`, listed, so the `nests` it is
+// inside, by their lines' keys, and the set it is in open; the row expanded, when the match is `inContent`, not on the
+// block's line; and the regions and the headings' sections holding it, by key, open.
+export type Step = { match: Match; row: BlockRow; nests: string[]; inContent: boolean; regions: string[] };
 
 export type Direction = "next" | "previous";
 
@@ -190,7 +190,7 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     const { at, start } = current!;
     const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
-    if (past !== undefined) return stepTo(own.row, past);
+    if (past !== undefined) return stepTo(found, own, past);
   }
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
   const placeOf = (key: string, bias: number) => {
@@ -204,17 +204,18 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
-  return stepTo(block.row, (forward ? matches[0] : matches.at(-1))!);
+  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);
 }
 
-function stepTo(row: BlockRow, { match, shown }: { match: Match; shown: Shown }): Step {
+function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown }: { match: Match; shown: Shown }): Step {
+  const nests = nestsOf(rows, index);
   switch (shown.in) {
     case "line":
-      return { match, row, inContent: false, regions: [] };
+      return { match, row, nests, inContent: false, regions: [] };
     case "content":
-      return { match, row, inContent: true, regions: [] };
+      return { match, row, nests, inContent: true, regions: [] };
     case "regions":
-      return { match, row, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line)) };
+      return { match, row, nests, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line)) };
   }
 }
 
