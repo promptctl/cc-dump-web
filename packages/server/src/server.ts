@@ -3,15 +3,15 @@ import { buffer } from "node:stream/consumers";
 import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
 import { describe } from "@cc-dump/log/describe";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
-import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
+import { parseLaunch, type Failure, type Launched, type Launcher, type Session } from "./format.ts";
 import { fromThisMachine } from "./origin.ts";
 import { launchSettings } from "./settings.ts";
-import { TmuxRefused, type Tmux } from "./tmux.ts";
+import { TmuxRefused, type PanesSession, type Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
-// tmux server, the running proxy (what it says it is, and the recording it makes for an agent), and `directory`, the one
-// the app was started in, where every agent it launches starts. `logs`: the app server's log lines (processLog), which
-// `GET /logs` serves to the logs panel (docs/design/01-mvp.md, F9).
+// tmux server, the running proxy (what it says it is, and the recording it makes for an agent), `directory`, the one
+// the app was started in, which every session offers a launch, and `home`, the user's home directory. `logs`: the app
+// server's log lines (processLog), which `GET /logs` serves to the logs panel (docs/design/01-mvp.md, F9).
 export type Parts = {
   log: Log;
   logs: Handler;
@@ -20,6 +20,7 @@ export type Parts = {
   proxyInfo: () => Promise<ProxyInfo>;
   proxyRecording: () => Promise<Listing>;
   directory: string;
+  home: string;
 };
 
 // A request the app server refuses, answered with `status` and the refusal's message.
@@ -35,7 +36,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 
 // The app server restarts on every source change, so it holds nothing that must survive one: the settings are on disk,
 // and tmux and the proxy are asked again on each request.
-export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
+export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory, home }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
   const readSettings = async (trace_id: string) =>
@@ -43,17 +44,25 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
       await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
     ).settings;
 
-  // `GET /launch` (docs/design/01-mvp.md, F1): what a launch starts from.
-  const launcher: Answer = async (_req, { trace_id }): Promise<Launcher> => ({
-    settings: await readSettings(trace_id),
-    sessions: await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length })),
-  });
+  // `GET /launch` (docs/design/01-mvp.md, F1): what a launch starts from. Each session offers the directories its panes
+  // are in and then the app's own, so none offers none.
+  const launcher: Answer = async (_req, { trace_id }): Promise<Launcher> => {
+    const settings = await readSettings(trace_id);
+    const [first, ...rest] = await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length }));
+    const offering = ({ name, directories }: PanesSession): Session => ({
+      name,
+      // [LAW:types-are-the-program] Never empty: the app's directory is one.
+      directories: [...new Set([...directories, directory])] as Session["directories"],
+    });
+    return { settings, sessions: [offering(first), ...rest.map(offering)], home };
+  };
 
-  // `POST /launch`: stores the settings asked for, then opens the agent's window, pointed at the running proxy by a path
-  // of its own, which is how the proxy tells its process's requests from every other's (`agentBaseUrl`). The command is
-  // run as the user wrote it. The proxy makes the recording that process will be, since it is the proxy that writes it.
+  // `POST /launch`: stores the settings asked for, then opens the agent's window in the directory asked for, pointed at
+  // the running proxy by a path of its own, which is how the proxy tells its process's requests from every other's
+  // (`agentBaseUrl`). The command is run as the user wrote it. The proxy makes the recording that process will be, since
+  // it is the proxy that writes it.
   const launch: Answer = async (req, { trace_id }): Promise<Launched> => {
-    const { session, command } = parsed(parseLaunch, (await buffer(req)).toString());
+    const { session, command, cwd } = parsed(parseLaunch, (await buffer(req)).toString());
     launchSettings.write(settingsPath, { session, command });
     const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info).catch((error: unknown) => {
       throw new Refused(502, `The proxy did not say where agents reach it: ${describe(error)}`, { cause: error });
@@ -65,8 +74,8 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
       log,
       trace_id,
       "launch",
-      { session, command, directory, base_url, recording, settings_path: settingsPath },
-      () => tmux.newWindow({ session, command, cwd: directory, env: { ANTHROPIC_BASE_URL: agentBaseUrl(base_url, recording) } }),
+      { session, command, cwd, base_url, recording, settings_path: settingsPath },
+      () => tmux.newWindow({ session, command, cwd, env: { ANTHROPIC_BASE_URL: agentBaseUrl(base_url, recording) } }),
       (window) => window,
     );
     return { session, ...window, recording };

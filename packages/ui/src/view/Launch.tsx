@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { useAnswer } from "./answer.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
+import { tildeHome } from "./home.ts";
 import { view } from "./state.ts";
 
 type Launching = Pick<Connection, "launcher" | "launch">;
@@ -60,23 +61,41 @@ function LaunchForm({ connection, ...started }: { connection: Launching } & Star
   }
 }
 
-// The session and the command, starting from the settings the last launch asked for.
+// The session and the command, starting from the settings the last launch asked for, and the directory, one of the
+// session's, the one most of its panes are in until the user picks another.
 function Choice({ launcher, launch, start }: { launcher: Launcher } & Started) {
-  const { settings, sessions } = launcher;
+  const { settings, sessions, home } = launcher;
   const [session, setSession] = useState(() => launchSession(launcher));
+  const [cwd, setCwd] = useState(session.directories[0]);
   const [command, setCommand] = useState(settings.command);
+  const pick = (name: string) => {
+    // The select offers only the sessions' names.
+    const picked = sessions.find((found) => found.name === name)!;
+    setSession(picked);
+    setCwd(picked.directories[0]);
+  };
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
-    start({ session, command });
+    start({ session: session.name, command, cwd });
   };
   return (
     <form className="flex flex-col gap-2" onSubmit={submit}>
       <label className="flex items-center justify-between gap-2">
         <span>tmux session</span>
-        <select data-launch-session className="field w-56" value={session} onChange={(event) => setSession(event.target.value)}>
-          {sessions.map((name) => (
+        <select data-launch-session className="field w-56" value={session.name} onChange={(event) => pick(event.target.value)}>
+          {sessions.map(({ name }) => (
             <option key={name} value={name}>
               {name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span>Directory</span>
+        <select data-launch-directory className="field w-56 font-mono" value={cwd} onChange={(event) => setCwd(event.target.value)}>
+          {session.directories.map((path) => (
+            <option key={path} value={path}>
+              {tildeHome(path, home)}
             </option>
           ))}
         </select>

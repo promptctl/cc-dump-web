@@ -53,7 +53,7 @@ function LaunchSession({ connection }: { connection: Pick<Connection, "launcher"
   return (
     <Row label="tmux session for launching" id="tmux-session">
       {launcher.state === "answered" ? (
-        <Value text={launchSession(launcher.value)} />
+        <Value text={launchSession(launcher.value).name} />
       ) : launcher.state === "failed" ? (
         <p className="text-error">{describe(launcher.error)}</p>
       ) : (

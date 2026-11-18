@@ -7,13 +7,20 @@ import { app } from "./testing.ts";
 import { TmuxRefused } from "./tmux.ts";
 
 describe("GET /launch", () => {
-  it("starts from the default settings and lists the sessions, to any origin", async () => {
+  it("starts from the default settings and lists the sessions, each with its panes' directories and then the app's, to any origin", async () => {
     const { url, work } = await app();
     const res = await fetch(`${url}/launch`);
     expect([res.status, res.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
     expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
     expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
-    expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
+    expect(parseLauncher(await res.text())).toEqual({
+      settings: { session: null, command: "claude" },
+      sessions: [
+        { name: "work", directories: ["/home/u/notes", "/work/project"] },
+        { name: "play", directories: ["/work/project"] },
+      ],
+      home: "/home/u",
+    });
   });
 
   it("fails naming the settings file it cannot take", async () => {
@@ -37,9 +44,9 @@ describe("GET /launch", () => {
 });
 
 describe("POST /launch", () => {
-  it("opens the agent's window pointed at the proxy by a path of its own, runs the command as written, stores the settings asked for, and answers the recording the agent will be", async () => {
+  it("opens the agent's window in the directory asked for, pointed at the proxy by a path of its own, runs the command as written, stores the settings asked for, and answers the recording the agent will be", async () => {
     const { url, opened, settingsPath, launch, work } = await app();
-    const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions" });
+    const res = await launch({ session: "work", command: "claude --dangerously-skip-permissions", cwd: "/home/u/notes" });
     expect(res.status).toBe(200);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "ok", base_url: "http://127.0.0.1:3344" });
     expect(await work()).toMatchObject({ event: "proxy_recording", outcome: "ok", recording: expect.any(String) });
@@ -48,6 +55,7 @@ describe("POST /launch", () => {
       outcome: "ok",
       session: "work",
       command: "claude --dangerously-skip-permissions",
+      cwd: "/home/u/notes",
       base_url: "http://127.0.0.1:3344",
       recording: expect.any(String),
       settings_path: settingsPath,
@@ -60,7 +68,7 @@ describe("POST /launch", () => {
     expect(launched).toEqual({ session: "work", start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9", recording: expect.any(String) });
     expect(recordingStart(launched.recording)).toBeInstanceOf(Date);
     expect(opened).toEqual([
-      { session: "work", command: "claude --dangerously-skip-permissions", cwd: "/work/project", env: { ANTHROPIC_BASE_URL: agentBaseUrl("http://127.0.0.1:3344", launched.recording) } },
+      { session: "work", command: "claude --dangerously-skip-permissions", cwd: "/home/u/notes", env: { ANTHROPIC_BASE_URL: agentBaseUrl("http://127.0.0.1:3344", launched.recording) } },
     ]);
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({ session: "work", command: "claude --dangerously-skip-permissions" });
     const launcher = parseLauncher(await (await fetch(`${url}/launch`)).text());
@@ -74,6 +82,7 @@ describe("POST /launch", () => {
     [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
     [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
     [{ command: "claude" }, "session must be a line of text that is not blank, got undefined"],
+    [{ session: "work", command: "claude", cwd: "code" }, 'directory must be absolute, got "code"'],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
     const { opened, settingsPath, launch, next } = await app();
@@ -87,14 +96,14 @@ describe("POST /launch", () => {
 
   it("answers tmux's refusal in tmux's words", async () => {
     const { launch } = await app({ tmux: { newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
-    const res = await launch({ session: "gone", command: "claude" });
+    const res = await launch({ session: "gone", command: "claude", cwd: "/work/project" });
     expect(res.status).toBe(502);
     expect(parseFailure(await res.text())).toEqual({ error: "can't find session: gone" });
   });
 
   it("does not launch an agent the proxy cannot be found for, and keeps what was asked for the next try", async () => {
     const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
-    const res = await launch({ session: "work", command: "claude" });
+    const res = await launch({ session: "work", command: "claude", cwd: "/work/project" });
     expect(res.status).toBe(502);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
     expect(await next()).toMatchObject({ event: "request", status: 502, outcome: "error", error: expect.stringContaining("did not say where agents reach it") });
@@ -106,14 +115,14 @@ describe("POST /launch", () => {
   it("launches the agent into the recording the proxy made, named by the proxy and not by the app", async () => {
     const proxyRecording = async () => ({ name: "20200102T030405.006Z.jsonl" });
     const { opened, launch } = await app({ proxyRecording });
-    const launched = parseLaunched(await (await launch({ session: "work", command: "claude" })).text());
+    const launched = parseLaunched(await (await launch({ session: "work", command: "claude", cwd: "/work/project" })).text());
     expect(launched.recording).toBe("20200102T030405.006Z.jsonl");
     expect(opened.map(({ env }) => env)).toEqual([{ ANTHROPIC_BASE_URL: "http://127.0.0.1:3344/agent/20200102T030405.006Z" }]);
   });
 
   it("does not launch an agent the proxy refused a recording, and keeps what was asked for the next try", async () => {
     const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new Error("POST http://127.0.0.1:3347/recordings", { cause: new Error("500 Internal Server Error") })) });
-    const res = await launch({ session: "work", command: "claude" });
+    const res = await launch({ session: "work", command: "claude", cwd: "/work/project" });
     expect(res.status).toBe(502);
     await work();
     expect(await work()).toMatchObject({ event: "proxy_recording", outcome: "error", error: expect.stringContaining("500 Internal Server Error") });
@@ -125,7 +134,7 @@ describe("POST /launch", () => {
 
   it("fails the request, on its event, when the app server fails", async () => {
     const { next, launch } = await app({ tmux: { newWindow: () => Promise.reject(new Error("tmux exploded")) } });
-    const res = await launch({ session: "work", command: "claude" });
+    const res = await launch({ session: "work", command: "claude", cwd: "/work/project" });
     expect(res.status).toBe(500);
     expect(parseFailure(await res.text())).toEqual({ error: "tmux exploded" });
     expect(await next()).toMatchObject({ event: "request", method: "POST", url: "/launch", outcome: "error", error: expect.stringContaining("tmux exploded") });
@@ -136,7 +145,7 @@ describe("routes", () => {
   it("refuses a page from another site, launching nothing, on the request's event", async () => {
     const { url, opened, next } = await app();
     for (const origin of ["https://example.com", "http://127.0.0.1.example.com:3346", "null"]) {
-      const res = await fetch(`${url}/launch`, { method: "POST", headers: { origin, "content-type": "text/plain" }, body: JSON.stringify({ session: "work", command: "claude" }) });
+      const res = await fetch(`${url}/launch`, { method: "POST", headers: { origin, "content-type": "text/plain" }, body: JSON.stringify({ session: "work", command: "claude", cwd: "/work/project" }) });
       expect(res.status).toBe(403);
       expect(parseFailure(await res.text())).toEqual({ error: `A page at ${origin} is not one this machine serves` });
       expect(await next()).toMatchObject({ event: "request", status: 403, outcome: "error" });
@@ -146,7 +155,7 @@ describe("routes", () => {
 
   it.each(["http://127.0.0.1:3346", "http://localhost:3346", "http://[::1]:3346"])("answers a page served from this machine, at %s", async (origin) => {
     const { opened, launch } = await app();
-    const res = await launch({ session: "work", command: "claude" }, { origin });
+    const res = await launch({ session: "work", command: "claude", cwd: "/work/project" }, { origin });
     expect(res.status).toBe(200);
     expect(opened).toHaveLength(1);
   });

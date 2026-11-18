@@ -16,7 +16,26 @@ function setEnv(name: string, value: string) {
 describe("createTmux", () => {
   it("names every session on the server", async () => {
     const { socketPath } = tmuxServer("one two", "alpha");
-    expect((await createTmux({ socketPath }).sessions()).sort()).toEqual(["alpha", "one two"]);
+    expect((await createTmux({ socketPath }).sessions()).map(({ name }) => name).sort()).toEqual(["alpha", "one two"]);
+  });
+
+  it("gives each session the directories its running panes are in, the one most are in first", async () => {
+    const { socketPath, tmux } = tmuxServer("work");
+    const made = () => {
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "cc-dump-")));
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+      return dir;
+    };
+    const [one, two] = [made(), made()];
+    tmux("new-window", "-d", "-t", "=work:", "-c", two);
+    tmux("new-window", "-d", "-t", "=work:", "-c", two);
+    tmux("new-window", "-d", "-t", "=work:", "-c", one);
+    const [work] = await createTmux({ socketPath }).sessions();
+    expect(work.name).toBe("work");
+    // The session's own first window is in a directory too, the tests', with one pane, as `one` has.
+    expect(work.directories).toHaveLength(3);
+    expect(work.directories[0]).toBe(two);
+    expect(work.directories).toContain(one);
   });
 
   it("is refused in tmux's words when no server runs", async () => {
@@ -77,6 +96,6 @@ describe("createTmux", () => {
     const { socketPath, tmux } = tmuxServer("work");
     tmux("new-window", "-d", "-E", "-t", "=work:");
     setEnv("TMUX", "/tmp/some-other-server,1,0");
-    expect(await createTmux({ socketPath }).sessions()).toEqual(["work"]);
+    expect((await createTmux({ socketPath }).sessions()).map(({ name }) => name)).toEqual(["work"]);
   });
 });

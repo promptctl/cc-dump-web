@@ -1,5 +1,6 @@
 import { describe } from "@cc-dump/log/describe";
 import {
+  listPanes,
   listSessions,
   newEmptyWindow,
   respawnPane,
@@ -10,10 +11,14 @@ import {
   UnrecognizedTmuxVersionError,
   UnsupportedTmuxVersionError,
   watchServerArgs,
+  type PaneRecord,
   type SpawnOptions,
   type TmuxConnection,
 } from "@promptctl/tmux-control-mode-js";
-import { startTime, sessions, type Launched, type Sessions, type TmuxWindow } from "./format.ts";
+import { atLeastOne, startTime, type Launched, type TmuxWindow } from "./format.ts";
+
+// A session on the server, by name, and the directories its running panes are in, the one most of them are in first.
+export type PanesSession = { name: string; directories: string[] };
 
 // A window to open in a session: the command its pane runs, through the user's shell, in `cwd`, an absolute directory,
 // with `env` set for it alone.
@@ -26,8 +31,8 @@ export type Window = Pick<Launched, keyof TmuxWindow | "pane_id">;
 // control-mode connection, opened for it and closed after, so none outlives the app server's restart on a change.
 // Whatever tmux refuses, the attach included (no server, no sessions), rejects as TmuxRefused, in tmux's words.
 export type Tmux = {
-  // The names of the sessions on the server.
-  sessions: () => Promise<Sessions>;
+  // The sessions on the server, at least one: tmux was attached to one to list them.
+  sessions: () => Promise<[PanesSession, ...PanesSession[]]>;
   // Opens the window as its session's current one, so a terminal attached to the session shows it.
   newWindow: (window: NewWindow) => Promise<Window>;
 };
@@ -81,7 +86,7 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
     }
   };
   return {
-    sessions: () => connected(async (client) => sessions((await listSessions(client)).map((session) => session.sessionName))),
+    sessions: () => connected(async (client) => atLeastOne(panesSessions(await listPanes(client)), "sessions: tmux listed none")),
     newWindow: ({ session, command, cwd, env }) =>
       connected(async (client) => {
         // tmux takes a session by id: a name it would also match as a prefix, a pattern, another session's id or a client.
@@ -113,6 +118,17 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
         return { start_time, session_id: `$${named.sessionId}`, window_id: `@${windowId}`, pane_id: `%${paneId}` };
       }),
   };
+}
+
+// The sessions `panes` are in, in tmux's order: every session has a pane. A dead or empty pane is in no directory.
+export function panesSessions(panes: readonly PaneRecord[]): PanesSession[] {
+  const counts = new Map<string, Map<string, number>>();
+  for (const { sessionName, process } of panes) {
+    const directories = counts.get(sessionName) ?? new Map<string, number>();
+    counts.set(sessionName, directories);
+    if (process.state === "running" && process.cwd !== null) directories.set(process.cwd, (directories.get(process.cwd) ?? 0) + 1);
+  }
+  return [...counts].map(([name, directories]) => ({ name, directories: [...directories].sort(([, a], [, b]) => b - a).map(([path]) => path) }));
 }
 
 // [LAW:single-enforcer] The one place the library's errors become the seam's: a command tmux answered with an error, a
