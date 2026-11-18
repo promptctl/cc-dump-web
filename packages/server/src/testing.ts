@@ -15,8 +15,9 @@ import type { NewWindow, Tmux } from "./tmux.ts";
 export { TmuxRefused } from "./tmux.ts";
 
 // The app server on a free port, until the test finishes: its launch settings in a directory of the test's own, a tmux
-// with the sessions "work" and "play" that opens every window asked for (`opened`, in order), and a proxy at port 3344 that
-// makes a recording for each agent, one millisecond after the last, started in /work/project.
+// with the sessions "work", whose panes are in /home/u/notes and /work/project, and "play", whose are in none, that
+// opens every window asked for (`opened`, in order), and a proxy at port 3344 that makes a recording for each agent, one
+// millisecond after the last, started in /work/project by the user whose home is /home/u.
 // `tmux`, `proxyInfo` and `proxyRecording` replace any, to make it fail. `work` resolves with each event of the app's own work.
 export async function app({
   tmux = {},
@@ -30,14 +31,17 @@ export async function app({
   const settingsPath = join(dir, "cc-dump/launch.json");
   const opened: NewWindow[] = [];
   const fake: Tmux = {
-    sessions: async () => ["work", "play"],
+    sessions: async () => [
+      { name: "work", directories: ["/home/u/notes", "/work/project"] },
+      { name: "play", directories: [] },
+    ],
     newWindow: async (window) => (opened.push(window), { start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9" }),
     ...tmux,
   };
   const events = eventLog();
   // The app server's log lines, as a stand-in: what is served at `/logs` is processLog's to test.
   const logs: Handler = (_req, res) => void res.writeHead(200).end("the app server's log");
-  const { url, port, next } = await serving(createApp({ log: events.log, logs, settingsPath, tmux: fake, proxyInfo, proxyRecording: makeRecording, directory: "/work/project" }));
+  const { url, port, next } = await serving(createApp({ log: events.log, logs, settingsPath, tmux: fake, proxyInfo, proxyRecording: makeRecording, directory: "/work/project", home: "/home/u" }));
   const launch = (body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${url}/launch`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return { url, port, next, work: events.next, settingsPath, opened, launch };

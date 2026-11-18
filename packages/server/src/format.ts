@@ -15,20 +15,25 @@ export const launchSettingsTable = {
 };
 export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 
-// The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
-export type Sessions = [string, ...string[]];
+// A session on a tmux server, by name, and the directories a launch there can start in: those its panes are in, the
+// one most of them are in first, then the one the app was started in, each once.
+export type Session = { name: string; directories: [string, ...string[]] };
 
-// `GET /launch`: the settings, and the sessions on the user's tmux server.
-export type Launcher = { settings: LaunchSettings; sessions: Sessions };
+// The sessions on a tmux server: at least one, since tmux was attached to one to list them.
+export type Sessions = [Session, ...Session[]];
+
+// `GET /launch`: the settings, the sessions on the user's tmux server, and `home`, the app server's home directory,
+// which the UI shows as `~`.
+export type Launcher = { settings: LaunchSettings; sessions: Sessions; home: string };
 
 // [LAW:single-enforcer] The session a launch starts in unless the user picks another: the one the last launch asked for,
 // while tmux still has it, and otherwise tmux's first.
-export function launchSession({ settings, sessions }: Launcher): string {
-  return settings.session !== null && sessions.includes(settings.session) ? settings.session : sessions[0];
+export function launchSession({ settings, sessions }: Launcher): Session {
+  return sessions.find((session) => session.name === settings.session) ?? sessions[0];
 }
 
-// `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line.
-export type Launch = { session: string; command: string };
+// `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line, in `cwd`.
+export type Launch = { session: string; command: string; cwd: string };
 
 // `POST /launch`'s answer: the window opened, its pane, and `recording`, the name of the recording the agent's process
 // records to (docs/design/01-mvp.md, F1), which exists once the process sends its first request.
@@ -53,6 +58,13 @@ export function commandLine(value: unknown): string {
   return oneLine(value, "command");
 }
 
+// tmux would start a pane in a relative directory relative to its own, not the user's.
+export function directory(value: unknown): string {
+  const path = oneLine(value, "directory");
+  if (!path.startsWith("/")) throw new Error(`directory must be absolute, got ${JSON.stringify(path)}`);
+  return path;
+}
+
 function oneLine(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
@@ -60,18 +72,27 @@ function oneLine(value: unknown, name: string): string {
 
 export function parseLaunch(json: string): Launch {
   const launch = jsonObject(parseJson(json, "launch"), "launch");
-  return { session: sessionName(launch.session), command: commandLine(launch.command) };
+  return { session: sessionName(launch.session), command: commandLine(launch.command), cwd: directory(launch.cwd) };
 }
 
 export function parseLauncher(json: string): Launcher {
   const f = fields(parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, f.object("settings")), sessions: sessions(f.strings("sessions").map(sessionName)) };
+  return {
+    settings: parseSettings("launcher settings", launchSettingsTable, f.object("settings")),
+    sessions: atLeastOne(f.read("sessions", Array.isArray, "a list").map(parseSession), "sessions: tmux listed none"),
+    home: directory(f.string("home")),
+  };
 }
 
-// [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
-export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Error("sessions: tmux listed none");
-  return names as Sessions;
+function parseSession(json: unknown): Session {
+  const f = fields(json, "session");
+  return { name: sessionName(f.string("name")), directories: atLeastOne(f.strings("directories").map(directory), "session: no directories") };
+}
+
+// [LAW:parse-dont-validate] A list as one with at least one item, or `empty` as the error.
+export function atLeastOne<T>(items: T[], empty: string): [T, ...T[]] {
+  if (items.length === 0) throw new Error(empty);
+  return items as [T, ...T[]];
 }
 
 export function parseLaunched(json: string): Launched {
