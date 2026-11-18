@@ -642,6 +642,12 @@ describe("format", () => {
     expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
   });
 
+  it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
+    const call = (name: string) => ({ type: "tool_use", id: "toolu_1", name, input: { message: "Done." } });
+    const content = [call("SubagentHandback"), call("SendMessage")];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
+  });
+
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
     const said = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ summary }) => summary);
     expect(said("assistant", "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Did it.\n</summary>\n")).toEqual(["1. Did it."]);

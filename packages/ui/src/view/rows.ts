@@ -55,8 +55,8 @@ export type Sibling = { step: number; preview: string };
 // [LAW:types-are-the-program] A nest's line: the subagent an Agent tool's call launched, which stands right after the
 // call and holds the subagent's rows, one level in, closed until the reader opens it (Opened, by this row's key). It
 // says the subagent's `type`, where the call says one, the `prompt` it was launched with, the `count` of its steps the
-// column lists, and, while its last step's reply did not end its turn, the `latest` thing it did, that reply's last
-// block. `change`: the step shown brought the subagent's first step, is another step inside the nest, or neither.
+// column lists, and, while it runs, the `latest` thing it did, its last step's last block of the reply: it runs until
+// that reply ends its turn or hands its report back (format/blocks.ts, `handback`). `change`: the step shown brought the subagent's first step, is another step inside the nest, or neither.
 export type NestRow = { kind: "nest"; key: string; change: "added" | "same" | "changed"; type: string | undefined; prompt: string; count: number; latest: KeyedBlock | undefined } & Standing;
 // A thread's line: after the block whose summary a compaction's next thread begins with, where the thread above, now
 // dimmed, ends and the thread that carries it on begins, at the same depth. `change`: whether the step shown is the
@@ -400,6 +400,7 @@ function nestRow(call: BlockRow, key: string, column: Column, segments: readonly
   const steps = column.levels.get(key)!;
   const { type, prompt } = blockIn(call.versions[0]!).launch!;
   const { facts, groups } = segments[steps.at(-1)! - 1]!.formatted;
+  const last = groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
   return {
     kind: "nest",
     key,
@@ -407,7 +408,7 @@ function nestRow(call: BlockRow, key: string, column: Column, segments: readonly
     type,
     prompt,
     count: steps.length,
-    latest: facts.stopReason === "end_turn" ? undefined : groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply"),
+    latest: facts.stopReason === "end_turn" || last?.handback ? undefined : last,
     ...standing,
   };
 }

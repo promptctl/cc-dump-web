@@ -528,6 +528,17 @@ describe("the column", () => {
     expect([2, 3, 4, 5].map((step) => markOf(nest(at(step))))).toEqual(["added", "changed", "changed", "same"]);
   });
 
+  it("says what a subagent last did until its reply hands its report back, though its turn is not ended", () => {
+    const calling = (name: string) => [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }),
+      ...reply("s1", [text("Looking."), { type: "tool_use", id: "toolu_2", name, input: { message: "Done." } }], "tool_use"),
+    ];
+    const latest = (name: string) => nest(layouts(calling(name))(2), "thread:t1/message.1/content.0/nest").latest?.name;
+    expect(["Read", "SubagentHandback"].map(latest)).toEqual(["tool_use: Read", undefined]);
+  });
+
   it("puts the line where subagents of one call part first inside the call's nest", () => {
     // A second request with the subagent's first message hangs on the same call: a sibling of the first.
     const twice = [
