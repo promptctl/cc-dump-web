@@ -43,7 +43,9 @@ export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Grou
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
 // milliseconds from then to its end, once it has ended. `status`: the response's, once its head is recorded. `model`:
 // the one the request asks for, once its body is whole. `session`: the agent's session the request says it is part of,
-// as Claude Code says it, the `session_id` in the JSON text of `metadata.user_id`; undefined where it does not. The message's facts, once the response's message is read:
+// as Claude Code says it, the `session_id` in the JSON text of `metadata.user_id`; undefined where it does not. `agent`:
+// the subagent the request is sent for, as Claude Code names it in the `x-claude-code-agent-id` header of each of its
+// requests (seen on its traffic, 2026-11-18); undefined for the main agent's, which carry none. The message's facts, once the response's message is read:
 // `input` is the total of its usage's input tokens, the uncached, the cache read and the cache written together (the API
 // reports the uncached alone as input_tokens), `cacheRead` and `cacheWritten` the cache's share of them, `output` the
 // output tokens, and `stopReason` why it stopped, each undefined where the API did not say; so is the total where the
@@ -56,6 +58,7 @@ export type Facts = {
   status: number | undefined;
   model: string | undefined;
   session: string | undefined;
+  agent: string | undefined;
 } & MessageFacts;
 export type MessageFacts = {
   input: number | undefined;
@@ -104,6 +107,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
           status: exchange.response.head?.status,
           model: request.model,
           session: request.session,
+          agent: headerValues(exchange.request.head?.headers ?? [], "x-claude-code-agent-id")[0],
           ...response.message,
         },
         groups: [

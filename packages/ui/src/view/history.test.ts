@@ -7,8 +7,9 @@ import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
+// A request, sent for the subagent `agent` names as Claude Code sends one, or for the main agent.
+const request = (trace_id: string, body: unknown, agent?: string): RecordedEvent[] => [
+  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: agent === undefined ? [] : [["x-claude-code-agent-id", agent]] },
   { timestamp, trace_id, type: "request_body", base64: base64(body) },
   { timestamp, trace_id, type: "request_trailers", headers: [] },
 ];
@@ -241,22 +242,32 @@ describe("what a step stands after", () => {
     const after = history([
       ...request("t1", { ...main, messages: [hi] }),
       ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")]),
-      ...request("s1", { ...agent, messages: [task] }),
+      ...request("s1", { ...agent, messages: [task] }, "a1"),
       ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
+      ...request("s2", { ...agent, messages: [task] }, "a2"),
       ...reply("s2", [text("B.")]),
-      ...request("other", { ...agent, messages: [user(text("Count the words."))] }),
-      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
-      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
-      ...request("probe", { ...agent, messages: [task] }),
+      ...request("other", { ...agent, messages: [user(text("Count the words."))] }, "a3"),
+      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }, "a1"),
+      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }, "a2"),
+      ...request("probe", { ...agent, messages: [task] }, "a2"),
       ...reply("probe", [text("Reading.")]),
     ]);
     const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
+    // The probe is sent for the second twin, so it hangs where that twin's thread does.
     expect(afters(after)).toEqual([undefined, under(1), under(2), under(3), follows(2), follows(3), under(2)]);
     // Twins send the same first message and are each a history of their own.
     expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s2/message.0/content.0.0", "thread:s2/message.0/content.0.1", "thread:s2/message.1/content.0"]));
     expect(keysAt(after, 5)).toContain("thread:s3/message.2/content.0");
     expect(keysAt(after, 6)).toContain("thread:s4/message.2/content.0");
+    expect(versioned(after)).toEqual([]);
+  });
+
+  it("has a fork, which resends the main agent's conversation for another agent, follow the step it resends and go on in a thread of its own", () => {
+    const fork = (trace: string, ...more: unknown[]) => request(trace, { ...main, messages: [hi, assistant(...hello), user(text("You are a worker fork.")), ...more] }, "f1");
+    const after = history([...process, ...fork("f1"), ...reply("f1", [text("Forked.")]), ...t3, ...fork("f2", assistant(text("Forked.")), user(text("Go on.")))]);
+    // Its first request is a sibling of t2 after t1, and its next follows its own.
+    expect(afters(after).slice(3)).toEqual([follows(2), follows(2), follows(4), follows(5)]);
+    expect(keysAt(after, 5)).toContain("thread:f1/message.2/content.0");
     expect(versioned(after)).toEqual([]);
   });
 

@@ -60,9 +60,11 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 // The conversation's history: each step's segment, step k's at k - 1, and the step of an exchange, by its trace_id.
 export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined };
 
-// A thread: the first message every request of it sends, what that message says, how many of its requests follow
-// nothing, and the tree of the paths its requests have sent.
-type Thread = { first: KeyedBlock[]; said: string; roots: number; root: Root };
+// A thread: the agent whose requests it holds (the exchange's `agent`, none for the main agent's), the first message
+// every request of it sends, what that message says, and the tree of the paths its requests have sent. An agent's
+// requests are told apart by its name on the wire, so two subagents sent one prompt are two threads, and the harness's
+// fork of a conversation, which resends it under another agent, is a thread of its own.
+type Thread = { agent: string | undefined; first: KeyedBlock[]; said: string; root: Root };
 // The root of a thread's tree, before any block, which the request that began the thread owns; a node, a block at its
 // place, `at`, as the request that first sent it there, `owner`, sent it. Each has the nodes after it on the paths that
 // pass it, and the steps whose path, reply included, ends at it.
@@ -103,15 +105,10 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     own.segment = { ...own.segment, groups: own.segment.groups.with(group, { ...own.segment.groups[group]!, items: own.segment.groups[group]!.items.with(index, item) }) };
   };
 
-  // Reading a step walks its path down its thread's tree as far as an earlier request sent the same, which is where it
-  // leaves them, and adds the rest of its path, as its own.
-  const readStep = (formatted: FormattedExchange, step: number): Read => {
-    const undo: (() => void)[] = [];
-    const thread = threadOf(formatted, threads, alike, step, undo);
-    if (thread === undefined) return { formatted, thread, fact: undefined, undo };
-    const begun = thread.root.owner === step;
-    let node: Root = thread.root;
-    const path = pathOf(formatted);
+  // How far down a tree a path goes as an earlier request sent the same: the node it stops at, and the index of the
+  // first of its blocks the tree does not hold.
+  const walk = (root: Root, path: ReturnType<typeof pathOf>): { node: Root; index: number } => {
+    let node = root;
     let index = 0;
     for (; index < path.length; index++) {
       const { at, held } = path[index]!;
@@ -119,9 +116,30 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       if (next === undefined) break;
       node = next;
     }
-    const message = path[index]?.message ?? formatted.messages;
-    const left = begun ? undefined : node.ends.length > 0 ? { step: node.ends.at(-1)!, whole: true, message } : { step: node.owner, whole: false, message };
-    for (const { at, held } of path.slice(index)) {
+    return { node, index };
+  };
+
+  // Reading a step walks its path down its thread's tree as far as an earlier request sent the same, which is where it
+  // leaves them, and adds the rest of its path, as its own. A thread's first request leaves nothing of its own; it
+  // leaves the thread of another agent's whose first message it sends, if any, as a fork resends what it forks.
+  const readStep = (formatted: FormattedExchange, step: number): Read => {
+    const undo: (() => void)[] = [];
+    const thread = threadOf(formatted, threads, alike, step, undo);
+    if (thread === undefined) return { formatted, thread, fact: undefined, undo };
+    const path = pathOf(formatted);
+    const own = walk(thread.root, path);
+    const begun = thread.root.owner === step;
+    const other = begun ? threads.find((one) => one.agent !== thread.agent && sameFirst(one.first, thread.first, alike)) : thread;
+    const leaves = other === thread ? own : other === undefined ? undefined : walk(other.root, path);
+    const message = (at: number) => path[at]?.message ?? formatted.messages;
+    const left =
+      leaves === undefined
+        ? undefined
+        : leaves.node.ends.length > 0
+          ? { step: leaves.node.ends.at(-1)!, whole: true, message: message(leaves.index) }
+          : { step: leaves.node.owner, whole: false, message: message(leaves.index) };
+    let node = own.node;
+    for (const { at, held } of path.slice(own.index)) {
       const added: Node = { at, held, owner: step, children: [], ends: [] };
       const parent = node;
       parent.children.push(added);
@@ -143,15 +161,15 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     return base.chain;
   };
 
-  // What a thread's request that follows nothing hangs on. The requests of the subagents that calls of one prompt
-  // launch are one thread's, each following nothing, so the i-th of them hangs on the i-th call with that prompt, and
-  // one past the last call on the last: a probe of a subagent, which resends its first message alone. Any other hangs
-  // on the last summary its first message holds, or on nothing.
-  const hungOn = (thread: Thread, undo: (() => void)[]): After | undefined => {
+  // What a thread's request that follows nothing hangs on, the same for each of them: a probe of a subagent resends
+  // its first message alone. A subagent's thread hangs on a call that launched it with the prompt its first message
+  // says: the i-th thread to arrive that says it on the i-th such call, and one past the last call on the last. That is
+  // the order the subagents first sent in, the one fact there is when the first of them arrives, and a call's result
+  // that names its agent later moves none (check/column.ts holds the order against it). Any other hangs on the last
+  // summary its first message holds, or on nothing.
+  const hungOn = (thread: Thread): After | undefined => {
     const calls = launches.filter(({ prompt }) => prompt === thread.said);
-    const call = calls[Math.min(thread.roots, calls.length - 1)];
-    thread.roots++;
-    undo.push(() => thread.roots--);
+    const call = calls[Math.min(threads.filter(({ said }) => said === thread.said).indexOf(thread), calls.length - 1)];
     if (call !== undefined) return { step: call.step, on: "block", key: call.key, as: "nest" };
     const summary = summaries.findLast(({ summary }) => thread.said.includes(summary));
     return summary === undefined ? undefined : { step: summary.step, on: "block", key: summary.key, as: "thread" };
@@ -167,7 +185,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const undo: (() => void)[] = [];
     const trace = formatted.exchange.trace_id;
     const followed = follows.get(step);
-    const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread, undo);
+    const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread);
     const chain = thread === undefined ? undefined : chainOf(followed, step, undo);
     const path = new Set<number>();
     for (let on: number | undefined = step; on !== undefined; on = follows.get(on)) path.add(on);
@@ -305,18 +323,22 @@ function pathOf(formatted: FormattedExchange): { at: string; message: number; he
   );
 }
 
-// The thread an exchange is part of: the one whose first message it sends, or, when none was sent before, a new one it
-// begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.
+// The thread an exchange is part of: its agent's whose first message it sends, or, when none was sent before, a new
+// one it begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.
 function threadOf(formatted: FormattedExchange, threads: Thread[], alike: Comparison, step: number, undo: (() => void)[]): Thread | undefined {
   const first = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
   if (first.length === 0) return undefined;
-  const found = threads.find((thread) => thread.first.length === first.length && thread.first.every((block, index) => alike.blocks(block, first[index]!)));
+  const { agent } = formatted.facts;
+  const found = threads.find((thread) => thread.agent === agent && sameFirst(thread.first, first, alike));
   if (found !== undefined) return found;
-  const begun: Thread = { first, said: saidIn(first), roots: 0, root: { owner: step, children: [], ends: [] } };
+  const begun: Thread = { agent, first, said: saidIn(first), root: { owner: step, children: [], ends: [] } };
   threads.push(begun);
   undo.push(() => threads.pop());
   return begun;
 }
+
+// Whether two first messages are one: the same blocks, alike.
+const sameFirst = (a: KeyedBlock[], b: KeyedBlock[], alike: Comparison) => a.length === b.length && a.every((block, index) => alike.blocks(block, b[index]!));
 
 // What a message says: the texts of its blocks that the harness did not inject, less the space around them. A
 // subagent's first message so says the prompt it was launched with.
