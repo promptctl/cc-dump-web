@@ -176,7 +176,10 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const level = [...path].filter((own) => levelOf(own) === nest.key);
       if (!sameList(inside, level)) say(`${nest.key} holds steps ${inside.join(" ")} where its level's on the path are ${level.join(" ")}`);
       if (nest.count !== level.length) say(`${nest.key} counts ${nest.count} steps of ${level.length}`);
-      if ((nest.latest === undefined) !== (segments[level.at(-1)! - 1]!.formatted.facts.stopReason === "end_turn")) say(`${nest.key} ${nest.latest === undefined ? "says nothing of" : "says the latest of"} a subagent whose last step ${level.at(-1)} stopped for ${segments[level.at(-1)! - 1]!.formatted.facts.stopReason}`);
+      // A subagent runs until a reply of its ends its turn, or ends with its call of the tool that hands its report back.
+      const { facts, groups } = segments[level.at(-1)! - 1]!.formatted;
+      const done = facts.stopReason === "end_turn" || groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply")?.name === "tool_use: SubagentHandback";
+      if ((nest.latest === undefined) === !done) say(`${nest.key} ${done ? "says the latest of a subagent done at" : "says nothing of a subagent that runs after"} its step ${level.at(-1)}`);
       const id = fieldOf(first(call), "id");
       rows.forEach((row, index) => {
         if (row.kind !== "block" || id === undefined || fieldOf(blockOf(row), "tool_use_id") !== id) return;

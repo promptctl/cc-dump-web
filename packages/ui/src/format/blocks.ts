@@ -20,9 +20,10 @@ export type Category = (typeof categories)[number];
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
 // `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
 // reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
-// it (view/history.ts), which reads them here and never back out of a block's parts.
+// it (view/history.ts), which reads them here and never back out of a block's parts. `handback`: a subagent's call of
+// the tool that hands its report back to its caller, after which it does nothing more until it is told more.
 export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; summary?: string };
+export type Stated = { launch?: Launch; summary?: string; handback?: true };
 
 // What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
 // agent `type` it names, where it names one.
@@ -107,14 +108,17 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
     return [...parts, { kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
-// The subagent a client tool's call launches: Claude Code's Agent tool sends its input's `prompt` as the subagent's
-// first message, to the agent its `subagent_type` names (seen on Claude Code's traffic, 2026-11-17). An input still
-// streaming is text, and launches none yet.
-const launched = (block: unknown): Stated => {
+// What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
+// a subagent: it sends its input's `prompt` as the subagent's first message, to the agent its `subagent_type` names.
+// An input still streaming is text, and launches none yet. A subagent hands its report back with SubagentHandback, the
+// last block of a reply that stops for a tool's use, where its turn never ends.
+const called = (block: unknown): Stated => {
+  const name = sentField(block, "name");
   const input = sentField(block, "input");
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
-  return sentField(block, "name") === "Agent" && typeof prompt === "string" ? { launch: { prompt, type: typeof type === "string" ? type : undefined } } : {};
+  if (name === "Agent" && typeof prompt === "string") return { launch: { prompt, type: typeof type === "string" ? type : undefined } };
+  return name === "SubagentHandback" ? { handback: true } : {};
 };
 
 // The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the
@@ -173,7 +177,7 @@ const entries = new Map<string, Entry>([
     },
   ],
   ["redacted_thinking", { category: thought, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
-  ["tool_use", { ...toolUse(inputParts), stated: launched }],
+  ["tool_use", { ...toolUse(inputParts), stated: called }],
   ["server_tool_use", toolUse((_, input) => jsonInput(input))],
   ["mcp_tool_use", toolUse((_, input) => jsonInput(input))],
   ["tool_result", toolResult],
