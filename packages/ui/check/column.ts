@@ -18,7 +18,7 @@ import { blockOf, createLayout, pastOf, type BlockRow, type Layout, type Row } f
 type Found = { steps: number; forks: Map<string, string>; nests: Map<string, string>; threads: Map<string, string> };
 
 // The block an item arrived as, which says what it launches or sums up.
-const first = ({ versions }: BlockRow): KeyedBlock => {
+const first = ({ versions }: Pick<BlockRow, "versions">): KeyedBlock => {
   const version = versions[0]!;
   return version.block === undefined ? version.was : version.block;
 };
@@ -28,11 +28,13 @@ const fieldOf = ({ parts }: KeyedBlock, name: string): string | undefined =>
   parts
     .flatMap((part) => (part.kind === "fields" ? part.fields : []))
     .findLast(([field, value]) => field === name && typeof value === "string")?.[1] as string | undefined;
-// The texts of a step's first message: all of them, or those the harness did not inject, what the message says.
-const firstMessage = ({ segments }: History, step: number, said: boolean): string =>
-  (segments[step - 1]!.formatted.groups.find(({ key }) => key === "message.0")?.blocks ?? [])
-    .flatMap(({ injected, parts }) => (said && injected !== undefined ? [] : parts.flatMap((part) => (part.kind === "text" ? [part.text] : []))))
-    .join("");
+const textsOf = ({ parts }: KeyedBlock): string[] => parts.flatMap((part) => (part.kind === "text" ? [part.text] : []));
+// What a step's first message says: its texts, less those the harness injected.
+const firstMessage = ({ segments }: History, step: number): string =>
+  (segments[step - 1]!.formatted.groups.find(({ key }) => key === "message.0")?.blocks ?? []).flatMap((block) => (block.injected === undefined ? textsOf(block) : [])).join("");
+// What the harness asks a subagent at work, in a request of its own that the subagent's thread never takes up (Claude
+// Code, 2026-11-17).
+const asking = "Describe your most recent action";
 const sameList = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((one, index) => one === b[index]);
 const kindOf =
   <Kind extends Row["kind"]>(kind: Kind) =>
@@ -58,11 +60,16 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const level = levelOf(step);
     return level === undefined ? 0 : 1 + depthOf(callers.get(level)!);
   };
+  // The agent a step is sent as, by the id its request says: none for the main thread's. And whether a step is the
+  // harness asking a subagent what it is doing.
+  const agentOf = (step: number) => segments[step - 1]!.formatted.exchange.request.head?.headers.find(([name]) => name.toLowerCase() === "x-claude-code-agent-id")?.[1];
+  const asks = (step: number) => segments[step - 1]!.groups.some(({ items }) => items.some((item) => first(item).place?.in === "message" && textsOf(first(item)).some((text) => text.includes(asking))));
 
   const found: Found = { steps: segments.length, forks: new Map(), nests: new Map(), threads: new Map() };
   const broken: string[] = [];
   for (let step = 1; step <= segments.length; step++) {
     const say = (what: string) => broken.push(`step ${step}: ${what}`);
+    const arrived = Array.from({ length: step }, (_, index) => index + 1);
     // The path to the step: a step that stands after nothing, and, of the siblings that have arrived after a thing on
     // it, the one the latest step by now stands under.
     const latest = new Array<number>(step + 1).fill(0);
@@ -167,7 +174,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       }
       const { launch } = first(call);
       if (launch === undefined) say(`${nest.key} stands after a block that launches nothing`);
-      else if (firstMessage(history, root, true).trim() !== launch.prompt.trim()) say(`${nest.key} holds step ${root}, whose first message is not its call's prompt`);
+      else if (firstMessage(history, root).trim() !== launch.prompt.trim()) say(`${nest.key} holds step ${root}, whose first message is not its call's prompt`);
       else if (nest.prompt !== launch.prompt || nest.type !== launch.type) say(`${nest.key} does not say what its call launches`);
       if (nest.depth !== call.depth || nest.dimmed !== call.dimmed) say(`${nest.key} does not stand as its call does`);
       const next = rows.findIndex((row, index) => index > at && row.depth <= nest.depth);
@@ -176,10 +183,19 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const level = [...path].filter((own) => levelOf(own) === nest.key);
       if (!sameList(inside, level)) say(`${nest.key} holds steps ${inside.join(" ")} where its level's on the path are ${level.join(" ")}`);
       if (nest.count !== level.length) say(`${nest.key} counts ${nest.count} steps of ${level.length}`);
-      // A subagent runs until a reply of its ends its turn, or ends with its call of the tool that hands its report back.
-      const { facts, groups } = segments[level.at(-1)! - 1]!.formatted;
-      const done = facts.stopReason === "end_turn" || groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply")?.name === "tool_use: SubagentHandback";
-      if ((nest.latest === undefined) === !done) say(`${nest.key} ${done ? "says the latest of a subagent done at" : "says nothing of a subagent that runs after"} its step ${level.at(-1)}`);
+      // Its line says the last thing the subagent did while it runs. That is decided here by what the layout does not
+      // read: the subagent's steps are those sent under its agent's id, less the harness's asking, and it runs while
+      // the newest of them by now has a reply that stopped for a tool other than the one that hands its report back,
+      // or that has not ended.
+      const agent = agentOf(root);
+      const newest = agent === undefined ? undefined : arrived.findLast((own) => agentOf(own) === agent && !asks(own));
+      if (newest === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
+      else {
+        const { exchange, facts, groups } = segments[newest - 1]!.formatted;
+        const last = groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
+        const runs = exchange.end === undefined || (facts.stopReason === "tool_use" && last?.handback === undefined);
+        if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest}`);
+      }
       const id = fieldOf(first(call), "id");
       rows.forEach((row, index) => {
         if (row.kind !== "block" || id === undefined || fieldOf(blockOf(row), "tool_use_id") !== id) return;
@@ -203,7 +219,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         continue;
       }
       const { summary } = first(block);
-      if (summary === undefined || !firstMessage(history, own, false).includes(summary)) say(`${thread.key} stands after a block whose summary step ${own} does not begin with`);
+      if (summary === undefined || !firstMessage(history, own).includes(summary)) say(`${thread.key} stands after a block whose summary step ${own} does not begin with`);
       if (thread.depth !== block.depth || !block.dimmed) say(`${thread.key} is not level with its block, or its block is not dimmed`);
       if (!(indexOf.get(traceOf(own))! > at) || thread.change === "added" !== (own === step)) say(`${thread.key} does not stand above its thread's first step ${own}, or is ${thread.change}`);
     }

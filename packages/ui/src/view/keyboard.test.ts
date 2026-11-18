@@ -109,6 +109,24 @@ describe("the keys", () => {
     holdEach(heard.app.keys, appPresses, ({ app }) => app);
   });
 
+  it("hears a key whose symbol the keyboard types with Option or AltGr", () => {
+    // `[` and `]` on a German keyboard: Option with 5 and 6 on macOS, AltGr with 8 and 9 on Windows, which reports
+    // AltGr as Ctrl and Alt.
+    const typed: Press[] = [
+      ["[", { altKey: true, code: "Digit5" }, ["sibling", "previous"]],
+      ["]", { altKey: true, code: "Digit6" }, ["sibling", "next"]],
+      ["[", { ctrlKey: true, altKey: true, code: "Digit8" }, ["sibling", "previous"]],
+      ["]", { ctrlKey: true, altKey: true, code: "Digit9" }, ["sibling", "next"]],
+    ];
+    for (const [key, held, call] of typed) {
+      const { calls, conversation } = recorded();
+      const event = keydown(key, held);
+      press(heard.conversation.keys, event, conversation);
+      expect(calls).toEqual([call]);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
   it("leaves a press that is no key to the browser", () => {
     const { calls, conversation } = recorded();
     const other = keydown("x");
@@ -162,6 +180,8 @@ describe("the keys", () => {
       keydown("ArrowLeft", { altKey: true, code: "ArrowLeft" }),
       keydown("Dead", { altKey: true, shiftKey: true, code: "KeyN" }),
       keydown("¡", { altKey: true, code: "Digit1" }),
+      // Where Alt types nothing of its own: the browser's tab of that number, not the category's level.
+      keydown("1", { altKey: true, code: "Digit1" }),
     ];
     for (const event of presses) {
       press(heard.conversation.keys, event, conversation);
@@ -181,6 +201,11 @@ describe("the keys", () => {
     // With Alt the letter is read from the key's place: Windows types the letter, macOS another character or none yet.
     expect(chordOf(keydown("n", { altKey: true, code: "KeyN" }))).toBe("Alt+N");
     expect(chordOf(keydown(...alt("N")))).toBe("Alt+N");
+    // Alt is part of a symbol typed, and so is the Ctrl Windows reports with AltGr; with a digit or a name it is said.
+    expect(chordOf(keydown("[", { altKey: true, code: "Digit5" }))).toBe("[");
+    expect(chordOf(keydown("[", { ctrlKey: true, altKey: true, code: "Digit8" }))).toBe("[");
+    expect(chordOf(keydown("1", { altKey: true, code: "Digit1" }))).toBe("Alt+1");
+    expect(chordOf(keydown("ArrowLeft", { altKey: true, code: "ArrowLeft" }))).toBe("Alt+←");
     expect(chordOf(keydown("s", { ctrlKey: true, metaKey: true }))).toBe("Ctrl+Meta+s");
   });
 
