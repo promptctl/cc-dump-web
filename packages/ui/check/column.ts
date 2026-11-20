@@ -36,7 +36,8 @@ const kindOf =
 
 // A subagent as the wire says it: the steps sent under its id; its parent, the agent the first of them names as its
 // launcher where that agent sent a step before, and the main agent (none) otherwise; the step whose request first
-// carries a result of an Agent call that names it, with the call's id; and the steps whose requests first carry a
+// carries a result of an Agent call, or a notification of its stop, that names it with the id of the Agent or Skill
+// call that launched it; and the steps whose requests first carry a
 // notification of its stop, by where that notification stands in its sender's messages, or its foreground result.
 type WireAgent = { steps: number[]; parent: string | undefined; named: { step: number; call: string } | undefined; stops: number[] };
 // A reply of a subagent's: its step, when its exchange ended, why it stopped, the ids of the calls it makes but its
@@ -57,7 +58,7 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
   const replies = new Map<string, Reply[]>();
   // The step at which each call's result is first sent, by the call's id.
   const answered = new Map<string, number>();
-  const agentCalls = new Set<string>();
+  const launchers = new Set<string>();
   const calledAt = new Map<string, number>();
   const notices = new Set<string>();
   const ended = ({ exchange: { end } }: FormattedExchange) => (end === undefined ? undefined : Date.parse(end.timestamp));
@@ -73,14 +74,14 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
     const blocks = groups.flatMap((group) => group.blocks);
     for (const { stated, place } of blocks) {
       if (stated?.kind !== "call") continue;
-      if (stated.tool.name === "Agent") agentCalls.add(stated.id);
+      if ("launch" in stated.tool) launchers.add(stated.id);
       if (place?.in === "reply" && !calledAt.has(stated.id)) calledAt.set(stated.id, step);
     }
     for (const block of blocks) {
       const { stated, place } = block;
       if (stated?.kind === "result" && place?.in !== "reply") {
         if (!answered.has(stated.answers)) answered.set(stated.answers, step);
-        if (stated.named === undefined || !agentCalls.has(stated.answers)) continue;
+        if (stated.named === undefined || !launchers.has(stated.answers)) continue;
         const agent = agents.get(stated.named.agent) ?? { steps: [], parent: undefined, named: undefined, stops: [] };
         agents.set(stated.named.agent, agent);
         if (agent.named !== undefined) continue;
@@ -95,6 +96,7 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
           const agent = agents.get(stop.agent) ?? { steps: [], parent: undefined, named: undefined, stops: [] };
           agents.set(stop.agent, agent);
           agent.stops.push(step);
+          if (agent.named === undefined && launchers.has(stop.call)) agent.named = { step, call: stop.call };
         }
       }
     }
@@ -169,6 +171,13 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const after = afterOf(own);
       if (after === undefined || (path.has(after.step) && siblings.get(places[own - 1]!)!.every((other) => other > step || latest[other]! <= latest[own]!))) path.add(own);
     }
+    // A subagent's steps are on the path where what it stands in is: its call's step, or its parent's level.
+    const levelListed = (agent: string | undefined): boolean => {
+      if (agent === undefined) return true;
+      const on = standsOn(agent);
+      return "call" in on ? path.has(on.call) && levelListed(senderIdOf(on.call)) : levelListed(on.parent);
+    };
+    for (const own of [...path]) if (!levelListed(senderIdOf(own))) path.delete(own);
     // What a thread on the path carries on from: the step whose summary it begins with, and each that one follows
     // or carries on. A step is dimmed when it is one, or what its level stands in is.
     const carried = new Set<number>();

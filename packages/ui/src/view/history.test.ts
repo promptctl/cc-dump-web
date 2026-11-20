@@ -2,7 +2,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
-import { agentCall, assistant, by, launched, notice, reply, request, text, toolUse, user } from "./fixtures.ts";
+import { agentCall, assistant, by, launched, notice, reply, request, result, text, toolUse, user } from "./fixtures.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
@@ -247,6 +247,19 @@ describe("what a step stands after", () => {
     });
     // Two agents launched with one prompt are two threads: neither's request resends the other's.
     expect(afters(after)).toEqual([undefined, undefined, undefined, follows(1), undefined, undefined, follows(4), follows(7)]);
+  });
+
+  it("ties a forked skill's agent to its Skill call from the step a notification of its stop names both", () => {
+    const skill = toolUse("toolu_1", "Skill", { skill: "review", args: "high" });
+    const called = [hi, assistant(skill), user(result("toolu_1", "Skill \"review\" launched (forked execution, running in the background)."))];
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [skill], "tool_use"),
+      ...request("s1", { model: "m", messages: [user(text("Review."))] }, by("a1")),
+      ...request("t2", { ...main, messages: called }),
+      ...request("t3", { ...main, messages: [...called, assistant(text("Waiting.")), user(notice("a1", "toolu_1"))] }),
+    ]);
+    expect(after.agents.get("a1")).toEqual({ first: 2, parent: { kind: "main" }, named: { step: 4, call: { step: 1, key: "thread:t1/message.1/content.0", launch: { prompt: "high", type: "review" } } }, stops: [4] });
   });
 
   it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {

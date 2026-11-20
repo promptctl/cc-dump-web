@@ -567,6 +567,26 @@ describe("the column", () => {
     expect(keys.slice(keys.indexOf("t1/reply"))).toEqual(["t1/reply", "thread:t1/message.1/content.0", "nest:a1", "thread:t1/message.1/content.1", "nest:a2", "t2", "t2/message.2", "thread:t2/message.2/content.0", "thread:t2/message.2/content.1"]);
   });
 
+  it("lists a subagent's steps only where what it stands in is listed: its call's history, not a sibling's", () => {
+    const asked = [hi, assistant(text("Hello.")), user(text("Look."))];
+    const called = [...asked, assistant(call("toolu_1", "Find the longest word."))];
+    const branched = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("Hello.")]),
+      ...request("t2", { ...main, messages: asked }),
+      ...reply("t2", [call("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }, by("a1")),
+      ...reply("s1", [text("Long.")]),
+      ...request("t3", { ...main, messages: [...called, user(launched("toolu_1", "a1"))] }),
+      // The reader's other question, resending the first turn: a sibling of the turn whose call launched a1.
+      ...request("t2b", { ...main, messages: [hi, assistant(text("Hello.")), user(text("Something else."))] }),
+    ];
+    const at = layouts(branched, dialogue);
+    expect(keysOf(at(4))).toContain(outer);
+    expect(keysOf(at(5))).not.toContain(outer);
+    expect(at(5).steps).toEqual(new Set([1, 5]));
+  });
+
   it("says on a nest's line what it launched, how many steps it holds, and whether it runs and what it last did", () => {
     const at = layouts(nested);
     expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([

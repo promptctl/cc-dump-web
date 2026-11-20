@@ -33,12 +33,12 @@ export type Stated =
   | { kind: "notified"; stops: Stop[] }
   | { kind: "summary"; summary: string };
 // The tool a call calls, where it is one the conversation's shape depends on: the Agent tool, which launches a
-// subagent, or SubagentHandback, by which a subagent hands its report back to its caller and does nothing more until it
-// is told more.
-export type CalledTool = { name: "Agent"; launch: Launch } | { name: "SubagentHandback" } | { name: "other" };
+// subagent, or the Skill tool, which does where its skill forks; or SubagentHandback, by which a subagent hands its
+// report back to its caller and does nothing more until it is told more.
+export type CalledTool = { name: "Agent" | "Skill"; launch: Launch } | { name: "SubagentHandback" } | { name: "other" };
 
-// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
-// agent `type` it names, where it names one.
+// What a call launches: the `prompt` it sends, and the `type` it names, where it names one: an Agent call's agent type
+// and the subagent's first message, or a Skill call's skill and its arguments.
 export type Launch = { prompt: string; type: string | undefined };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
@@ -122,7 +122,8 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 });
 // What a client tool's call states: its id, and the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool
 // launches a subagent: it sends its input's `prompt` as the subagent's first message, to the agent its `subagent_type`
-// names. An input still streaming is text, and launches none yet. A subagent hands its report back with
+// names. Its Skill tool runs the `skill` its input names with its `args`, in a subagent where that skill forks. An
+// input still streaming is text, and launches none yet. A subagent hands its report back with
 // SubagentHandback, the last block of a reply that stops for a tool's use, where its turn never ends. A call with no
 // id states nothing: its entry cannot read it, so it is shown as sent, with why.
 const called = (block: unknown): Stated | undefined => {
@@ -131,10 +132,14 @@ const called = (block: unknown): Stated | undefined => {
   const input = sentField(block, "input");
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
+  const skill = sentField(input, "skill");
+  const args = sentField(input, "args");
   const tool: CalledTool =
     name === "Agent" && typeof prompt === "string"
       ? { name, launch: { prompt, type: typeof type === "string" ? type : undefined } }
-      : name === "SubagentHandback"
+      : name === "Skill" && typeof skill === "string"
+        ? { name, launch: { prompt: typeof args === "string" ? args : "", type: skill } }
+        : name === "SubagentHandback"
         ? { name }
         : { name: "other" };
   return typeof id === "string" ? { kind: "call", id, tool } : undefined;

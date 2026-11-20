@@ -376,6 +376,22 @@ function columnOf({ segments, agents }: History, step: number): Column {
     if ("under" in stand) add(under, stand.under.key, id);
     else add(ending, levelKey(stand.ending), id);
   }
+  // A subagent's steps are listed where what it stands in is: its call's step, or its parent's level. One whose call
+  // a sibling history made is that history's, not the one listed.
+  const listed = new Map<string, boolean>();
+  const isListed = (level: Level): boolean => {
+    if (level.kind === "main") return true;
+    const stand = stands.get(level.id)!;
+    const known = listed.get(level.id) ?? ("under" in stand ? steps.has(stand.under.step) && isListed(segments[stand.under.step - 1]!.level) : isListed(stand.ending));
+    listed.set(level.id, known);
+    return known;
+  };
+  for (const id of stands.keys()) {
+    const level = levelKey({ kind: "agent", id });
+    if (isListed({ kind: "agent", id })) continue;
+    for (const own of levels.get(level) ?? []) steps.delete(own);
+    levels.delete(level);
+  }
   // The nests the chosen step is in: its level's, then the level its nest stands in, and so on out.
   const inside = new Set<string>();
   for (let level: Level = arrived[step - 1]?.level ?? main; level.kind === "agent"; ) {

@@ -52,20 +52,20 @@ const levelOf = (sender: Sender): Level => (sender.kind === "subagent" ? { kind:
 // What the wire says of a subagent, each by the step that says it (docs/design/claude-code-wire.md): its `first` step;
 // its `parent`, the level of the agent that launched it, as its first request says, where that agent's level began
 // before it, and the main agent's otherwise; the step whose request first carries the result that names it, `named`,
-// with the Agent call that result answers; and each step whose request first tells it stopped. [LAW:no-ambient-temporal-coupling] These are events at steps, never where a subagent stands: that is a fact
+// with the call that launched it; and each step whose request first tells it stopped. [LAW:no-ambient-temporal-coupling] These are events at steps, never where a subagent stands: that is a fact
 // of the moment shown, which the column reads off them (view/rows.ts).
 export type Agent = { first: number; parent: Level; named: Naming | undefined; stops: readonly number[] };
 export type Naming = { step: number; call: Call };
-// An Agent call: the step that first sent it, its item's key, and what it launches.
+// A call that launches a subagent: the step that first sent it, its item's key, and what it launches.
 export type Call = { step: number; key: string; launch: Launch };
 
 // The place a step stands after, by name: the trace_id of the step it follows, or the key of the block it hangs on.
 export const placeOf = (after: After, segments: readonly Segment[]): string => (after.on === "step" ? segments[after.step - 1]!.formatted.exchange.trace_id : after.key);
 
 // [LAW:one-source-of-truth] The subagents, by id, as the steps' new items state their calls, the results that name
-// them and their stops, in step order. Only a result answering an Agent call names an agent, and the first to name one
-// is its naming: a resent result is no new item. A foreground agent's result names it as it returns, so it is a stop
-// too.
+// them and their stops, in step order. A result answering an Agent call names its agent, and so does a notification of
+// its stop, with the call that launched it: a forked skill's result names none. The first to name one is its naming: a
+// resent result is no new item. A foreground agent's result names it as it returns, so it is a stop too.
 export function agentsOf(segments: readonly Segment[]): Map<string, Agent> {
   const calls = new Map<string, Call>();
   const namings = new Map<string, Naming>();
@@ -80,14 +80,19 @@ export function agentsOf(segments: readonly Segment[]): Map<string, Agent> {
     }
     for (const { key, versions } of groups.flatMap(({ items }) => items)) {
       const { stated } = versions[0]!.block!;
-      if (stated?.kind === "call" && stated.tool.name === "Agent" && !calls.has(stated.id)) calls.set(stated.id, { step, key, launch: stated.tool.launch });
-      if (stated?.kind === "notified") for (const { agent } of stated.stops) stop(agent, step);
-      if (stated?.kind !== "result" || stated.named === undefined) continue;
-      const call = calls.get(stated.answers);
-      const { agent, ran } = stated.named;
-      if (call === undefined || namings.has(agent)) continue;
-      namings.set(agent, { step, call });
-      if (ran === "foreground") stop(agent, step);
+      const name = (agent: string, id: string) => {
+        const call = calls.get(id);
+        const named = call !== undefined && !namings.has(agent);
+        if (named) namings.set(agent, { step, call });
+        return named;
+      };
+      if (stated?.kind === "call" && "launch" in stated.tool && !calls.has(stated.id)) calls.set(stated.id, { step, key, launch: stated.tool.launch });
+      if (stated?.kind === "notified")
+        for (const { agent, call } of stated.stops) {
+          name(agent, call);
+          stop(agent, step);
+        }
+      if (stated?.kind === "result" && stated.named !== undefined && name(stated.named.agent, stated.answers) && stated.named.ran === "foreground") stop(stated.named.agent, step);
     }
   });
   return new Map([...firsts].map(([id, { step, parent }]) => [id, { first: step, parent, named: namings.get(id), stops: stops.get(id) ?? [] }]));
