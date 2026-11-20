@@ -83,9 +83,7 @@ const top = levelKey({ kind: "main" });
 
 // A tie a step makes: the step, the call it names, and what that call launches where one of that id that launches what
 // the tie asks stands on the step's reach.
-type Tied = { own: number; call: string; found: Launch | undefined };
-// A stop: the agent a notification says stopped, and how.
-type Stop = { agent: string; status: string };
+type Tied = { own: number; by: string; call: string; found: Launch | undefined };
 
 function check(history: History, layoutAt: (step: number) => Layout): { found: Found; broken: string[] } {
   const { segments, stepOf } = history;
@@ -99,52 +97,60 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
   const siblings = new Map<string, number[]>();
   places.forEach((place, index) => place !== undefined && siblings.set(place, [...(siblings.get(place) ?? []), index + 1]));
 
-  // Each subagent's level's first step, and the level its nest stands in: its parent header's agent's, where that agent
-  // sent a step before it, and the main agent's for any other.
+  // What the wire has said by now, kept as each step arrives, so a step's bookkeeping does not grow with the steps
+  // before it. `firsts`: each subagent's level's first step. `parents`: the level its nest stands in, its parent
+  // header's agent's, where that agent sent a step before it, and the main agent's for any other. `ties`: each
+  // subagent's, in the order their steps arrived, by a result or a notification the step it follows did not send,
+  // with the level `by` that made it, found on its reach, it and the steps it stands after, a thread's included: a tie
+  // can come before the agent's first step, so whether its parent's level made it is read when it counts. `stopped`: each agent's last stop, at the step that sends its notification first in the recording.
+  // `answered`: the calls each agent's steps answer. `agents`: each agent's steps since its last stop.
   const firsts = new Map<string, number>();
   const parents = new Map<string, string>();
-  said.forEach(({ level, parent }, index) => {
-    const key = levelKey(level);
-    if (firsts.has(key) || key === top) return;
-    firsts.set(key, index + 1);
-    const named = parent === undefined ? undefined : levelKey({ kind: "agent", id: parent });
-    parents.set(key, named !== undefined && firsts.has(named) ? named : top);
-  });
-  const depthOf = (key: string): number => (key === top ? 0 : 1 + depthOf(parents.get(key)!));
-  // Each subagent's ties, in the order their steps arrived: those a step of its parent's level makes by a result or a
-  // notification the step it follows did not send, found on its reach, it and the steps it stands after, a thread's
-  // included.
   const ties = new Map<string, Tied[]>();
-  said.forEach((one, index) => {
-    const own = index + 1;
+  const sent = new Set<string>();
+  const stopped = new Map<string, { own: number; status: string }>();
+  const answered = new Map<string, Set<string>>();
+  const agents = new Map<string, number[]>();
+  const depthOf = (key: string): number => (key === top ? 0 : 1 + depthOf(parents.get(key)!));
+  const arrive = (own: number) => {
+    const one = sayOf(own);
+    const key = levelKey(one.level);
+    if (!firsts.has(key) && key !== top) {
+      firsts.set(key, own);
+      const named = one.parent === undefined ? undefined : levelKey({ kind: "agent", id: one.parent });
+      parents.set(key, named !== undefined && firsts.has(named) ? named : top);
+    }
     const after = afterOf(own);
     const before = after?.on === "step" ? sayOf(after.step).ties : new Map();
     for (const [signature, { agent, call, result }] of one.ties) {
-      const key = levelKey({ kind: "agent", id: agent });
-      if (before.has(signature) || parents.get(key) !== levelKey(one.level)) continue;
+      const tied = levelKey({ kind: "agent", id: agent });
+      if (before.has(signature)) continue;
       let found: Launch | undefined;
       for (let on: number | undefined = own; on !== undefined && found === undefined; on = afterOf(on)?.step) {
         const launches = sayOf(on).calls.get(call);
         if (launches !== undefined && (!result || launches.tool === "Agent")) found = launches;
       }
-      ties.set(key, [...(ties.get(key) ?? []), { own, call, found }]);
+      ties.set(tied, [...(ties.get(tied) ?? []), { own, by: key, call, found }]);
     }
-  });
-  // Each step's stops: the notifications it is the first in the recording to send.
-  const sent = new Set<string>();
-  const stops = said.map(({ notices }) =>
-    [...notices].flatMap(([text, stop]) => {
-      if (sent.has(text)) return [];
+    for (const [text, { agent, status }] of one.notices) {
+      if (sent.has(text)) continue;
       sent.add(text);
-      return [stop];
-    }),
-  );
+      stopped.set(agent, { own, status });
+      agents.set(agent, []);
+    }
+    if (one.level.kind !== "agent") return;
+    const id = one.level.id;
+    if (!answered.has(id)) answered.set(id, new Set());
+    for (const call of one.answers) answered.get(id)!.add(call);
+    agents.set(id, [...(agents.get(id) ?? []), own]);
+  };
 
   const found: Found = { steps: segments.length, forks: new Map(), nests: new Map(), threads: new Map() };
   const broken: string[] = [];
   for (let step = 1; step <= segments.length; step++) {
     const say = (what: string) => broken.push(`step ${step}: ${what}`);
-    const tiesBy = (key: string) => (ties.get(key) ?? []).filter(({ own }) => own <= step);
+    arrive(step);
+    const tiesBy = (key: string) => (ties.get(key) ?? []).filter(({ by }) => by === parents.get(key));
     // The chain of levels the chosen step is in, each reached at a step: its own at the chosen step, and each above at
     // the step of the latest tie by now that places the one below, where one does.
     const reached = new Set<number>();
@@ -250,7 +256,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const nests = rows.filter(kindOf("nest"));
     const levels = [...firsts].filter(([, own]) => own <= step);
     if (!sameList(nests.map(({ key }) => key).sort(), levels.map(([, own]) => nestKey(sayOf(own).level)).sort())) say(`the nests' lines are ${nests.map(({ key }) => key).join(" ")} where the levels by now are ${levels.map(([key]) => key).join(" ")}`);
-    const doing = doingOf(said, stops, segments, step);
+    const doing = doingOf(said, segments, step, { stopped, answered, agents });
     for (const [key, own] of levels) {
       const level = sayOf(own).level;
       const nest = nests.find((one) => one.key === nestKey(level));
@@ -317,28 +323,23 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
 // that answer none of the calls the step they follow waits on, it runs while one's reply has not ended by the time the
 // chosen step's had (the chosen one not ended: now), or waits on a call no step of it by now answers; and, while it
 // runs, the newest of those replies' last block is what it last did. It ended as its last stop by now says.
-function doingOf(said: readonly Said[], stops: readonly Stop[][], segments: History["segments"], step: number) {
+function doingOf(
+  said: readonly Said[],
+  segments: History["segments"],
+  step: number,
+  { stopped, answered, agents }: { stopped: ReadonlyMap<string, { status: string }>; answered: ReadonlyMap<string, ReadonlySet<string>>; agents: ReadonlyMap<string, readonly number[]> },
+) {
   const now = said[step - 1]!.end;
-  const stopped = new Map<string, { own: number; status: string }>();
-  const answered = new Map<string, Set<string>>();
-  const steps = new Map<string, number[]>();
-  for (let own = 1; own <= step; own++) {
-    for (const { agent, status } of stops[own - 1]!) stopped.set(agent, { own, status });
-    const { level, answers } = said[own - 1]!;
-    if (level.kind !== "agent") continue;
-    steps.set(level.id, [...(steps.get(level.id) ?? []), own]);
-    answered.set(level.id, new Set([...(answered.get(level.id) ?? []), ...answers]));
-  }
   return new Map(
-    [...new Set([...steps.keys(), ...stopped.keys()])].map((id) => {
-      const since = (steps.get(id) ?? []).filter((own) => {
+    [...agents].map(([id, steps]) => {
+      const since = steps.filter((own) => {
         const followed = segments[own - 1]!.after;
         const waited = followed?.on === "step" ? said[followed.step - 1]!.waits : [];
-        return own > (stopped.get(id)?.own ?? 0) && !(waited.length > 0 && !waited.some((call) => said[own - 1]!.answers.has(call)));
+        return !(waited.length > 0 && !waited.some((call) => said[own - 1]!.answers.has(call)));
       });
       const runs = since.some((own) => {
         const { end, waits } = said[own - 1]!;
-        return end === undefined || (now !== undefined && end > now) || waits.some((call) => !answered.get(id)!.has(call));
+        return end === undefined || (now !== undefined && end > now) || waits.some((call) => !answered.get(id)?.has(call));
       });
       const latest = since.map((own) => said[own - 1]!.replied).findLast((block) => block !== undefined);
       return [id, { runs, latest: runs ? latest : undefined, ended: stopped.get(id)?.status }] as const;
