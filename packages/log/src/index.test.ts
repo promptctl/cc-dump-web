@@ -105,7 +105,7 @@ describe("loggedAfter", () => {
 
 describe("serve", () => {
   it("emits one event for an answered request", async () => {
-    const { url, next } = await serving((_req, res) => res.writeHead(418).end());
+    const { url, next } = await serving((_req, res) => res.writeHead(204).end());
 
     await (await fetch(`${url}/a?b=1`, { method: "POST" })).text();
 
@@ -117,10 +117,35 @@ describe("serve", () => {
       outcome: "ok",
       method: "POST",
       url: "/a?b=1",
-      status: 418,
+      status: 204,
       client_address: LOOPBACK,
       client_port: expect.any(Number),
     });
+  });
+
+  it.each([
+    { status: 404, reason: undefined, error: "404 Not Found" },
+    { status: 405, reason: undefined, error: "405 Method Not Allowed" },
+    { status: 400, reason: "from must be 0", error: "400 from must be 0" },
+    { status: 503, reason: undefined, error: "503 Service Unavailable" },
+  ])("records an answer of $status as the request's failure, by its status line, with no word from the handler", async ({ status, reason, error }) => {
+    const { url, next } = await serving((_req, res) => void (reason === undefined ? res.writeHead(status) : res.writeHead(status, reason)).end());
+
+    await (await fetch(url)).text();
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "error", status, error });
+  });
+
+  it("records an answer relayed from another server as its own, whatever its status", async () => {
+    const { url, next } = await serving((_req, res, { relay }) => {
+      relay(429, "Too Many Requests", ["content-type", "application/json"]);
+      res.end("{}");
+    });
+
+    const answer = await fetch(url);
+
+    expect([answer.status, answer.headers.get("content-type"), await answer.text()]).toEqual([429, "application/json", "{}"]);
+    expect(await next()).toMatchObject({ event: "request", outcome: "ok", status: 429 });
   });
 
   it("records an aborted request with no status when the client leaves first", async () => {

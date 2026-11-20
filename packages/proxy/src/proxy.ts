@@ -32,7 +32,7 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
   const request = requestFor[url.protocol as keyof typeof requestFor];
   const basePath = url.pathname.replace(/\/$/, "");
 
-  return (req, res, { trace_id, fail, ended }) => {
+  return (req, res, { trace_id, fail, relay, ended }) => {
     const { name, url: target } = agentOf(req.url!) ?? { name: run, url: req.url! };
     const seen = record(name, trace_id);
     const headers = pairs(req.rawHeaders);
@@ -83,12 +83,13 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
       res.on("close", () => incoming.off("data", responseBody).off("end", responseEnded));
       incoming.on("data", responseBody);
       incoming.on("error", upstreamFailed);
+      // Relayed: an error status is the upstream's, which the recording holds, and no failure of the proxy's.
       // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
       // stricter than node's response parser (status 099, a control byte in the reason phrase). A
       // response it refuses is cut, as the agent's own client would fail on it directly. Not a 502:
       // the refused writeHead has already written part of its state onto `res`.
       try {
-        res.writeHead(incoming.statusCode!, incoming.statusMessage, endToEnd(responseHeaders, hopByHop).flat());
+        relay(incoming.statusCode!, incoming.statusMessage!, endToEnd(responseHeaders, hopByHop).flat());
       } catch (error) {
         fail(error);
         return res.destroy();

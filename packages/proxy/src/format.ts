@@ -105,7 +105,8 @@ export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traf
 // is never an empty `changed_source`: a dead watch must not read as nothing pending.
 export type SourceStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
-// The requests this run of the proxy serves, on any path. `in_flight`: those that arrived and have not ended.
+// The requests this run of the proxy forwards, the agents' traffic on its port, and not the reader port's, where the
+// UI's own open reads would never let `in_flight` fall to 0. `in_flight`: those that arrived and have not ended.
 // `last_request`: when the latest arrived, as an ISO time; null until the run's first.
 export type Traffic = { in_flight: number; last_request: string | null };
 

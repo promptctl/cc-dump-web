@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type OutgoingHttpHeader, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { inspect } from "node:util";
@@ -83,14 +83,20 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
   };
 }
 
-// The request's unit of work as its event records it. A handler reports a failure through `fail`;
-// what the client is sent when that happens is the handler's decision, made before or after `fail`.
-// `ended` resolves when the response closes, with the ending the event records.
+// A request's or an upgrade's unit of work as its event records it. The part reports a failure through `fail`; what
+// the client is sent then is the part's decision, made before or after `fail`.
+// `ended` resolves when the work has ended, with the ending the event records.
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
-// a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
+// a part subscribes to `ended` before the work ends runs before its server's `close` resolves.
 export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
 
-export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
+// [LAW:single-enforcer] A request's work. An answer the part makes with a 4xx or 5xx status is the request's failure,
+// its status line the error, with no word from the handler, which reports through `fail` only a failure its status does
+// not show, or a reason finer than the status line. `relay` writes the head of an answer the part relays from another
+// server, as a gateway (RFC 9110): its status is that server's, so it is no failure of the part's.
+export type RequestWork = Work & { relay: (status: number, reason: string, headers: OutgoingHttpHeader[]) => void };
+
+export type Handler = (req: IncomingMessage, res: ServerResponse, work: RequestWork) => void;
 
 // A request to switch protocols (a WebSocket's) that the part takes over: from here the connection's socket is the
 // part's, and the unit of work is the connection's whole life. The part's promise settles once it is done with the
@@ -201,8 +207,9 @@ function clientOf(socket: Socket) {
 }
 
 // The event is written once, when the response closes: an error reported before then is its
-// outcome, the first one if there were several. A response cut short was stopped if its server had stopped
-// listening by then, which only `close` does, and was left by its client otherwise.
+// outcome, the first one if there were several, and failing that, an error status the part answered with, by its
+// status line. A response cut short was stopped if its server had stopped listening by then, which only `close` does,
+// and was left by its client otherwise.
 // [LAW:one-source-of-truth] This is the one place that decides why a request ended; the handler reads it
 // from `ended`. The request is in flight, for `close` to wait on, until it is decided.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
@@ -210,12 +217,14 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
     const span = startTrace();
     const client = clientOf(req.socket);
     let failure: string | undefined;
+    let relayed = false;
     const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
     inFlight.add(ended);
     res.on("close", () => {
       const cut = server.listening ? "aborted" : "stopped";
-      const ending: Ending =
-        failure === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error: failure };
+      const refused = res.headersSent && res.statusCode >= 400 && !relayed;
+      const error = failure ?? (refused ? `${res.statusCode} ${res.statusMessage}` : undefined);
+      const ending: Ending = error === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error };
       inFlight.delete(ended);
       end(ending);
       log({
@@ -230,9 +239,13 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       });
     });
     const fail = (error: unknown) => (failure ??= describeError(error));
+    const relay = (status: number, reason: string, headers: OutgoingHttpHeader[]) => {
+      res.writeHead(status, reason, headers);
+      relayed = true;
+    };
     // A handler that throws fails its own request, which is cut, and not the process with every other request in it.
     try {
-      handler(req, res, { trace_id: span.trace_id, fail, ended });
+      handler(req, res, { trace_id: span.trace_id, fail, relay, ended });
     } catch (error) {
       fail(error);
       res.destroy();

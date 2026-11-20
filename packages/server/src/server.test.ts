@@ -157,11 +157,13 @@ describe("routes", () => {
     expect([res.status, res.headers.get("access-control-allow-methods"), res.headers.get("access-control-allow-headers")]).toEqual([204, "GET, POST", "content-type"]);
   });
 
-  it("answers a method a route does not take with 405, and an unknown route with 404", async () => {
-    const { url } = await app();
+  it("answers a method a route does not take with 405, and an unknown route with 404, each the request's failure", async () => {
+    const { url, next } = await app();
     const res = await fetch(`${url}/launch`, { method: "DELETE" });
     expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
+    expect(await next()).toMatchObject({ event: "request", method: "DELETE", url: "/launch", status: 405, outcome: "error", error: "405 Method Not Allowed" });
     expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
+    expect(await next()).toMatchObject({ event: "request", url: "/api/nothing", status: 404, outcome: "error", error: "404 Not Found" });
   });
 
   it("serves its log at /logs to the UI's page, and refuses it to a page from another site", async () => {

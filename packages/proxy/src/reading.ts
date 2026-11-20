@@ -64,15 +64,19 @@ function list(names: string[], res: ServerResponse) {
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(listed));
 }
 
+declare const readable: unique symbol;
+// A name a read may join to the recordings directory. Branded, so `readableName` alone makes one.
+type ReadableName = string & { readonly [readable]: true };
+
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The name that may be read, or none: a file the directory lists,
 // spelled as it lists it, or a recording the run holds a writer for, by the name it was given. Nothing else in the URL
 // reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
 // serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
 // A name that is neither, a typo or one nothing made, is not waited on.
-async function readableName(recordings: Recordings, asked: string | undefined): Promise<string | undefined> {
+async function readableName(recordings: Recordings, asked: string | undefined): Promise<ReadableName | undefined> {
   if (asked === undefined) return undefined;
-  if (recordings.follows(asked)) return asked;
-  return (await files(recordings.dir)).find((name) => name === asked);
+  if (recordings.follows(asked)) return asked as ReadableName;
+  return (await files(recordings.dir)).find((name) => name === asked) as ReadableName | undefined;
 }
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
@@ -91,7 +95,7 @@ type Reading = {
   log: Log;
   trace_id: TraceId;
   ended: Promise<Ending>;
-  name: string;
+  name: ReadableName;
   path: string;
   followed: boolean;
   recordings: Recordings;
@@ -99,7 +103,7 @@ type Reading = {
   unterminated: () => number;
 };
 
-function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: string): Reading {
+function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   let finished: ReturnType<typeof recordedLength> | undefined;
@@ -119,7 +123,9 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
 
 async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
   if (position === undefined || !(await atLineStart(reading, position))) {
-    return void res.writeHead(400, { "content-type": "text/plain" }).end("from must be 0 or the id of an event\n");
+    // The reason phrase says why, so the request's event does: it records an answer's status line as its error.
+    const reason = "from must be 0 or the id of an event";
+    return void res.writeHead(400, reason, { "content-type": "text/plain" }).end(`${reason}\n`);
   }
   // A request cut while its recording was looked up, by its client or its server's close, has ended and its
   // event is written: there is no one to read to. One still open has not ended, so the read's subscription

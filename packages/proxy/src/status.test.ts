@@ -95,7 +95,7 @@ describe("countTraffic", () => {
   const request = (traffic: ReturnType<typeof countTraffic>) => {
     const { promise: ended, resolve } = Promise.withResolvers<Ending>();
     const handled: unknown[] = [];
-    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: parseTraceId("t"), fail: () => {}, ended });
+    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: parseTraceId("t"), fail: () => {}, relay: () => {}, ended });
     return { handled, end: () => resolve({ outcome: "ok" }) };
   };
 

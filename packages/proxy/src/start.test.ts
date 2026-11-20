@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { LOOPBACK } from "@cc-dump/log/address";
-import { parseLogLine } from "@cc-dump/log/line";
+import { parseLogLine, type LoggedEvent } from "@cc-dump/log/line";
 import { send, serving, subscribe } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, recordingStart } from "./format.ts";
@@ -51,6 +51,34 @@ describe("the reader port", () => {
     const answered = fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" });
     expect(await failed).toMatchObject({ service: "proxy", event: "request", outcome: "error", error: expect.stringContaining("ECONNREFUSED"), facts: { method: "POST", url: "/v1/messages", status: 502 } });
     expect((await answered).status).toBe(502);
+  });
+
+  it("records the reader port's refusals as their requests' failures, and an error the upstream answered, relayed, as no failure of its own", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    const upstream = await serving((_req, res) => res.writeHead(429, { "content-type": "application/json" }).end('{"type":"error"}'));
+    const { proxyPort, readerPort } = await proxyProcess(upstream.url, dir, "unlimited");
+    const { res, next } = await subscribe(readerPort, "/logs");
+    onTestFinished(() => void res.destroy());
+    const requests = (async () => {
+      const seen = new Map<unknown, LoggedEvent>();
+      while (seen.size < 3) {
+        const { data, id } = await next();
+        const line = parseLogLine(data, id!);
+        if ("event" in line && line.event.event === "request") seen.set(line.event.facts.url, line.event);
+      }
+      return seen;
+    })();
+
+    const answers = [await send(readerPort, { path: "/elsewhere" }), await send(readerPort, { method: "POST", path: "/logs" })];
+    const relayed = await fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" });
+
+    expect([...answers.map(({ statusCode }) => statusCode), relayed.status, await relayed.text()]).toEqual([404, 405, 429, '{"type":"error"}']);
+    const seen = await requests;
+    expect(seen.get("/elsewhere")).toMatchObject({ outcome: "error", error: "404 Not Found", facts: { status: 404 } });
+    expect(seen.get("/logs")).toMatchObject({ outcome: "error", error: "405 Method Not Allowed", facts: { method: "POST", status: 405 } });
+    expect(seen.get("/v1/messages")).toMatchObject({ outcome: "ok", facts: { status: 429 } });
+    for (const answer of answers) answer.destroy();
   });
 
   it("makes a new agent's recording, answering its name, and lists none until it holds something", async () => {

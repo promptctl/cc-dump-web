@@ -73,9 +73,9 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   return watched;
 }
 
-// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy serves passes: `counted`
-// wraps the proxy's handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends,
-// however it ends.
+// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy forwards passes:
+// `counted` wraps the forwarding handler, so a request is counted as it arrives, at the time `now` gives, and uncounted
+// as it ends, however it ends.
 export function countTraffic(now: () => Date = () => new Date()): Watched<Traffic> & { counted: (handler: Handler) => Handler } {
   const { become, ...traffic } = watchable<Traffic>({ in_flight: 0, last_request: null });
   return {
