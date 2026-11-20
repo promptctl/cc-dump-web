@@ -29,8 +29,10 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
 // there is none, the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter
 // replaced, as a body so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
-  for (let end = key.length; end !== -1; end = key.lastIndexOf("/", end - 1)) {
-    const index = indexOf(key.slice(0, end));
+  const segments = key.split("/");
+  const prefixes = segments.map((_, index) => segments.slice(0, segments.length - index).join("/"));
+  for (const prefix of prefixes) {
+    const index = indexOf(prefix);
     if (index !== undefined) return index;
   }
   return undefined;

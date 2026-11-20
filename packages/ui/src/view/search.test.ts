@@ -8,7 +8,7 @@ import { parseSettings, type SearchOptions, type Visibility } from "../settings.
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
-import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
+import { blockOf, createLayout, type BlockRow, type Keys, type Layout, type Row } from "./rows.ts";
 import { address, adjacent, compareAddresses, createSearch, currentIn, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
@@ -251,17 +251,18 @@ describe("search", () => {
   it("orders a block's addresses as the block shows its texts: the name, then each part in order, a part's text before its fields", () => {
     const order = [address.name, address.part(0), address.part(2), address.field(2, 0, "name"), address.field(2, 0, "value"), address.field(2, 1, "name"), address.part(10)];
     expect(order.toReversed().toSorted(compareAddresses)).toEqual(order);
-    // The block lists its texts in that order.
-    const parts: Part[] = [
-      { kind: "text", form: "verbatim", text: "t" },
-      { kind: "fields", fields: [["a", "1"], ["b", "2"]] },
-      { kind: "json", value: 1 },
-      { kind: "diff", before: "old", after: "new" },
-      ...Array.from({ length: 7 }, (): Part => ({ kind: "json", value: 0 })),
-      { kind: "fields", fields: [["c", "3"]] },
-    ];
-    const shown = shownTexts(added({ category: "tools", name: "X", parts })).map(({ at }) => at);
-    expect(shown.toSorted(compareAddresses)).toEqual(shown);
+  });
+
+  it("steps from a current match whose text a later step took away to the next or previous block when none in its own is past it", () => {
+    const text = (text: string) => ({ kind: "text", form: "verbatim", text }) as const;
+    const row = (key: string, parts: Part[]): BlockRow => ({ ...added({ category: "tools", name: "X", parts }), key });
+    const listed = ["j", "k", "m"];
+    const keys: Keys = { at: (index) => listed[index]!, indexOf: (key) => (listed.includes(key) ? listed.indexOf(key) : undefined) };
+    const current = { key: "k", at: address.field(1, 0, "value"), start: 0 };
+    // Block k was [needle, fields(id: needle)]; a later step rewrote part 1 to text holding no match.
+    const found = createSearch()([row("j", [text("needle j")]), row("k", [text("needle k"), text("none")]), row("m", [text("needle m")])], pattern);
+    expect(adjacent(found, current, top, "next", pattern, keys)!.match).toEqual({ key: "m", at: address.part(0), start: 0 });
+    expect(adjacent(found, current, top, "previous", pattern, keys)!.match).toEqual({ key: "k", at: address.part(0), start: 0 });
   });
 
   it("paints the current match in the text at its address, by the address's value, not its object", () => {

@@ -92,11 +92,11 @@ export type Shown = { at: Address } & ({ in: "line" | "content"; searched: Searc
 // The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
 // away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
 // itself or a line describing it, what a step rewrote in a block is the view's account of it, and a text's contents
-// say its headings again (contents.ts), so none is searched. The order is the block's own, its parts' and their fields', as
-// the view lists them; `compareAddresses` states it for an address the block no longer shows.
+// say its headings again (contents.ts), so none is searched. [LAW:one-source-of-truth] The order is `compareAddresses`'s.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  const texts: Shown[] = [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return texts.toSorted((a, b) => compareAddresses(a.at, b.at));
 }
 
 function partTexts(part: Part, index: number): Shown[] {
@@ -232,10 +232,12 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
   // In its own block, the first match past it in the direction of the step, by where its text stands in the block,
   // whether the block still shows that text or a later step took it away.
-  const own = current && found.byKey.get(current.key);
-  if (current !== undefined && own !== undefined) {
-    const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(compareAddresses(match.at, current.at) || match.start - current.start));
-    if (past !== undefined) return stepTo(found, own, past);
+  if (current !== undefined) {
+    const own = found.byKey.get(current.key);
+    if (own !== undefined) {
+      const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(compareAddresses(match.at, current.at) || match.start - current.start));
+      if (past !== undefined) return stepTo(found, own, past);
+    }
   }
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
   const rowPlace = (key: string, bias: number) => {

@@ -45,4 +45,9 @@ describe("position", () => {
     expect(positionAt(0, rowAt)).toEqual({ at: "start" });
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
   });
+
+  it("does not resolve a key that starts at a slash and none of whose prefixes is a row, as one of an exchange with an empty trace id", () => {
+    expect(resolve({ at: "row", key: "/request/http", offset: 0 }, indexOf, placed)).toBeUndefined();
+    expect(resolve({ at: "row", key: "c//body", offset: 0 }, indexOf, placed)).toBe(450);
+  });
 });
