@@ -5,7 +5,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
 import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
-// A category's level of detail (docs/design/01-mvp.md, F5): its blocks not listed, `hidden`; listed, each as its line,
+// A category's level of detail (docs/design/features.md, F5): its blocks not listed, `hidden`; listed, each as its line,
 // `compact`; or each in full, `expanded`. In order of more detail, the order a click on the filter bar moves through.
 export const visibilities = ["hidden", "compact", "expanded"] as const;
 export type Visibility = (typeof visibilities)[number];
@@ -28,12 +28,12 @@ export const defaultVisibility: Record<Category, Visibility> = {
   http: "hidden",
 };
 
-// How a search reads its query (docs/design/01-mvp.md, F6). `caseSensitive`: letters match only in the case typed.
+// How a search reads its query (docs/design/features.md, F6). `caseSensitive`: letters match only in the case typed.
 // `wholeWord`: a match is not part of a longer word. `regex`: the query is a regular expression, not the characters it
 // says. Each is on or off and no other, so the choices are independent.
 export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
 
-// [LAW:one-source-of-truth] The reader's settings (docs/design/01-mvp.md, F11): what they chose that outlives a tab. Kept
+// [LAW:one-source-of-truth] The reader's settings (docs/design/features.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
 // app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6).

@@ -4,7 +4,7 @@ import type { TmuxWindow } from "./format.ts";
 // without starting the server.
 export const SERVER_PORT = 3345;
 
-// [LAW:one-source-of-truth] Where on the app server a page's WebSocket reaches a tmux window (docs/design/01-mvp.md,
+// [LAW:one-source-of-truth] Where on the app server a page's WebSocket reaches a tmux window (docs/design/features.md,
 // F13): under TMUX_PATH, by its whole address, its server's start time, its session's id and its own.
 export const TMUX_PATH = "/tmux";
 export const tmuxPath = ({ start_time, session_id, window_id }: TmuxWindow) =>

@@ -28,7 +28,7 @@ export type Connection = {
   // Makes a new recording for an agent started by hand, which the proxy follows from its first event (F8). Made once
   // asked, so it is asked only for an agent about to be started.
   agentRecording: () => Promise<Listing>;
-  // The launch settings and the sessions on the user's tmux server, read now (docs/design/01-mvp.md, F1). A refusal
+  // The launch settings and the sessions on the user's tmux server, read now (docs/design/features.md, F1). A refusal
   // fails it in the app server's words, tmux's own when tmux refused, as when it has no server or no sessions.
   launcher: (signal: AbortSignal) => Promise<Launcher>;
   // Stores the settings asked for as the next launch's, then opens the agent's window. Fails as `launcher` does.

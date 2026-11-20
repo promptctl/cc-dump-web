@@ -2,7 +2,7 @@ import { describe } from "./describe.ts";
 import { outcomes, type Ending } from "./ending.ts";
 import { fields, jsonObject, parseJson } from "./json.ts";
 
-// A part's log as the logs panel reads it (docs/design/01-mvp.md, F9). Imports nothing that needs node, so the UI's
+// A part's log as the logs panel reads it (docs/design/features.md, F9). Imports nothing that needs node, so the UI's
 // parser is this one.
 
 // [LAW:types-are-the-program] How much a line asks of its reader, most first: work that failed, work its server cut

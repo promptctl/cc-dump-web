@@ -27,9 +27,9 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - An agent started by hand also works: the info panel (F8) gives the line to export.
 
 ### F2. Capture
-- Every request to the Anthropic Messages API, streaming or not, is captured with its response.
+- Every request, whatever its path, is captured with its response. Those to the Anthropic Messages API, a POST to `/v1/messages`, streaming or not, are shown.
 - The agent receives response bytes as they arrive from Anthropic. The request body reaches Anthropic byte-for-byte as the agent sent it.
-- Requests to any other path are forwarded and not shown.
+- Requests with any other method or path are forwarded and recorded, and not shown.
 - Requests that overlap in time are kept as separate exchanges.
 - Failures are captured as exchanges: an HTTP error with its body, an error event in the middle of a stream, and a failed connection to Anthropic.
 - Every block type is captured, including types the app has never seen. The proxy records what was on the wire and does not interpret it.
@@ -53,7 +53,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
 - A Markdown heading in a block's text is the line of what stands under it, up to the next heading of its depth or a shallower one: a click on the heading hides that, the deeper headings and what is under them with it, and a click shows it again. Closed, the line says how many lines it hides. What the user and the assistant said, and what the assistant thought, starts with all of it shown; the system prompt, a tool's description and the content the harness injects start with each heading closed, as their outline. What the user opened or closed stays that way.
 - A Markdown text whose headings stand far apart has its contents above it: one line, closed until clicked, that opens to a list of every heading in the text, each set in under the heading it stands under, with how many lines stand under it. A click on an entry shows its heading, whatever was closed around it, and what stands under it, and puts the view there.
-- A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
+- A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3) and a block a step took away, which always start collapsed. A block of a hidden category that search shows (F6) starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
 - A set is one line while closed, and its blocks are listed under that line while open; a click on the line switches between them. The line says how many blocks the set holds, their names, as many as fit, and their size together, and the last thing a step did to one of them, so a tool a step rewrote or took away is found from the closed line. A set starts closed at its category's compact level and open at its expanded level, and one the user opened or closed stays that way when the level changes.
 
 ### F5. Filter
@@ -73,10 +73,11 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - The user can pick any past recording from a list and read it with every feature in this document.
 - A reopened recording and live traffic reach the screen through the same path. There is no second implementation for replay.
 - Live capture keeps recording while the user reads another recording.
+- A restart of the proxy ends the live view of an agent launched before it: its conversation says the recording ended. The recording is followed again once the agent's next request reaches the new proxy and the recording is reopened.
 
 ### F8. Status and info
 - **Connection status,** always on screen: whether the browser is connected to the proxy, how many requests are in flight, and how long ago the last request arrived.
-- **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, which gives the agent started with it a recording of its own, the upstream address, the path of the current recording, the agent's session ID when the traffic carries one, the tmux session used for launching, and the app version. Every value can be copied with one click.
+- **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, which gives the agent started with it a recording of its own, the upstream address, the path of the current recording, the agent's session ID when a request's `metadata.user_id` is the JSON text of an object holding `session_id`, the tmux session used for launching, and the app version. Every value can be copied with one click.
 
 ### F9. Logs panel
 - A panel shows the log lines of the proxy and the app server as they are written, and can be filtered by level.
@@ -114,11 +115,13 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 
 **The proxy knows nothing about messages, blocks or streaming events.** Everything that understands the Anthropic API lives in the parts that reload.
 
-**One path to the screen.** The browser holds two kinds of state: the events it has read from the proxy, and the view settings of F11. Everything else on screen is derived from those two. Watching live traffic, reopening a past recording, refreshing the browser and reloading after a code change are one operation: read a recording from the start, then follow it.
+**One path to the screen.** The browser holds three kinds of state: the events it has read from the proxy, the view settings of F11, and what the reader has chosen in the view, kept for the tab (F12): the recording open, what they opened or closed, where they are, the moment shown and their search. Everything else on screen is derived from those three. Watching live traffic, reopening a past recording, refreshing the browser and reloading after a code change are one operation: read a recording from the start, then follow it.
 
-**One connection interface.** The UI reaches the backend only through a single interface.
+**One connection interface.** The UI reaches the proxy and the app server only through one interface: it lists the recordings, reads them, follows the proxy's status and each part's log, and launches agents. How they are reached is its implementation's alone.
 
-**One formatter.** A new block type or a richer rendering is one new entry in the formatter, with no change to capture or the view. Anything computed from traffic is another reader of the same events.
+**One formatter.** The formatter alone reads the API's content: a new block type is one new entry in it, shown as parts the view already draws, with no change to capture or the view. Anything computed from traffic is another reader of the same events.
+
+**Security is a non-goal.** Whatever is needed is built in the most direct way.
 
 ## Stack
 

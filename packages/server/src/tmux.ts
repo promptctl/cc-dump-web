@@ -22,7 +22,7 @@ export type NewWindow = { session: string; command: string; cwd: string; env: Re
 // The window opened, by its address, and its pane.
 export type Window = Pick<Launched, keyof TmuxWindow | "pane_id">;
 
-// [LAW:locality-or-seam] Everything the app server asks of tmux (docs/design/01-mvp.md, F1). Each call is one
+// [LAW:locality-or-seam] Everything the app server asks of tmux (docs/design/features.md, F1). Each call is one
 // control-mode connection, opened for it and closed after, so none outlives the app server's restart on a change.
 // Whatever tmux refuses, the attach included (no server, no sessions), rejects as TmuxRefused, in tmux's words.
 export type Tmux = {

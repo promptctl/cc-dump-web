@@ -1,5 +1,5 @@
 // What the harness puts into the text of a message, and the text around it: the pieces a text splits into, so each is a
-// block of its own, named for what it is (docs/design/01-mvp.md, F3). The harness is Claude Code; its own content is a
+// block of its own, named for what it is (docs/design/features.md, F3). The harness is Claude Code; its own content is a
 // system reminder, hook output, the contents of a CLAUDE.md file, or, in a system-role message, a section it titles.
 
 // [LAW:types-are-the-program] A piece is what said it, and what that says about it: a hook has its name, a CLAUDE.md

@@ -10,7 +10,7 @@ import { useView } from "./state.ts";
 
 type Informing = Pick<Connection, "agentRecording" | "launcher">;
 
-// The info panel (docs/design/01-mvp.md, F8): what a person needs to point an agent at the proxy by hand, and to say
+// The info panel (docs/design/features.md, F8): what a person needs to point an agent at the proxy by hand, and to say
 // what they are looking at. Each value copies with one click. `status`: the UI's connection to the proxy, whose status
 // says what the proxy is, so the panel follows the proxy across its restarts. `open`: the recording open, by name.
 // `session`: the agent's session, as the latest request that names one says it.

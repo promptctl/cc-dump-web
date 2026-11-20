@@ -1,7 +1,7 @@
 // Where the reader is in the conversation: at its end, wherever the end now is; at its start; or at a row, `offset`
 // pixels into it at the top of the view.
 // [LAW:types-are-the-program] A row is named by its key, not its pixel offset, which moves as rows above it arrive or
-// are measured. The end is not a place: while follow is on, being at the end is following (docs/design/01-mvp.md, F4).
+// are measured. The end is not a place: while follow is on, being at the end is following (docs/design/features.md, F4).
 export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: string; offset: number };
 
 // A placed row: its key, where it starts, in pixels from the top of the conversation, and its height.

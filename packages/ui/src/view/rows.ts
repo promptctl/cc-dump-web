@@ -40,7 +40,7 @@ export type BlockRow = { kind: "block"; key: string; change: Change; versions: r
 export type Standing = { depth: number; dimmed: boolean };
 // [LAW:types-are-the-program] A set's line: the title of a group whose blocks are a set, blocks of one kind and one
 // category that read as one thing, as a request's tool definitions do. It stands for them while it is closed, when
-// none of them is listed, and over them while it is open (docs/design/01-mvp.md, F4). It holds the group's `items`,
+// none of them is listed, and over them while it is open (docs/design/features.md, F4). It holds the group's `items`,
 // the history's own array, and the step shown and the `steps` the column lists, which its blocks' rows are read from
 // (blocksOf), so it is the same fields while none of its items gets a version. `change`: what the step shown did to
 // the set, which brings it, leaves it, or changes it, by doing anything to a block of it.
@@ -137,7 +137,7 @@ export function summaryOf(set: SetRow): Summary {
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
 // category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block revealed
 // among them wherever no closed nest holds it; `every` row, listed or not, which the search reads, since a hidden
-// category's blocks, a closed set's and a closed nest's are searched (docs/design/01-mvp.md, F6); and the `steps` the
+// category's blocks, a closed set's and a closed nest's are searched (docs/design/features.md, F6); and the `steps` the
 // column lists, whose rows these are (columnOf).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
@@ -153,7 +153,7 @@ export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 // [LAW:one-source-of-truth] What the reader chose to show of each block, region or nest they opened or closed, by key:
 // open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts now
 // or not, since how a block starts moves with its category's level and the choice outlasts a change of level
-// (docs/design/01-mvp.md, F4).
+// (docs/design/features.md, F4).
 export type Opened = Record<string, boolean>;
 export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
 
@@ -164,7 +164,7 @@ export const pastKey = (key: string) => `past:${key}`;
 // Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
 // level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
 // closed until the reader opens it (`opened`). It leaves out the blocks of each category `visibility` hides
-// (docs/design/01-mvp.md, F5) and of each set that shows closed (F4) but the one at the key `revealed`, which the
+// (docs/design/features.md, F5) and of each set that shows closed (F4) but the one at the key `revealed`, which the
 // search has stepped to (F6), and a group or a set with no block a level lists, rather than a title over nothing. A
 // step of 0 is the conversation before anything arrived.
 export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
@@ -471,7 +471,7 @@ function keysOf(keys: string[], places: Map<string, number>): Keys {
 }
 const listedKeysOf = (keys: string[], measured: string[], places: Map<string, number>): ListedKeys => ({ ...keysOf(keys, places), measuredBy: (index) => measured[index]! });
 
-// [LAW:types-are-the-program] What each level shows of its category's blocks (docs/design/01-mvp.md, F4, F5): whether
+// [LAW:types-are-the-program] What each level shows of its category's blocks (docs/design/features.md, F4, F5): whether
 // they are listed, and whether each starts expanded. The compiler asks for an entry for each level.
 const levels: Record<Visibility, { listed: boolean; startsExpanded: boolean }> = {
   hidden: { listed: false, startsExpanded: false },
@@ -596,7 +596,7 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
 
 // [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen). A block
 // starts as its category's level says, but what the harness injected into a message starts collapsed, since it is not
-// what was said (docs/design/01-mvp.md, F4), and so do a block a step took away, which is no longer part of the
+// what was said (docs/design/features.md, F4), and so do a block a step took away, which is no longer part of the
 // conversation, and a block of a hidden category the search revealed.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
   const { category, injected } = blockOf(row);
@@ -604,14 +604,14 @@ export function startsExpanded(row: BlockRow, visibility: Record<Category, Visib
 }
 
 // [LAW:one-source-of-truth] Whether the sections under the headings of a block's texts start open, before any choice of
-// the reader's (docs/design/01-mvp.md, F4): what the user or the assistant said or thought reads whole, as it was
+// the reader's (docs/design/features.md, F4): what the user or the assistant said or thought reads whole, as it was
 // written, each heading a place to fold it; what was written for the model, its prompt, a tool's description and what
 // the harness injected, starts as its outline, each heading a line that opens.
 export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
   injected === undefined && (category === "user" || category === "assistant" || category === "thinking");
 
 // [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's: as the level of its blocks'
-// category says, so at compact it is its one line, and at expanded its blocks are listed (docs/design/01-mvp.md, F4).
+// category says, so at compact it is its one line, and at expanded its blocks are listed (docs/design/features.md, F4).
 export const setStartsOpen = (category: Category, visibility: Record<Category, Visibility>): boolean => levels[visibility[category]].startsExpanded;
 
 // The set a block's row is in that shows closed, by its line's key: none for a row of no set, or of a set that shows

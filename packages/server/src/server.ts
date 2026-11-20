@@ -11,7 +11,7 @@ import { TmuxRefused, type Tmux } from "./tmux.ts";
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
 // tmux server, the running proxy (what it says it is, and the recording it makes for an agent), and `directory`, the one
 // the app was started in, where every agent it launches starts. `logs`: the app server's log lines (processLog), which
-// `GET /logs` serves to the logs panel (docs/design/01-mvp.md, F9).
+// `GET /logs` serves to the logs panel (docs/design/features.md, F9).
 export type Parts = {
   log: Log;
   logs: Handler;
@@ -43,7 +43,7 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
       await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
     ).settings;
 
-  // `GET /launch` (docs/design/01-mvp.md, F1): what a launch starts from.
+  // `GET /launch` (docs/design/features.md, F1): what a launch starts from.
   const launcher: Answer = async (_req, { trace_id }): Promise<Launcher> => ({
     settings: await readSettings(trace_id),
     sessions: await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length })),
@@ -76,7 +76,7 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
 
   return (req, res, work) => {
     // [LAW:single-enforcer] Every answer, any route's: the browser's origin is the UI's, and security is a non-goal
-    // (docs/design/01-mvp.md).
+    // (docs/design/features.md).
     res.setHeader("access-control-allow-origin", "*");
     if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} is not one this machine serves`));
     const route = routes[new URL(req.url!, "http://server").pathname];

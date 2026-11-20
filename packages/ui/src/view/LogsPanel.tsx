@@ -7,7 +7,7 @@ import { settings, useSettings } from "../settings.ts";
 
 const named: Record<Part, string> = { proxy: "proxy", server: "app server" };
 
-// The logs panel (docs/design/01-mvp.md, F9): the proxy's and the app server's log lines as they are written, the
+// The logs panel (docs/design/features.md, F9): the proxy's and the app server's log lines as they are written, the
 // latest at the bottom, those asking at least the level chosen. Each line opens to the whole of its event.
 export function LogsPanel({ connection }: { connection: Pick<Connection, "logs"> }) {
   const logs = useLogs(connection);
