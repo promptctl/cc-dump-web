@@ -465,19 +465,30 @@ function ForkLine({ row }: { row: ForkRow }) {
   );
 }
 
-// A nest's line (rows.ts, NestRow), under the Agent call that launched the subagent: its type, the prompt's first
-// words, how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
-// lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the reader
-// left it. Its arrow and its words stand under those of the call's line.
+// A nest's line (rows.ts, NestRow): under the Agent call that launched the subagent, its type and the prompt's first
+// words; at the end of the level of the agent that launched it, until a call's result names it, its id and that no call
+// has yet; then how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or
+// Enter, lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the
+// reader left it. Its arrow and its words stand under those of the call's line.
 function NestLine({ row }: { row: NestRow }) {
   const { open, toggle } = useToggle(row.key, nestStartsOpen);
+  const { subagent } = row;
   return (
     <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
       <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
-      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
-      <span className="min-w-0 truncate" title={row.prompt}>
-        {row.prompt}
-      </span>
+      {subagent.on === "call" ? (
+        <>
+          {subagent.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{subagent.type}</span>}
+          <span className="min-w-0 truncate" title={subagent.prompt}>
+            {subagent.prompt}
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="shrink-0 font-mono text-foreground">{subagent.agent ?? "sender not recorded"}</span>
+          <span className="min-w-0 truncate">{subagent.agent === undefined ? "no agent id was recorded for this request" : "no call's result names this agent yet"}</span>
+        </>
+      )}
       <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
       {row.latest === undefined ? null : <span className="min-w-0 flex-1 truncate text-success">{`● ${row.latest.name} ${preview(row.latest)}`}</span>}
     </button>

@@ -29,17 +29,33 @@ type Gone = { step: number; block: undefined; was: KeyedBlock; previous: number 
 // `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
 
-// A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, and
-// what it stands `after`.
-export type Segment = { formatted: FormattedExchange; groups: readonly ItemGroup[]; after: After | undefined };
+// A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it
+// stands `after` on its `level`, and the tasks whose stop first arrived with it, `stops`, by their ids: each
+// notification's task (format/injected.ts), and each agent a foreground call's result says ran, which it returns as
+// the agent stops. [LAW:one-source-of-truth] A stop arrives with the item that tells of it, so a notification resent
+// is not another, and a second one alike, at a place of its own, is.
+export type Segment = { formatted: FormattedExchange; groups: readonly ItemGroup[]; level: string; after: After | undefined; stops: readonly string[] };
 export type ItemGroup = { key: string; title: Group["title"]; items: readonly Item[] };
 
-// [LAW:types-are-the-program] What a step stands after, which is one thing: the step its request follows
-// (view/lines.ts), or, for one whose request follows nothing, the block its thread hangs on, the item at `key` in
-// `step`'s segment: the Agent tool's call that launched it, under which it is a `nest`, or the reply's text whose
-// summary it begins with, which it carries on as the `thread` after a compaction. None for one that hangs on nothing.
+// [LAW:types-are-the-program] What a step stands after on its level, which is one thing: the step its request follows
+// (view/lines.ts), or, for one whose request follows nothing, the reply's text whose summary its thread begins with,
+// the item at `key` in `step`'s segment, which it carries on after a compaction. None for one that follows nothing.
 // The steps that stand after one thing are siblings: the column lists one of them (view/rows.ts).
-export type After = { step: number; on: "step" } | { step: number; on: "block"; key: string; as: "nest" | "thread" };
+export type After = { step: number; on: "step" } | { step: number; on: "summary"; key: string };
+
+// [LAW:types-are-the-program] The levels steps stand on, each by who sent them (format/format.ts, Sender): the main
+// agent's, `top`; every step a subagent sent, `agent:<id>`, whatever its first message says; and a step whose sender
+// was not recorded, on a level of its own.
+export const top = "";
+export const agentLevel = (id: string) => `agent:${id}`;
+const levelOf = ({ sender, exchange }: FormattedExchange): string =>
+  sender.kind === "main" ? top : sender.kind === "subagent" ? agentLevel(sender.id) : `unrecorded:${exchange.trace_id}`;
+
+// Where a level other than the main agent's stands (docs/design/claude-code-wire.md, "An Agent call and the agent it
+// launches"): under the Agent call whose result names its agent, the call's item at `key` in step `step`'s segment; or,
+// until a result names it, at the end of the level of the agent that launched it, `level`, not yet placed: the parent
+// subagent's the header names, or the main agent's, which a step whose sender was not recorded stands at too.
+export type Placement = { on: "call"; step: number; key: string } | { on: "level"; level: string };
 
 // The place a step stands after, by name: the trace_id of the step it follows, or the key of the block it hangs on.
 export const placeOf = (after: After, segments: readonly Segment[]): string => (after.on === "step" ? segments[after.step - 1]!.formatted.exchange.trace_id : after.key);
@@ -57,12 +73,13 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
   return new Map([...siblings].filter(([, steps]) => steps.length > 1));
 }
 
-// The conversation's history: each step's segment, step k's at k - 1, and the step of an exchange, by its trace_id.
-export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined };
+// The conversation's history: each step's segment, step k's at k - 1; the step of an exchange, by its trace_id; and
+// where each level stands but the main agent's, by its key, in the order their first steps arrived.
+export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; placements: ReadonlyMap<string, Placement> };
 
-// A thread: the first message every request of it sends, what that message says, how many of its requests follow
-// nothing, and the tree of the paths its requests have sent.
-type Thread = { first: KeyedBlock[]; said: string; roots: number; root: Root };
+// A thread: its level, the first message every request of it sends, what that message says, and the tree of the paths
+// its requests have sent.
+type Thread = { level: string; first: KeyedBlock[]; said: string; root: Root };
 // The root of a thread's tree, before any block, which the request that began the thread owns; a node, a block at its
 // place, `at`, as the request that first sent it there, `owner`, sent it. Each has the nodes after it on the paths that
 // pass it, and the steps whose path, reply included, ends at it.
@@ -91,11 +108,13 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   const threads: Thread[] = [];
   const read: Read[] = [];
   const folded: Folded[] = [];
-  // What a thread can hang on, in the order it arrived: each Agent tool's call, by its item's key, with the prompt it
-  // launches a subagent with, and each summary a reply's text ends with.
-  const launches: { step: number; key: string; prompt: string }[] = [];
-  const summaries: { step: number; key: string; summary: string }[] = [];
-  let last: History = { segments: [], stepOf: () => undefined };
+  // Each Agent tool's call, by its id, with its item; the call the first result to name an agent names it of, by the
+  // agent's id; and each summary a reply's text ends with, by its level, in the order it arrived, which a thread can
+  // hang on.
+  const calls = new Map<string, { step: number; key: string }>();
+  const named = new Map<string, string>();
+  const summaries: { level: string; step: number; key: string; summary: string }[] = [];
+  let last: History = { segments: [], stepOf: () => undefined, placements: new Map() };
 
   const itemAt = ({ step, group, index }: Location) => folded[step - 1]!.segment.groups[group]!.items[index]!;
   const replace = ({ step, group, index }: Location, item: Item) => {
@@ -143,18 +162,27 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     return base.chain;
   };
 
-  // What a thread's request that follows nothing hangs on. The requests of the subagents that calls of one prompt
-  // launch are one thread's, each following nothing, so the i-th of them hangs on the i-th call with that prompt, and
-  // one past the last call on the last: a probe of a subagent, which resends its first message alone. Any other hangs
-  // on the last summary its first message holds, or on nothing.
-  const hungOn = (thread: Thread, undo: (() => void)[]): After | undefined => {
-    const calls = launches.filter(({ prompt }) => prompt === thread.said);
-    const call = calls[Math.min(thread.roots, calls.length - 1)];
-    thread.roots++;
-    undo.push(() => thread.roots--);
-    if (call !== undefined) return { step: call.step, on: "block", key: call.key, as: "nest" };
-    const summary = summaries.findLast(({ summary }) => thread.said.includes(summary));
-    return summary === undefined ? undefined : { step: summary.step, on: "block", key: summary.key, as: "thread" };
+  // What a thread's request that follows nothing stands after: the last summary of its level its first message holds,
+  // or nothing.
+  const hungOn = (thread: Thread): After | undefined => {
+    const summary = summaries.findLast(({ level, summary }) => level === thread.level && thread.said.includes(summary));
+    return summary === undefined ? undefined : { step: summary.step, on: "summary", key: summary.key };
+  };
+
+  // Where each level but the main agent's stands, by what the steps folded say: a subagent's under the call a result
+  // names it with, once one has; until then, and for a step whose sender was not recorded, in its parent's level.
+  const placementsOf = (): Map<string, Placement> => {
+    const placements = new Map<string, Placement>();
+    for (const { formatted } of read) {
+      const level = levelOf(formatted);
+      if (level === top || placements.has(level)) continue;
+      const { sender } = formatted;
+      const id = sender.kind === "subagent" ? named.get(sender.id) : undefined;
+      const call = id === undefined ? undefined : calls.get(id);
+      const parent = sender.kind === "subagent" && sender.parent !== undefined ? agentLevel(sender.parent) : top;
+      placements.set(level, call === undefined ? { on: "level", level: parent } : { on: "call", ...call });
+    }
+    return placements;
   };
 
   // Folding a step lists its blocks as items against the conversation on its path, the steps it follows up to the one
@@ -166,8 +194,10 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   const fold = ({ formatted, thread }: Read, follows: ReadonlyMap<number, number | undefined>, step: number): Folded => {
     const undo: (() => void)[] = [];
     const trace = formatted.exchange.trace_id;
+    const level = levelOf(formatted);
     const followed = follows.get(step);
-    const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread, undo);
+    const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread);
+    const stops: string[] = [];
     const chain = thread === undefined ? undefined : chainOf(followed, step, undo);
     const path = new Set<number>();
     for (let on: number | undefined = step; on !== undefined; on = follows.get(on)) path.add(on);
@@ -191,12 +221,19 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
-          if (block.launch !== undefined) {
-            launches.push({ step, key, prompt: block.launch.prompt.trim() });
-            undo.push(() => launches.pop());
+          const { launch, launched, notified, summary } = block;
+          // A call is the item that first sent it: a fork of a thread, a level of its own, resends the calls it holds.
+          if (launch !== undefined && !calls.has(launch.call)) {
+            calls.set(launch.call, { step, key });
+            undo.push(() => calls.delete(launch.call));
           }
-          if (block.summary !== undefined) {
-            summaries.push({ step, key, summary: block.summary });
+          if (launched !== undefined && !named.has(launched.agent)) {
+            named.set(launched.agent, launched.call);
+            undo.push(() => named.delete(launched.agent));
+          }
+          stops.push(...(notified ?? []).map(({ task }) => task), ...(launched?.ran === "foreground" ? [launched.agent] : []));
+          if (summary !== undefined) {
+            summaries.push({ level, step, key, summary });
             undo.push(() => summaries.pop());
           }
           continue;
@@ -222,7 +259,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was, previous }] });
       undo.push(() => replace(location, item));
     }
-    return { segment: { formatted, groups, after }, chain, undo };
+    return { segment: { formatted, groups, level, after, stops }, chain, undo };
   };
 
   return (formatted) => {
@@ -244,7 +281,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares
     // only what it folds again.
     folded.forEach((step, index) => (step.segment = segments[index]!));
-    last = { segments, stepOf: (trace) => steps.get(trace) };
+    last = { segments, stepOf: (trace) => steps.get(trace), placements: keptPlacements(last.placements, placementsOf()) };
     return last;
   };
 }
@@ -283,7 +320,10 @@ const keptEach = <T>(before: readonly T[] | undefined, made: readonly T[], kept:
 const keptItem = (before: Item | undefined, made: Item): Item => keptAs(before, { ...made, versions: keptEach(before?.versions, made.versions, keptAs) });
 const keptGroup = (before: ItemGroup | undefined, made: ItemGroup): ItemGroup => keptAs(before, { ...made, items: keptEach(before?.items, made.items, keptItem) });
 const keptSegment = (before: Segment | undefined, made: Segment): Segment =>
-  keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), after: made.after && keptAs(before?.after, made.after) });
+  keptAs(before, { ...made, groups: keptEach(before?.groups, made.groups, keptGroup), after: made.after && keptAs(before?.after, made.after), stops: keptAs(before?.stops, made.stops) });
+// The placements, the map handed out before where each level stands as it did.
+const keptPlacements = (before: ReadonlyMap<string, Placement>, made: Map<string, Placement>): ReadonlyMap<string, Placement> =>
+  before.size === made.size && [...made].every(([level, placement]) => { const was = before.get(level); return was !== undefined && sameFields(was, placement); }) ? before : made;
 
 // Whether two objects say the same: the same fields, each the same value. A field that holds undefined is a field, so
 // it does not stand for one the other does not have.
@@ -305,21 +345,22 @@ function pathOf(formatted: FormattedExchange): { at: string; message: number; he
   );
 }
 
-// The thread an exchange is part of: the one whose first message it sends, or, when none was sent before, a new one it
-// begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.
+// The thread an exchange is part of: the one of its level whose first message it sends, or, when none was sent before,
+// a new one it begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.
 function threadOf(formatted: FormattedExchange, threads: Thread[], alike: Comparison, step: number, undo: (() => void)[]): Thread | undefined {
+  const level = levelOf(formatted);
   const first = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
   if (first.length === 0) return undefined;
-  const found = threads.find((thread) => thread.first.length === first.length && thread.first.every((block, index) => alike.blocks(block, first[index]!)));
+  const found = threads.find((thread) => thread.level === level && thread.first.length === first.length && thread.first.every((block, index) => alike.blocks(block, first[index]!)));
   if (found !== undefined) return found;
-  const begun: Thread = { first, said: saidIn(first), roots: 0, root: { owner: step, children: [], ends: [] } };
+  const begun: Thread = { level, first, said: saidIn(first), root: { owner: step, children: [], ends: [] } };
   threads.push(begun);
   undo.push(() => threads.pop());
   return begun;
 }
 
-// What a message says: the texts of its blocks that the harness did not inject, less the space around them. A
-// subagent's first message so says the prompt it was launched with.
+// What a message says: the texts of its blocks that the harness did not inject, less the space around them, which a
+// compaction's next thread holds the summary in.
 function saidIn(blocks: KeyedBlock[]): string {
   const texts = blocks.flatMap(({ injected, parts }) => (injected === undefined ? parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])) : []));
   return texts.join("").trim();

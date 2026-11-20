@@ -4,7 +4,7 @@ import { exchanges } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import type { Visibility } from "../src/settings.ts";
-import { createHistory, type After, type History } from "../src/view/history.ts";
+import { createHistory, top, type After, type History } from "../src/view/history.ts";
 import { blockOf, createLayout, pastOf, type BlockRow, type Layout, type Row } from "../src/view/rows.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
@@ -42,24 +42,32 @@ const kindOf =
     row.kind === kind;
 
 function check(history: History, layoutAt: (step: number) => Layout): { found: Found; broken: string[] } {
-  const { segments, stepOf } = history;
+  const { segments, stepOf, placements } = history;
   const afterOf = (step: number): After | undefined => segments[step - 1]!.after;
   const traceOf = (step: number) => segments[step - 1]!.formatted.exchange.trace_id;
   // What each step stands after, by name, and the steps of the recording that stand after each thing: siblings.
   const places = segments.map(({ after }) => (after === undefined ? undefined : after.on === "step" ? traceOf(after.step) : after.key));
   const siblings = new Map<string, number[]>();
   places.forEach((place, index) => place !== undefined && siblings.set(place, [...(siblings.get(place) ?? []), index + 1]));
-  // A step's level: the nest it is in, by the nest's line, or none; and the step whose call each nest hangs on.
-  const hangs = (after: After | undefined, as: "nest" | "thread"): after is Extract<After, { on: "block" }> => after?.on === "block" && after.as === as;
-  const levelOf = (step: number): string | undefined => {
-    const after = afterOf(step);
-    return after === undefined ? undefined : hangs(after, "nest") ? `${after.key}/nest` : levelOf(after.step);
+  // A step's level, by its nest's line, none for the main agent's; how far in a level stands, and whether it is
+  // dimmed, as the call it stands under is, or the level it stands at the end of.
+  const carries = (after: After | undefined): after is Extract<After, { on: "summary" }> => after?.on === "summary";
+  const nestOf = (level: string) => {
+    const placement = placements.get(level)!;
+    return `${placement.on === "call" ? placement.key : level}/nest`;
   };
-  const callers = new Map<string, number>(segments.flatMap(({ after }) => (hangs(after, "nest") ? [[`${after.key}/nest`, after.step] as const] : [])));
-  const depthOf = (step: number): number => {
-    const level = levelOf(step);
-    return level === undefined ? 0 : 1 + depthOf(callers.get(level)!);
+  const levelOf = (step: number): string | undefined => (segments[step - 1]!.level === top ? undefined : nestOf(segments[step - 1]!.level));
+  const outward = <T>(level: string, atTop: T, atCall: (step: number) => T, atLevel: (level: string) => T): T => {
+    if (level === top) return atTop;
+    const placement = placements.get(level)!;
+    return placement.on === "call" ? atCall(placement.step) : atLevel(placement.level);
   };
+  const levelDepth = (level: string): number => outward(level, 0, (call) => 1 + depthOf(call), (parent) => 1 + levelDepth(parent));
+  const depthOf = (step: number): number => levelDepth(segments[step - 1]!.level);
+  // Whether a level is listed once its steps are on the path: where its call's step is, or the level it stands in.
+  const levelListed = (level: string, path: Set<number>): boolean => outward(level, true, (call) => path.has(call), (parent) => levelListed(parent, path));
+  // The step a step stands under: the one it stands after, or the step of the call its level stands under.
+  const underOf = (step: number): number | undefined => afterOf(step)?.step ?? outward(segments[step - 1]!.level, undefined, (call) => call, () => undefined);
   // The agent a step is sent as, by the id its request says: none for the main thread's. And whether a step is the
   // harness asking a subagent what it is doing.
   const agentOf = (step: number) => segments[step - 1]!.formatted.exchange.request.head?.headers.find(([name]) => name.toLowerCase() === "x-claude-code-agent-id")?.[1];
@@ -73,24 +81,21 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     // The path to the step: a step that stands after nothing, and, of the siblings that have arrived after a thing on
     // it, the one the latest step by now stands under.
     const latest = new Array<number>(step + 1).fill(0);
-    for (let own = 1; own <= step; own++) for (let up: number | undefined = own; up !== undefined; up = afterOf(up)?.step) latest[up] = own;
+    for (let own = 1; own <= step; own++) for (let up: number | undefined = own; up !== undefined; up = underOf(up)) latest[up] = own;
     const path = new Set<number>();
     for (let own = 1; own <= step; own++) {
       const after = afterOf(own);
-      if (after === undefined || (path.has(after.step) && siblings.get(places[own - 1]!)!.every((other) => other > step || latest[other]! <= latest[own]!))) path.add(own);
+      if (after === undefined ? levelListed(segments[own - 1]!.level, path) : path.has(after.step) && siblings.get(places[own - 1]!)!.every((other) => other > step || latest[other]! <= latest[own]!)) path.add(own);
     }
     // What a thread on the path carries on from: the step whose summary it begins with, and each that one follows
     // or carries on. A step is dimmed when it is one, or the call its nest hangs on is in one.
     const carried = new Set<number>();
     for (const own of path) {
       const after = afterOf(own);
-      for (let on = hangs(after, "thread") ? after.step : undefined; on !== undefined; ) {
-        carried.add(on);
-        const up = afterOf(on);
-        on = up === undefined || hangs(up, "nest") ? undefined : up.step;
-      }
+      for (let on = carries(after) ? after.step : undefined; on !== undefined; on = afterOf(on)?.step) carried.add(on);
     }
-    const isDimmed = (own: number): boolean => carried.has(own) || (levelOf(own) !== undefined && isDimmed(callers.get(levelOf(own)!)!));
+    const levelDimmed = (level: string): boolean => outward(level, false, (call) => isDimmed(call), levelDimmed);
+    const isDimmed = (own: number): boolean => carried.has(own) || levelDimmed(segments[own - 1]!.level);
 
     const { rows, every, steps } = layoutAt(step);
     const indexOf = new Map(rows.map(({ key }, index) => [key, index]));
@@ -151,22 +156,23 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         if (line === undefined || from! > at || fork.depth !== line.depth || fork.dimmed !== line.dimmed) say(`${fork.key} does not stand under its step as the step stands`);
         else if (rows.slice(from! + 1, at).some((row) => row.kind === "exchange" && row.depth <= fork.depth)) say(`${fork.key} stands after another step's rows`);
       } else {
-        // First under the line of what hangs there: one level in under a nest's, level with a thread's.
+        // First under the line of the thread that carries the summary on, level with it.
         const line = rows[at - 1];
-        if (line?.key !== `${after.key}/${after.as}` || fork.depth !== line.depth + (after.as === "nest" ? 1 : 0)) say(`${fork.key} is not first under the ${after.as}'s line`);
+        if (line?.key !== `${after.key}/thread` || fork.depth !== line.depth) say(`${fork.key} is not first under the thread's line`);
       }
     }
 
-    // A nest's line stands right after the Agent call whose prompt its first step's first message says, and holds its
+    // A nest's line stands right after the Agent call whose result names the agent its steps are sent by, and holds its
     // level's steps on the path one level in, in the order they arrived, before the call's result.
     const nests = rows.filter(kindOf("nest"));
-    const nested = [...path].filter((own) => hangs(afterOf(own), "nest"));
-    if (!sameList(nests.map(({ key }) => key).sort(), nested.map((own) => levelOf(own)!).sort())) say("the nests' lines are not those of the subagents on the path");
+    const nested = [...new Set([...path].flatMap((own) => (levelOf(own) === undefined ? [] : [levelOf(own)!])))];
+    if (!sameList(nests.map(({ key }) => key).sort(), nested.sort())) say("the nests' lines are not those of the subagents on the path");
     for (const nest of nests) {
-      found.nests.set(nest.key, `${nest.depth} in, ${nest.type ?? "an agent"}, ${nest.count} steps`);
-      const root = nested.find((own) => levelOf(own) === nest.key);
+      found.nests.set(nest.key, `${nest.depth} in, ${nest.subagent.on === "call" ? (nest.subagent.type ?? "an agent") : `${nest.subagent.agent ?? "no agent"}, not yet placed`}, ${nest.count} steps`);
+      const root = [...path].find((own) => levelOf(own) === nest.key);
       if (root === undefined) continue;
       const at = indexOf.get(nest.key)!;
+      if (nest.subagent.on === "level") continue;
       const call = rows[at - 1];
       if (call?.kind !== "block" || `${call.key}/nest` !== nest.key) {
         say(`${nest.key} does not stand right after its call`);
@@ -174,8 +180,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       }
       const { launch } = first(call);
       if (launch === undefined) say(`${nest.key} stands after a block that launches nothing`);
-      else if (firstMessage(history, root).trim() !== launch.prompt.trim()) say(`${nest.key} holds step ${root}, whose first message is not its call's prompt`);
-      else if (nest.prompt !== launch.prompt || nest.type !== launch.type) say(`${nest.key} does not say what its call launches`);
+      else if (nest.subagent.prompt !== launch.prompt || nest.subagent.type !== launch.type) say(`${nest.key} does not say what its call launches`);
       if (nest.depth !== call.depth || nest.dimmed !== call.dimmed) say(`${nest.key} does not stand as its call does`);
       const next = rows.findIndex((row, index) => index > at && row.depth <= nest.depth);
       const end = next === -1 ? rows.length : next;
@@ -197,9 +202,11 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         const runs = newest !== undefined && last?.handback === undefined && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
         if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest ?? root}`);
       }
+      // Of the results of the call, its level's: a fork of the thread, a level of its own, resends one of its own.
       const id = fieldOf(first(call), "id");
+      const levelAt = (own: number) => segments[own - 1]!.level;
       rows.forEach((row, index) => {
-        if (row.kind !== "block" || id === undefined || fieldOf(blockOf(row), "tool_use_id") !== id) return;
+        if (row.kind !== "block" || id === undefined || fieldOf(blockOf(row), "tool_use_id") !== id || levelAt(row.versions[0]!.step) !== levelAt(call.versions[0]!.step)) return;
         if (index < end || row.depth !== call.depth) say(`${nest.key} does not stand between its call and the call's result ${row.key}, at their depth`);
       });
     }
@@ -207,11 +214,12 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     // A thread's line stands right after the block whose summary the thread on the path begins with, level with it,
     // above the thread's first step.
     const threads = rows.filter(kindOf("thread"));
-    const carrying = [...path].filter((own) => hangs(afterOf(own), "thread"));
-    if (!sameList(threads.map(({ key }) => key).sort(), carrying.map((own) => `${(afterOf(own) as Extract<After, { on: "block" }>).key}/thread`).sort())) say("the threads' lines are not those of the threads on the path that carry a summary on");
+    const carrying = [...path].filter((own) => carries(afterOf(own)));
+    const summaryOf = (own: number) => (afterOf(own) as Extract<After, { on: "summary" }>).key;
+    if (!sameList(threads.map(({ key }) => key).sort(), carrying.map((own) => `${summaryOf(own)}/thread`).sort())) say("the threads' lines are not those of the threads on the path that carry a summary on");
     for (const thread of threads) {
       found.threads.set(thread.key, `${thread.depth} in`);
-      const own = carrying.find((one) => `${(afterOf(one) as Extract<After, { on: "block" }>).key}/thread` === thread.key);
+      const own = carrying.find((one) => `${summaryOf(one)}/thread` === thread.key);
       if (own === undefined) continue;
       const at = indexOf.get(thread.key)!;
       const block = rows[at - 1];
@@ -236,7 +244,7 @@ for (const recording of process.argv.slice(2)) {
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line) as RecordedEvent);
   const history = createHistory()(createFormatter()(exchanges(events)));
-  const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
+  const open = Object.fromEntries([...history.placements].map(([level, placement]) => [`${placement.on === "call" ? placement.key : level}/nest`, true] as const));
   const layOut = createLayout(expanded);
   const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
   console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);

@@ -1,4 +1,4 @@
-import type { RecordedEvent } from "@cc-dump/proxy/format";
+import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
@@ -7,8 +7,8 @@ import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
+const request = (trace_id: string, body: unknown, headers: Header[] = []): RecordedEvent[] => [
+  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers },
   { timestamp, trace_id, type: "request_body", base64: base64(body) },
   { timestamp, trace_id, type: "request_trailers", headers: [] },
 ];
@@ -217,7 +217,7 @@ describe("what a step stands after", () => {
     const continued = request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] });
     const after = history([...process, ...compact, ...t3, ...continued]);
     // The compaction resends t1 whole and t2's message with the instruction, never t2's reply: its message is its own.
-    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "block", key: "thread:compact/message.3/content.0", as: "thread" }]);
+    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "summary", key: "thread:compact/message.3/content.0" }]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
       "compact/response/http",
@@ -234,30 +234,84 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
-  it("hangs each subagent on the Agent tool's call that launched it, twins on the calls of their one prompt in order, and a probe of one on the last", () => {
-    const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
-    const task = user(text("<system-reminder>\nBe brief.\n</system-reminder>\nFind the longest word.\n"));
-    const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+  // A turn that launches three subagents, twins of one prompt and another; each agent's requests, by the ids Claude Code
+  // sends, the later-launched twin first; the next turn, with the results that name them; a request of the first whose
+  // first message is the harness's alone; and an agent the first launched, which no result names.
+  const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
+  const launched = (id: string, agent: string) => ({ type: "tool_result", tool_use_id: id, content: [text(`Async agent launched successfully.\nagentId: ${agent} (internal ID)\nThe agent is working in the background.`)] });
+  const by = (agent: string, parent?: string): Header[] => [["x-claude-code-agent-id", agent], ...(parent === undefined ? [] : [["x-claude-code-parent-agent-id", parent] satisfies Header])];
+  const task = user(text("<system-reminder>\nBe brief.\n</system-reminder>\nFind the longest word.\n"));
+  const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+  const calls = [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")];
+  const launching = [
+    ...request("t1", { ...main, messages: [hi] }),
+    ...reply("t1", calls),
+    ...request("s2", { ...agent, messages: [task] }, by("a2")),
+    ...reply("s2", [text("B.")]),
+    ...request("s1", { ...agent, messages: [task] }, by("a1")),
+    ...reply("s1", [text("A.")]),
+    ...request("other", { ...agent, messages: [user(text("Count the words."))] }, by("a3")),
+  ];
+  const named = [
+    ...request("t2", { ...main, messages: [hi, assistant(...calls), user(launched("toolu_1", "a1"), launched("toolu_2", "a2"), launched("toolu_3", "a3"))] }),
+    ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }, by("a1")),
+    ...request("woken", { ...agent, messages: [user(text("<system-reminder>\nGo on.\n</system-reminder>"))] }, by("a1")),
+    ...request("inner", { ...agent, messages: [user(text("Count."))] }, by("a4", "a1")),
+  ];
+  const under = (content: number) => ({ on: "call", step: 1, key: `thread:t1/message.1/content.${content}` });
+
+  it("stands each subagent's every request on its agent's level, under the call whose result names the agent", () => {
+    const after = history([...launching, ...named]);
+    expect(after.segments.map(({ level }) => level)).toEqual(["", "agent:a2", "agent:a1", "agent:a3", "", "agent:a1", "agent:a1", "agent:a4"]);
+    // Twins launched with one prompt stand each under its own call, the one that spoke first under the later call.
+    expect([...after.placements]).toEqual([
+      ["agent:a2", under(2)],
+      ["agent:a1", under(1)],
+      ["agent:a3", under(3)],
+      ["agent:a4", { on: "level", level: "agent:a1" }],
+    ]);
+    // Within its level a request parts from what it resends by content: the next of a1's follows its first, and one
+    // whose first message is the harness's alone begins a thread there, standing after nothing.
+    expect(afters(after)).toEqual([undefined, undefined, undefined, undefined, follows(1), follows(3), undefined, undefined]);
+    // Twins send the same first message and are each a history of their own.
+    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s1/message.0/content.0.0", "thread:s1/message.0/content.0.1", "thread:s1/message.1/content.0"]));
+    expect(versioned(after)).toEqual([]);
+  });
+
+  it("stands a subagent no result names yet at the end of its parent's level, and under its call once one does, folding no step again", () => {
+    const read = reader();
+    const before = read(launching);
+    expect([...before.placements]).toEqual([
+      ["agent:a2", { on: "level", level: "" }],
+      ["agent:a1", { on: "level", level: "" }],
+      ["agent:a3", { on: "level", level: "" }],
+    ]);
+    const after = read([...launching, ...named]);
+    expect(after.placements.get("agent:a1")).toEqual(under(1));
+    expect(after.segments.slice(0, 4).every((segment, index) => segment === before.segments[index])).toBe(true);
+  });
+
+  it("keeps a call under the step that first sent it when a fork of the thread, a level of its own, resends it", () => {
+    const fork = request("f1", { ...main, messages: [hi, assistant(...calls), user(text("<fork-boilerplate>\nOne directive.\n</fork-boilerplate>"))] }, by("f1"));
+    const after = history([...launching, ...fork, ...named]);
+    expect(after.placements.get("agent:f1")).toEqual({ on: "level", level: "" });
+    expect(keysAt(after, 5)).toContain("thread:f1/message.1/content.1");
+    expect(after.placements.get("agent:a1")).toEqual(under(1));
+  });
+
+  it("records a stop where the item that tells of it arrives: a notification resent is none, a second alike is another, and a foreground run's result is one", () => {
+    const notice = (task: string) => user(text(`<system-reminder>\n<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n</task-notification>\n</system-reminder>\nGo on.`));
+    const report = { type: "tool_result", tool_use_id: "toolu_1", content: [text("Done."), text("agentId: a5 (use SendMessage)\n<usage>total_tokens: 9</usage>")] };
+    const told = [hi, assistant(...calls), notice("a1")];
     const after = history([
       ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")]),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
-      ...reply("s2", [text("B.")]),
-      ...request("other", { ...agent, messages: [user(text("Count the words."))] }),
-      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
-      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
-      ...request("probe", { ...agent, messages: [task] }),
-      ...reply("probe", [text("Reading.")]),
+      ...reply("t1", calls),
+      ...request("t2", { ...main, messages: told }),
+      ...reply("t2", [text("Noted.")]),
+      ...request("t3", { ...main, messages: [...told, assistant(text("Noted.")), notice("a1")] }),
+      ...request("t4", { ...main, messages: [hi, assistant(...calls), user(report)] }),
     ]);
-    const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
-    expect(afters(after)).toEqual([undefined, under(1), under(2), under(3), follows(2), follows(3), under(2)]);
-    // Twins send the same first message and are each a history of their own.
-    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s2/message.0/content.0.0", "thread:s2/message.0/content.0.1", "thread:s2/message.1/content.0"]));
-    expect(keysAt(after, 5)).toContain("thread:s3/message.2/content.0");
-    expect(keysAt(after, 6)).toContain("thread:s4/message.2/content.0");
-    expect(versioned(after)).toEqual([]);
+    expect(after.segments.map(({ stops }) => stops)).toEqual([[], ["a1"], ["a1"], ["a5"]]);
   });
 
   it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {
