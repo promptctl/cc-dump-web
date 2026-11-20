@@ -2,8 +2,8 @@ import { readdir, open, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
-import { describeError, startSpan, type Ending, type Handler, type Log } from "@cc-dump/log";
-import type { Listing, ReadFailure, RecordingEnd } from "./format.ts";
+import { describeError, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
+import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
 import { recordedLength } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
@@ -80,8 +80,7 @@ async function readableName(recordings: Recordings, asked: string | undefined): 
 // no position, a repeated header too: node joins its values into one string (only set-cookie stays a list).
 function positionOf(req: IncomingMessage, url: URL): number | undefined {
   const given = (req.headers["last-event-id"] as string | undefined) ?? url.searchParams.get("from") ?? "0";
-  const position = Number(given);
-  return /^\d+$/.test(given) && Number.isSafeInteger(position) ? position : undefined;
+  return offsetOf(given);
 }
 
 // One reader's read of the recording `name`, which is followed, not ended, when `followed`.
@@ -90,7 +89,7 @@ function positionOf(req: IncomingMessage, url: URL): number | undefined {
 // read asks its writer's `written` each time. `unterminated()`: the bytes after its last newline, never sent.
 type Reading = {
   log: Log;
-  trace_id: string;
+  trace_id: TraceId;
   ended: Promise<Ending>;
   name: string;
   path: string;
@@ -100,7 +99,7 @@ type Reading = {
   unterminated: () => number;
 };
 
-function readingOf(log: Log, recordings: Recordings, trace_id: string, ended: Promise<Ending>, name: string): Reading {
+function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: string): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   let finished: ReturnType<typeof recordedLength> | undefined;

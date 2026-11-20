@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
 import { eventLog } from "@cc-dump/log/testing";
+import { parseTraceId } from "@cc-dump/log/trace";
 import { WebSocketTmuxClient, type BrowserWebSocketLike } from "@promptctl/tmux-control-mode-js/websocket";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -180,7 +181,7 @@ describe("createTerminal", () => {
     const req = { method: "GET", url: tmuxPath(windowOf("work")), headers } as IncomingMessage;
     const fail = vi.fn();
 
-    await upgrade(req, socket, Buffer.alloc(0), { trace_id: "0".repeat(32), fail, ended: new Promise(() => {}) });
+    await upgrade(req, socket, Buffer.alloc(0), { trace_id: parseTraceId("0".repeat(32)), fail, ended: new Promise(() => {}) });
     expect(socket.destroyed).toBe(true);
     expect(fail).not.toHaveBeenCalled();
   });

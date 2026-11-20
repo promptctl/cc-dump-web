@@ -1,5 +1,6 @@
 import { outcomes, type Ending } from "@cc-dump/log/ending";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
+import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -21,7 +22,7 @@ export type Recorded =
   | { type: "response_body"; base64: string }
   | { type: "response_trailers"; headers: Header[] }
   | ({ type: "end" } & Ending);
-export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
+export type RecordedEvent = { timestamp: string; trace_id: TraceId } & Recorded;
 
 // One recording in `GET /recordings`: a `.jsonl` file in the recordings directory. `POST /recordings` answers the one it
 // created.
@@ -81,6 +82,13 @@ export function agentOf(url: string): { name: string; url: string } | undefined 
   return stem !== undefined && recordingStart(name) !== undefined ? { name, url: rest.startsWith("/") ? rest : `/${rest}` } : undefined;
 }
 
+// A byte offset in a recording, as a read's event ids and positions write it: a decimal integer a file can have, or
+// undefined for any other text.
+export function offsetOf(text: string): number | undefined {
+  const offset = Number(text);
+  return /^\d+$/.test(text) && Number.isSafeInteger(offset) ? offset : undefined;
+}
+
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
 export type RecordingEnd = { unterminated_bytes: number };
 
@@ -138,7 +146,7 @@ export function parseProxyStatus(json: string): ProxyStatus {
   return {
     info: infoOf(status.object("info"), "proxy status: info"),
     source: state === "watching" ? { state, changed_source: source.strings("changed_source") } : { state, message: source.string("message") },
-    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, "an ISO 8601 UTC time or null") },
+    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, `${aTime} or null`) },
   };
 }
 
@@ -154,8 +162,10 @@ function infoOf(info: unknown, what: string): ProxyInfo {
 export function parseRecordedEvent(line: string): RecordedEvent {
   const json = parseJson(line, "recorded event");
   const type = fields(json, "recorded event").oneOf("type", recordedTypes);
-  const f = fields(json, `recorded ${type} event`);
-  const event = { timestamp: f.string("timestamp"), trace_id: f.string("trace_id") };
+  const trace_id = fields(json, `recorded ${type} event`).parsed("trace_id", parseTraceId);
+  // Named as the fold names an event it refuses (ui/src/exchanges.ts), so either refusal names its trace and type.
+  const f = fields(json, `trace ${trace_id}'s ${type}`);
+  const event = { timestamp: f.read("timestamp", isTime, aTime), trace_id };
   switch (type) {
     case "request":
       return { ...event, type, method: f.string("method"), url: f.string("url"), http_version: f.string("http_version"), headers: f.headers("headers") };
@@ -186,9 +196,10 @@ const recordedTypes: Record<Recorded["type"], true> = {
   end: true,
 };
 const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
-// A time exactly as `toISOString` writes it, which is how the proxy writes every time it sends.
-const isTimeOrNull = (value: unknown): value is string | null =>
-  value === null || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value)));
+// A time exactly as `toISOString` writes it, which is how the proxy writes every time it records or sends.
+const isTime = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
+const aTime = "an ISO 8601 UTC time";
+const isTimeOrNull = (value: unknown): value is string | null => value === null || isTime(value);
 
 // The fields of `what`, with the recording format's headers beside the JSON types.
 function fields(json: unknown, what: string) {

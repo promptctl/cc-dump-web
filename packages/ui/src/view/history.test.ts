@@ -1,22 +1,23 @@
+import { exchanges, recordedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
+const at = recordedAt(timestamp);
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64(body) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+const request = (trace: string, body: unknown): RecordedEvent[] => [
+  { ...at(trace), type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
+  { ...at(trace), type: "request_body", base64: base64(body) },
+  { ...at(trace), type: "request_trailers", headers: [] },
 ];
-const reply = (trace_id: string, content: unknown[]): RecordedEvent[] => [
-  { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { timestamp, trace_id, type: "response_trailers", headers: [] },
-  { timestamp, trace_id, type: "end", outcome: "ok" },
+const reply = (trace: string, content: unknown[]): RecordedEvent[] => [
+  { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) },
+  { ...at(trace), type: "response_trailers", headers: [] },
+  { ...at(trace), type: "end", outcome: "ok" },
 ];
 const text = (text: string) => ({ type: "text", text });
 const user = (...content: unknown[]) => ({ role: "user", content });

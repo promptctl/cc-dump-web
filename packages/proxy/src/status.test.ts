@@ -9,6 +9,7 @@ import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
 import { countTraffic, createStatus, watchable, watchSource } from "./status.ts";
 import { subscribe } from "@cc-dump/log/testing";
+import { parseTraceId } from "@cc-dump/log/trace";
 
 // Two source files in a directory of their own, recorded as they are now.
 function sourceFiles() {
@@ -94,7 +95,7 @@ describe("countTraffic", () => {
   const request = (traffic: ReturnType<typeof countTraffic>) => {
     const { promise: ended, resolve } = Promise.withResolvers<Ending>();
     const handled: unknown[] = [];
-    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: "t", fail: () => {}, ended });
+    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: parseTraceId("t"), fail: () => {}, ended });
     return { handled, end: () => resolve({ outcome: "ok" }) };
   };
 

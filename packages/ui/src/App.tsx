@@ -2,12 +2,11 @@ import type { SourceStatus } from "@cc-dump/proxy/format";
 import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
-import { exchanges } from "./exchanges.ts";
 import { createFormatter } from "./format/format.ts";
 import { useRecording, type Reading } from "./reading.ts";
 import { settings, useSettings } from "./settings.ts";
 import { ago, useNow, useProxyStatus, type StatusReading } from "./status.ts";
-import { useEvents } from "./store.ts";
+import { useExchanges } from "./store.ts";
 import { useTheme } from "./theme/useTheme.ts";
 import { Conversation } from "./view/Conversation.tsx";
 import { InfoPanel } from "./view/InfoPanel.tsx";
@@ -27,11 +26,11 @@ export function App({ connection }: { connection: Connection }) {
   const terminal = useView((state) => state.terminal);
   const reading = useRecording(connection, open);
   const status = useProxyStatus(connection);
-  const events = useEvents((store) => store.events);
-  const read = useEvents((store) => store.read);
+  const exchanges = useExchanges((store) => store.exchanges);
+  const read = useExchanges((store) => store.read);
   // Fast Refresh keeps state but re-runs memos, so an edit to the formatter takes effect.
   const format = useMemo(() => createFormatter(), []);
-  const shown = useMemo(() => format(exchanges(events)), [format, events]);
+  const shown = useMemo(() => format(exchanges), [format, exchanges]);
   const session = useMemo(() => shown.findLast(({ facts }) => facts.session !== undefined)?.facts.session, [shown]);
   const info = useSettings((state) => state.info);
   const logs = useSettings((state) => state.logs);

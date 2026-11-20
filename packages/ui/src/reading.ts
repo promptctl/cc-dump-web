@@ -1,7 +1,9 @@
-import type { RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
+import type { TraceId } from "@cc-dump/log/trace";
+import type { RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
-import type { Connection } from "./connection/connection.ts";
-import { events, useEvents } from "./store.ts";
+import { refusedAt, type Connection } from "./connection/connection.ts";
+import { add, type ByTrace, type Exchange } from "./exchanges.ts";
+import { recording, useExchanges } from "./store.ts";
 
 // The recording open (docs/design/01-features.md, F7), by its name, or none: a tab that has launched no agent and opened no
 // recording shows neither.
@@ -18,7 +20,8 @@ export type Reading =
   | { state: "ended"; name: string; end: RecordingEnd }
   | { state: "failed"; error: Error };
 
-export type Sink = { reset: () => void; append: (batch: RecordedEvent[]) => void };
+// Where a read shows what it has read: its exchanges, in the order they began, each time they change.
+export type Sink = (exchanges: Exchange[]) => void;
 
 // A frame clock: runs `callback` at the next frame, and returns the function that cancels it.
 export type Frames = (callback: () => void) => () => void;
@@ -29,39 +32,65 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // Reads the recording open into `sink` from its start, reporting where the read stands to `changed`, until `signal`
 // aborts it. Whichever recording it is, it is the one read (docs/design/01-features.md, "One path to the screen"). With none
 // open it reads nothing.
-// [LAW:no-ambient-temporal-coupling] The read owns its batch: events arriving between frames are appended in one call
-// at the next, because catching up delivers thousands in quick succession and one copy and render each would be
-// quadratic. Its end and its failure append what is pending first, so no frame of the read runs after it has ended;
-// its abort cancels the frame.
+// [LAW:single-enforcer] The read folds each event into its exchange as it arrives (exchanges.ts, `add`), so an event
+// that breaks the shape the proxy writes fails the read, naming where in the recording it ends, and ends the
+// connection's read of it: what follows it cannot be trusted to be the recording.
+// [LAW:no-ambient-temporal-coupling] The read owns its batch: exchanges changed between frames are shown in one call at
+// the next, because catching up delivers thousands of events in quick succession and one copy and render each would be
+// quadratic. Each frame hands `sink` copies of the exchanges it changed: a frame's exchanges are not changed by the
+// events after it, which the read goes on placing in its own. The read's end is its own signal, `reading`: it aborts on
+// `signal`, and as the read ends, refused, ended or failed, once it has shown what is pending. Its abort cancels the
+// frame, and the connection delivers nothing after it, so no frame and no event of the read comes after its end.
 export function readRecording(connection: Pick<Connection, "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
-  sink.reset();
+  sink([]);
   // Reported as the read begins, so an end or a failure the read reports as it begins is the last state.
   changed(begun(open));
   if (open === null) return;
-  let pending: RecordedEvent[] = [];
-  let cancelFrame = () => {};
+  const byTrace: ByTrace = new Map();
+  const shown = new Map<TraceId, Exchange>();
+  const touched = new Map<TraceId, Exchange>();
   const flush = () => {
-    sink.append(pending);
-    pending = [];
+    for (const [trace, exchange] of touched) shown.set(trace, snapshot(exchange));
+    touched.clear();
+    sink([...shown.values()]);
   };
-  const settle = (reading: Reading) => {
-    cancelFrame();
+  // The one frame pending, by the function that cancels it: scheduled by the first event after a frame, none once it
+  // has run.
+  let frame: (() => void) | undefined;
+  const shownAtFrame = () => {
+    frame = undefined;
     flush();
-    changed(reading);
   };
-  signal.addEventListener("abort", () => cancelFrame());
+  const ended = new AbortController();
+  const reading = AbortSignal.any([signal, ended.signal]);
+  reading.addEventListener("abort", () => frame?.());
+  const settle = (outcome: Reading) => {
+    flush();
+    ended.abort();
+    changed(outcome);
+  };
   connection.read(
     open,
     {
-      event: (event) => {
-        if (pending.push(event) === 1) cancelFrame = frames(flush);
+      event: (event, offset) => {
+        const placed = add(byTrace, event);
+        if (typeof placed === "string") return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
+        touched.set(event.trace_id, placed);
+        frame ??= frames(shownAtFrame);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
       failed: (error) => settle({ state: "failed", error }),
     },
-    signal,
+    reading,
   );
 }
+
+// An exchange as it stands now, which the events after it leave as it is.
+const snapshot = (exchange: Exchange): Exchange => ({
+  ...exchange,
+  request: { ...exchange.request, body: [...exchange.request.body] },
+  response: { ...exchange.response, body: [...exchange.response.body] },
+});
 
 // The recording on screen, by its name: the one being read or read to its end. None while none is open, or the read
 // failed.
@@ -77,14 +106,14 @@ const animationFrames: Frames = (callback) => {
 // The recording open, read into the store for as long as the component using it is mounted, and read again from its
 // start each time one is opened.
 // [LAW:one-source-of-truth] A recording is opened again by its own name, which changes nothing in `open`: the store's
-// `read` is what changes on every open, so it is what a read depends on. The read empties the events with `clear`, which
-// leaves `read` as it was; were it `open`, the read would change its own dependency.
+// `read` is what changes on every open, so it is what a read depends on. The read empties the exchanges with `show`,
+// which leaves `read` as it was; were it `open`, the read would change its own dependency.
 export function useRecording(connection: Connection, open: OpenRecording): Reading {
   const [reading, setReading] = useState<Reading>(() => begun(open));
-  const read = useEvents((store) => store.read);
+  const read = useExchanges((store) => store.read);
   useEffect(() => {
     const abort = new AbortController();
-    readRecording(connection, open, { reset: events.clear, append: events.append }, animationFrames, abort.signal, setReading);
+    readRecording(connection, open, recording.show, animationFrames, abort.signal, setReading);
     return () => abort.abort();
   }, [connection, open, read]);
   return reading;

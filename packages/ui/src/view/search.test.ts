@@ -1,6 +1,6 @@
+import { exchanges, recordedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
@@ -11,10 +11,11 @@ import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./r
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["x-probe", "needle in a header"]] },
-  { timestamp, trace_id, type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+const at = recordedAt(timestamp);
+const request = (trace: string, body: unknown): RecordedEvent[] => [
+  { ...at(trace), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["x-probe", "needle in a header"]] },
+  { ...at(trace), type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
+  { ...at(trace), type: "request_trailers", headers: [] },
 ];
 const lines = (count: number, at: number, line: string) => Array.from({ length: count }, (_, index) => (index === at ? line : `filler ${index}`));
 // A tool result holding a tagged section of 16 lines, which holds a 14-line code block with the needle on its line 5.

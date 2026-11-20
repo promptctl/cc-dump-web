@@ -58,6 +58,9 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 }
 
 // The conversation's history: each step's segment, step k's at k - 1, and the step of an exchange, by its trace_id.
+// [LAW:parse-dont-validate] exception: `stepOf` takes any string, since a view's moment names its trace as stored, and
+// the stored view is not parsed as it is loaded yet (dump-design-ajl.6nq); until then a trace it does not hold is a
+// miss, which the conversation shows as its latest step (Conversation.tsx).
 export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined };
 
 // A thread: the first message every request of it sends, what that message says, how many of its requests follow
@@ -238,7 +241,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const facts = read.flatMap(({ fact }) => (fact === undefined ? [] : [fact]));
     const follows = new Map(followsOf(facts).map((followed, index) => [facts[index]!.step, followed]));
     for (let index = from; index < read.length; index++) folded.push(fold(read[index]!, follows, index + 1));
-    const steps = new Map(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
+    const steps = new Map<string, number>(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
     const made = folded.map(({ segment }) => segment);
     const segments = keptEach(last.segments, made, keptSegment);
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares

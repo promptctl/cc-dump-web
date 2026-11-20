@@ -6,6 +6,7 @@
     "./address": "./src/address.ts",
     "./ask": "./src/ask.ts",
     "./format": "./src/format.ts",
+    "./recording": "./src/recording.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {

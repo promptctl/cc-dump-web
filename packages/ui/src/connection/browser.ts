@@ -2,11 +2,11 @@ import { LOOPBACK } from "@cc-dump/log/address";
 import { parseLogLine } from "@cc-dump/log/line";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { ask } from "@cc-dump/proxy/ask";
-import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { offsetOf, parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
-import type { Connection } from "./connection.ts";
+import { refusedAt, type Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader and the app server, on the address they are bound to, whatever host the
 // page was opened at: `fetch` for the list and for launching, one EventSource per read, per status and per log, which
@@ -21,8 +21,18 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     read: (name, reader, signal) => {
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
-      // A message that does not parse ends the read: what follows it cannot be trusted to be the recording.
-      stream.on("message", parseRecordedEvent, reader.event, stream.fail);
+      // A message that does not parse ends the read: what follows it cannot be trusted to be the recording. Its id is
+      // where in the recording its line ends.
+      const recorded = (data: string, id: string) => {
+        const offset = offsetOf(id);
+        if (offset === undefined) throw new Error(`recorded event: id ${JSON.stringify(id)} is not a byte offset`);
+        try {
+          return { event: parseRecordedEvent(data), offset };
+        } catch (error) {
+          throw refusedAt(offset, error);
+        }
+      };
+      stream.on("message", recorded, ({ event, offset }) => reader.event(event, offset), stream.fail);
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
       // reconnects and reads the recording again, or into the same failure.
       stream.on(

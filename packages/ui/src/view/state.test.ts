@@ -1,8 +1,9 @@
+import { exchanges, recordedAt } from "../testing.ts";
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
-import { events, useEvents } from "../store.ts";
+import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
 import { useView, view } from "./state.ts";
 
@@ -14,7 +15,7 @@ const row: BlockRow = { kind: "block", key: "thread:t1/tools/tools.Read.0", chan
 describe("opening a recording", () => {
   beforeEach(() => {
     useView.setState(useView.getInitialState(), true);
-    events.clear();
+    recording.show([]);
   });
 
   it("opens a tab with none open", () => {
@@ -34,22 +35,22 @@ describe("opening a recording", () => {
   });
 
   // What a read depends on besides the name (useRecording): a retry of a failed read opens the recording already open.
-  it("changes what a read depends on whenever a recording is opened, the one already open again too, and not when a read empties the events", () => {
+  it("changes what a read depends on whenever a recording is opened, the one already open again too, and not when a read empties the exchanges", () => {
     view.open(agent);
-    const first = useEvents.getState().read;
+    const first = useExchanges.getState().read;
     view.open(agent);
-    const again = useEvents.getState().read;
-    events.clear();
+    const again = useExchanges.getState().read;
+    recording.show([]);
 
     expect(again).not.toBe(first);
-    expect(useEvents.getState().read).toBe(again);
+    expect(useExchanges.getState().read).toBe(again);
     expect(useView.getState().open).toBe(agent);
   });
 
-  it("never has it open with the last recording's events", () => {
-    events.append([{ timestamp: "2026-11-13T08:00:00.000Z", trace_id: "t1", type: "request_body", base64: "" }]);
+  it("never has it open with the last recording's exchanges", () => {
+    recording.show(exchanges([{ ...recordedAt("2026-11-13T08:00:00.000Z")("t1"), type: "request_body", base64: "" }]));
     const seen: number[] = [];
-    const unsubscribe = useView.subscribe(({ open }) => open === agent && seen.push(useEvents.getState().events.length));
+    const unsubscribe = useView.subscribe(({ open }) => open === agent && seen.push(useExchanges.getState().exchanges.length));
     view.open(agent);
     unsubscribe();
     expect(seen).toEqual([0]);
@@ -59,7 +60,7 @@ describe("opening a recording", () => {
 describe("a launch", () => {
   beforeEach(() => {
     useView.setState(useView.getInitialState(), true);
-    events.clear();
+    recording.show([]);
   });
 
   it("opens a tab with no window", () => {

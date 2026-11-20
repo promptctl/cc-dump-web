@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
 import { settings, type SearchOptions } from "../settings.ts";
-import { events } from "../store.ts";
+import { recording } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
 import { isOpen, type Opened } from "./rows.ts";
@@ -11,7 +11,7 @@ import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
 // launch opened and whether its terminal is shown (F13), each block, set, nest, region or fold they opened or closed
-// (rows.ts), where they are, the moment shown, and their search. Everything else on screen is derived from the events
+// (rows.ts), where they are, the moment shown, and their search. Everything else on screen is derived from the exchanges
 // and the settings. It is kept for the tab in sessionStorage, so after a hot reload or a page reload the view is the
 // same (docs/design/01-features.md, F12). A tab opens at the end, now, which follows the conversation while follow is on.
 // While it is off, the end becomes the place under the view at the first step.
@@ -50,12 +50,12 @@ export const useView = create<View>()(
 export const view = {
   // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last
   // recording's. Choices are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
-  // [LAW:no-ambient-temporal-coupling] The events shown are emptied as it opens, so the view of the last recording's
-  // events unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
+  // [LAW:no-ambient-temporal-coupling] The exchanges shown are emptied as it opens, so the view of the last recording's
+  // exchanges unmounts in the commit that opens it and never steps on the position the new one opens at. Its read begins
   // as that commit's effects run (useRecording), and reads it from its start, the one already open again as well: a read
   // that failed is opened to try again.
   open: (open: string) => {
-    events.open();
+    recording.open();
     useView.setState(({ search }) => ({ open, position: { at: "end" }, moment: { at: "now" }, search: { ...search, current: undefined } }));
   },
   // A launch shows its agent: the recording its process makes, opened, and its window, beside it, which stays shown when
