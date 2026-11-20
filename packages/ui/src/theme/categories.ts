@@ -10,7 +10,7 @@ export type CategoryColors = { bar: ColorRgba; chip: ColorRgba; chipText: ColorR
 // most of, and the two split from it the next places.
 const hueIndex: Record<Category, number> = { tools: 0, system: 1, http: 2, user: 3, assistant: 4, thinking: 5, parameters: 6, usage: 7 };
 
-// Consecutive hues this far apart keep the eight at least 32.5° from each other.
+// Consecutive hues this far apart keep the eight at least 32.4° from each other.
 const goldenAngle = 137.508;
 // A theme color less saturated than this is a gray, and holds no hue to keep the categories away from.
 const chromaticFloor = 0.05;
