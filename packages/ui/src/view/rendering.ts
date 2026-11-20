@@ -6,7 +6,7 @@ import { linkOpening } from "./terminalLink.ts";
 
 // What a text part shows (docs/design/02-design.md, "Two voices"), read as its form says: verbatim, its long regions
 // cut from its lines (view/regions.ts), or as Markdown, rendered as a reader reads it, in GitHub's flavor of CommonMark,
-// which the model writes in. Its long regions fold (docs/design/features.md, F4).
+// which the model writes in. Its long regions fold (docs/design/01-features.md, F4).
 // [LAW:one-source-of-truth] One rendering, a function of the text and its form alone, is both what the view draws and
 // what the search reads: `text`, the characters the rendering shows, in order, as the DOM's textContent holds them, and
 // the leaves that draw them, each placed at its offset in `text`. So a match the search counts is one the reader sees, the syntax a Markdown

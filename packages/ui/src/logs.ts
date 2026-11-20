@@ -9,7 +9,7 @@ export type LogConnection = { state: "connecting" } | { state: "connected" } | {
 // A line as the panel lists it: its part, the line, and when its work ended, which orders it among the other part's.
 export type Listed = { part: Part; line: LogLine; ended: number };
 
-// The logs panel's state (docs/design/features.md, F9). `lines`: both parts' lines, in the order their work ended, the
+// The logs panel's state (docs/design/01-features.md, F9). `lines`: both parts' lines, in the order their work ended, the
 // last `kept` of them. `notKept`: how many lines either part wrote that are not among them, read off the gaps in the
 // numbers of a process's lines, and the lines let go here. `last`: the last line read of each part's process.
 export type Logs = {

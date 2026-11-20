@@ -8,7 +8,7 @@ import { recordedLength } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
-// (docs/design/features.md): live viewing, reopening, refresh and reload are all one read from a position.
+// (docs/design/01-features.md): live viewing, reopening, refresh and reload are all one read from a position.
 // `GET /recordings` lists the `.jsonl` files of the recordings directory that hold something, in no order of its own: a
 // recording with no bytes has no conversation, and one a launch made is opened by its name. `GET /recordings/<name>` is
 // Server-Sent Events, one per recorded line, whose id is the byte offset just past the line: a reconnecting EventSource

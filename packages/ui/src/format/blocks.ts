@@ -5,7 +5,7 @@ import { inputParts, jsonInput } from "./tools.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
-// [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/features.md, "Vocabulary"), in the order
+// [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/01-features.md, "Vocabulary"), in the order
 // the filter bar lists them: what was said and sent, then the exchange's envelope by where it is from. `parameters`:
 // what a request asks beside its prompt and its messages, its cache breakpoints and a message's other fields among
 // them. `usage`: what the API reported about its reply, why it stopped and what it counted. `http`: the wire as it was
@@ -37,7 +37,7 @@ export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
 // The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
 // where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
-// (docs/design/features.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
+// (docs/design/01-features.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
 const pieces: Record<Role, (text: string) => Piece[]> = {
   user: (text) => split(text, "said"),
   assistant: (text) => [{ kind: "said", text, content: text }],
@@ -90,7 +90,7 @@ const tools = () => "tools" as const;
 // [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one
 // in Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
 // reply, how long its signature or its data is: it is `usage`, so it is no row among what was said until the reader
-// shows the usage, and is never dropped (docs/design/features.md, F3).
+// shows the usage, and is never dropped (docs/design/01-features.md, F3).
 const thought = (_: Role, block: unknown): Category => {
   const text = sentField(block, "thinking");
   return typeof text === "string" && text !== "" ? "thinking" : "usage";
@@ -226,7 +226,7 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
-// shown as what was said (docs/design/features.md, F3). A text block's other fields follow its last piece, which states
+// shown as what was said (docs/design/01-features.md, F3). A text block's other fields follow its last piece, which states
 // what the text ends with.
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");

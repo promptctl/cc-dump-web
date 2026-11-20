@@ -8,8 +8,8 @@ const ansiNames = [
   "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
 ] as const satisfies readonly (keyof ITheme)[];
 
-// The terminal in the theme (docs/design/features.md, F10, F13): a terminal is content, so it is on the theme's background
-// in its foreground (docs/design/02-design.md, Principles), its cursor and selection are the theme's input cursor and
+// The terminal in the theme (docs/design/01-features.md, F10, F13): a terminal is content, so it is on the theme's background
+// in its foreground, as the conversation is, its cursor and selection are the theme's input cursor and
 // selection, and the 16 ANSI colors are the theme's terminal table, rich-js's own, so what the agent prints in color is
 // in the theme's colors as rich-js renders them.
 export function terminalTheme({ name, palette }: Theme): ITheme {

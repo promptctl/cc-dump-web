@@ -13,6 +13,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 | Heading | The word over a run of an exchange's blocks, saying whose they are: `tools`, the tools the model is offered; `system`, its system prompt, and a message in the system's role; `user` and `assistant`, a message by who speaks, the reply as much as an assistant's message sent again; `message`, a message that is not the shape a message has. The exchange's envelope has no heading: it stands under the exchange's line. |
 | Set | A heading's blocks that are one line while closed: the tool definitions, under `tools`. The heading is the set's line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, thinking, and the exchange's envelope by where it is from: parameters (what a request asks beside its prompt and messages, its cache breakpoints among them), usage (what the API reported about its reply: why it stopped, what it counted) and http (the wire as received: each side's head, a body or event not read, how the connection ended). |
+| Nest | A subagent's thread, listed under the Agent call that launched it. |
 | Conversation | The exchanges of one recording, in order, as shown on screen. |
 | Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
 
@@ -29,11 +30,11 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 ### F2. Capture
 - Every request, whatever its path, is captured with its response. Those to the Anthropic Messages API, a POST to `/v1/messages`, streaming or not, are shown.
 - The agent receives response bytes as they arrive from Anthropic. The request body reaches Anthropic byte-for-byte as the agent sent it.
-- Requests with any other method or path are forwarded and recorded, and not shown.
+- Requests with any other method or path are forwarded and recorded, and not shown. A request whose method and path were not recorded is shown.
 - Requests that overlap in time are kept as separate exchanges.
 - Failures are captured as exchanges: an HTTP error with its body, an error event in the middle of a stream, and a failed connection to Anthropic.
 - Every block type is captured, including types the app has never seen. The proxy records what was on the wire and does not interpret it.
-- The `authorization`, `x-api-key`, `cookie` and `set-cookie` headers are forwarded but never written to a recording and never sent to the browser.
+- The `authorization`, `proxy-authorization`, `x-api-key`, `cookie` and `set-cookie` headers are forwarded but never written to a recording and never sent to the browser.
 
 ### F3. Format
 - Each exchange is shown as one unit: its line, then its envelope, then what the request sends, then the reply.
@@ -62,8 +63,8 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
-- The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
-- The query is a regular expression, matched without regard to case. Each of case, whole word and regular expression can be switched.
+- The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones and what a closed nest holds included.
+- The query is a regular expression, matched without regard to case, by default. Each of case, whole word and regular expression can be switched.
 - Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match under a closed heading opens it, moving to a match in a closed set opens the set, and moving to a match in a hidden category shows its block.
 - A text's contents (F4) are not searched: a match in a heading is counted once, where the heading is.
 
@@ -71,9 +72,8 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - Every exchange is written to its process's recording as it happens, with no action from the user.
 - A recording that was being written when the app crashed can still be opened.
 - The user can pick any past recording from a list and read it with every feature in this document.
-- A reopened recording and live traffic reach the screen through the same path. There is no second implementation for replay.
 - Live capture keeps recording while the user reads another recording.
-- A restart of the proxy ends the live view of an agent launched before it: its conversation says the recording ended. The recording is followed again once the agent's next request reaches the new proxy and the recording is reopened.
+- After a restart of the proxy, the recording of an agent launched before it is followed only once the agent's next request reaches the new proxy. A view that reconnects before then says the recording ended, and follows it again when the recording is reopened.
 
 ### F8. Status and info
 - **Connection status,** always on screen: whether the browser is connected to the proxy, how many requests are in flight, and how long ago the last request arrived.
@@ -87,7 +87,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - Every color, including the category colors, comes from the theme. Adding a theme means adding one set of values and changing no component.
 
 ### F11. Settings persist
-- These survive a restart of the browser, the app and the machine: the theme, each category's level, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the tmux session used for launching, the agent command, and the proxy port and upstream address.
+- These survive a restart of the browser, the app and the machine: the theme, each category's level, the search's case, whole-word and regular-expression switches, follow mode, which panels are open, the logs panel's level, the tmux session used for launching, the agent command, and the proxy port and upstream address.
 
 ### F12. Hot reload
 - Saving a change to any source file except the proxy's takes effect in the running app without restarting the proxy.
@@ -101,7 +101,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - After a reload the pane is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it (by Unicode 11's table). A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, any other scheme by the app the OS has for it. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
 
 ## Architecture
 
@@ -121,11 +121,11 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 
 **One formatter.** The formatter alone reads the API's content: a new block type is one new entry in it, shown as parts the view already draws, with no change to capture or the view. Anything computed from traffic is another reader of the same events.
 
-**Security is a non-goal.** Whatever is needed is built in the most direct way.
+**Who may reach it.** The app server answers only a request that names no page or names a page served from this machine, by any of loopback's names. The proxy's reader port answers any page.
 
 ## Stack
 
 - TypeScript throughout. Node for the proxy and the app server.
 - React with Vite for the UI. Zustand for state.
 - Tailwind, reading the theme's variables; no component library.
-- tmux-control-mode-js for all tmux operations, and its terminal export, on xterm.js, for the terminal (F13).
+- `@promptctl/tmux-control-mode-js` for all tmux operations, and its terminal export, on xterm.js, for the terminal (F13).

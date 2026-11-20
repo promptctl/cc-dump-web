@@ -1,7 +1,7 @@
 import { LONG } from "./regions.ts";
 import type { Block, Heading, Inline, Run } from "./rendering.ts";
 
-// A Markdown text's table of contents (docs/design/features.md, F4): its headings, listed in one place above it, each a
+// A Markdown text's table of contents (docs/design/01-features.md, F4): its headings, listed in one place above it, each a
 // way to its section. Not a block's content, which is what the block holds.
 // [LAW:one-source-of-truth] It is read from the text's rendering, so an entry is a heading the text shows, by the line
 // that names its section.

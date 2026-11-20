@@ -7,7 +7,7 @@ import { parseSettings, withDefaults, type SettingsOf, type Table } from "./sett
 // set; every other setting is its default.
 export type ReadSettings<S> = { settings: S; file_keys: string[] | null };
 
-// A JSON settings file (docs/design/features.md, F11), `what` in what it says, holding the settings of `table`. Each
+// A JSON settings file (docs/design/01-features.md, F11), `what` in what it says, holding the settings of `table`. Each
 // part's file is an instance.
 export function settingsFile<T extends Table>(what: string, table: T) {
   // `text` is the file's, or undefined when there is no file; `said`, the file as its failures name it.
