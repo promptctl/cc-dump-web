@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe } from "@cc-dump/log/describe";
-import { parseRecordedEvent } from "@cc-dump/proxy/format";
+import { parseRecordedEvent, type RecordedEvent } from "@cc-dump/proxy/format";
 import { recordedLength } from "@cc-dump/proxy/recording";
-import { exchanges } from "../src/exchanges.ts";
+import { refusedAt } from "../src/connection/connection.ts";
+import { add, type ByTrace } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import type { Visibility } from "../src/settings.ts";
@@ -239,15 +240,21 @@ for (const recording of process.argv.slice(2)) {
     // cross; the bytes after its last newline, which a write cut short left, are no event.
     const { terminated, unterminated } = recordedLength(recording);
     if (unterminated > 0) console.log(`${recording}: its last ${unterminated} bytes are cut off, and not read`);
-    const lines = readFileSync(recording).subarray(0, terminated).toString("utf8").split("\n").slice(0, -1);
-    const events = lines.map((line, index) => {
+    // Folded as a read folds it, each event refused where its line ends.
+    const byTrace: ByTrace = new Map();
+    let offset = 0;
+    for (const line of readFileSync(recording).subarray(0, terminated).toString("utf8").split("\n").slice(0, -1)) {
+      offset += Buffer.byteLength(line) + 1;
+      let event: RecordedEvent;
       try {
-        return parseRecordedEvent(line);
+        event = parseRecordedEvent(line);
       } catch (error) {
-        throw new Error(`event ${index + 1}`, { cause: error });
+        throw refusedAt(offset, error);
       }
-    });
-    const history = createHistory()(createFormatter()(exchanges(events)));
+      const placed = add(byTrace, event);
+      if (typeof placed === "string") throw refusedAt(offset, placed);
+    }
+    const history = createHistory()(createFormatter()([...byTrace.values()]));
     const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
     const layOut = createLayout(expanded);
     const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));

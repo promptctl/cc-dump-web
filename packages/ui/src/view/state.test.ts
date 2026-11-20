@@ -1,9 +1,8 @@
-import { recordedAt } from "../testing.ts";
+import { exchanges, recordedAt } from "../testing.ts";
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
-import { exchanges } from "../exchanges.ts";
 import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
 import { useView, view } from "./state.ts";

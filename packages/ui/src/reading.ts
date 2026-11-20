@@ -48,10 +48,10 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
   if (open === null) return;
   const byTrace: ByTrace = new Map();
   const shown = new Map<TraceId, Exchange>();
-  const touched = new Set<TraceId>();
+  const touched = new Map<TraceId, Exchange>();
   let cancelFrame = () => {};
   const flush = () => {
-    for (const trace of touched) shown.set(trace, snapshot(byTrace.get(trace)!));
+    for (const [trace, exchange] of touched) shown.set(trace, snapshot(exchange));
     touched.clear();
     sink([...shown.values()]);
   };
@@ -67,9 +67,9 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     open,
     {
       event: (event, offset) => {
-        const refused = add(byTrace, event);
-        if (refused !== undefined) return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, refused) }) });
-        if (touched.add(event.trace_id).size === 1) cancelFrame = frames(flush);
+        const placed = add(byTrace, event);
+        if (typeof placed === "string") return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
+        if (touched.set(event.trace_id, placed).size === 1) cancelFrame = frames(flush);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
       failed: (error) => settle({ state: "failed", error }),

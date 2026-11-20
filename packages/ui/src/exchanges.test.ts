@@ -1,7 +1,8 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { add, exchanges, trailersOf, type ByTrace } from "./exchanges.ts";
-import { recordedAt } from "./testing.ts";
+import { add, trailersOf, type ByTrace } from "./exchanges.ts";
+import { exchanges, recordedAt } from "./testing.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const at = recordedAt(timestamp);
@@ -85,15 +86,22 @@ describe("add", () => {
     ["a second end", [end("a")], end("a"), "follows its trace's end"],
   ])("refuses %s, naming its trace and type, placing it nowhere", (_, placed, refused, why) => {
     const byTrace: ByTrace = new Map();
-    for (const event of placed) expect(add(byTrace, event)).toBeUndefined();
+    for (const event of placed) add(byTrace, event);
     const before = structuredClone(byTrace);
     expect(add(byTrace, refused)).toBe(`trace a's ${refused.type} ${why}`);
     expect(byTrace).toEqual(before);
   });
 
-  it("takes the other side's events after one side's trailers", () => {
+  it("takes the other side's events after one side's trailers, returning the exchange it placed each in", () => {
     const byTrace: ByTrace = new Map();
-    for (const event of [request("a", "/"), requestTrailers("a"), response("a", 200), body("a"), trailers("a"), end("a")]) expect(add(byTrace, event)).toBeUndefined();
+    const events = [request("a", "/"), requestTrailers("a"), response("a", 200), body("a"), trailers("a"), end("a")];
+    const placed = events.map((event) => add(byTrace, event));
+    expect(new Set(placed)).toEqual(new Set([byTrace.get(parseTraceId("a"))]));
+    expect(byTrace.get(parseTraceId("a"))).toMatchObject({
+      request: { head: events[0], body: [], completedBy: events[1] },
+      response: { head: events[2], body: [events[3]], completedBy: events[4] },
+      end: events[5],
+    });
   });
 
   it("fails the fold of a list on the first refusal, naming the event, its trace and its type", () => {

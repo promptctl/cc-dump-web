@@ -2,9 +2,9 @@ import { describe as said } from "@cc-dump/log/describe";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import { exchanges, type Exchange } from "./exchanges.ts";
+import type { Exchange } from "./exchanges.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
-import { recordedAt } from "./testing.ts";
+import { exchanges, recordedAt } from "./testing.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
 const at = recordedAt("2026-11-13T08:00:00.000Z");

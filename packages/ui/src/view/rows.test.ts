@@ -1,7 +1,6 @@
-import { recordedAt } from "../testing.ts";
+import { exchanges, recordedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";

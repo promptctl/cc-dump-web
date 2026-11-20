@@ -1,7 +1,6 @@
-import { recordedAt } from "../testing.ts";
+import { exchanges, recordedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";

@@ -72,18 +72,20 @@ describe("parseRecordedEvent", () => {
     );
   });
 
-  const event = { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "4bf92f3577b34da6a3ce929d0e0e4736" };
+  const event = { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "t1" };
   it.each([
     ["not json", "{", "recorded event: is not JSON"],
     ["not an object", "[]", "recorded event: is not an object"],
     ["an unknown type", { ...event, type: "response_footer" }, "recorded event: type is not one of request, "],
-    ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "recorded response event: status is not an integer"],
-    ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "recorded request_body event: base64 is not a string"],
-    ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "recorded request_trailers event: headers is not a list of [name, value] string pairs"],
+    ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "trace t1's response: status is not an integer"],
+    ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "trace t1's request_body: base64 is not a string"],
+    ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "trace t1's request_trailers: headers is not a list of [name, value] string pairs"],
     ["a trace id that is not a word", { ...event, trace_id: "a/b", type: "end", outcome: "ok" }, `recorded end event: trace_id: "a/b" is not a word: one or more letters, digits, '-' or '_'`],
-    ["a time the proxy does not write", { ...event, timestamp: "yesterday", type: "end", outcome: "ok" }, "recorded end event: timestamp is not an ISO 8601 UTC time"],
-    ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "recorded end event: outcome is not one of ok, aborted, stopped, error"],
-    ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "recorded end event: error is not a string"],
+    ["a time that is not one", { ...event, timestamp: "yesterday", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
+    ["a day its month does not have", { ...event, timestamp: "2026-02-31T00:00:00.000Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
+    ["a time written as the proxy does not", { ...event, timestamp: "2026-11-13T08:00:00Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
+    ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "trace t1's end: outcome is not one of ok, aborted, stopped, error"],
+    ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "trace t1's end: error is not a string"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
     expect(refusal(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line)))).toContain(message);
   });

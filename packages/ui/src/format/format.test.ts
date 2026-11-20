@@ -1,8 +1,7 @@
-import { recordedAt } from "../testing.ts";
+import { exchanges, recordedAt } from "../testing.ts";
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import type { Block } from "./blocks.ts";
 import { createFormatter, type FormattedExchange } from "./format.ts";
 import { doesNotFit, fieldValue } from "./parts.ts";

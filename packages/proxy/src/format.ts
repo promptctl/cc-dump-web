@@ -162,8 +162,10 @@ function infoOf(info: unknown, what: string): ProxyInfo {
 export function parseRecordedEvent(line: string): RecordedEvent {
   const json = parseJson(line, "recorded event");
   const type = fields(json, "recorded event").oneOf("type", recordedTypes);
-  const f = fields(json, `recorded ${type} event`);
-  const event = { timestamp: f.read("timestamp", isTime, aTime), trace_id: f.parsed("trace_id", parseTraceId) };
+  const trace_id = fields(json, `recorded ${type} event`).parsed("trace_id", parseTraceId);
+  // Named as the fold names an event it refuses (ui/src/exchanges.ts), so either refusal names its trace and type.
+  const f = fields(json, `trace ${trace_id}'s ${type}`);
+  const event = { timestamp: f.read("timestamp", isTime, aTime), trace_id };
   switch (type) {
     case "request":
       return { ...event, type, method: f.string("method"), url: f.string("url"), http_version: f.string("http_version"), headers: f.headers("headers") };
@@ -195,8 +197,7 @@ const recordedTypes: Record<Recorded["type"], true> = {
 };
 const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
 // A time exactly as `toISOString` writes it, which is how the proxy writes every time it records or sends.
-const isTime = (value: unknown): value is string =>
-  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !Number.isNaN(Date.parse(value));
+const isTime = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
 const aTime = "an ISO 8601 UTC time";
 const isTimeOrNull = (value: unknown): value is string | null => value === null || isTime(value);
 

@@ -78,7 +78,10 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
       const responseHeaders = pairs(incoming.rawHeaders);
       // Recorded before it is relayed, so a response node refuses to relay is recorded too.
       seen({ type: "response", status: incoming.statusCode!, reason: incoming.statusMessage!, http_version: incoming.httpVersion, headers: responseHeaders });
-      incoming.on("data", (chunk: Buffer) => seen({ type: "response_body", chunk }));
+      const responseBody = (chunk: Buffer) => seen({ type: "response_body", chunk });
+      const responseEnded = relayEnd(incoming, res, "response_trailers");
+      res.on("close", () => incoming.off("data", responseBody).off("end", responseEnded));
+      incoming.on("data", responseBody);
       incoming.on("error", upstreamFailed);
       // [LAW:single-enforcer] writeHead is node's check that a response can be relayed, and it is
       // stricter than node's response parser (status 099, a control byte in the reason phrase). A
@@ -90,13 +93,14 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
         fail(error);
         return res.destroy();
       }
-      incoming.on("end", relayEnd(incoming, res, "response_trailers"));
+      incoming.on("end", responseEnded);
       incoming.pipe(res, { end: false });
     });
     // [LAW:no-ambient-temporal-coupling] The exchange ends when its response closes, whether the client
     // left or the exchange is done. Nothing stays open upstream (when done, a no-op), and nothing more is
-    // recorded: the agent may still be sending, and destroying `outgoing` dumps `incoming`, removing its
-    // data listeners; a destroyed stream never ends.
+    // recorded: the agent may still be sending, and the upstream's response may still end, so each side's
+    // listeners that record are removed as it closes, the response's where it arrives. `end` is recorded
+    // after every close listener has run, so it is the exchange's last event.
     res.on("close", () => {
       req.off("data", requestBody).off("end", requestEnded);
       outgoing.destroy();

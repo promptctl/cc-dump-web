@@ -30,21 +30,6 @@ describe("record", () => {
     expect(readdirSync(dir)).toEqual([]);
     expect(logged).toMatchObject([{ event: "record", outcome: "error", error: expect.stringContaining("ENOENT") }]);
   });
-
-  it("writes nothing of an exchange after its end, logging what came late as an error", () => {
-    const logged: Event[] = [];
-    const { dir, record } = recordings(moment, (event) => void logged.push(event));
-    const seen = record(run, trace_id);
-
-    seen({ type: "end", outcome: "ok" });
-    seen({ type: "response_trailers", headers: [] });
-
-    expect(readFileSync(join(dir, run), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line).type)).toEqual(["end"]);
-    expect(logged).toMatchObject([
-      { event: "record", outcome: "ok" },
-      { event: "record_late", trace_id, outcome: "error", error: "response_trailers seen after its exchange's end: not recorded" },
-    ]);
-  });
 });
 
 describe("create", () => {

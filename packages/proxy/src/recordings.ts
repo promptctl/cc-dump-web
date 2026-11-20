@@ -62,13 +62,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     const span = startSpan(trace_id);
     const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
     let failure: string | undefined;
-    let ended = false;
     return (seen) => {
-      // [LAW:no-ambient-temporal-coupling] An exchange's recording ends at its `end`, and its recorder is the one owner of
-      // that: an event seen after it is not written, since a reader refuses a trace's event after its end, and the
-      // recording would be unreadable from there. It is logged, as the proxy's failure to end the exchange last.
-      if (ended) return log({ event: "record_late", ...startSpan(trace_id).end(), outcome: "error", error: `${seen.type} seen after its exchange's end: not recorded`, path });
-      ended = seen.type === "end";
       const line = eventLine(trace_id, seen);
       try {
         writerOf(name).append(line);

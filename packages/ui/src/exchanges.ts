@@ -36,27 +36,17 @@ export type ByTrace = Map<TraceId, Exchange>;
 // [LAW:single-enforcer] [LAW:parse-dont-validate] The one step that places an event in its exchange, and the one place
 // a recording is held to the shape the proxy writes: a trace holds one request head and one response head, at most one
 // trailers per side, and one end; a side's head comes before the rest of it and its trailers after, and a trace takes
-// nothing after its end. An event that breaks it is refused, as what is wrong with it, naming its trace and type, and
-// placed nowhere: what `byTrace` holds stays as it was. A head never recorded is the shape: the recorder writes a side's
-// body without it when the head's write fails.
-export function add(byTrace: ByTrace, event: RecordedEvent): string | undefined {
+// nothing after its end. It returns the exchange the event is placed in. An event that breaks the shape is refused, as
+// what is wrong with it, naming its trace and type, and placed nowhere: what `byTrace` holds stays as it was. A head
+// never recorded is the shape: the recorder writes a side's body without it when the head's write fails.
+export function add(byTrace: ByTrace, event: RecordedEvent): Exchange | string {
   const exchange = byTrace.get(event.trace_id) ?? begun(event);
   const place = placing(exchange, event);
   if (typeof place === "string") return `trace ${event.trace_id}'s ${event.type} ${place}`;
   place();
   exchange.latest = event;
   byTrace.set(event.trace_id, exchange);
-  return undefined;
-}
-
-// The exchanges of `events`, in the order they began, or an error naming the first event that breaks the shape.
-export function exchanges(events: RecordedEvent[]): Exchange[] {
-  const byTrace: ByTrace = new Map();
-  events.forEach((event, index) => {
-    const refused = add(byTrace, event);
-    if (refused !== undefined) throw new Error(`event ${index + 1}: ${refused}`);
-  });
-  return [...byTrace.values()];
+  return exchange;
 }
 
 const begun = (event: RecordedEvent): Exchange => ({
