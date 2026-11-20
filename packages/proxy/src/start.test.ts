@@ -53,7 +53,7 @@ describe("the reader port", () => {
     expect((await answered).status).toBe(502);
   });
 
-  it("makes a recording for an agent about to launch, answering its name, and lists none until it holds something", async () => {
+  it("makes a new agent's recording, answering its name, and lists none until it holds something", async () => {
     const { dir, readerPort } = await proxy();
 
     const res = await send(readerPort, { method: "POST", path: "/recordings" });

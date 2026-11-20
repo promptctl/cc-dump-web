@@ -220,7 +220,7 @@ describe("createReader", () => {
     }
   });
 
-  it("follows a recording the run made for an agent about to launch, empty until its process writes, and sends its events once it does", async () => {
+  it("follows a recording the run made for a new agent, empty until its process writes, and sends its events once it does", async () => {
     const { dir, recordings, reader, readerLog, exchange, lines } = await proxyAndReader();
     expect(recordings.create()).toBe(agentName);
 

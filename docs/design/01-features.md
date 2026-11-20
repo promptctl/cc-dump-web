@@ -42,7 +42,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - What the request sends is the tool definitions under `tools`, the system prompt under `system`, and every message with its content blocks under who speaks, `user` or `assistant`.
 - The reply is the response's content blocks under `assistant`, the heading the same content has when a later request sends it again as a message. An error that ended the exchange stands with the reply.
 - A heading and the block under it do not say the same thing: a block of text is named `text` under whoever speaks.
-- A thinking block that holds no text says only what the API reported, how long its signature is: it is usage, not thinking, so it is no row among what was said until the usage is shown.
+- A thinking block that holds no text, or a redacted one, says only what the API reported, how long its signature or its data is: it is usage, not thinking, so it is no row among what was said until the usage is shown.
 - Content the harness injects into a user message is split out of it into blocks of its own, each named for what it is: a system reminder, hook output, the contents of a CLAUDE.md file named by its path.
 - Every content block type has a rendering: text, thinking, redacted thinking, tool use, tool result, image, document, server tool use and its results.
 - A block of a type the app does not know is shown under its type name as raw JSON. No block is ever dropped.
@@ -60,7 +60,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 ### F5. Filter
 - Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line, and a set is its one line) or expanded (each block is expanded, and a set is open).
 - The levels start as: user and assistant expanded; tools, system and thinking compact; parameters, usage and http hidden.
-- A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
+- A filter bar, there while a recording is open, shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones and what a closed nest holds included.
@@ -96,12 +96,12 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
-- The agent's tmux pane is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the agent, as in their own terminal.
-- A launch (F1) shows the pane it opened.
-- After a reload the pane is shown again as it is now.
+- The agent's tmux window is shown in the page, beside the conversation, live and fully interactive: its panes as tmux-control-mode-js draws them, what the agent prints appearing as it prints it, and what the user types going to the pane they clicked into.
+- A launch (F1) shows the window it opened.
+- After a reload the window is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it writes as one opens on a click, or is refused, by its scheme, as terminalLink.ts decides, and a web page's URL in its text is a link to that page. The pointer over a link shows where it goes.
 
 ## Architecture
 
