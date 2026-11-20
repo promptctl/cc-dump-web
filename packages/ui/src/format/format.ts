@@ -35,9 +35,19 @@ export type Place =
   | { in: "reply" };
 
 // One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
-// the system prompt and each message, then the reply; the facts its line prints; and how many messages of a speaker's
-// the request sends, which is the reply's index among them.
-export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
+// the system prompt and each message, then the reply; the facts its line prints; how many messages of a speaker's the
+// request sends, which is the reply's index among them; and who sent it.
+export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number; sender: Sender };
+
+// Who sent a request, as Claude Code's headers say (docs/design/claude-code-wire.md, "Request headers"): the main
+// agent, whose requests carry no agent id; a subagent, by its `id`, and the `parent` subagent that launched it, none
+// where the main agent did; or, for a request whose head was not recorded, no one the recording names.
+export type Sender = { kind: "main" } | { kind: "subagent"; id: string; parent: string | undefined } | { kind: "unrecorded" };
+function senderOf(head: RequestSide["head"]): Sender {
+  if (head === undefined) return { kind: "unrecorded" };
+  const [id] = headerValues(head.headers, "x-claude-code-agent-id");
+  return id === undefined ? { kind: "main" } : { kind: "subagent", id, parent: headerValues(head.headers, "x-claude-code-parent-agent-id")[0] };
+}
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
@@ -113,6 +123,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
           { key: "reply", title: "assistant", blocks: [...response.reply, ...one("end", ended.reply)] },
         ],
         messages: request.messages,
+        sender: senderOf(exchange.request.head),
       };
       formatted.set(exchange.latest, shown);
       return shown;

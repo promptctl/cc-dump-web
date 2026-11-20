@@ -125,6 +125,21 @@ function within(text: string, rest: Made, markers: Marker[]): Piece[] {
   return cuts.map(({ at, mark, piece }, index) => piece(text.slice(at, cuts[index + 1]?.at), mark)).filter((piece) => piece.text !== "");
 }
 
+// A task's stop, as the harness tells the agent that launched it (docs/design/claude-code-wire.md, "When a subagent
+// stops"): a `<task-notification>` naming the task, which for an agent is the agent's id, and the call that launched it,
+// which Claude Code names where there was one. [LAW:types-are-the-program] One whose task the notification does not
+// name is a misfit, with why, shown on its block and never a stop.
+export type Notification = { task: string; call: string | undefined } | { misfit: string };
+
+// The notifications a text of the harness holds, in order. Only the harness's pieces are read (format/blocks.ts): a
+// person may type the tag, which notifies nothing.
+export function notificationsIn(text: string): Notification[] {
+  return [...text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)].map(([, inner]) => {
+    const task = /<task-id>([^<]+)<\/task-id>/.exec(inner!)?.[1];
+    return task === undefined ? { misfit: "a task notification that names no task-id" } : { task, call: /<tool-use-id>([^<]+)<\/tool-use-id>/.exec(inner!)?.[1] };
+  });
+}
+
 // The fenced code blocks of a text, as the start and end of each, as markdown has them: a line starting with ``` or ~~~
 // opens one, the next line starting with the same three characters closes it, and one never closed runs to the end.
 function fences(text: string): [from: number, to: number][] {

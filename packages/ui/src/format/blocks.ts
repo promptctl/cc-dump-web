@@ -1,4 +1,4 @@
-import { split, type Piece } from "./injected.ts";
+import { notificationsIn, split, type Notification, type Piece } from "./injected.ts";
 import { doesNotFit, fieldsParts, fieldValue, type Field, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
@@ -18,16 +18,22 @@ export type Category = (typeof categories)[number];
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
-// `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
-// reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
-// it (view/history.ts), which reads them here and never back out of a block's parts. `handback`: a subagent's call of
-// the tool that hands its report back to its caller, after which it does nothing more until it is told more.
+// `launch`: the subagent an Agent tool's call launches. `launched`: the agent a tool's result says it launched.
+// `notified`: the tasks whose stop the harness's text tells of. `summary`: the summary an assistant's text ends with, as
+// the reply to a compaction does. [LAW:one-source-of-truth] The history reads each of these here (view/history.ts),
+// never back out of a block's parts. `handback`: a subagent's call of the tool that hands its report back to its
+// caller, after which it does nothing more until it is told more.
 export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; summary?: string; handback?: true };
+export type Stated = { launch?: Launch; launched?: Launched; notified?: Notified[]; summary?: string; handback?: true };
 
-// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
-// agent `type` it names, where it names one.
-export type Launch = { prompt: string; type: string | undefined };
+// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent is first told, and the agent
+// `type` it names, where it names one; `call`, the call's id, by which its result names it.
+export type Launch = { call: string; prompt: string; type: string | undefined };
+// The agent a result of the call `call` says it launched, by the agent's id, which every request of that agent carries
+// (format/format.ts, Sender), and how it ran: in the background, whose result is returned as it starts, or in the
+// foreground, whose result is its report, returned as it stops.
+export type Launched = { call: string; agent: string; ran: "background" | "foreground" };
+export type Notified = Extract<Notification, { task: string }>;
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -114,11 +120,28 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 // last block of a reply that stops for a tool's use, where its turn never ends.
 const called = (block: unknown): Stated => {
   const name = sentField(block, "name");
+  const call = sentField(block, "id");
   const input = sentField(block, "input");
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
-  if (name === "Agent" && typeof prompt === "string") return { launch: { prompt, type: typeof type === "string" ? type : undefined } };
+  if (name === "Agent" && typeof call === "string" && typeof prompt === "string") return { launch: { call, prompt, type: typeof type === "string" ? type : undefined } };
   return name === "SubagentHandback" ? { handback: true } : {};
+};
+
+// The agent an Agent tool's result says it launched, in the text Claude Code frames the result with
+// (docs/design/claude-code-wire.md, "An Agent call and the agent it launches"): a background launch's one text opens
+// with its line and names the agent on the next; a foreground run's report is followed by a text of the harness's own,
+// which opens naming the agent and ends with its usage. A report that only quotes such a line is not the frame, and a
+// result of any other tool's call is matched to no Agent call (view/history.ts).
+const background = /^Async agent launched successfully\.[^\n]*\nagentId: (\S+)/;
+const foreground = /^agentId: (\S+)[\s\S]*\n<usage>[\s\S]*<\/usage>$/;
+const resulted = (block: unknown): Stated => {
+  const call = sentField(block, "tool_use_id");
+  const content = sentField(block, "content");
+  const texts = (typeof content === "string" ? [content] : Array.isArray(content) ? content.map((part) => sentField(part, "text")) : []).filter((text) => typeof text === "string");
+  const launched = (agent: string | undefined, ran: Launched["ran"]): Stated => (agent === undefined || typeof call !== "string" ? {} : { launched: { call, agent, ran } });
+  const first = background.exec(texts[0] ?? "")?.[1];
+  return first !== undefined ? launched(first, "background") : texts.length > 1 ? launched(foreground.exec(texts.at(-1)!)?.[1], "foreground") : {};
 };
 
 // The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the
@@ -138,6 +161,7 @@ const summarized = (block: unknown, role: Role): Stated => {
 const toolResult: Entry = {
   category: tools,
   failed: (block) => sentField(block, "is_error") === true,
+  stated: resulted,
   parts: (fields, role) => {
     const content = fields.value("content");
     const failed = fields.value("is_error");
@@ -238,10 +262,19 @@ export function formatContent(block: unknown, role: Role): Block[] {
     const form = pieceForm[piece.kind];
     const last = index === textPieces.length - 1;
     const rest = last ? fields : [];
-    const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
+    const { notified, misfits } = notifiedIn(piece);
+    const parts: Part[] = [...misfits.map(doesNotFit), { kind: "text", form, text: piece.text }, ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...notified, ...(last ? stated : {}) };
   });
+}
+
+// The stops a piece tells of, where it is the harness's, and why each notification it holds that tells of none does
+// not fit.
+function notifiedIn(piece: Piece): { notified: Pick<Stated, "notified">; misfits: string[] } {
+  const notifications: Notification[] = piece.kind === "said" ? [] : notificationsIn(piece.content);
+  const notified = notifications.filter((notification): notification is Notified => "task" in notification);
+  return { notified: notified.length === 0 ? {} : { notified }, misfits: notifications.flatMap((notification) => ("misfit" in notification ? [notification.misfit] : [])) };
 }
 
 function isText(block: unknown): block is { type: "text"; text: string } {

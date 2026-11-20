@@ -629,8 +629,8 @@ describe("format", () => {
     const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
     const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
     expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
-      { prompt: "Find the bug.\n", type: "Explore" },
-      { prompt: "Go.", type: undefined },
+      { call: "toolu_1", prompt: "Find the bug.\n", type: "Explore" },
+      { call: "toolu_1", prompt: "Go.", type: undefined },
     ]);
     // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
     expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
@@ -639,7 +639,49 @@ describe("format", () => {
     const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
     const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
     expect(reply(4)).toEqual([undefined]);
-    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
+    expect(reply(5)).toEqual([{ call: "toolu_1", prompt: "Go.", type: undefined }]);
+  });
+
+  it("states who sent a request, as its agent headers say, and no one for a request whose head was not recorded", () => {
+    const sent = (headers: Header[]) => one([{ ...at("a"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers }, end("a")]).sender;
+    expect(sent([])).toEqual({ kind: "main" });
+    expect(sent([["X-Claude-Code-Agent-Id", "a1"]])).toEqual({ kind: "subagent", id: "a1", parent: undefined });
+    expect(sent([["x-claude-code-agent-id", "a2"], ["x-claude-code-parent-agent-id", "a1"]])).toEqual({ kind: "subagent", id: "a2", parent: "a1" });
+    expect(one([end("a")]).sender).toEqual({ kind: "unrecorded" });
+  });
+
+  it("states the agent an Agent tool's result says it launched, in the background or the foreground, read from the harness's frame alone", () => {
+    const result = (content: unknown) => ({ type: "tool_result", tool_use_id: "toolu_1", content });
+    const launched = (...content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "user", content: content.map(result) }] })), "message.0").map(({ launched }) => launched);
+    const texts = (...texts: string[]) => texts.map((text) => ({ type: "text", text }));
+    const async = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a1 (internal ID - do not mention to user.)\nThe agent is working in the background.";
+    const trailer = "agentId: a2 (use SendMessage with to: 'a2' to continue this agent)\n<usage>total_tokens: 9\ntool_uses: 1\nduration_ms: 5</usage>";
+    expect(launched(texts(async), async, texts("The report.", trailer))).toEqual([
+      { call: "toolu_1", agent: "a1", ran: "background" },
+      { call: "toolu_1", agent: "a1", ran: "background" },
+      { call: "toolu_1", agent: "a2", ran: "foreground" },
+    ]);
+    // A one-shot agent's report alone names none, nor does a report that quotes the frame, or any other text.
+    expect(launched(texts("The report."), texts(trailer), texts(`The report quotes:\n${async}`, "More."), "agentId: a3", [{ type: "image" }])).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  });
+
+  it("states each task's stop the harness's text tells of, and shows a notification that names no task as a misfit", () => {
+    const notification = (inner: string) => `<task-notification>\n${inner}\n<status>completed</status>\n</task-notification>`;
+    const reminder = (...inner: string[]) => `<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n${inner.map(notification).join("\n")}\n</system-reminder>\n`;
+    const blocks = (text: string, role = "user") => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), role === "system" ? "message.0.system.0" : "message.0");
+    expect(blocks(reminder("<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>", "<task-id>b2</task-id>")).map(({ notified }) => notified)).toEqual([
+      [
+        { task: "a1", call: "toolu_1" },
+        { task: "b2", call: undefined },
+      ],
+    ]);
+    // In a system-role message, whose text is the harness's whole.
+    expect(blocks(notification("<task-id>a1</task-id>"), "system").map(({ notified }) => notified)).toEqual([[{ task: "a1", call: undefined }]]);
+    // What a person typed tells of none.
+    expect(blocks(notification("<task-id>a1</task-id>")).map(({ notified }) => notified)).toEqual([undefined]);
+    const [misread] = blocks(reminder("<tool-use-id>toolu_1</tool-use-id>"));
+    expect(misread).not.toHaveProperty("notified");
+    expect(misread!.parts[0]).toEqual(doesNotFit("a task notification that names no task-id"));
   });
 
   it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
