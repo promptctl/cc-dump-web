@@ -163,13 +163,13 @@ export const pastKey = (key: string) => `past:${key}`;
 // Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
 // level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
 // closed until the reader opens it (`opened`), and of each step's own rows those shownOf lists, by the levels
-// `visibility`, the reader's choices and the block at the key `current`, the search's current match. A step of 0 is the
+// `visibility`, the reader's choices and the key `currentKey` of the search's current match. A step of 0 is the
 // conversation before anything arrived.
-export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, current: string | undefined, opened: Opened) => Layout {
+export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, currentKey: string | undefined, opened: Opened) => Layout {
   let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, steps: new Set() };
   // Each fork's siblings as its line last listed them, by its key.
   let forks = new Map<string, readonly Sibling[]>();
-  return (history, step, current, opened) => {
+  return (history, step, currentKey, opened) => {
     const { segments } = history;
     const column = columnOf(history, step);
     // [LAW:one-source-of-truth] The steps listed are the set they were while they are the same steps, and a fork's
@@ -195,7 +195,7 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
         const row = rows[index]!;
         if (row.kind === "block") {
           const levelLists = levels[visibility[blockOf(row).category]].listed;
-          const listedBy = levelLists || row.key === current;
+          const listedBy = levelLists || row.key === currentKey;
           const setOpen = row.set === undefined || isOpen(opened, row.set, setStartsOpen(blockOf(row).category, visibility));
           shown[index] = listedBy && setOpen;
           titled ||= listedBy;
@@ -599,7 +599,8 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
 // [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen). A block
 // starts as its category's level says, but what the harness injected into a message starts collapsed, since it is not
 // what was said (docs/design/01-features.md, F4), and so do a block a step took away, which is no longer part of the
-// conversation, and a block of a hidden category that is the search's current match.
+// conversation, and, since a hidden level starts its blocks collapsed, a hidden category's block the search lists as
+// its current match.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
   const { category, injected } = blockOf(row);
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;

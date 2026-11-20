@@ -44,7 +44,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
   const layOut = useMemo(() => createLayout(visibility), [visibility]);
-  // The search's current match, whose block is listed whichever its category (createLayout).
+  // The search's current match, whose block is listed at any level of its category while its set shows open (rows.ts).
   const current = useView((state) => state.search.current);
   const currentKey = current?.key;
   const opened = useView((state) => state.opened);

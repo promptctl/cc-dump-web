@@ -309,9 +309,10 @@ describe("a set", () => {
     const hidden = { ...shown, tools: "hidden" } as const;
     const pattern = /Runs/g;
     beforeEach(() => useView.setState(useView.getInitialState(), true));
-    // The reader's step to the first match, Bash's description, at the levels `visibility`, as the view takes it.
-    const step = (visibility: Record<Category, Visibility>) => {
-      const layout = layouts(events, visibility)(1);
+    // The reader's step to the first match, Bash's description, as the view takes it: the search reads every row,
+    // whatever the levels, and the step reads none.
+    const step = () => {
+      const layout = layouts(events)(1);
       const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
@@ -332,7 +333,7 @@ describe("a set", () => {
       ["hidden", hidden, [tools[2]]],
     ] as const) {
       it(`opens it at ${level}; the reader's close takes the current match back into the closed line, and opening it lists the match again`, () => {
-        step(visibility);
+        step();
         expect(seen(visibility)).toEqual({ line: "open", tools: open });
         toggle(visibility);
         expect(seen(visibility)).toEqual({ line: "closed", tools: [] });
@@ -342,7 +343,7 @@ describe("a set", () => {
     }
 
     it("leaves the current match listed under an open line, its block open, when the level changes after a step into a set and a block that started open", () => {
-      step(listing);
+      step();
       // Whether the current match's block shows open at the levels `visibility`, so the description holding it is drawn.
       const drawn = (visibility: Record<Category, Visibility>) => {
         const { opened, search } = useView.getState();
