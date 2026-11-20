@@ -1,10 +1,10 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { paint } from "./highlights.ts";
 import { useWhere, type Where } from "./painting.ts";
-import { rangesIn, whole } from "./search.ts";
+import { rangesIn, whole, type Address } from "./search.ts";
 
 // A whole text, its matches highlighted.
-export function HighlightedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
+export function HighlightedText({ blockKey, at, text }: { blockKey: string; at: Address; text: string }) {
   return <Highlighted slice={text} from={0} where={useWhere(blockKey, at, useMemo(() => whole(text), [text]))} />;
 }
 

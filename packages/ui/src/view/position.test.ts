@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, type Placed } from "./position.ts";
+import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -44,5 +44,17 @@ describe("position", () => {
     expect(positionAt(170, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
     expect(positionAt(0, rowAt)).toEqual({ at: "start" });
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
+  });
+
+  it("gives the row of the longest of a key's prefixes that is listed, and none when none is, whatever the key's slashes", () => {
+    const listed = (...keys: string[]) => (key: string) => (keys.includes(key) ? keys.indexOf(key) : undefined);
+    expect(rowIndex("a/b/c", listed("a", "a/b"))).toBe(1);
+    expect(rowIndex("a/b/c", listed("a"))).toBe(0);
+    expect(rowIndex("a/b/c", listed("a/b/c", "a"))).toBe(0);
+    expect(rowIndex("a/b", listed("x"))).toBeUndefined();
+    expect(rowIndex("/request/http", listed("", "/request"))).toBe(1);
+    expect(rowIndex("/request/http", listed(""))).toBe(0);
+    expect(rowIndex("/request/http", listed())).toBeUndefined();
+    expect(rowIndex("//", listed())).toBeUndefined();
   });
 });
