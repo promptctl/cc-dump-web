@@ -101,7 +101,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - After a reload the window is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and each character as wide as Unicode 11's table says. A link it writes as a link opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. A web address it prints as text opens on a click in a new tab. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and each character as wide as tmux counts it, by Unicode 11's table. A link it writes as a link opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. A web address it prints as text opens on a click in a new tab. The pointer over a link shows where it goes.
 
 ## Architecture
 
