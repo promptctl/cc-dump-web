@@ -20,20 +20,23 @@ export type Match = { key: string; at: Address; start: number };
 // The block's name is the empty path; a part's own text, a text, its JSON or its diff, is its part's index; a line of a
 // part's fields is its part's index, the line's, and its side's, 0 its name and 1 its value. The search and the view
 // both name a text by it.
-export type Address = readonly [] | PartAddress | readonly [part: number, line: number, side: 0 | 1];
+export type Address = readonly [] | PartAddress | FieldAddress;
 
 // The address of a part's own text.
 export type PartAddress = readonly [part: number];
 
+// The address of a line's name or value in a fields part.
+export type FieldAddress = readonly [part: number, line: number, side: 0 | 1];
+
 export const address = {
-  name: [] satisfies Address,
+  name: [] as const satisfies Address,
   part: (part: number): PartAddress => [part],
-  field: (part: number, line: number, side: "name" | "value"): Address => [part, line, side === "name" ? 0 : 1],
+  field: (part: number, line: number, side: "name" | "value"): FieldAddress => [part, line, side === "name" ? 0 : 1],
 };
 
 // [LAW:one-source-of-truth] Addresses in the order a block shows their texts: as paths, element by element, and a path
 // before every path that extends it, so the name before the parts and a part's own text before its lines. A block's
-// texts are listed in this order by construction (shownTexts); the comparison is what gives an address the block no
+// texts are listed in this order by construction, which search.test.ts holds over every part kind; the comparison is what gives an address the block no
 // longer shows, its text taken away by a later step, a place among those it shows.
 export function compareAddresses(a: Address, b: Address): number {
   for (let index = 0; index < Math.min(a.length, b.length); index++) if (a[index] !== b[index]) return a[index]! - b[index]!;
@@ -98,7 +101,7 @@ function partTexts(part: Part, index: number): Shown[] {
 }
 
 // A text of a line of a fields part: its address and its characters.
-type FieldText = { at: Address; text: string };
+type FieldText = { at: FieldAddress; text: string };
 
 // [LAW:one-source-of-truth] The lines of the fields of the part at `part`: each line's depth among the fields holding
 // it, its name, and its value, none for a field that holds fields. The view renders them and the search reads them, so
