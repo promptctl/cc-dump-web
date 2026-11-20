@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseTraceId } from "@cc-dump/log/trace";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   agentBaseUrl,
@@ -40,7 +41,7 @@ describe("parseRecordedEvent", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const recordings = createRecordings(() => {}, dir, "run.jsonl");
-    const trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const trace_id = parseTraceId("4bf92f3577b34da6a3ce929d0e0e4736");
     seen.forEach(recordings.record("run.jsonl", trace_id));
     const lines = readFileSync(join(dir, "run.jsonl"), "utf8").split("\n").filter(Boolean);
     expect(lines.map(parseRecordedEvent)).toEqual(
@@ -60,6 +61,7 @@ describe("parseRecordedEvent", () => {
     ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "recorded response event: status is not an integer"],
     ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "recorded request_body event: base64 is not a string"],
     ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "recorded request_trailers event: headers is not a list of [name, value] string pairs"],
+    ["a trace id that is not a word", { ...event, trace_id: "a/b", type: "end", outcome: "ok" }, "recorded end event: trace_id is not a word: one or more letters, digits, '-' or '_'"],
     ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "recorded end event: outcome is not one of ok, aborted, stopped, error"],
     ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "recorded end event: error is not a string"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {

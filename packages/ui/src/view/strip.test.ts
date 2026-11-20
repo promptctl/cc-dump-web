@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -6,11 +7,12 @@ import { createHistory } from "./history.ts";
 import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
 const timestamp = "2026-11-16T16:00:00.000Z";
+const at = (trace: string) => ({ timestamp, trace_id: parseTraceId(trace) });
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, messages: unknown[]): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64({ model: "claude-opus-5-5", messages }) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+const request = (trace: string, messages: unknown[]): RecordedEvent[] => [
+  { ...at(trace), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
+  { ...at(trace), type: "request_body", base64: base64({ model: "claude-opus-5-5", messages }) },
+  { ...at(trace), type: "request_trailers", headers: [] },
 ];
 const ask = { role: "user", content: [{ type: "text", text: "Read it." }] };
 const call = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] };

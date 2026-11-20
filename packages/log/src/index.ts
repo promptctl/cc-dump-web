@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
@@ -6,14 +5,15 @@ import type { Duplex } from "node:stream";
 import { inspect } from "node:util";
 import { LOOPBACK } from "./address.ts";
 import type { Ending } from "./ending.ts";
+import { mintTraceId, type TraceId } from "./trace.ts";
 
-export type { Ending };
+export type { Ending, TraceId };
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
 // fields. Parts add facts beside them and never rename them; `service` is added by the sink.
 export type Event = {
   event: string;
-  trace_id: string;
+  trace_id: TraceId;
   started_at: string;
   duration_ms: number;
   service?: never;
@@ -40,7 +40,7 @@ export function logged<T>(
   work: () => T extends PromiseLike<unknown> ? never : T,
   found: (result: T) => Facts = () => ({}),
 ): T {
-  const end = endEvent(log, event, facts, startSpan());
+  const end = endEvent(log, event, facts, startTrace());
   try {
     const result = work();
     end.ok(found(result));
@@ -53,7 +53,7 @@ export function logged<T>(
 
 // An asynchronous unit of work done inside another, in its trace (a request's): its event is written once `work`
 // settles, with the facts `found` reads off its result, or when it rejects, and then the error is rethrown.
-export async function loggedIn<T>(log: Log, trace_id: string, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
+export async function loggedIn<T>(log: Log, trace_id: TraceId, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
   const end = endEvent(log, event, facts, startSpan(trace_id));
   try {
     const result = await work();
@@ -67,7 +67,7 @@ export async function loggedIn<T>(log: Log, trace_id: string, event: string, fac
 
 // A unit of work, inside another's trace, that something else did and timed, reported once it has ended: it took
 // `duration_ms`, up to now, and failed with `error`, or did not, when `error` is undefined.
-export function loggedAfter(log: Log, trace_id: string, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
+export function loggedAfter(log: Log, trace_id: TraceId, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
   const span = { end: () => ({ trace_id, started_at: new Date(Date.now() - duration_ms).toISOString(), duration_ms }) };
   const end = endEvent(log, event, facts, span);
   if (error === undefined) end.ok({});
@@ -88,7 +88,7 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
 // `ended` resolves when the response closes, with the ending the event records.
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
-export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Promise<Ending> };
+export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
 
@@ -117,7 +117,7 @@ export async function serve(log: Log, handler: Handler, port: number, upgrade?: 
   // (an h2c POST included) to the upgrade listener once there is one, so every other reaches `handler` as before.
   const server = loggedServer(log, handler, inFlight, (req) => upgrade !== undefined && req.headers.upgrade?.toLowerCase() === "websocket");
   if (upgrade) server.on("upgrade", withUpgradeEvent(log, upgrade, server, upgraded));
-  const span = startSpan();
+  const span = startTrace();
   try {
     server.listen(port, LOOPBACK);
     await once(server, "listening");
@@ -169,7 +169,7 @@ export function shutdownOnSignal(log: Log, servers: Serving[]) {
 // A unit of work that is several at once: its event is written once every one has settled, so one that
 // fails cuts none of the others short, and then the first failure is rethrown.
 async function loggedAll(log: Log, event: string, facts: Facts, work: Promise<unknown>[]) {
-  const end = endEvent(log, event, facts, startSpan());
+  const end = endEvent(log, event, facts, startTrace());
   const failure = (await Promise.allSettled(work)).find((result) => result.status === "rejected");
   if (failure) {
     end.failed(failure.reason);
@@ -182,7 +182,7 @@ function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>
   const server = createHttpServer({ shouldUpgradeCallback });
   server.on("request", withRequestEvent(log, handler, server, inFlight));
   server.on("connection", (socket: Socket) => {
-    const span = startSpan();
+    const span = startTrace();
     const client = clientOf(socket);
     // Every request node:http refuses (a malformed request line, headers over its limit, a bad chunk, a
     // request timeout) and every connection the client resets ends in node destroying the socket with
@@ -207,7 +207,7 @@ function clientOf(socket: Socket) {
 // from `ended`. The request is in flight, for `close` to wait on, until it is decided.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
   return (req, res) => {
-    const span = startSpan();
+    const span = startTrace();
     const client = clientOf(req.socket);
     let failure: string | undefined;
     const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
@@ -245,7 +245,7 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
 // The upgrade is open, for `close` to cut and wait on, until its socket closes.
 function withUpgradeEvent(log: Log, upgrade: Upgrade, server: Server, upgraded: Map<Duplex, Promise<Ending>>) {
   return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const span = startSpan();
+    const span = startTrace();
     const client = clientOf(req.socket);
     let failure: string | undefined;
     const fail = (error: unknown) => (failure ??= describeError(error));
@@ -278,10 +278,13 @@ export function describeError(error: unknown): string {
   return inspect(said);
 }
 
-// The floor's span fields, for any unit of work a part times itself. A unit of work inside another's
-// trace (a request's recording) takes that trace_id; a new one is W3C Trace Context's: 16 random bytes
-// as lowercase hex.
-export function startSpan(trace_id = randomBytes(16).toString("hex")) {
+// The floor's span fields, for any unit of work a part times itself: one that begins a trace of its own, or one inside
+// another's trace (a request's recording), joining it. Two entries, so a unit of work meant to join a trace cannot mint one.
+export function startTrace() {
+  return startSpan(mintTraceId());
+}
+
+export function startSpan(trace_id: TraceId) {
   const started_at = new Date().toISOString();
   const started = performance.now();
   return { trace_id, end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };

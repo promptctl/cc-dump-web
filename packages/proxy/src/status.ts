@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
-import { describeError, startSpan, type Handler, type Log } from "@cc-dump/log";
+import { describeError, startTrace, type Handler, type Log } from "@cc-dump/log";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
@@ -40,7 +40,7 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
   const check = () => {
-    const span = startSpan();
+    const span = startTrace();
     try {
       const changed = [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path);
       log({ event: "source_check", ...span.end(), outcome: "ok", files_checked: source.size, changed_source: changed });
@@ -52,12 +52,12 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   };
 
   const directories = new Set([...source.keys()].map(dirname));
-  const span = startSpan();
+  const span = startTrace();
   try {
     for (const directory of directories) {
       const watcher = watch(directory, { persistent: false }, check);
       watcher.on("error", (error) => {
-        log({ event: "source_watch", ...startSpan().end(), outcome: "error", error: describeError(error), directory });
+        log({ event: "source_watch", ...startTrace().end(), outcome: "error", error: describeError(error), directory });
         failWith(error);
       });
       watchers.push(watcher);

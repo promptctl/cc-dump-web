@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { RecordedEvent } from "@cc-dump/proxy/format";
+import { parseRecordedEvent } from "@cc-dump/proxy/format";
 import { exchanges } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
@@ -231,10 +231,12 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
 const expanded = Object.fromEntries(categories.map((category) => [category, "expanded"])) as Record<Category, Visibility>;
 let failed = false;
 for (const recording of process.argv.slice(2)) {
-  const events = readFileSync(recording, "utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as RecordedEvent);
+  // The recording's whole events, through the checkpoint every reader's events cross; the bytes after its last newline,
+  // which a write cut short left, are no event.
+  const lines = readFileSync(recording, "utf8").split("\n");
+  const unterminated = lines.pop()!;
+  if (unterminated !== "") console.log(`${recording}: its last ${Buffer.byteLength(unterminated)} bytes are cut off, and not read`);
+  const events = lines.map(parseRecordedEvent);
   const history = createHistory()(createFormatter()(exchanges(events)));
   const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
   const layOut = createLayout(expanded);

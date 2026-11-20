@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { agentBaseUrl, parseListing, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -16,8 +17,8 @@ import type { Part } from "./connection.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
-  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "a", type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
-  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: "a", type: "end", outcome: "aborted" },
+  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("a"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
+  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: parseTraceId("a"), type: "end", outcome: "aborted" },
 ];
 
 // The proxy as its own process, recording into a directory that holds a past run's recording a write left cut off,

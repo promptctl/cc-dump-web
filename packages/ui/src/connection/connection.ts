@@ -60,8 +60,9 @@ export type LogWatcher = {
   failed: (error: Error) => void;
 };
 
+// `offset`: where in the recording the event's line ends, the byte just past it.
 export type Reader = {
-  event: (event: RecordedEvent) => void;
+  event: (event: RecordedEvent, offset: number) => void;
   end: (end: RecordingEnd) => void;
   failed: (error: Error) => void;
 };

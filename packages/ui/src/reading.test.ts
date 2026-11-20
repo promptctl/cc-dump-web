@@ -1,18 +1,23 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
+import { exchanges, type Exchange } from "./exchanges.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
-const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
+const timestamp = "2026-11-13T08:00:00.000Z";
+const event = (n: number): RecordedEvent => ({ timestamp, trace_id: parseTraceId(`t${n}`), type: "request_body", base64: "" });
+const end = (n: number): RecordedEvent => ({ timestamp, trace_id: parseTraceId(`t${n}`), type: "end", outcome: "ok" });
 
-// A connection the test drives: it hands the test each read's reader. A read begun aborted throws, as the browser's does.
+// A connection the test drives: it hands the test each read's reader, and its signal. A read begun aborted throws, as
+// the browser's does.
 function fakeConnection() {
-  const reads: { name: string; reader: Reader }[] = [];
+  const reads: { name: string; reader: Reader; signal: AbortSignal }[] = [];
   const connection: Parameters<typeof readRecording>[0] = {
     read: (name, reader, signal) => {
       signal.throwIfAborted();
-      reads.push({ name, reader });
+      reads.push({ name, reader, signal });
     },
   };
   return { connection, reads };
@@ -33,73 +38,96 @@ function handFrames() {
   return { frames, run, pending: () => scheduled.size };
 }
 
-// readRecording of `open` into a sink that records its calls, with every state it reported.
+// readRecording of `open` into a sink that keeps each list it was shown, with every state it reported. `deliver` hands
+// the read events as the connection does, each with the offset its line ends at.
 function started(open: OpenRecording = agent) {
   const { connection, reads } = fakeConnection();
   const frames = handFrames();
-  const calls: (["reset"] | ["append", RecordedEvent[]])[] = [];
-  const sink = { reset: () => void calls.push(["reset"]), append: (batch: RecordedEvent[]) => void calls.push(["append", batch]) };
+  const shown: Exchange[][] = [];
   const states: Reading[] = [];
   const abort = new AbortController();
-  readRecording(connection, open, sink, frames.frames, abort.signal, (reading) => states.push(reading));
-  return { reads, frames, calls, states, abort };
+  readRecording(connection, open, (exchanges) => void shown.push(exchanges), frames.frames, abort.signal, (reading) => states.push(reading));
+  let offset = 0;
+  const deliver = (...events: RecordedEvent[]) => events.forEach((event) => reads[0]!.reader.event(event, (offset += 100)));
+  return { reads, frames, shown, states, abort, deliver };
 }
 
 describe("readRecording", () => {
-  it("reads the recording open by its name, appending the events that arrive between frames in one call", () => {
-    const { reads, frames, calls, states } = started();
+  it("reads the recording open by its name, showing the exchanges changed between frames in one call", () => {
+    const { reads, frames, shown, states, deliver } = started();
     expect(reads.map(({ name }) => name)).toEqual([agent]);
-    const { reader } = reads[0]!;
-    [1, 2, 3].map(event).forEach(reader.event);
-    expect(calls).toEqual([["reset"]]);
+    deliver(...[1, 2, 3].map(event));
+    expect(shown).toEqual([[]]);
     frames.run();
-    reader.event(event(4));
+    deliver(event(4));
     frames.run();
-    expect(calls).toEqual([["reset"], ["append", [1, 2, 3].map(event)], ["append", [event(4)]]]);
+    expect(shown).toEqual([[], exchanges([1, 2, 3].map(event)), exchanges([1, 2, 3, 4].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }]);
   });
 
-  it("appends what is pending before it reports its end, and no frame of it runs after", () => {
-    const { reads, frames, calls, states } = started();
-    const { reader } = reads[0]!;
-    [1, 2].map(event).forEach(reader.event);
-    reader.end({ unterminated_bytes: 3 });
-    expect(calls).toEqual([["reset"], ["append", [1, 2].map(event)]]);
+  it("shows what is pending before it reports its end, and no frame of it runs after", () => {
+    const { reads, frames, shown, states, deliver } = started();
+    deliver(...[1, 2].map(event));
+    reads[0]!.reader.end({ unterminated_bytes: 3 });
+    expect(shown).toEqual([[], exchanges([1, 2].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "ended", name: agent, end: { unterminated_bytes: 3 } }]);
     expect(frames.pending()).toBe(0);
   });
 
-  it("appends what is pending before it reports its failure", () => {
-    const { reads, frames, calls, states } = started();
-    const { reader } = reads[0]!;
+  it("shows what is pending before it reports its failure", () => {
+    const { reads, frames, shown, states, deliver } = started();
     const error = new Error("refused");
-    reader.event(event(1));
-    reader.failed(error);
-    expect(calls).toEqual([["reset"], ["append", [event(1)]]]);
+    deliver(event(1));
+    reads[0]!.reader.failed(error);
+    expect(shown).toEqual([[], exchanges([event(1)])]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
     expect(frames.pending()).toBe(0);
   });
 
+  it("fails on an event that breaks the shape the proxy writes, naming where it ends, after showing what came before, and ends the connection's read", () => {
+    const { reads, frames, shown, states, deliver } = started();
+    deliver(event(1), end(1), event(2), event(1));
+    expect(shown).toEqual([[], exchanges([event(1), end(1), event(2)])]);
+    expect(states).toEqual([
+      { state: "reading", name: agent },
+      { state: "failed", error: new Error(`${agent}: the event ending at byte 400, trace t1's request_body, follows its trace's end`) },
+    ]);
+    expect(reads[0]!.signal.aborted).toBe(true);
+    expect(frames.pending()).toBe(0);
+  });
+
+  it("leaves a frame's exchanges as they were when later events change the exchange", () => {
+    const { frames, shown, deliver } = started();
+    deliver(event(1));
+    frames.run();
+    const first = structuredClone(shown[1]!);
+    deliver(event(1), end(1));
+    frames.run();
+    expect(shown[1]).toEqual(first);
+    expect(shown[2]).toEqual(exchanges([event(1), event(1), end(1)]));
+  });
+
   it("cancels its pending frame when aborted, and reports nothing", () => {
-    const { reads, frames, calls, states, abort } = started();
-    reads[0]!.reader.event(event(1));
+    const { reads, frames, shown, states, abort, deliver } = started();
+    deliver(event(1));
     abort.abort();
     expect(frames.pending()).toBe(0);
-    expect(calls).toEqual([["reset"]]);
+    expect(reads[0]!.signal.aborted).toBe(true);
+    expect(shown).toEqual([[]]);
     expect(states).toEqual([{ state: "reading", name: agent }]);
   });
 
   it("ends in a failure the read reports as it begins", () => {
     const error = new Error("GET /recordings/x: not served");
     const states: Reading[] = [];
-    readRecording({ read: (_name, reader) => reader.failed(error) }, agent, { reset: () => {}, append: () => {} }, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    readRecording({ read: (_name, reader) => reader.failed(error) }, agent, () => {}, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
   });
 
   it("empties what is shown and reads nothing when no recording is open", () => {
-    const { reads, calls, states } = started(null);
+    const { reads, shown, states } = started(null);
     expect(reads).toEqual([]);
-    expect(calls).toEqual([["reset"]]);
+    expect(shown).toEqual([[]]);
     expect(states).toEqual([{ state: "none" }]);
   });
 });

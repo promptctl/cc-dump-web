@@ -1,5 +1,6 @@
 import { outcomes, type Ending } from "@cc-dump/log/ending";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
+import { isTraceId, traceIdShape, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -21,7 +22,7 @@ export type Recorded =
   | { type: "response_body"; base64: string }
   | { type: "response_trailers"; headers: Header[] }
   | ({ type: "end" } & Ending);
-export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
+export type RecordedEvent = { timestamp: string; trace_id: TraceId } & Recorded;
 
 // One recording in `GET /recordings`: a `.jsonl` file in the recordings directory. `POST /recordings` answers the one it
 // created.
@@ -79,6 +80,13 @@ export function agentOf(url: string): { name: string; url: string } | undefined 
   const [, stem, rest = ""] = agentUrl.exec(url) ?? [];
   const name = `${stem}.jsonl`;
   return stem !== undefined && recordingStart(name) !== undefined ? { name, url: rest.startsWith("/") ? rest : `/${rest}` } : undefined;
+}
+
+// A byte offset in a recording, as a read's event ids and positions write it: a decimal integer a file can have, or
+// undefined for any other text.
+export function offsetOf(text: string): number | undefined {
+  const offset = Number(text);
+  return /^\d+$/.test(text) && Number.isSafeInteger(offset) ? offset : undefined;
 }
 
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
@@ -155,7 +163,7 @@ export function parseRecordedEvent(line: string): RecordedEvent {
   const json = parseJson(line, "recorded event");
   const type = fields(json, "recorded event").oneOf("type", recordedTypes);
   const f = fields(json, `recorded ${type} event`);
-  const event = { timestamp: f.string("timestamp"), trace_id: f.string("trace_id") };
+  const event = { timestamp: f.string("timestamp"), trace_id: f.read("trace_id", isTraceId, traceIdShape) };
   switch (type) {
     case "request":
       return { ...event, type, method: f.string("method"), url: f.string("url"), http_version: f.string("http_version"), headers: f.headers("headers") };
