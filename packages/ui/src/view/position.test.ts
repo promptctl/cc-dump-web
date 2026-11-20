@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, type Placed } from "./position.ts";
+import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -38,6 +38,23 @@ describe("position", () => {
   it("puts the view at the end of the row standing in for a hidden one, where the hidden one stood, whatever the offset into it", () => {
     const hidden = (key: string) => (key === "b/hidden" ? 0 : indexOf(key));
     expect(resolve({ at: "row", key: "b/hidden", offset: 30 }, hidden, placed)).toBe(100);
+  });
+
+  it("finds the nearest row a key is inside, a key starting with a slash inside the row keyed with nothing", () => {
+    // Throws, rather than letting a loop that never ends hang the run.
+    const bounded = (keys: string[]) => {
+      let calls = 0;
+      return (key: string) => {
+        if (++calls > 10) throw new Error(`rowIndex probed more than 10 keys, the last ${JSON.stringify(key)}`);
+        const index = keys.indexOf(key);
+        return index === -1 ? undefined : index;
+      };
+    };
+    expect(rowIndex("/request/http", bounded(["", "x"]))).toBe(0);
+    expect(rowIndex("//", bounded(["", "x"]))).toBe(0);
+    expect(rowIndex("/request/http", bounded(["x"]))).toBeUndefined();
+    expect(rowIndex("a/b/c", bounded(["", "a"]))).toBe(1);
+    expect(rowIndex("x", bounded([""]))).toBeUndefined();
   });
 
   it("reads the position back from an offset: the row at the top and how far into it, or the start", () => {
