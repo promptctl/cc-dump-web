@@ -20,6 +20,7 @@ import {
 } from "./format.ts";
 import type { Seen } from "./recording.ts";
 import { createRecordings } from "./recordings.ts";
+import { parseTraceId, traceIdShape } from "@cc-dump/log/trace";
 
 // Every kind of event the recorder writes, each ending among them.
 const seen: Seen[] = [
@@ -40,7 +41,7 @@ describe("parseRecordedEvent", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const recordings = createRecordings(() => {}, dir, "run.jsonl");
-    const trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const trace_id = parseTraceId("4bf92f3577b34da6a3ce929d0e0e4736");
     seen.forEach(recordings.record("run.jsonl", trace_id));
     const lines = readFileSync(join(dir, "run.jsonl"), "utf8").split("\n").filter(Boolean);
     expect(lines.map(parseRecordedEvent)).toEqual(
@@ -64,6 +65,11 @@ describe("parseRecordedEvent", () => {
     ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "recorded end event: error is not a string"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
     expect(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line))).toThrow(message);
+  });
+
+  // A trace id begins every row key the UI builds for its exchange, so it holds none of the separators a key is cut at.
+  it.each(["", "a/b", "thread:T", "a.b", "a b", 7])("refuses the trace id %j, naming its shape", (trace_id) => {
+    expect(() => parseRecordedEvent(JSON.stringify({ ...event, trace_id, type: "end", outcome: "ok" }))).toThrow(`recorded end event: trace_id is not ${traceIdShape}`);
   });
 });
 

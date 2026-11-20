@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -8,7 +9,7 @@ import { doesNotFit, fieldValue } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
 const timestamp = "2026-11-13T08:00:00.000Z";
-const at = (trace_id: string) => ({ timestamp, trace_id });
+const at = (trace_id: string) => ({ timestamp, trace_id: parseTraceId(trace_id) });
 // A body recorded in two chunks, each encoded on its own as the proxy does, so padding falls mid-body.
 const chunks = (bytes: Buffer) => [bytes.subarray(0, Math.ceil(bytes.length / 3)), bytes.subarray(Math.ceil(bytes.length / 3))].map((chunk) => chunk.toString("base64"));
 

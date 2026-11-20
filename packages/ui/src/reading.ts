@@ -1,6 +1,7 @@
 import type { RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
+import { add, type Exchanges } from "./exchanges.ts";
 import { events, useEvents } from "./store.ts";
 
 // The recording open (docs/design/01-features.md, F7), by its name, or none: a tab that has launched no agent and opened no
@@ -39,6 +40,10 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
   changed(begun(open));
   if (open === null) return;
   let pending: RecordedEvent[] = [];
+  // [LAW:single-enforcer] Each event is put in its exchange as it arrives, by the step every read of exchanges takes
+  // (exchanges.ts), so a recording that breaks a trace's shape fails its read at the event that breaks it, and the
+  // events the sink holds are ones that step took.
+  const read: Exchanges = new Map();
   let cancelFrame = () => {};
   const flush = () => {
     sink.append(pending);
@@ -54,6 +59,7 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     open,
     {
       event: (event) => {
+        add(read, event);
         if (pending.push(event) === 1) cancelFrame = frames(flush);
       },
       end: (end) => settle({ state: "ended", name: open, end }),

@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
+import { parseTraceId } from "./trace.ts";
 import { serve, type Event, type Handler, type Upgrade } from "./index.ts";
 
 // What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
@@ -56,7 +57,7 @@ export async function serving(handler: Handler, upgrade?: Upgrade) {
 }
 
 // The event of a unit of work `name` as a test logs it: started at a fixed time, ended as it should.
-export const workEvent = (name: string) => ({ event: name, trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok" as const });
+export const workEvent = (name: string) => ({ event: name, trace_id: parseTraceId("t"), started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok" as const });
 
 export type ServerSentEvent = { id?: string; event?: string; data: string };
 

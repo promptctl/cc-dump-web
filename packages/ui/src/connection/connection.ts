@@ -11,7 +11,8 @@ export type Connection = {
   recordings: (signal: AbortSignal) => Promise<Listing[]>;
   // Reads a recording from its start, then, while it is followed (the proxy run holds its writer), each event as it is
   // written. A read ends in exactly one way: its recording ends, it fails, or `signal` aborts it, which reports
-  // nothing. A signal already aborted throws its reason, as `fetch` does.
+  // nothing. An event the reader throws on fails the read with that error, as a line that does not parse does, and
+  // nothing after it is delivered. A signal already aborted throws its reason, as `fetch` does.
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
   // The proxy's status, what the proxy is among it, now and at each change, across restarts of the proxy (the restarted proxy's status follows),
   // until `signal` aborts it, which reports nothing, or the status is not served, which fails it. A status it cannot

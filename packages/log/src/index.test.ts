@@ -8,8 +8,9 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
 import { createLog, logged, loggedAfter, serve, type Event, type Work } from "./index.ts";
 import { eventLog, send, sendRaw, serving } from "./testing.ts";
+import { parseTraceId } from "./trace.ts";
 
-const ended: Event = { event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "ok" };
+const ended: Event = { event: "e", trace_id: parseTraceId("t"), started_at: "s", duration_ms: 0, outcome: "ok" };
 
 // @ts-expect-error An event that ended well cannot carry an error.
 const contradictory: Event = { ...ended, error: "boom" };
@@ -87,7 +88,7 @@ describe("loggedAfter", () => {
     const { log, next } = eventLog();
     const before = Date.now();
 
-    loggedAfter(log, "t1", "call", { method: "send-keys" }, 900, undefined);
+    loggedAfter(log, parseTraceId("t1"), "call", { method: "send-keys" }, 900, undefined);
     const event = await next();
     expect(event).toMatchObject({ event: "call", trace_id: "t1", method: "send-keys", duration_ms: 900, outcome: "ok" });
     expect(Date.parse(event.started_at)).toBeGreaterThanOrEqual(before - 900);
@@ -97,7 +98,7 @@ describe("loggedAfter", () => {
   it("records the failure it reports", async () => {
     const { log, next } = eventLog();
 
-    loggedAfter(log, "t1", "call", {}, 0, new Error("denied"));
+    loggedAfter(log, parseTraceId("t1"), "call", {}, 0, new Error("denied"));
     expect(await next()).toMatchObject({ event: "call", outcome: "error", error: expect.stringContaining("denied") });
   });
 });

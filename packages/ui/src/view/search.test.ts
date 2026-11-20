@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -12,9 +13,9 @@ import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, ran
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["x-probe", "needle in a header"]] },
-  { timestamp, trace_id, type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["x-probe", "needle in a header"]] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request_trailers", headers: [] },
 ];
 const lines = (count: number, at: number, line: string) => Array.from({ length: count }, (_, index) => (index === at ? line : `filler ${index}`));
 // A tool result holding a tagged section of 16 lines, which holds a 14-line code block with the needle on its line 5.

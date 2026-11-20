@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Handler, type Log } from "@cc-dump/log";
+import type { TraceId } from "@cc-dump/log/trace";
 import type { Listing, ReadFailure, RecordingEnd } from "./format.ts";
 import { recordedLength } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
@@ -90,7 +91,7 @@ function positionOf(req: IncomingMessage, url: URL): number | undefined {
 // read asks its writer's `written` each time. `unterminated()`: the bytes after its last newline, never sent.
 type Reading = {
   log: Log;
-  trace_id: string;
+  trace_id: TraceId;
   ended: Promise<Ending>;
   name: string;
   path: string;
@@ -100,7 +101,7 @@ type Reading = {
   unterminated: () => number;
 };
 
-function readingOf(log: Log, recordings: Recordings, trace_id: string, ended: Promise<Ending>, name: string): Reading {
+function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: string): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   let finished: ReturnType<typeof recordedLength> | undefined;

@@ -1,10 +1,11 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
-const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
+const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId(`t${n}`), type: "request_body", base64: "" });
 
 // A connection the test drives: it hands the test each read's reader. A read begun aborted throws, as the browser's does.
 function fakeConnection() {
@@ -46,6 +47,16 @@ function started(open: OpenRecording = agent) {
 }
 
 describe("readRecording", () => {
+  it("refuses an event that breaks its trace's shape, which the connection fails the read with, and appends none of it", () => {
+    const { reads, frames, calls } = started();
+    const { reader } = reads[0]!;
+    const ended: RecordedEvent = { timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("t1"), type: "end", outcome: "ok" };
+    [event(1), ended].forEach(reader.event);
+    expect(() => reader.event(event(1))).toThrow("recorded request_body event: trace t1 has ended");
+    frames.run();
+    expect(calls).toEqual([["reset"], ["append", [event(1), ended]]]);
+  });
+
   it("reads the recording open by its name, appending the events that arrive between frames in one call", () => {
     const { reads, frames, calls, states } = started();
     expect(reads.map(({ name }) => name)).toEqual([agent]);

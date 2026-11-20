@@ -10,6 +10,7 @@ import { tmuxPath } from "./address.ts";
 import { sessionId, type TmuxWindow } from "./format.ts";
 import { createTerminal } from "./terminal.ts";
 import { terminal, tmuxServer } from "./testing.ts";
+import { parseTraceId } from "@cc-dump/log/trace";
 
 // A page's WebSocket as a browser opens it, with its page's origin, which only ws lets a test set. As the client's socket
 // it is the browser's in all but its type: ws also has binary types a browser lacks, and the client sets its own.
@@ -180,7 +181,7 @@ describe("createTerminal", () => {
     const req = { method: "GET", url: tmuxPath(windowOf("work")), headers } as IncomingMessage;
     const fail = vi.fn();
 
-    await upgrade(req, socket, Buffer.alloc(0), { trace_id: "0".repeat(32), fail, ended: new Promise(() => {}) });
+    await upgrade(req, socket, Buffer.alloc(0), { trace_id: parseTraceId("0".repeat(32)), fail, ended: new Promise(() => {}) });
     expect(socket.destroyed).toBe(true);
     expect(fail).not.toHaveBeenCalled();
   });

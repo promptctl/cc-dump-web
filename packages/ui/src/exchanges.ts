@@ -1,3 +1,4 @@
+import type { TraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 
 export type Of<T extends RecordedEvent["type"]> = Extract<RecordedEvent, { type: T }>;
@@ -15,7 +16,7 @@ export type ResponseSide = Side<Of<"response">, Of<"response_body">, Of<"respons
 // One exchange of a recording: its two sides, its end, which is undefined until the exchange ends, and its first and
 // latest events. A recording only grows, so two derivations of an exchange with the same latest event hold the same
 // events.
-export type Exchange = { trace_id: string; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
+export type Exchange = { trace_id: TraceId; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
 
 // The last event that changed a side, so two derivations of a side with the same latest event are the same side.
 export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefined {
@@ -24,44 +25,56 @@ export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefi
 
 // The exchanges of `events`, in the order they began.
 export function exchanges(events: RecordedEvent[]): Exchange[] {
-  const byTrace = new Map<string, Exchange>();
-  for (const event of events) {
-    const exchange = byTrace.get(event.trace_id) ?? {
-      trace_id: event.trace_id,
-      request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
-      response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
-      end: undefined,
-      first: event,
-      latest: event,
-    };
-    exchange.latest = event;
-    byTrace.set(event.trace_id, exchange);
-    switch (event.type) {
-      case "request":
-        exchange.request.head = event;
-        break;
-      case "request_body":
-        exchange.request.body.push(event);
-        break;
-      case "request_trailers":
-        exchange.request.trailers = event;
-        exchange.request.completedBy = event;
-        break;
-      case "response":
-        exchange.response.head = event;
-        break;
-      case "response_body":
-        exchange.response.body.push(event);
-        break;
-      case "response_trailers":
-        exchange.response.trailers = event;
-        exchange.response.completedBy = event;
-        break;
-      case "end":
-        exchange.end = event;
-        for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
-        break;
-    }
-  }
+  const byTrace: Exchanges = new Map();
+  for (const event of events) add(byTrace, event);
   return [...byTrace.values()];
+}
+
+// The exchanges read so far, by trace, in the order they began.
+export type Exchanges = Map<TraceId, Exchange>;
+
+// [LAW:single-enforcer] The one step that puts an event in its exchange, so the one place a trace's shape is kept: the
+// proxy writes a trace's request head, response head, each side's trailers and its end once each, the end last, and an
+// event that would be a second of any, or come after the end, is refused here, with the exchange left as it was.
+export function add(byTrace: Exchanges, event: RecordedEvent) {
+  const exchange = byTrace.get(event.trace_id) ?? {
+    trace_id: event.trace_id,
+    request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
+    response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
+    end: undefined,
+    first: event,
+    latest: event,
+  };
+  const refused = (what: string) => new Error(`recorded ${event.type} event: trace ${event.trace_id} ${what}`);
+  if (exchange.end !== undefined) throw refused("has ended");
+  const once = <T>(filled: T | undefined, value: T): T => {
+    if (filled !== undefined) throw refused(`already has its ${event.type}`);
+    return value;
+  };
+  switch (event.type) {
+    case "request":
+      exchange.request.head = once(exchange.request.head, event);
+      break;
+    case "request_body":
+      exchange.request.body.push(event);
+      break;
+    case "request_trailers":
+      exchange.request.trailers = exchange.request.completedBy = once(exchange.request.trailers, event);
+      break;
+    case "response":
+      exchange.response.head = once(exchange.response.head, event);
+      break;
+    case "response_body":
+      exchange.response.body.push(event);
+      break;
+    case "response_trailers":
+      exchange.response.trailers = exchange.response.completedBy = once(exchange.response.trailers, event);
+      break;
+    case "end":
+      exchange.end = event;
+      for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
+      break;
+  }
+  exchange.latest = event;
+  byTrace.set(event.trace_id, exchange);
 }

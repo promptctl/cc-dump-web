@@ -21,7 +21,8 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
     read: (name, reader, signal) => {
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
-      // A message that does not parse ends the read: what follows it cannot be trusted to be the recording.
+      // A message that does not parse, or that the reader refuses, ends the read: what follows it cannot be trusted to be
+      // the recording.
       stream.on("message", parseRecordedEvent, reader.event, stream.fail);
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
       // reconnects and reads the recording again, or into the same failure.
@@ -102,13 +103,12 @@ function eventStream(url: string, signal: AbortSignal, failed: (error: Error) =>
     source.addEventListener(
       type,
       ({ data, lastEventId }: MessageEvent<string>) => {
-        let value: T;
+        // A message its consumer throws on is refused as one that does not parse is.
         try {
-          value = parse(data, lastEventId);
+          deliver(parse(data, lastEventId));
         } catch (error) {
-          return refused(new Error(`GET ${url}`, { cause: error }));
+          refused(new Error(`GET ${url}`, { cause: error }));
         }
-        deliver(value);
       },
       listening,
     );

@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { agentBaseUrl, parseListing, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -16,8 +17,8 @@ import type { Part } from "./connection.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
-  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "a", type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
-  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: "a", type: "end", outcome: "aborted" },
+  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("a"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
+  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: parseTraceId("a"), type: "end", outcome: "aborted" },
 ];
 
 // The proxy as its own process, recording into a directory that holds a past run's recording a write left cut off,
@@ -135,6 +136,24 @@ describe("the browser connection", () => {
     ]);
     // The lines after it arrive in the same chunk, so any event dispatched after the read closed is queued by now.
     expect(read.queued()).toBe(0);
+  });
+
+  it("ends a read at an event the reader refuses, reporting it as failed with the reader's error and nothing after it", async () => {
+    const { proxy, connection } = await proxyAndConnection();
+    const abort = new AbortController();
+    onTestFinished(() => abort.abort());
+    const { arrive, next, queued } = arrivals<Arrival>();
+    const refusal = new Error("refused");
+    const event = (event: RecordedEvent) => {
+      arrive({ event });
+      if (event.type === "request") throw refusal;
+    };
+    connection.read(finishedName, { event, end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
+    expect([await next(), await next()]).toEqual([
+      { event: finishedEvents[0] },
+      { failed: expect.objectContaining({ message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${finishedName}`, cause: refusal }) },
+    ]);
+    expect(queued()).toBe(0);
   });
 
   it("reports a read the reader failed once it began as failed, with the reader's error, and closes it so it is not read again", async () => {

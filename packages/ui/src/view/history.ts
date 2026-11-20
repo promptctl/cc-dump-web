@@ -238,7 +238,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const facts = read.flatMap(({ fact }) => (fact === undefined ? [] : [fact]));
     const follows = new Map(followsOf(facts).map((followed, index) => [facts[index]!.step, followed]));
     for (let index = from; index < read.length; index++) folded.push(fold(read[index]!, follows, index + 1));
-    const steps = new Map(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
+    const steps = new Map<string, number>(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
     const made = folded.map(({ segment }) => segment);
     const segments = keptEach(last.segments, made, keptSegment);
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares

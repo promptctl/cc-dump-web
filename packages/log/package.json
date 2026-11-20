@@ -10,7 +10,8 @@
     "./json": "./src/json.ts",
     "./testing": "./src/testing.ts",
     "./line": "./src/line.ts",
-    "./lines": "./src/lines.ts"
+    "./lines": "./src/lines.ts",
+    "./trace": "./src/trace.ts"
   },
   "scripts": {
     "typecheck": "tsc"

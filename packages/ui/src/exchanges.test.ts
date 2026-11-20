@@ -1,13 +1,14 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "./exchanges.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
-const request = (trace_id: string, url: string): RecordedEvent => ({ timestamp, trace_id, type: "request", method: "POST", url, http_version: "1.1", headers: [] });
-const body = (trace_id: string): RecordedEvent => ({ timestamp, trace_id, type: "response_body", base64: "e30=" });
-const response = (trace_id: string, status: number): RecordedEvent => ({ timestamp, trace_id, type: "response", status, reason: "", http_version: "1.1", headers: [] });
-const trailers = (trace_id: string): RecordedEvent => ({ timestamp, trace_id, type: "response_trailers", headers: [] });
-const end = (trace_id: string): RecordedEvent => ({ timestamp, trace_id, type: "end", outcome: "ok" });
+const request = (trace_id: string, url: string): RecordedEvent => ({ timestamp, trace_id: parseTraceId(trace_id), type: "request", method: "POST", url, http_version: "1.1", headers: [] });
+const body = (trace_id: string): RecordedEvent => ({ timestamp, trace_id: parseTraceId(trace_id), type: "response_body", base64: "e30=" });
+const response = (trace_id: string, status: number): RecordedEvent => ({ timestamp, trace_id: parseTraceId(trace_id), type: "response", status, reason: "", http_version: "1.1", headers: [] });
+const trailers = (trace_id: string): RecordedEvent => ({ timestamp, trace_id: parseTraceId(trace_id), type: "response_trailers", headers: [] });
+const end = (trace_id: string): RecordedEvent => ({ timestamp, trace_id: parseTraceId(trace_id), type: "end", outcome: "ok" });
 
 const empty = { head: undefined, body: [], trailers: undefined, completedBy: undefined };
 
@@ -58,5 +59,21 @@ describe("exchanges", () => {
     const [exchange] = exchanges(events);
     expect(exchange!.response).toEqual({ head: events[1], body: [events[2]], trailers: events[3], completedBy: events[3] });
     expect(exchange!.request).toEqual({ ...empty, head: events[0], completedBy: events[4] });
+  });
+
+  // The proxy writes each of these once per trace, so a recording holding a second was not written as it recorded.
+  const requestTrailers: RecordedEvent = { timestamp, trace_id: parseTraceId("a"), type: "request_trailers", headers: [] };
+  it.each([
+    ["request", request("a", "/v1/messages")],
+    ["request_trailers", requestTrailers],
+    ["response", response("a", 200)],
+    ["response_trailers", trailers("a")],
+  ])("refuses a second %s of one trace", (type, event) => {
+    expect(() => exchanges([event, event])).toThrow(`recorded ${type} event: trace a already has its ${type}`);
+  });
+
+  // An exchange's end is its last event.
+  it.each([request("a", "/v1/messages"), body("a"), requestTrailers, response("a", 200), trailers("a"), end("a")])("refuses a $type after its trace's end", (event) => {
+    expect(() => exchanges([end("a"), event])).toThrow(`recorded ${event.type} event: trace a has ended`);
   });
 });

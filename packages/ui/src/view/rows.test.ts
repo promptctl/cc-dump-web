@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -13,9 +14,9 @@ import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, descri
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64(body) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request_body", base64: base64(body) },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "request_trailers", headers: [] },
 ];
 const text = (text: string) => ({ type: "text", text });
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
@@ -441,10 +442,10 @@ const say = (count: number) => Array.from({ length: count }, (_, index) => ({ ro
 
 // A reply, which ends its turn unless it says why else it stopped.
 const reply = (trace_id: string, content: unknown[], stop_reason = "end_turn"): RecordedEvent[] => [
-  { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { timestamp, trace_id, type: "response_trailers", headers: [] },
-  { timestamp, trace_id, type: "end", outcome: "ok" },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "response_trailers", headers: [] },
+  { timestamp, trace_id: parseTraceId(trace_id), type: "end", outcome: "ok" },
 ];
 const user = (...content: unknown[]) => ({ role: "user", content });
 const assistant = (...content: unknown[]) => ({ role: "assistant", content });
@@ -594,7 +595,7 @@ describe("the column", () => {
       ...request("s3", { ...agent, messages: searched }),
       ...reply("s3", [use("toolu_4", "SubagentHandback")], "tool_use"),
       ...request("left", { ...agent, messages: asked(searched) }),
-      { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
+      { timestamp, trace_id: parseTraceId("left"), type: "end", outcome: "aborted" } as const,
     ];
     const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
     expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
