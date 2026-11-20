@@ -183,11 +183,10 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
       every.push(row);
       isShown.push(shown);
     };
-    // [LAW:one-source-of-truth] Whether each row of a step's is listed. A block is listed where its level lists it
-    // (docs/design/01-features.md, F5) or it is the search's current match (F6), and its set, if any, shows open (F4). A
-    // title, a group's or a set's, is listed over such a block, its set open or not, so a closed set's line stays the
-    // control that opens it, and no title is listed over nothing: read from the end, whether one follows before the
-    // next title.
+    // [LAW:one-source-of-truth] Whether each of a step's rows is listed. A block counts where its level lists it
+    // (docs/design/01-features.md, F5) or it is the search's current match (F6), and is listed while its set, if any,
+    // shows open (F4). A title, a group's or a set's, is listed over any block that counts, its set open or closed, so a
+    // closed set's line stays the control that opens it: read from the end, whether one follows before the next title.
     const shownOf = (rows: Own[]): boolean[] => {
       const shown = rows.map(() => true);
       let titled = false;
@@ -599,8 +598,7 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
 // [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen). A block
 // starts as its category's level says, but what the harness injected into a message starts collapsed, since it is not
 // what was said (docs/design/01-features.md, F4), and so do a block a step took away, which is no longer part of the
-// conversation, and, since a hidden level starts its blocks collapsed, a hidden category's block the search lists as
-// its current match.
+// conversation.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
   const { category, injected } = blockOf(row);
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;

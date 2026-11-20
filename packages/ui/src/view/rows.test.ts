@@ -319,43 +319,33 @@ describe("a set", () => {
     };
     const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
     // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
-    // its line, if listed, open or closed as it draws, and the tools listed under it.
+    // its line, if listed, open or closed as it draws, the tools listed under it, and the current match's block, if
+    // listed, open or closed, so the description holding the match is drawn or not.
     const seen = (visibility: Record<Category, Visibility>) => {
       const { opened, search } = useView.getState();
-      const layout = layouts(events, visibility)(1, search.current?.key, opened);
+      if (search.current === undefined) throw new Error("the step made no match current");
+      const { key } = search.current;
+      const layout = layouts(events, visibility)(1, key, opened);
       const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, "t1/tools", setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";
-      return { line, tools: toolsListed(layout) };
+      const block = layout.rows.find((row): row is BlockRow => row.kind === "block" && row.key === key);
+      return { line, tools: toolsListed(layout), match: block === undefined ? "unlisted" : showsOpen(block, visibility, opened) ? "open" : "closed" };
     };
 
+    // The step reads no level, so each level here is also the one a change of level after the step goes to.
     for (const [level, visibility, open] of [
       ["compact", shown, tools],
       ["expanded", listing, tools],
       ["hidden", hidden, [tools[2]]],
     ] as const) {
-      it(`opens it at ${level}; the reader's close takes the current match back into the closed line, and opening it lists the match again`, () => {
+      it(`at ${level}, shows the set and the block holding the match open; the reader's close takes the match back into the closed line, and opening it shows it again`, () => {
         step();
-        expect(seen(visibility)).toEqual({ line: "open", tools: open });
+        expect(seen(visibility)).toEqual({ line: "open", tools: open, match: "open" });
         toggle(visibility);
-        expect(seen(visibility)).toEqual({ line: "closed", tools: [] });
+        expect(seen(visibility)).toEqual({ line: "closed", tools: [], match: "unlisted" });
         toggle(visibility);
-        expect(seen(visibility)).toEqual({ line: "open", tools: open });
+        expect(seen(visibility)).toEqual({ line: "open", tools: open, match: "open" });
       });
     }
-
-    it("leaves the current match listed under an open line, its block open, when the level changes after a step into a set and a block that started open", () => {
-      step();
-      // Whether the current match's block shows open at the levels `visibility`, so the description holding it is drawn.
-      const drawn = (visibility: Record<Category, Visibility>) => {
-        const { opened, search } = useView.getState();
-        const key = search.current!.key;
-        return showsOpen(blockAt(layouts(events, visibility)(1, key, opened), key), visibility, opened);
-      };
-      expect(drawn(listing)).toBe(true);
-      expect(seen(shown)).toEqual({ line: "open", tools });
-      expect(drawn(shown)).toBe(true);
-      expect(seen(hidden)).toEqual({ line: "open", tools: [tools[2]] });
-      expect(drawn(hidden)).toBe(true);
-    });
   });
 
   it("says on its line how many blocks it holds, which, and how large, and the last thing a step did to one of them", () => {
