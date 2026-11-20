@@ -14,7 +14,7 @@ import { injectedFrom } from "./injected.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type ForkRow, type NestRow, type Row, type SetRow } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -477,20 +477,35 @@ function NestLine({ row }: { row: NestRow }) {
   return (
     <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
       <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
-      {row.level.kind === "unread" ? <span className="shrink-0">sender not read</span> : null}
-      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
-      {row.tied === undefined && row.level.kind === "agent" ? <span className="shrink-0">{row.unfound ? "untied: its call is not on the path of the step that named it" : "untied"}</span> : null}
+      {row.level.kind === "unread" ? <span className="shrink-0">sender not read</span> : <Stands stands={row.level.stands} />}
       <span className="min-w-0 truncate" title={row.prompt}>
-        {row.prompt}
+        {row.prompt ?? "first message not read"}
       </span>
       <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
-      {row.parent.kind === "unrecorded" ? <span className="shrink-0">{`· parent ${row.parent.named} not recorded`}</span> : null}
-      {row.runs ? (
-        <span className="min-w-0 flex-1 truncate text-success">{row.latest === undefined ? "● running" : `● ${row.latest.name} ${preview(row.latest)}`}</span>
-      ) : row.ended === undefined ? null : (
-        <span className="shrink-0">{`· ${row.ended}`}</span>
-      )}
+      {row.level.kind === "unread" ? null : <Lineage parent={row.level.parent} doing={row.level.doing} />}
     </button>
+  );
+}
+
+// Where a subagent's nest stands, on its line: what its call launches, or "untied", and why where a step named it with
+// a call not on its path.
+function Stands({ stands }: { stands: Stands }) {
+  if (stands.kind === "untied") return <span className="shrink-0">{stands.unfound ? "untied: its call is not on the path of the step that named it" : "untied"}</span>;
+  return stands.launches === undefined ? null : <span className="shrink-0 font-mono text-foreground">{stands.launches}</span>;
+}
+
+// The rest of a subagent's nest line: a parent the wire named but did not record, and, while it runs, the last thing it
+// did, or else how a notification said it ended.
+function Lineage({ parent, doing }: { parent: Parent; doing: Doing }) {
+  return (
+    <>
+      {parent.kind === "unrecorded" ? <span className="shrink-0">{`· parent ${parent.named} not recorded`}</span> : null}
+      {doing.runs ? (
+        <span className="min-w-0 flex-1 truncate text-success">{doing.latest === undefined ? "● running" : `● ${doing.latest.name} ${preview(doing.latest)}`}</span>
+      ) : doing.ended === undefined ? null : (
+        <span className="shrink-0">{`· ${doing.ended}`}</span>
+      )}
+    </>
   );
 }
 

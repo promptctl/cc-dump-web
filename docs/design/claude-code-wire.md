@@ -56,7 +56,7 @@ tool_uses: N
 duration_ms: N</usage>
 ```
 
-The `(use SendMessage …)` clause is left out when the agent cannot be continued. The trailer is either a text block of its own, or it follows a single-text report after a newline.
+The `(use SendMessage …)` clause is left out when the agent cannot be continued. The trailer is either a text block of its own, or it follows a single-text report after a newline. Its `agentId:` line is the last one in the text, so a report that quotes another agent's id names that agent nowhere.
 
 An Explore or Plan agent that ran without a worktree returns its report alone, so its result names no agent. No recording holds a foreground trailer, so this is read from the binary:
 
@@ -64,7 +64,7 @@ An Explore or Plan agent that ran without a worktree returns its report alone, s
 strings -n 6 ~/.local/share/claude/versions/2.1.299 | grep -n -e '<usage>subagent_tokens: ' -e '_0t=new Set'
 ```
 
-A result that quotes either shape anywhere other than in these places names nothing.
+A result that quotes either shape anywhere other than in these places names nothing, and only a result of an Agent call names an agent at all.
 
 ## That an agent stopped
 
@@ -81,7 +81,7 @@ jq -r '.body.messages[]?.content[]? | objects | select(.type == "text") | .text
   | (capture("<task-id>(?<id>[^<]+)</task-id>").id) + " " + ((capture("<tool-use-id>(?<c>[^<]+)</tool-use-id>").c) // "none")' requests.jsonl | sort -u
 ```
 
-Every later request of the caller resends the notification as history. In 20261117T143819.271Z, each of three agents' notifications is carried by more than 100 requests. So the stop is the first request in the recording to carry that text:
+Every later request of the caller resends the notification as history. In 20261117T143819.271Z, each of three agents' notifications is carried by more than 100 requests. So a stop is the request that first sends the notification in its history; a request that resends it there states nothing again, and a woken agent's next notification is a text block of its own, a new stop whatever it says:
 
 ```sh
 jq -r '[.body.messages[]?.content[]? | objects | select(.type == "text") | .text

@@ -26,26 +26,31 @@ export function senderOf(head: { headers: Header[] } | undefined): Sender {
 // The agent a tool's result names, by the texts of its content in order. An Agent call launched in the background is
 // answered as the agent starts, its first text opening with the launch and the agent's id on the next line. One run in
 // the foreground is answered when it returns, its last text ending with the agent's id, the ways to reach it, and the
-// usage it took: a text of its own, or the end of a report that is a single text (Claude Code 2.1.299). What another
-// tool returns can quote either, so a result names an agent only for the call that launched it (view/history.ts).
+// usage it took: a text of its own, or the end of a report that is a single text (Claude Code 2.1.299). The trailer's is
+// the last `agentId:` line, so a report that quotes another agent's id names that agent nowhere. What another tool
+// returns can quote either, so a result names an agent only for the call that launched it (view/history.ts).
 const background = /^Async agent launched successfully\.[^\n]*\nagentId: ([\w-]+) \(internal ID/;
-const foreground = /(?:^|\n)agentId: ([\w-]+)(?: \([^\n]*\))?(?:\n[^\n]*)*?\n<usage>subagent_tokens: \d+\ntool_uses: \d+\nduration_ms: \d+<\/usage>$/;
+const foreground = /(?:^|\n)agentId: ([\w-]+)(?: \([^\n]*\))?(?:\n(?!agentId: )[^\n]*)*\n<usage>subagent_tokens: \d+\ntool_uses: \d+\nduration_ms: \d+<\/usage>$/;
 export function namedIn(texts: readonly string[]): string | undefined {
   return background.exec(texts[0] ?? "")?.[1] ?? foreground.exec(texts.at(-1) ?? "")?.[1];
 }
 
-// [LAW:types-are-the-program] That an agent stopped, as the harness tells its caller: the agent, by its `<task-id>`,
-// how it ended, by its `<status>`, and the call that launched it, by its `<tool-use-id>`, where it says one.
-export type Notice = { agent: string; status: string; call: string | undefined };
+// [LAW:types-are-the-program] What a notification says: that an agent stopped, `stop`, the agent by its `<task-id>`,
+// how it ended by its `<status>`, and the call that launched it by its `<tool-use-id>`, where it says one; or, for one
+// that lacks the agent or the status, that it is `unread`, and `why`, so it is shown as a notification and stops nothing.
+export type Notice = { kind: "stop"; agent: string; status: string; call: string | undefined } | { kind: "unread"; why: string };
 
-// The notice a text is: one whose whole is one system reminder holding a `<task-notification>`, as the harness sends
-// each, a text block of its own. A person's text that quotes one has text of its own around it, so it is none.
-const notification = /^\s*<system-reminder>\n(?:(?!<\/system-reminder>)[\s\S])*?<task-notification>((?:(?!<\/system-reminder>)[\s\S])*?)<\/task-notification>\s*<\/system-reminder>\s*$/;
-const tag = (inner: string, name: string) => new RegExp(`<${name}>([^<]+)</${name}>`).exec(inner)?.[1];
-export function noticeIn(text: string): Notice | undefined {
-  const inner = notification.exec(text)?.[1];
-  if (inner === undefined) return undefined;
-  const agent = tag(inner, "task-id");
-  const status = tag(inner, "status");
-  return agent === undefined || status === undefined ? undefined : { agent, status, call: tag(inner, "tool-use-id") };
+// The notification a text is, its `notice` and `content`, the `<task-notification>` element: a text whose whole is one
+// system reminder holding that element, as the harness sends each, a text block of its own. A person's text that quotes
+// one has text of its own around it, so it is none.
+const notification = /^\s*<system-reminder>\n(?:(?!<\/system-reminder>)[\s\S])*?(<task-notification>(?:(?!<\/system-reminder>)[\s\S])*?<\/task-notification>)\s*<\/system-reminder>\s*$/;
+const tag = (element: string, name: string) => new RegExp(`<${name}>([^<]+)</${name}>`).exec(element)?.[1];
+export function notificationIn(text: string): { notice: Notice; content: string } | undefined {
+  const content = notification.exec(text)?.[1];
+  if (content === undefined) return undefined;
+  const agent = tag(content, "task-id");
+  const status = tag(content, "status");
+  const notice: Notice =
+    agent === undefined || status === undefined ? { kind: "unread", why: `no ${agent === undefined ? "<task-id>" : "<status>"}` } : { kind: "stop", agent, status, call: tag(content, "tool-use-id") };
+  return { notice, content };
 }

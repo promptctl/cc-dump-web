@@ -29,35 +29,35 @@ export type Level = { kind: "main" } | { kind: "agent"; id: string } | { kind: "
 const main: Level = { kind: "main" };
 const unread: Level = { kind: "unread" };
 export const levelOf = (sender: Sender): Level => (sender.kind === "agent" ? { kind: "agent", id: sender.id } : sender.kind === "main" ? main : unread);
-// A level as a Map's key, and nowhere else.
+// A level as a key, a Map's or a row's (view/rows.ts, nestKey), the same string for the same level.
 export const levelKey = (level: Level): string => (level.kind === "agent" ? `agent:${level.id}` : level.kind);
 
 // [LAW:one-source-of-truth] What a step says on the wire about its level's agents (format/wire.ts), recorded once, as
 // the step is folded, so moving back across the step takes it away with the step's segment and nothing reads it again
 // out of the blocks: the column and the nest lines read these (view/rows.ts).
-// `level`: whose the step is. `opens`: for the first step of a subagent's level or of the unread one, the level it stands
-// under (Parent), and what its first message says, which the nest's line shows. `ties`: each agent a result or a
-// notification among the step's new items names with the call that launched it (Tie). `stops`: each agent a
-// notification the recording had not sent before tells stopped, and how it ended. `answers`: the calls the results
-// among the step's new items answer. `waits`: the calls its reply stopped for, each a call whose result it waits on.
-// `side`: whether it follows a step that waits without answering any call that step waits on, as the harness's
-// question of what a subagent at work is doing does, which says nothing of its work.
+// Each fact is of the blocks the step brings to its path, new items and new versions alike, so a block it resends as its
+// path holds it states nothing again. `level`: whose the step is. `opens`: for the first step of a subagent's level or
+// of the unread one, the agent its parent header `names`, which the column places it under where that agent is
+// recorded (view/rows.ts), and what its first message `says`, none while its request's body is not read.
+// `ties`: each agent a result of an Agent call or a notification names with the call that launched it (Tie). `stops`:
+// each agent a notification tells stopped, and how it ended. `answers`: the calls its results answer. `waits`: the
+// calls its reply stopped for, each a call whose result it waits on. `did`: its reply's last block, none before its
+// reply's first. `side`: whether it follows a step that waits without answering any call that step waits on, as the
+// harness's question of what a subagent at work is doing does, which says nothing of its work.
 export type StepWire = {
   level: Level;
-  opens: { parent: Parent; said: string } | undefined;
+  opens: { names: string | undefined; says: string | undefined } | undefined;
   ties: readonly Tie[];
   stops: readonly { agent: string; status: string }[];
   answers: readonly string[];
   waits: readonly string[];
+  did: KeyedBlock | undefined;
   side: boolean;
 };
-// [LAW:types-are-the-program] The level a subagent's stands under: the main agent's, or the subagent that launched it,
-// by the parent header, where that agent sent a step before this one's first; or the main agent's, for a parent header
-// naming an agent with no step by then, `unrecorded` saying which. So the levels are a tree by construction.
-export type Parent = { kind: "main" } | { kind: "agent"; id: string } | { kind: "unrecorded"; named: string };
 // [LAW:types-are-the-program] That a step names `agent` with the call that launched it, on the step's own level: the
-// call's item, at `key`, and what it `launches`, found on the step's path; or `found: false`, where no call of that id
-// that launches anything is on its path, which the agent's nest line says.
+// call's item, at `key`, and what it `launches`, found on the step's reach; or `found: false`, for a notification that
+// names a call no call on its reach that launches anything has, which the agent's nest line says. A result names an
+// agent only as the answer of an Agent call on its reach, so a result that names one is always found.
 export type Tie = { agent: string; call: string } & ({ found: true; key: string; launches: Launch } | { found: false });
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
@@ -91,7 +91,7 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
   segments.forEach(({ after }, index) => {
     if (after === undefined) return;
     const place = placeOf(after, segments);
-    siblings.set(place, [...(siblings.get(place) ?? []), index + 1]);
+    siblings.set(place, siblings.get(place) ?? []).get(place)!.push(index + 1);
   });
   return new Map([...siblings].filter(([, steps]) => steps.length > 1));
 }
@@ -136,8 +136,6 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   // Each client tool's call that launches something, by its level and its id, in the order its items arrived: a call
   // that two sibling histories each send is two items with one id.
   const calls = new Map<string, { step: number; key: string; launches: Launch }[]>();
-  // The notifications sent, by their text: a later request resends one as history, which is no stop.
-  const notified = new Set<string>();
   // The levels that have a step, by their keys.
   const begun = new Set<string>();
   let last: History = { segments: [], stepOf: () => undefined, forks: new Map() };
@@ -196,12 +194,6 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     return summary === undefined ? undefined : { step: summary.step, on: "block", key: summary.key, as: "thread" };
   };
 
-  // The level a subagent's first step's level stands under (Parent).
-  const parentOf = (sender: Sender): Parent => {
-    if (sender.kind !== "agent" || sender.parent === undefined) return { kind: "main" };
-    return begun.has(levelKey({ kind: "agent", id: sender.parent })) ? { kind: "agent", id: sender.parent } : { kind: "unrecorded", named: sender.parent };
-  };
-
   // Folding a step lists its blocks as items against the conversation on its path, the steps it follows up to the one
   // that follows nothing: a block as its place holds on the path adds nothing; different there, it is the item's next
   // version, where the item stands; at a place the path has not held, it is a new item, in the step's own segment; and
@@ -230,9 +222,36 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const ties: Tie[] = [];
     const stops: StepWire["stops"][number][] = [];
     const answers: string[] = [];
-    const tie = (agent: string, call: string, launching: (launches: Launch) => boolean) => {
-      const found = calls.get(`${levelName}/${call}`)?.findLast((one) => reach.has(one.step) && launching(one.launches));
-      ties.push(found === undefined ? { agent, call, found: false } : { agent, call, found: true, key: found.key, launches: found.launches });
+    // The item on the step's reach that holds the call of id `call` that launches what `launching` asks, the last to
+    // arrive.
+    const callOf = (call: string, launching: (launches: Launch) => boolean) => calls.get(`${levelName}/${call}`)?.findLast((one) => reach.has(one.step) && launching(one.launches));
+    // [LAW:single-enforcer] What a block the step brings to its path, at the item `key`, states (format/blocks.ts): the
+    // call it makes, the call it answers, the agent its result or notification names, the stop it tells, the summary
+    // it ends with. Every block the step brings is read here, a new item or a new version, and no other.
+    const state = (block: KeyedBlock, key: string) => {
+      if (block.call?.launches !== undefined) {
+        const named = `${levelName}/${block.call.id}`;
+        const list = calls.get(named) ?? [];
+        calls.set(named, list);
+        list.push({ step, key, launches: block.call.launches });
+        undo.push(() => list.pop());
+      }
+      if (block.result !== undefined) {
+        const { answers: call, names } = block.result;
+        answers.push(call);
+        const found = callOf(call, (launches) => launches.tool === "Agent");
+        if (names !== undefined && found !== undefined) ties.push({ agent: names, call, found: true, key: found.key, launches: found.launches });
+      }
+      if (block.notice?.kind === "stop") {
+        const { agent, status, call } = block.notice;
+        stops.push({ agent, status });
+        const found = call === undefined ? undefined : callOf(call, () => true);
+        if (call !== undefined) ties.push(found === undefined ? { agent, call, found: false } : { agent, call, found: true, key: found.key, launches: found.launches });
+      }
+      if (block.summary !== undefined) {
+        summaries.push({ level: levelName, step, key, summary: block.summary });
+        undo.push(() => summaries.pop());
+      }
     };
     // An item's version on the path, by its index: the last a step of the path gave it.
     const current = ({ versions }: Item) => versions.findLastIndex(({ step }) => path.has(step));
@@ -254,22 +273,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
-          if (block.call?.launches !== undefined) {
-            const named = `${levelName}/${block.call.id}`;
-            const list = calls.get(named) ?? [];
-            calls.set(named, list);
-            list.push({ step, key, launches: block.call.launches });
-            undo.push(() => list.pop());
-          }
-          if (block.result !== undefined) {
-            answers.push(block.result.answers);
-            if (block.result.names !== undefined) tie(block.result.names, block.result.answers, (launches) => launches.tool === "Agent");
-          }
-          if (block.notice?.call !== undefined) tie(block.notice.agent, block.notice.call, () => true);
-          if (block.summary !== undefined) {
-            summaries.push({ level: levelName, step, key, summary: block.summary });
-            undo.push(() => summaries.pop());
-          }
+          state(block, key);
           continue;
         }
         const item = itemAt(location);
@@ -279,6 +283,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
         const before = lastSent(item.versions, previous);
         replace(location, { ...item, versions: [...item.versions, { step, block, reply, rewrote: alike(before, block) ? undefined : before.block, previous }] });
         undo.push(() => replace(location, item));
+        state(block, item.key);
       }
       return { key: group.key, title: group.title, items };
     });
@@ -293,25 +298,21 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was, previous }] });
       undo.push(() => replace(location, item));
     }
-    // A notification tells a stop where the recording sends it first, in whichever message of the request it stands.
-    for (const { blocks } of formatted.groups) {
-      for (const { notice, parts } of blocks) {
-        const text = parts[0]?.kind === "text" ? parts[0].text : undefined;
-        if (notice === undefined || text === undefined || notified.has(text)) continue;
-        notified.add(text);
-        undo.push(() => notified.delete(text));
-        stops.push({ agent: notice.agent, status: notice.status });
-      }
-    }
-    const waits = formatted.facts.stopReason === "tool_use" ? formatted.groups.flatMap(({ blocks }) => blocks.flatMap(({ place, call }) => (place?.in === "reply" && call?.waits ? [call.id] : []))) : [];
+    const reply = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "reply"));
+    const waits = formatted.facts.stopReason === "tool_use" ? reply.flatMap(({ call }) => (call?.waits ? [call.id] : [])) : [];
+    const did = reply.at(-1);
     const waited = followed === undefined ? [] : folded[followed - 1]!.segment.wire.waits;
-    const opens = begun.has(levelName) || level.kind === "main" ? undefined : { parent: parentOf(formatted.sender), said: thread?.said ?? "" };
+    const names = formatted.sender.kind === "agent" ? formatted.sender.parent : undefined;
+    const opens = begun.has(levelName) || level.kind === "main" ? undefined : { names, says: thread?.said };
     if (!begun.has(levelName)) {
       begun.add(levelName);
       undo.push(() => begun.delete(levelName));
     }
+    // [LAW:parse-dont-validate] The Messages API answers a reply that stops for tools only with a user message that
+    // starts with their results, so a request after one that answers none of them is not that agent's next turn: it is
+    // a question asked beside the work, which the harness sends while the agent's tools still run.
     const side = waited.length > 0 && !waited.some((call) => answers.includes(call));
-    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, side } }, chain, undo };
+    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, did, side } }, chain, undo };
   };
 
   return (formatted) => {
@@ -377,7 +378,7 @@ const keptWire = (before: StepWire | undefined, made: StepWire): StepWire =>
   keptAs(before, {
     ...made,
     level: keptAs(before?.level, made.level),
-    opens: made.opens && keptAs(before?.opens, { ...made.opens, parent: keptAs(before?.opens?.parent, made.opens.parent) }),
+    opens: made.opens && keptAs(before?.opens, made.opens),
     ties: keptEach(before?.ties, made.ties, keptAs),
     stops: keptEach(before?.stops, made.stops, keptAs),
     answers: keptEach(before?.answers, made.answers, (_, one) => one),
@@ -419,7 +420,7 @@ function threadOf(formatted: FormattedExchange, level: Level, threads: Thread[],
 }
 
 // What a message says: the texts of its blocks that the harness did not inject, less the space around them.
-function saidIn(blocks: KeyedBlock[]): string {
+export function saidIn(blocks: KeyedBlock[]): string {
   const texts = blocks.flatMap(({ injected, parts }) => (injected === undefined ? parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])) : []));
   return texts.join("").trim();
 }

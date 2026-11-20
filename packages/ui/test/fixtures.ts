@@ -26,7 +26,25 @@ export const reply = (trace_id: string, content: unknown[], stop_reason = "end_t
   ...(ended === false ? [] : ([{ timestamp, trace_id, type: "response_trailers", headers: [] }, { timestamp: ended, trace_id, type: "end", outcome: "ok" }] as RecordedEvent[])),
 ];
 
-export const text = (text: string) => ({ type: "text", text });
+// A reply still coming, streamed as the API streams one: its message's start and each of its content blocks whole, and
+// nothing after, so the message has not stopped and the exchange has not ended.
+export const streaming = (trace_id: string, content: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown })[]): RecordedEvent[] => {
+  const events = [
+    { type: "message_start", message: { id: `msg_${trace_id}`, type: "message", role: "assistant", content: [], usage: { input_tokens: 1, output_tokens: 1 } } },
+    ...content.flatMap((block, index) => [
+      { type: "content_block_start", index, content_block: block.type === "text" ? { type: "text", text: "" } : { ...block, input: {} } },
+      { type: "content_block_delta", index, delta: block.type === "text" ? { type: "text_delta", text: block.text } : { type: "input_json_delta", partial_json: JSON.stringify(block.input) } },
+      { type: "content_block_stop", index },
+    ]),
+  ];
+  const sse = events.map((data) => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+  return [
+    { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "text/event-stream"]] },
+    { timestamp, trace_id, type: "response_body", base64: Buffer.from(sse).toString("base64") },
+  ];
+};
+
+export const text = (text: string) => ({ type: "text" as const, text });
 export const user = (...content: unknown[]) => ({ role: "user", content });
 export const assistant = (...content: unknown[]) => ({ role: "assistant", content });
 

@@ -1,6 +1,6 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
-import { agentCall, assistant, call, launched, notification, reply, request, result, returned, text, timestamp, user } from "../../test/fixtures.ts";
+import { agentCall, assistant, call, launched, notification, reply, request, result, returned, streaming, text, timestamp, user } from "../../test/fixtures.ts";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
@@ -9,7 +9,7 @@ import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { adjacent, createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
@@ -518,6 +518,10 @@ describe("the column", () => {
   ];
   const [outer, inner] = ["nest:agent:a1", "nest:agent:a2"];
   const nest = (layout: { rows: Row[] }, key = outer): NestRow => rowAt(layout, "nest", key);
+  // What a subagent's nest line says, as toMatchObject reads it: where it stands, and what it is doing.
+  const tiedTo = (call: string, launches?: string) => ({ level: { stands: { kind: "tied", call, launches } } });
+  const untied = (unfound = false) => ({ level: { stands: { kind: "untied", unfound } } });
+  const doing = (does: Doing | { runs: true; latest: { name: string } }) => ({ level: { doing: does } });
 
   it("nests a subagent's rows under the call a listed step ties it to, on one line that holds them closed until the reader opens it", () => {
     const at = layouts(nested, { ...dialogue, tools: "compact" });
@@ -542,6 +546,9 @@ describe("the column", () => {
     const rows = every.rows;
     const nestsAt = (key: string) => nestsOf(rows, rows.findIndex((row) => row.key === key));
     expect(["thread:inner/message.1/content.0", inner, "s2", outer, "t2"].map(nestsAt)).toEqual([[inner, outer], [outer], [outer], [], []]);
+    // With the tools hidden, the call's row is not listed and its nest still is, where the call stands.
+    const hidden = keysOf(layouts(nested, dialogue)(5));
+    expect(hidden.slice(hidden.indexOf("thread:t1/message.1/content.0"), hidden.indexOf(outer) + 1)).toEqual(["thread:t1/message.1/content.0", outer]);
   });
 
   it("stands a nest at its parent's end, untied, until the step that ties it, and under its call from then on, its one key open as the reader left it", () => {
@@ -556,21 +563,23 @@ describe("the column", () => {
       inner,
       "inner", "inner/tools", "inner/message.0", "thread:inner/message.0/content.0", "inner/reply", "thread:inner/message.1/content.0",
     ]);
-    expect([nest(at(3)), nest(at(3).every, inner)]).toMatchObject([{ tied: undefined, type: undefined }, { tied: undefined, type: undefined, depth: 1 }]);
-    expect(nest(at(4).every, inner)).toMatchObject({ tied: "thread:s1/message.1/content.1", type: undefined });
-    expect(nest(at(5))).toMatchObject({ tied: "thread:t1/message.1/content.1", type: "Explore" });
+    expect([nest(at(3)), nest(at(3).every, inner)]).toMatchObject([untied(), { ...untied(), depth: 1 }]);
+    expect(nest(at(4).every, inner)).toMatchObject(tiedTo("thread:s1/message.1/content.1"));
+    expect(nest(at(5))).toMatchObject(tiedTo("thread:t1/message.1/content.1", "Explore"));
   });
 
   it("says on a nest's line its prompt, how many steps it holds, and what it last did while it runs", () => {
     const at = layouts(nested);
+    const running = { level: { doing: { runs: true, latest: { name: "tool_use: Agent" } } } };
     expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([
-      { change: "added", type: undefined, prompt: "Find the longest word.", count: 1, runs: true, latest: { name: "tool_use: Agent" }, depth: 0 },
-      { change: "changed", count: 1, runs: true, latest: { name: "tool_use: Agent" } },
-      { change: "changed", count: 2, runs: false, latest: undefined },
-      { change: "same", count: 2, runs: false, latest: undefined },
+      { change: "added", ...untied(), prompt: "Find the longest word.", count: 1, depth: 0 },
+      { change: "changed", count: 1 },
+      { change: "changed", count: 2, ...doing({ runs: false, ended: undefined }) },
+      { change: "same", count: 2, ...doing({ runs: false, ended: undefined }) },
     ]);
+    expect([2, 3].map((step) => nest(at(step)))).toMatchObject([running, running]);
     expect(keysOf(at(1))).not.toContain(outer);
-    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, latest: undefined, depth: 1 });
+    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, depth: 1, ...doing({ runs: false, ended: undefined }) });
     expect([2, 3, 4, 5].map((step) => markOf(nest(at(step))))).toEqual(["added", "changed", "changed", "same"]);
   });
 
@@ -596,14 +605,14 @@ describe("the column", () => {
     const at = layouts(twice, dialogue);
     const steps = (step: number) => [...at(step).steps].sort((a, b) => a - b);
     expect(steps(6)).toEqual([1, 2, 3, 6]);
-    expect(nest(at(6))).toMatchObject({ tied: "thread:m1/message.1/content.0" });
+    expect(nest(at(6))).toMatchObject(tiedTo("thread:m1/message.1/content.0"));
     expect(steps(5)).toEqual([1, 2, 4, 5]);
-    expect(nest(at(5))).toMatchObject({ tied: "thread:m3/message.3/content.0" });
+    expect(nest(at(5))).toMatchObject(tiedTo("thread:m3/message.3/content.0"));
     // a1's own step lists the history of its latest tie by then, 5's, though 6 is later.
     expect(steps(7)).toEqual([1, 2, 4, 5, 7]);
-    expect(nest(at(7))).toMatchObject({ tied: "thread:m3/message.3/content.0", change: "changed" });
+    expect(nest(at(7))).toMatchObject({ ...tiedTo("thread:m3/message.3/content.0"), change: "changed" });
     // Before any tie, a1 stands untied at the main agent's end.
-    expect(nest(at(2))).toMatchObject({ tied: undefined });
+    expect(nest(at(2))).toMatchObject(untied());
     expect(keysOf(at(2)).at(-1)).toBe(outer);
   });
 
@@ -620,8 +629,8 @@ describe("the column", () => {
       ...request("g", { ...agent, messages: [user(text("Inner."))] }, { agent: "g1", parent: "b1" }),
     ];
     const at = layouts(forked, dialogue);
-    expect(nest(at(5), "nest:agent:b1")).toMatchObject({ tied: "thread:m1/message.1/content.0" });
-    expect(nest(at(5).every, "nest:agent:g1")).toMatchObject({ tied: undefined, depth: 1 });
+    expect(nest(at(5), "nest:agent:b1")).toMatchObject(tiedTo("thread:m1/message.1/content.0"));
+    expect(nest(at(5).every, "nest:agent:g1")).toMatchObject({ ...untied(), depth: 1 });
     expect(at(5).steps.has(3)).toBe(true);
   });
 
@@ -637,8 +646,9 @@ describe("the column", () => {
       ...request("m2", { ...main, messages: [user(text("This session is being continued.\nReviewing.\nGo on.")), user(notification("k1", "completed", "toolu_s"))] }),
     ];
     const at = layouts(compacted, dialogue);
-    expect(nest(at(3), "nest:agent:k1")).toMatchObject({ tied: undefined });
-    expect(nest(at(4), "nest:agent:k1")).toMatchObject({ tied: "thread:m1/message.1/content.0", type: "review", runs: false, ended: "completed" });
+    expect(nest(at(3), "nest:agent:k1")).toMatchObject(untied());
+    // A skill reads as the command that runs it.
+    expect(nest(at(4), "nest:agent:k1")).toMatchObject({ level: { stands: { kind: "tied", call: "thread:m1/message.1/content.0", launches: "/review" }, doing: { runs: false, ended: "completed" } } });
   });
 
   it("says a subagent runs while it waits on a call or a reply of its is coming, until a notification stops it, and again once it is woken", () => {
@@ -655,49 +665,100 @@ describe("the column", () => {
       ...request("b", { ...agent, messages: [user(text("Look.")), assistant(read), user(result("toolu_r", "words"))] }, { agent: "a1" }),
       ...reply("b", [text("Woken.")], "end_turn", false),
       ...told("m4", [notification("a1", "killed"), text("Go on."), notification("a1", "completed", undefined, "Woken.")]),
+      // Woken again, and stopped again by a notification with the first one's very text, in a message of its own.
+      ...request("c", { ...agent, messages: [user(text("Look.")), assistant(read), user(result("toolu_r", "words")), assistant(text("Woken.")), user(text("More."))] }, { agent: "a1" }),
+      ...reply("c", [text("Again.")], "end_turn", false),
+      ...told("m5", [notification("a1", "killed"), text("Go on."), notification("a1", "completed", undefined, "Woken."), text("Once more."), notification("a1", "killed")]),
     ];
     const at = layouts(woken, dialogue);
-    expect([2, 3, 4, 5, 6].map((step) => nest(at(step), outer))).toMatchObject([
-      { runs: true, latest: { name: "tool_use: Read" }, ended: undefined },
-      { runs: false, latest: undefined, ended: "killed" },
-      { runs: false, ended: "killed" },
+    expect([2, 3, 4, 5, 6, 7, 8].map((step) => nest(at(step), outer))).toMatchObject([
+      doing({ runs: true, latest: { name: "tool_use: Read" } }),
+      doing({ runs: false, ended: "killed" }),
+      doing({ runs: false, ended: "killed" }),
       // Woken, its reply still coming and not yet read, it runs with nothing said yet since the stop.
-      { runs: true, latest: undefined, ended: "killed" },
-      { runs: false, ended: "completed" },
+      doing({ runs: true, latest: undefined }),
+      doing({ runs: false, ended: "completed" }),
+      doing({ runs: true, latest: undefined }),
+      doing({ runs: false, ended: "killed" }),
     ]);
   });
 
-  it("says what a subagent last did while a reply of its waits on a tool or is still coming, and never what it told the harness's question", () => {
+  it("says what a subagent last did while a reply of its waits on a tool or is still coming, and never what it told the harness's question or a handback", () => {
     // A subagent that reads, then searches, then hands its report back. While each tool runs the harness asks it what
     // it is doing, in a request that resends the step waiting on the tool with no result.
     const tool = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
     const read = [task, assistant(tool("toolu_2", "Read")), user(result("toolu_2", "A."))];
     const searched = [...read, assistant(tool("toolu_3", "Grep")), user(result("toolu_3", "B."))];
-    const asked = (messages: { role: string; content: unknown[] }[], waiting: string) => [...messages, assistant(tool(waiting, "Grep")), user(text("Describe your most recent action."))];
+    const child = [...read, assistant(tool("toolu_3", "Grep")), user(text("Describe your most recent action."))];
+    // Or in one that stands beside the step waiting on the tool, the question appended to the result it resends.
+    const sibling = [...read.slice(0, -1), user(result("toolu_2", "A."), text("What are you doing?"))];
     const a1 = { agent: "a1" };
-    const working = [
+    const working = (asked: unknown[]) => [
       ...request("t1", { ...main, messages: [hi] }),
       ...reply("t1", [agentCall("toolu_1", "Find the longest word.")], "tool_use"),
       ...request("s1", { ...agent, messages: [task] }, a1),
       ...reply("s1", [tool("toolu_2", "Read")], "tool_use"),
       ...request("s2", { ...agent, messages: read }, a1),
       ...reply("s2", [tool("toolu_3", "Grep")], "tool_use"),
-      ...request("asked", { ...agent, messages: asked(read, "toolu_3") }, a1),
+      ...request("asked", { ...agent, messages: asked }, a1),
       ...reply("asked", [text("Searching.")]),
       ...request("s3", { ...agent, messages: searched }, a1),
       ...reply("s3", [tool("toolu_4", "SubagentHandback")], "tool_use"),
       ...request("left", { ...agent, messages: searched }, a1),
       { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
     ];
-    const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step)).latest?.name;
-    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
+    const latest = (events: RecordedEvent[], step: number) => {
+      const { level } = nest(layouts(events)(step));
+      return level.kind === "agent" && level.doing.runs ? level.doing.latest?.name : undefined;
+    };
+    for (const asked of [child, sibling]) expect([2, 3, 4, 5, 6].map((step) => latest(working(asked), step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
     // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
     // the line says what the subagent did last.
-    const from = working.findIndex(({ trace_id }) => trace_id === "s2");
-    const coming = (events: number) => latest(working.slice(0, from + events), 3);
+    const events = working(child);
+    const from = events.findIndex(({ trace_id }) => trace_id === "s2");
+    const coming = (count: number) => latest(events.slice(0, from + count), 3);
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
     // The harness may ask while a reply is still coming: its asking says nothing.
-    expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read, "toolu_3") }, a1)], 4)).toBe("tool_use: Grep");
+    expect(latest([...events.slice(0, from + 6), ...request("asked", { ...agent, messages: child }, a1)], 4)).toBe("tool_use: Grep");
+    // A last reply still coming that hands the report back says nothing of the handback.
+    const handing = events.findIndex(({ trace_id, type }) => trace_id === "s3" && type === "response");
+    const handback = (...content: Parameters<typeof streaming>[1]) => latest([...events.slice(0, handing), ...streaming("s3", content)], 5);
+    expect([handback(text("Done.")), handback(text("Done."), { type: "tool_use", id: "toolu_4", name: "SubagentHandback", input: {} })]).toEqual(["text", undefined]);
+  });
+
+  it("says a nest is untied where the latest listed tie names a call not on its step's reach", () => {
+    const missing = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("a", { ...agent, messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...reply("a", [text("Seen.")]),
+      ...request("m2", { ...main, messages: [hi, user(notification("a1", "completed", "toolu_gone"))] }),
+    ];
+    const at = layouts(missing, dialogue);
+    expect([nest(at(2)), nest(at(3))]).toMatchObject([untied(false), { ...untied(true), ...doing({ runs: false, ended: "completed" }) }]);
+  });
+
+  it("stands a subagent under the parent its header names once that parent has a step, and as not recorded until then", () => {
+    // g1's first request comes before any of b1's, as where the recording began while b1 worked.
+    const late = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("g", { ...agent, messages: [user(text("Inner."))] }, { agent: "g1", parent: "b1" }),
+      ...request("b", { ...agent, messages: [user(text("Middle."))] }, { agent: "b1" }),
+    ];
+    const at = layouts(late, dialogue);
+    const g1 = "nest:agent:g1";
+    expect(nest(at(2), g1)).toMatchObject({ level: { parent: { kind: "unrecorded", named: "b1" } }, depth: 0 });
+    expect(nest(at(3).every, g1)).toMatchObject({ level: { parent: { kind: "agent", id: "b1" } }, depth: 1 });
+    // Headers that name each other place neither under the other.
+    const crossed = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("x", { ...agent, messages: [user(text("X."))] }, { agent: "x1", parent: "y1" }),
+      ...request("y", { ...agent, messages: [user(text("Y."))] }, { agent: "y1", parent: "x1" }),
+    ];
+    const both = layouts(crossed, dialogue)(3);
+    expect(["nest:agent:x1", "nest:agent:y1"].map((key) => nest(both, key))).toMatchObject([
+      { level: { parent: { kind: "unrecorded", named: "y1" } }, depth: 0 },
+      { level: { parent: { kind: "unrecorded", named: "x1" } }, depth: 0 },
+    ]);
   });
 
   it("lists every root of a subagent's level, a side request of its beside its thread, with no line between them", () => {
@@ -716,7 +777,7 @@ describe("the column", () => {
     const repeated = { headers: [["x-claude-code-agent-id", "a1"], ["x-claude-code-agent-id", "a2"]] as [string, string][] };
     const at = layouts([...request("t1", { ...main, messages: [hi] }), ...request("x", { ...main, messages: [hi] }, repeated)], dialogue);
     expect(keysOf(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0", "nest:unread"]);
-    expect(nest(at(2), "nest:unread")).toMatchObject({ level: { kind: "unread" }, count: 1, tied: undefined, change: "added" });
+    expect(nest(at(2), "nest:unread")).toEqual(expect.objectContaining({ level: { kind: "unread" }, count: 1, change: "added" }));
     expect(keysOf(at(2, undefined, { "nest:unread": true })).slice(4)).toEqual(["x", "x/message.0", "thread:x/message.0/content.0"]);
   });
 

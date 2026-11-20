@@ -6,16 +6,13 @@ import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
+import { request as fixtureRequest } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
 import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
-const timestamp = "2026-11-13T08:00:00.000Z";
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["x-probe", "needle in a header"]] },
-  { timestamp, trace_id, type: "request_body", base64: Buffer.from(JSON.stringify(body)).toString("base64") },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
-];
+// A request whose header holds what a search can find.
+const request = (trace_id: string, body: unknown): RecordedEvent[] => fixtureRequest(trace_id, body, { headers: [["x-probe", "needle in a header"]] });
 const lines = (count: number, at: number, line: string) => Array.from({ length: count }, (_, index) => (index === at ? line : `filler ${index}`));
 // A tool result holding a tagged section of 16 lines, which holds a 14-line code block with the needle on its line 5.
 const section = ["<notes>", ...lines(1, -1, ""), "```", ...lines(12, 4, "the NEEDLE is here"), "```", "</notes>"].join("\n");
@@ -246,7 +243,7 @@ describe("search", () => {
   });
 
   it("opens the nests a match's block is inside, the innermost first", () => {
-    const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", level: { kind: "agent", id: "a1" }, type: undefined, prompt: "", count: 1, tied: undefined, unfound: false, parent: { kind: "main" }, runs: false, latest: undefined, ended: undefined, depth, dimmed: false });
+    const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", level: { kind: "unread" }, prompt: "", count: 1, depth, dimmed: false });
     const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
     const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
     expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);

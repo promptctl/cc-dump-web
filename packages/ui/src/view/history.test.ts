@@ -243,28 +243,56 @@ describe("what a step stands after", () => {
     ]);
     const wires = after.segments.map(({ wire }) => wire);
     expect(wires.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a1" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "main" }]);
-    expect(wires.map(({ opens }) => opens)).toEqual([undefined, { parent: { kind: "main" }, said: "Find the longest word." }, undefined, undefined, undefined, undefined, undefined]);
+    expect(wires.map(({ opens }) => opens)).toEqual([undefined, { names: undefined, says: "Find the longest word." }, undefined, undefined, undefined, undefined, undefined]);
     const call = { found: true, key: "thread:t1/message.1/content.1", launches: { tool: "Agent", type: "Explore", prompt: "Find the longest word." } };
     expect(wires.map(({ ties }) => ties)).toEqual([[], [], [], [{ agent: "a1", call: "toolu_1", ...call }], [], [{ agent: "a1", call: "toolu_1", ...call }], []]);
     expect(wires.map(({ stops }) => stops)).toEqual([[], [], [], [], [], [{ agent: "a1", status: "completed" }], []]);
-    expect(wires.map(({ waits, answers, side }) => [waits, answers, side])).toEqual([
-      [["toolu_1"], [], false],
-      [["toolu_r"], [], false],
-      [[], [], true],
-      [[], ["toolu_1"], false],
-      [[], ["toolu_r"], false],
-      [[], [], false],
-      [[], [], false],
+    expect(wires.map(({ waits, answers, side, did }) => [waits, answers, side, did?.name])).toEqual([
+      [["toolu_1"], [], false, "tool_use: Agent"],
+      [["toolu_r"], [], false, "tool_use: Read"],
+      [[], [], true, "text"],
+      [[], ["toolu_1"], false, "text"],
+      [[], ["toolu_r"], false, "text"],
+      [[], [], false, "text"],
+      [[], [], false, undefined],
     ]);
     // A subagent's request is its level's own thread, never the main agent's, so nothing of it is a version of main's.
     expect(afters(after)).toEqual([undefined, undefined, follows(2), follows(1), follows(2), follows(4), follows(6)]);
     expect(versioned(after)).toEqual([]);
   });
 
-  it("names an agent's parent by the parent header, where that agent sent a step before, and says one not recorded", () => {
+  it("ties an agent by a result only as the answer of an Agent call on the step's reach, never by a result that quotes one", () => {
+    const bash = { type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "cat log" } };
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [bash], "tool_use"),
+      // A Bash result that prints an Agent call's result, and a result for a call no step on its reach makes.
+      ...request("t2", { ...main, messages: [hi, assistant(bash), user(result("toolu_b", [text(launched("a1"))]))] }),
+      ...request("t3", { ...main, messages: [user(text("Else.")), assistant(text("Ok.")), user(result("toolu_x", [text(launched("a2"))]))] }),
+    ]);
+    expect(after.segments.map(({ wire }) => [wire.answers, wire.ties])).toEqual([
+      [[], []],
+      [["toolu_b"], []],
+      [["toolu_x"], []],
+    ]);
+  });
+
+  it("states what a block says when it arrives as an item's new version, as when it arrives as a new item", () => {
+    const after = history([
+      ...request("t1", { ...main, messages: [hi, user(text("Wait."))] }),
+      ...reply("t1", [text("Waiting.")]),
+      // The next turn resends the turn before with the notification where its message held other text.
+      ...request("t2", { ...main, messages: [hi, user(notification("a1", "completed")), assistant(text("Waiting.")), user(text("Go on."))] }),
+    ]);
+    expect(afters(after)).toEqual([undefined, follows(1)]);
+    expect(versioned(after)).toEqual(["thread:t1/message.1/content.0"]);
+    expect(after.segments.map(({ wire }) => wire.stops)).toEqual([[], [{ agent: "a1", status: "completed" }]]);
+  });
+
+  it("records on a level's first step the agent its parent header names, and what its first message says", () => {
     const ask = (trace: string, from: { agent: string; parent?: string }) => request(trace, { ...main, messages: [user(text(`I am ${from.agent}.`))] }, from);
-    const after = history([...request("t1", { ...main, messages: [hi] }), ...ask("b", { agent: "b1" }), ...ask("g", { agent: "g1", parent: "b1" }), ...ask("o", { agent: "o1", parent: "x9" })]);
-    expect(after.segments.map(({ wire }) => wire.opens?.parent)).toEqual([undefined, { kind: "main" }, { kind: "agent", id: "b1" }, { kind: "unrecorded", named: "x9" }]);
+    const after = history([...request("t1", { ...main, messages: [hi] }), ...ask("b", { agent: "b1" }), ...ask("g", { agent: "g1", parent: "b1" }), ...ask("g2", { agent: "g1", parent: "b1" })]);
+    expect(after.segments.map(({ wire }) => wire.opens)).toEqual([undefined, { names: undefined, says: "I am b1." }, { names: "b1", says: "I am g1." }, undefined]);
   });
 
   it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {

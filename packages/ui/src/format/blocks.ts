@@ -33,6 +33,9 @@ export type Call = { id: string; launches: Launch | undefined; waits: boolean };
 // What a call launches: an Agent call a subagent of the agent `type` it names, sent `prompt` as its first message; a
 // Skill call the skill it names, which runs in a subagent when the skill forks.
 export type Launch = { tool: "Agent"; type: string | undefined; prompt: string } | { tool: "Skill"; skill: string };
+// [LAW:one-source-of-truth] What a launch is called where it is shown: an Agent call's agent type, where it names one,
+// and a Skill call's skill as the command that runs it, so a skill and an agent type of one name read apart.
+export const launchName = (launches: Launch): string | undefined => (launches.tool === "Agent" ? launches.type : `/${launches.skill}`);
 // A client tool's result: the call it `answers`, and the agent its content `names`, where it names one (format/wire.ts).
 export type Answer = { answers: string; names: string | undefined };
 
@@ -288,7 +291,7 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
     case "section":
       return { category, name: piece.title, parts, injected: true };
     case "notification":
-      return { category, name: "task notification", parts, injected: true, notice: piece.notice };
+      return { category, name: piece.notice.kind === "stop" ? "task notification" : `task notification not read: ${piece.notice.why}`, parts, injected: true, notice: piece.notice };
   }
 }
 

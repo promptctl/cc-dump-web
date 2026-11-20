@@ -665,6 +665,8 @@ describe("format", () => {
       // A result that quotes a frame anywhere else names nothing, nor does a foreground Explore's, which has no trailer.
       { type: "tool_result", tool_use_id: "toolu_4", content: `cat log\nagentId: a3 (internal ID` },
       { type: "tool_result", tool_use_id: "toolu_5", content: "The bug is here." },
+      // The trailer's id is the last on its own line: a report that quotes another agent's names that one nowhere.
+      { type: "tool_result", tool_use_id: "toolu_6", content: [{ type: "text", text: `Report:\nagentId: zzz\nmore\nagentId: a4 (use SendMessage with to: 'a4' to continue this agent)\n${usage}` }] },
     ];
     expect(group(one(request("a", { model: "m", messages: [{ role: "user", content: results }] })), "message.0").map(({ result }) => result)).toEqual([
       { answers: "toolu_1", names: "ae5c3bca3aecbe477" },
@@ -672,6 +674,7 @@ describe("format", () => {
       { answers: "toolu_3", names: "a2" },
       { answers: "toolu_4", names: undefined },
       { answers: "toolu_5", names: undefined },
+      { answers: "toolu_6", names: "a4" },
     ]);
   });
 
@@ -679,12 +682,19 @@ describe("format", () => {
     const notification = (inner: string) => `<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n${inner}\n</task-notification>\n</system-reminder>`;
     const killed = notification("<task-id>aeb0927abd04e4d83</task-id>\n<status>killed</status>\n<summary>Agent was stopped</summary>");
     const done = notification("<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>");
-    const texts = [killed, done, `Look at this: ${done}`, `${done}\n<system-reminder>\nToday is Friday.\n</system-reminder>`];
+    const statusless = notification("<task-id>a2</task-id>\n<summary>Agent was stopped</summary>");
+    const texts = [killed, done, `Look at this: ${done}`, `${done}\n<system-reminder>\nToday is Friday.\n</system-reminder>`, statusless];
     const blocks = group(one(request("a", { model: "m", messages: [{ role: "user", content: texts.map((text) => ({ type: "text", text })) }] })), "message.0");
-    expect(blocks.filter(({ notice }) => notice !== undefined).map(({ name, injected, notice }) => ({ name, injected, notice }))).toEqual([
-      { name: "task notification", injected: true, notice: { agent: "aeb0927abd04e4d83", status: "killed", call: undefined } },
-      { name: "task notification", injected: true, notice: { agent: "a1", status: "completed", call: "toolu_1" } },
+    const notices = blocks.filter(({ notice }) => notice !== undefined);
+    expect(notices.map(({ name, injected, notice }) => ({ name, injected, notice }))).toEqual([
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "aeb0927abd04e4d83", status: "killed", call: undefined } },
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "a1", status: "completed", call: "toolu_1" } },
+      // One that lacks its agent or its status is shown as a notification that was not read, and tells no stop.
+      { name: "task notification not read: no <status>", injected: true, notice: { kind: "unread", why: "no <status>" } },
     ]);
+    // Its collapsed line reads its `<task-notification>` element, without the reminder around it.
+    const shown = (notices[1]!.preview ?? []).flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("");
+    expect([shown.startsWith("<task-notification>"), shown.trimEnd().endsWith("</task-notification>")]).toEqual([true, true]);
   });
 
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {

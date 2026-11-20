@@ -2,19 +2,15 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
+import { assistant, call as toolCall, request as fixtureRequest, text, user } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
-const timestamp = "2026-11-16T16:00:00.000Z";
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, messages: unknown[]): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64({ model: "claude-opus-5-5", messages }) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
-];
-const ask = { role: "user", content: [{ type: "text", text: "Read it." }] };
-const call = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] };
-const result = (fields: object) => ({ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", ...fields }] });
+const request = (trace_id: string, messages: unknown[]) => fixtureRequest(trace_id, { model: "claude-opus-5-5", messages });
+const ask = user(text("Read it."));
+const call = assistant(toolCall("toolu_1", "Read", {}));
+// A user message holding the Read call's result, with the fields given.
+const result = (fields: object) => user({ type: "tool_result", tool_use_id: "toolu_1", ...fields });
 const segmentsOf = (events: RecordedEvent[]) => createHistory()(createFormatter()(exchanges(events))).segments;
 
 describe("failuresOf", () => {
