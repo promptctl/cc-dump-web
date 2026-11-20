@@ -1,9 +1,7 @@
 import type { ILinkHandler } from "@xterm/xterm";
 
-// How a link in the terminal opens: a web page in a tab of its own; a link of a scheme the browser does not handle
-// itself (a statusline's cc-candybar://, vscode://, mailto:) by the app the OS has for it, as a click in iTerm opens it;
-// and a link of a scheme the browser does handle (javascript:, data:, file:, view-source:, …) not at all, since what the
-// agent prints is not the app's to run. One that does not parse as a URL is a link to nothing.
+// How a link in the terminal opens (docs/design/01-features.md, F13). One of a scheme the browser handles itself is
+// refused since what the agent prints is not the app's to run; one that does not parse as a URL is a link to nothing.
 export type LinkOpening = "tab" | "app" | "refused";
 
 const web = new Set(["http:", "https:"]);

@@ -174,8 +174,8 @@ function messageContent(content: unknown[], role: Role, place: Place): KeyedBloc
   return placed(place, content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role))));
 }
 
-// Whether an exchange is shown (docs/design/01-features.md, F2). One whose request was not recorded is, since its path
-// is not known.
+// Whether an exchange is shown (docs/design/01-features.md, F2). A target that does not parse as a URL has no path, so
+// it is not the Messages API's.
 function isMessages({ request: { head } }: Exchange): boolean {
   return head === undefined || (head.method === "POST" && URL.parse(head.url, "http://proxy")?.pathname === "/v1/messages");
 }

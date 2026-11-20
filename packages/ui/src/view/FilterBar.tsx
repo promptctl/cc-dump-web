@@ -33,8 +33,7 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
   );
 }
 
-// [LAW:dataflow-not-control-flow] Each level: whether the toggle is pressed, how it looks and what it shows. A listed
-// category's chip is in its color, the same the gutter paints its blocks with.
+// [LAW:dataflow-not-control-flow] Each level: whether the toggle is pressed, how it looks and what it shows.
 const visibilityStates: Record<Visibility, { pressed: boolean | "mixed"; look: string; shows: string }> = {
   hidden: { pressed: false, look: "border-transparent text-foreground-muted line-through hover:bg-hover", shows: "not listed" },
   compact: { pressed: "mixed", look: "border-(--category-chip) text-foreground hover:bg-hover", shows: "a line each" },

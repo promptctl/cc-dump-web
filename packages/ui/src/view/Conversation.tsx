@@ -142,7 +142,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
-  // The search (docs/design/01-features.md, F6): its matches among every row, listed or not.
+  // The search (docs/design/01-features.md, F6).
   const query = useView((state) => state.search.query);
   const options = useSettings(useShallow((state) => state.search));
   const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);

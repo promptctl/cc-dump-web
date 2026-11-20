@@ -14,7 +14,8 @@ export type Visibility = (typeof visibilities)[number];
 // detail, and from the most back to none.
 export const levelAfter = (visibility: Visibility): Visibility => visibilities[(visibilities.indexOf(visibility) + 1) % visibilities.length]!;
 
-// Each category's level until the reader sets one, as in the original cc-dump (src/cc_dump/core/filter_registry.py).
+// Each category's level until the reader sets one, as in the original cc-dump (~/code/cc-dump,
+// src/cc_dump/core/filter_registry.py).
 export const defaultVisibility: Record<Category, Visibility> = {
   user: "expanded",
   assistant: "expanded",
@@ -31,12 +32,8 @@ export const defaultVisibility: Record<Category, Visibility> = {
 // says. Each is on or off and no other, so the choices are independent.
 export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex: boolean };
 
-// [LAW:one-source-of-truth] The reader's settings (docs/design/01-features.md, F11): what they chose that outlives a
-// tab. Kept in localStorage, which the browser keeps on disk under the UI's origin; persist reads it as the store is
-// made, before anything renders. `follow`: whether follow mode is on. `visibility`: each category's level. `theme`: the
-// theme chosen (F10). `search`: how a query is read (F6). `info`: whether the info panel is open (F8). `logs`: whether
-// the logs panel is open, and `logLevel`, the least a line it lists asks (F9). `keys`: whether the keys panel is open
-// (view/keyboard.ts).
+// [LAW:one-source-of-truth] The reader's settings (docs/design/01-features.md, F11). Kept in localStorage, which the
+// browser keeps on disk under the UI's origin; persist reads it as the store is made, before anything renders.
 export type Settings = {
   follow: boolean;
   visibility: Record<Category, Visibility>;

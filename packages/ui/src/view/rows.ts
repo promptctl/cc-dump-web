@@ -590,24 +590,22 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
   ["out", facts.output],
 ];
 
-// [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen). A block
-// starts as its category's level says, but what the harness injected into a message starts collapsed, since it is not
-// what was said (docs/design/01-features.md, F4), and so do a block a step took away, which is no longer part of the
-// conversation, and a block of a hidden category the search revealed.
+// [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen;
+// docs/design/01-features.md, F4). What the harness injected is not what was said, and a block a step took away is no
+// longer part of the conversation.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
   const { category, injected } = blockOf(row);
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;
 }
 
 // [LAW:one-source-of-truth] Whether the sections under the headings of a block's texts start open, before any choice of
-// the reader's (docs/design/01-features.md, F4): what the user or the assistant said or thought reads whole, as it was
-// written; what was written for the model, its prompt, a tool's description and what the harness injected, starts as
-// its outline.
+// the reader's (docs/design/01-features.md, F4): what a speaker wrote reads as it was written, and what was written for
+// the model reads as its outline.
 export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
   injected === undefined && (category === "user" || category === "assistant" || category === "thinking");
 
-// [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's: as the level of its blocks'
-// category says (docs/design/01-features.md, F4).
+// [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's (docs/design/01-features.md,
+// F4).
 export const setStartsOpen = (category: Category, visibility: Record<Category, Visibility>): boolean => levels[visibility[category]].startsExpanded;
 
 // The set a block's row is in that shows closed, by its line's key: none for a row of no set, or of a set that shows

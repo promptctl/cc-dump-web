@@ -63,7 +63,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A filter bar, on screen while a recording is open, shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
-- The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones and what a closed nest holds included.
+- The user types a query and every match is highlighted as they type, with a count. Typing leaves the view where it is. Every category is searched, hidden ones and what a closed nest holds included.
 - The query is a regular expression, matched without regard to case, by default. Each of case, whole word and regular expression can be switched.
 - Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match under a closed heading opens it, moving to a match in a closed set opens the set, and moving to a match in a hidden category shows its block.
 - A text's contents (F4) are not searched: a match in a heading is counted once, where the heading is.
@@ -80,7 +80,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, which gives the agent started with it a recording of its own, the upstream address, the path of the current recording, the agent's session ID when a request's `metadata.user_id` is the JSON text of an object holding `session_id`, the tmux session used for launching, and the app version. Every value can be copied with one click.
 
 ### F9. Logs panel
-- A panel shows the log lines of the proxy and the app server as they are written, and can be filtered by level.
+- A panel shows the log lines of the proxy and the app server as they are written, the latest at the bottom, and can be filtered by level. Each line opens to the whole of its event.
 
 ### F10. Themes
 - The app ships with more than one theme, including a light one and a dark one. Switching takes effect immediately.
@@ -96,9 +96,9 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
-- The agent's tmux pane is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the agent, as in their own terminal.
-- A launch (F1) shows the pane it opened.
-- After a reload the pane is shown again as it is now.
+- The agent's tmux window is shown in the page, beside the conversation, every pane as tmux lays it out, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the pane they clicked into, as in their own terminal.
+- A launch (F1) shows the window it opened.
+- After a reload the window is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
 - It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and each character as wide as Unicode 11's table says, as tmux counts it. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.

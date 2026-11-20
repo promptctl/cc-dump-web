@@ -84,9 +84,8 @@ const sentField = (value: unknown, name: string): unknown => (typeof value === "
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
-// [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one in
-// Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
-// reply, how long its signature or its data is: it is `usage` (docs/design/01-features.md, F3).
+// [LAW:types-are-the-program] Thinking is what was thought, its text (docs/design/01-features.md, F3). Every thinking
+// block in Claude Code's traffic of 2026-11-16 holds none.
 const thought = (_: Role, block: unknown): Category => {
   const text = sentField(block, "thinking");
   return typeof text === "string" && text !== "" ? "thinking" : "usage";

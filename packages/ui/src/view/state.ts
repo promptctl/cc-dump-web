@@ -10,10 +10,8 @@ import type { By } from "./scroll.ts";
 import { closedSetOf, isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
-// [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
-// launch opened and whether its terminal is shown (F13), each block, set, nest, region or fold they opened or closed
-// (rows.ts), where they are, the moment shown, and their search. It is kept for the tab in sessionStorage, so after a
-// hot reload or a page reload the view is the same (docs/design/01-features.md, F12). A tab opens at the end, now,
+// [LAW:one-source-of-truth] What the reader has chosen about the view (docs/design/01-features.md, "One path to the
+// screen"), kept for the tab in sessionStorage, so after a hot reload or a page reload the view is the same (F12). A tab opens at the end, now,
 // which follows the conversation while follow is on. While it is off, the end becomes the place under the view at the
 // first step.
 export type View = { open: OpenRecording; terminal: Terminal | null; opened: Opened; position: Position; moment: Moment; search: Search };
