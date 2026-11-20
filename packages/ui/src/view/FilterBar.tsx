@@ -4,7 +4,7 @@ import { categoryVars } from "../theme/theme.ts";
 import { levelKeys, withKeys } from "./keyboard.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter (docs/design/01-features.md, F5): each category's level, always on screen, and the control that changes it.
+// The filter (docs/design/01-features.md, F5): each category's level, on screen while a recording is open, and the control that changes it.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
   return (
@@ -34,7 +34,7 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
 }
 
 // [LAW:dataflow-not-control-flow] Each level: whether the toggle is pressed, how it looks and what it shows. A listed
-// category's chip is in its color, the same the gutter paints its blocks with, so the bar is the gutter's legend
+// category's chip is in its hue, the one the gutter paints its blocks with, so the bar is the gutter's legend
 // (docs/design/02-design.md): filled while its blocks show in full, outlined while they show a line each. A hidden one
 // reads as struck out and uncolored.
 const visibilityStates: Record<Visibility, { pressed: boolean | "mixed"; look: string; shows: string }> = {

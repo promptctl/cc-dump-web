@@ -32,7 +32,7 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
   const [state, setState] = useState<WindowTerminalState>({ phase: "connecting" });
   const [error, setError] = useState<WindowTerminalError | undefined>(undefined);
   // [LAW:one-source-of-truth] The terminal's face is the stylesheet's (index.css), read where xterm.js needs a name: the
-  // mono, then the icons a statusline draws. Each link opens on a click (terminalLink.ts); Unicode 11's widths are the
+  // mono, then the icons a statusline draws. A link opens on a click as terminalLink.ts says; Unicode 11's widths are the
   // proposed API's.
   const xterm = useMemo(
     () => ({
