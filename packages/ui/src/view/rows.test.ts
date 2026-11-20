@@ -611,6 +611,27 @@ describe("the column", () => {
     expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read) }, by("a1")), ...working.slice(-3)], 4)).toBe("tool_use: Grep");
   });
 
+  it("says a subagent stops where the harness tells of its stop, and runs again with its next request", () => {
+    const use = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
+    const notice = text("<system-reminder>\n<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>killed</status>\n</task-notification>\n</system-reminder>");
+    const launched = user(result("toolu_1", "Async agent launched successfully.\nagentId: a1 (internal ID)\nThe agent is working in the background."));
+    const called = [hi, assistant(call("toolu_1", "Find the longest word.")), launched];
+    const stopped = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }, by("a1")),
+      ...reply("s1", [use("toolu_2", "Read")], "tool_use"),
+      ...request("t2", { ...main, messages: called }),
+      ...reply("t2", [text("Launched.")]),
+      ...request("t3", { ...main, messages: [...called, assistant(text("Launched.")), user(notice)] }),
+      ...reply("t3", [text("It stopped.")]),
+      ...request("s2", { ...agent, messages: [task, assistant(text("Again.")), user(text("Go on."))] }, by("a1")),
+      ...reply("s2", [use("toolu_3", "Grep")], "tool_use"),
+    ];
+    const at = layouts(stopped);
+    expect([2, 3, 4, 5].map((step) => nest(at(step), "thread:t1/message.1/content.0/nest").latest?.name)).toEqual(["tool_use: Read", "tool_use: Read", undefined, "tool_use: Grep"]);
+  });
+
   it("lists every request a subagent sent in its nest, one whose first message is the harness's alone after nothing there", () => {
     const twice = [
       ...request("t1", { ...main, messages: [hi] }),
