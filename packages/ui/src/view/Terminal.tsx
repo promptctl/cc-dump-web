@@ -71,9 +71,9 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
 
 // What each pane draws with, in xterm.js's DOM renderer, the one whose cell the library lays panes out in (a renderer
 // addon draws a narrower one): Unicode 11's widths, as tmux counts them, so an emoji is two cells and what follows it is
-// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the URLs a program prints as text, as links
-// (terminalLink.ts). A face that arrives after a pane drew, the icons' among them, the library has
-// xterm.js measure again (sizing/cell-metrics.js).
+// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the web URLs a program prints as text, as
+// links, a click on one opened by terminalLink.ts. A face that arrives after a pane drew, the icons' among them, the
+// library has xterm.js measure again (sizing/cell-metrics.js).
 const addons: XtermAddons = () => [
   {
     activate(terminal: Xterm) {

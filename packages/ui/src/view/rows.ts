@@ -7,7 +7,7 @@ import { forksOf, placeOf, sameFields, type After, type History, type Item, type
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
-// (docs/design/02-design.md, "Two axes"), of which only the rows on screen are mounted.
+// (docs/design/02-design.md, "Two axes").
 
 // What a step did to a row: brought it (`added`), left it as it was (`same`), gave its item a new version
 // (`changed`), or took it away (`removed`).
