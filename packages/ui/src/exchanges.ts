@@ -34,8 +34,9 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
 export type Exchanges = Map<TraceId, Exchange>;
 
 // [LAW:single-enforcer] The one step that puts an event in its exchange, so the one place a trace's shape is kept: the
-// proxy writes a trace's request head, response head, each side's trailers and its end once each, the end last, and an
-// event that would be a second of any, or come after the end, is refused here, with the exchange left as it was.
+// proxy writes a trace's request head, response head, each side's trailers and its end once each, a side's trailers
+// after the rest of it, and the end last. An event that would be a second of any, come after its side's trailers, or
+// come after the end, is refused here, with the exchange left as it was.
 export function add(byTrace: Exchanges, event: RecordedEvent) {
   const exchange = byTrace.get(event.trace_id) ?? {
     trace_id: event.trace_id,
@@ -47,33 +48,44 @@ export function add(byTrace: Exchanges, event: RecordedEvent) {
   };
   const refused = (what: string) => new Error(`recorded ${event.type} event: trace ${event.trace_id} ${what}`);
   if (exchange.end !== undefined) throw refused("has ended");
-  const once = <T>(filled: T | undefined, value: T): T => {
-    if (filled !== undefined) throw refused(`already has its ${event.type}`);
-    return value;
+  // [LAW:one-type-per-behavior] Both sides take their events by one rule: nothing once its trailers complete it, and one
+  // head. Each event's type names its side, so an event put on the other side does not type-check.
+  const open = <H, B, T>(side: Side<H, B, T>) => {
+    if (side.completedBy !== undefined) throw refused("already has its trailers");
+    return side;
   };
+  const head = <H, B, T>(side: Side<H, B, T>, taken: H) => {
+    if (open(side).head !== undefined) throw refused(`already has its ${event.type}`);
+    side.head = taken;
+  };
+  const body = <H, B, T>(side: Side<H, B, T>, taken: B) => void open(side).body.push(taken);
+  const trailers = <H, B, T>(side: Side<H, B, T>, taken: T) => void (open(side).trailers = side.completedBy = taken);
   switch (event.type) {
     case "request":
-      exchange.request.head = once(exchange.request.head, event);
+      head(exchange.request, event);
       break;
     case "request_body":
-      exchange.request.body.push(event);
+      body(exchange.request, event);
       break;
     case "request_trailers":
-      exchange.request.trailers = exchange.request.completedBy = once(exchange.request.trailers, event);
+      trailers(exchange.request, event);
       break;
     case "response":
-      exchange.response.head = once(exchange.response.head, event);
+      head(exchange.response, event);
       break;
     case "response_body":
-      exchange.response.body.push(event);
+      body(exchange.response, event);
       break;
     case "response_trailers":
-      exchange.response.trailers = exchange.response.completedBy = once(exchange.response.trailers, event);
+      trailers(exchange.response, event);
       break;
     case "end":
       exchange.end = event;
       for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
       break;
+    default:
+      // [LAW:types-are-the-program] A type the format adds is placed here before it compiles.
+      event satisfies never;
   }
   exchange.latest = event;
   byTrace.set(event.trace_id, exchange);

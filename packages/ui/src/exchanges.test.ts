@@ -64,12 +64,28 @@ describe("exchanges", () => {
   // The proxy writes each of these once per trace, so a recording holding a second was not written as it recorded.
   const requestTrailers: RecordedEvent = { timestamp, trace_id: parseTraceId("a"), type: "request_trailers", headers: [] };
   it.each([
-    ["request", request("a", "/v1/messages")],
-    ["request_trailers", requestTrailers],
-    ["response", response("a", 200)],
-    ["response_trailers", trailers("a")],
-  ])("refuses a second %s of one trace", (type, event) => {
-    expect(() => exchanges([event, event])).toThrow(`recorded ${type} event: trace a already has its ${type}`);
+    [request("a", "/v1/messages"), "request"],
+    [requestTrailers, "trailers"],
+    [response("a", 200), "response"],
+    [trailers("a"), "trailers"],
+  ])("refuses a second $type of one trace", (event, had) => {
+    expect(() => exchanges([event, event])).toThrow(`recorded ${event.type} event: trace a already has its ${had}`);
+  });
+
+  // A side's trailers are recorded when its body is complete, so nothing of that side follows them.
+  const requestBody: RecordedEvent = { timestamp, trace_id: parseTraceId("a"), type: "request_body", base64: "e30=" };
+  it.each([
+    [requestTrailers, requestBody],
+    [requestTrailers, request("a", "/v1/messages")],
+    [trailers("a"), body("a")],
+    [trailers("a"), response("a", 200)],
+  ])("refuses an event of a side after its trailers (%#)", (completed, event) => {
+    expect(() => exchanges([completed, event])).toThrow(`recorded ${event.type} event: trace a already has its trailers`);
+  });
+
+  it("takes a side's events after the other side's trailers", () => {
+    const events = [request("a", "/v1/messages"), requestTrailers, response("a", 200), body("a"), trailers("a")];
+    expect(exchanges(events)[0]!.response).toEqual({ head: events[2], body: [events[3]], trailers: events[4], completedBy: events[4] });
   });
 
   // An exchange's end is its last event.

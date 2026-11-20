@@ -9,11 +9,11 @@ const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.0
 
 // A connection the test drives: it hands the test each read's reader. A read begun aborted throws, as the browser's does.
 function fakeConnection() {
-  const reads: { name: string; reader: Reader }[] = [];
+  const reads: { name: string; reader: Reader; signal: AbortSignal }[] = [];
   const connection: Parameters<typeof readRecording>[0] = {
     read: (name, reader, signal) => {
       signal.throwIfAborted();
-      reads.push({ name, reader });
+      reads.push({ name, reader, signal });
     },
   };
   return { connection, reads };
@@ -47,14 +47,22 @@ function started(open: OpenRecording = agent) {
 }
 
 describe("readRecording", () => {
-  it("refuses an event that breaks its trace's shape, which the connection fails the read with, and appends none of it", () => {
-    const { reads, frames, calls } = started();
-    const { reader } = reads[0]!;
+  it("fails at an event that breaks its trace's shape, with what came before it appended and the read stopped", () => {
+    const { reads, frames, calls, states } = started();
+    const { reader, signal } = reads[0]!;
     const ended: RecordedEvent = { timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("t1"), type: "end", outcome: "ok" };
-    [event(1), ended].forEach(reader.event);
-    expect(() => reader.event(event(1))).toThrow("recorded request_body event: trace t1 has ended");
-    frames.run();
+    [event(1), ended, event(1)].forEach(reader.event);
     expect(calls).toEqual([["reset"], ["append", [event(1), ended]]]);
+    expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error: new Error("recorded request_body event: trace t1 has ended") }]);
+    expect(signal.aborted).toBe(true);
+    expect(frames.pending()).toBe(0);
+  });
+
+  it("begins no read when its signal is already aborted, as the connection's read throws", () => {
+    const abort = new AbortController();
+    abort.abort();
+    const { connection } = fakeConnection();
+    expect(() => readRecording(connection, agent, { reset: () => {}, append: () => {} }, handFrames().frames, abort.signal, () => {})).toThrow();
   });
 
   it("reads the recording open by its name, appending the events that arrive between frames in one call", () => {

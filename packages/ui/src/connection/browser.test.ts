@@ -138,24 +138,6 @@ describe("the browser connection", () => {
     expect(read.queued()).toBe(0);
   });
 
-  it("ends a read at an event the reader refuses, reporting it as failed with the reader's error and nothing after it", async () => {
-    const { proxy, connection } = await proxyAndConnection();
-    const abort = new AbortController();
-    onTestFinished(() => abort.abort());
-    const { arrive, next, queued } = arrivals<Arrival>();
-    const refusal = new Error("refused");
-    const event = (event: RecordedEvent) => {
-      arrive({ event });
-      if (event.type === "request") throw refusal;
-    };
-    connection.read(finishedName, { event, end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
-    expect([await next(), await next()]).toEqual([
-      { event: finishedEvents[0] },
-      { failed: expect.objectContaining({ message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${finishedName}`, cause: refusal }) },
-    ]);
-    expect(queued()).toBe(0);
-  });
-
   it("reports a read the reader failed once it began as failed, with the reader's error, and closes it so it is not read again", async () => {
     const { dir, proxy, logged, connection } = await proxyAndConnection();
     // A recording that is a directory: listed, and read from its start, so the reader sends its headers and

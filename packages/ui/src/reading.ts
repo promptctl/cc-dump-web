@@ -42,8 +42,10 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
   let pending: RecordedEvent[] = [];
   // [LAW:single-enforcer] Each event is put in its exchange as it arrives, by the step every read of exchanges takes
   // (exchanges.ts), so a recording that breaks a trace's shape fails its read at the event that breaks it, and the
-  // events the sink holds are ones that step took.
+  // events the sink holds are ones that step took. The refusal is the read's own failure: it stops reading, and
+  // reports the step's error.
   const read: Exchanges = new Map();
+  const refused = new AbortController();
   let cancelFrame = () => {};
   const flush = () => {
     sink.append(pending);
@@ -59,13 +61,18 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     open,
     {
       event: (event) => {
-        add(read, event);
+        try {
+          add(read, event);
+        } catch (error) {
+          refused.abort();
+          return settle({ state: "failed", error: error as Error });
+        }
         if (pending.push(event) === 1) cancelFrame = frames(flush);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
       failed: (error) => settle({ state: "failed", error }),
     },
-    signal,
+    AbortSignal.any([signal, refused.signal]),
   );
 }
 
