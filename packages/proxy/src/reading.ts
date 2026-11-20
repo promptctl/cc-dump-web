@@ -70,11 +70,15 @@ function list(names: string[], res: ServerResponse) {
 // reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
 // serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
 // A name that is neither, a typo or one nothing made, is not waited on.
-async function readableName(recordings: Recordings, asked: string | undefined): Promise<string | undefined> {
+async function readableName(recordings: Recordings, asked: string | undefined): Promise<ReadableName | undefined> {
   if (asked === undefined) return undefined;
-  if (recordings.follows(asked)) return asked;
-  return (await files(recordings.dir)).find((name) => name === asked);
+  if (recordings.follows(asked)) return asked as ReadableName;
+  return (await files(recordings.dir)).find((name) => name === asked) as ReadableName | undefined;
 }
+
+declare const readable: unique symbol;
+// A name `readableName` found, so the one a read may join to the directory.
+type ReadableName = string & { readonly [readable]: true };
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
 // the URL it first opened), else `?from=`, else the start. Anything but a decimal offset a file can have is
@@ -101,7 +105,7 @@ type Reading = {
   unterminated: () => number;
 };
 
-function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: string): Reading {
+function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   let finished: ReturnType<typeof recordedLength> | undefined;

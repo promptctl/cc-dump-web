@@ -157,11 +157,14 @@ describe("routes", () => {
     expect([res.status, res.headers.get("access-control-allow-methods"), res.headers.get("access-control-allow-headers")]).toEqual([204, "GET, POST", "content-type"]);
   });
 
-  it("answers a method a route does not take with 405, and an unknown route with 404", async () => {
-    const { url } = await app();
+  it("answers a method a route does not take with 405, and an unknown route with 404, each a failure on the request's event", async () => {
+    const { url, next } = await app();
     const res = await fetch(`${url}/launch`, { method: "DELETE" });
-    expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
-    expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
+    expect([res.status, res.headers.get("allow"), parseFailure(await res.text())]).toEqual([405, "GET, POST", { error: "DELETE is not one of GET, POST" }]);
+    expect(await next()).toMatchObject({ event: "request", status: 405, outcome: "error" });
+    const missing = await fetch(`${url}/api/nothing`);
+    expect([missing.status, parseFailure(await missing.text())]).toEqual([404, { error: "No route /api/nothing" }]);
+    expect(await next()).toMatchObject({ event: "request", status: 404, outcome: "error" });
   });
 
   it("serves its log at /logs to the UI's page, and refuses it to a page from another site", async () => {

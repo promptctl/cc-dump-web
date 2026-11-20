@@ -80,8 +80,9 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
     // fromThisMachine's to say.
     res.setHeader("access-control-allow-origin", "*");
     if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} is not one this machine serves`));
-    const route = routes[new URL(req.url!, "http://server").pathname];
-    if (route === undefined) return void res.writeHead(404).end();
+    const path = new URL(req.url!, "http://server").pathname;
+    const route = routes[path];
+    if (route === undefined) return failed(res, work, new Refused(404, `No route ${path}`));
     route(req, res, work);
   };
 }
@@ -93,7 +94,7 @@ function answering(answers: Partial<Record<string, Answer>>): Handler {
   return (req, res, work) => {
     if (req.method === "OPTIONS") return void res.writeHead(204, { "access-control-allow-methods": allow, "access-control-allow-headers": "content-type" }).end();
     const answer = answers[req.method!];
-    if (answer === undefined) return void res.writeHead(405, { allow }).end();
+    if (answer === undefined) return failed(res.setHeader("allow", allow), work, new Refused(405, `${req.method} is not one of ${allow}`));
     answer(req, work).then(
       (body) => json(res, 200, body),
       (error: unknown) => failed(res, work, error),
