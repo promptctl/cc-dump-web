@@ -32,8 +32,8 @@ const other = { ...body, messages: [{ role: "user", content: "Look for the needl
 const { search: defaults } = parseSettings(undefined);
 // Every category listed.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
-const layOut = (visibility: Record<Category, Visibility> = shown, revealed?: string): Layout =>
-  createLayout(visibility)(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, revealed, {});
+const layOut = (visibility: Record<Category, Visibility> = shown, current?: string): Layout =>
+  createLayout(visibility)(createHistory()(createFormatter()(exchanges([...request("a", body), ...request("b", other)]))), 2, current, {});
 // A query read under the default options, with those given changed.
 const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(query, { ...defaults, ...options });
 const { pattern } = read("needle");
@@ -193,8 +193,8 @@ describe("search", () => {
     const hidden = { ...shown, tools: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" } as const;
     const { every } = layOut(hidden);
     const found = createSearch()(every.rows, pattern);
-    const hiddenBlocksListed = (revealed?: string) =>
-      layOut(hidden, revealed)
+    const hiddenBlocksListed = (current?: string) =>
+      layOut(hidden, current)
         .rows.filter((row) => row.kind === "block" && hidden[blockOf(row).category] === "hidden")
         .map(({ key }) => key);
     expect(hiddenBlocksListed()).toEqual([]);
@@ -239,20 +239,17 @@ describe("search", () => {
     const part = partKey("thread:a/message.2/content.0", address.part(0));
     expect(result).toEqual({
       match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
-      row: rows.find((row) => row.key === "thread:a/message.2/content.0"),
-      nests: [],
-      inContent: true,
-      regions: [regionKey(part, 1), regionKey(part, 3)],
+      folds: ["thread:a/message.2/content.0", regionKey(part, 1), regionKey(part, 3)],
     });
     const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
-    expect(name).toMatchObject({ row: { key: "thread:a/message.1/content.0" }, inContent: false, regions: [] });
+    expect(name).toMatchObject({ match: { key: "thread:a/message.1/content.0" }, folds: [] });
   });
 
   it("opens the nests a match's block is inside, the innermost first", () => {
     const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
     const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
     const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
-    expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.nests).toEqual(["inner/nest", "outer/nest"]);
+    expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
   });
 
   it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {
@@ -260,8 +257,8 @@ describe("search", () => {
     const found = createSearch()([row], pattern);
     const part = partKey("k", address.part(0));
     const heading = adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!;
-    expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, inContent: true, regions: [] });
-    expect(adjacent(found, heading.match, top, "next", pattern, layOut().every.keys)!.regions).toEqual([regionKey(part, 0), regionKey(part, 2)]);
+    expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, folds: ["k"] });
+    expect(adjacent(found, heading.match, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
   });
 
   it("gives the matches holding any of a slice of a text", () => {

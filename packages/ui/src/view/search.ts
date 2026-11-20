@@ -167,10 +167,10 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
   return index === -1 ? undefined : block.before + index + 1;
 }
 
-// A step to a match, and what must show for it to be on screen: its block's `row`, listed, so the `nests` it is
-// inside, by their lines' keys, and the set it is in open; the row expanded, when the match is `inContent`, not on the
-// block's line; and the regions and the headings' sections holding it, by key, open.
-export type Step = { match: Match; row: BlockRow; nests: string[]; inContent: boolean; regions: string[] };
+// [LAW:types-are-the-program] A step to a match, and the `folds` that must show open for it to be on screen, by key:
+// the nests its block is inside, innermost first, and the set it is in, so its block is listed; then, for a match in
+// the block's content, not on its line, the block, and the regions and the headings' sections holding the match.
+export type Step = { match: Match; folds: string[] };
 
 export type Direction = "next" | "previous";
 
@@ -208,14 +208,14 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
 }
 
 function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown }: { match: Match; shown: Shown }): Step {
-  const nests = nestsOf(rows, index);
+  const listed = [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set])];
   switch (shown.in) {
     case "line":
-      return { match, row, nests, inContent: false, regions: [] };
+      return { match, folds: listed };
     case "content":
-      return { match, row, nests, inContent: true, regions: [] };
+      return { match, folds: [...listed, row.key] };
     case "regions":
-      return { match, row, nests, inContent: true, regions: regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line)) };
+      return { match, folds: [...listed, row.key, ...regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line))] };
   }
 }
 

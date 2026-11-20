@@ -109,47 +109,17 @@ describe("the search", () => {
     expect(useSettings.getState().search.wholeWord).toBe(true);
   });
 
-  // A step chooses only what it changes, so a block shows after a later change of level as the reader left it.
-  it("opens a match's block and the regions holding it, and records no choice for a block already open", () => {
-    const { visibility } = parseSettings(undefined);
-    view.goTo({ match, row, nests: [], inContent: true, regions: ["r"] }, "t1", visibility);
-    expect(useView.getState().opened).toEqual({ [row.key]: true, r: true });
+  // What a step chose is the reader's choice, however the fold starts, so a change of level never hides the current match.
+  it("chooses open the folds holding a match, over the reader's close, and records nothing for a step among what they hold open", () => {
+    view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, "t1");
+    expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true, r: true });
     // The next match in the same region: nothing is chosen, so the choices are the record they were.
     const { opened } = useView.getState();
-    view.goTo({ match: { ...match, start: match.start + 1 }, row, nests: [], inContent: true, regions: ["r"] }, "t1", visibility);
+    view.goTo({ match: { ...match, start: match.start + 1 }, folds: ["t1/tools", row.key, "r"] }, "t1");
     expect(useView.getState().opened).toBe(opened);
     expect(useView.getState().search.current).toEqual({ ...match, start: match.start + 1 });
-    useView.setState({ opened: {} });
-    view.goTo({ match, row, nests: [], inContent: true, regions: [] }, "t1", { ...visibility, tools: "expanded" });
-    expect(useView.getState().opened).toEqual({});
-    useView.setState({ opened: { [row.key]: false } });
-    view.goTo({ match, row, nests: [], inContent: true, regions: [] }, "t1", { ...visibility, tools: "expanded" });
-    expect(useView.getState().opened).toEqual({ [row.key]: true });
-  });
-
-  it("opens the nests a match's block is inside, and records no choice for one already open", () => {
-    const { visibility } = parseSettings(undefined);
-    const nests = ["t1/inner/nest", "t1/outer/nest"];
-    view.goTo({ match, row, nests, inContent: false, regions: [] }, "t1", visibility);
-    expect(useView.getState().opened).toEqual({ "t1/inner/nest": true, "t1/outer/nest": true });
-    const { opened } = useView.getState();
-    view.goTo({ match, row, nests, inContent: false, regions: [] }, "t1", visibility);
-    expect(useView.getState().opened).toBe(opened);
-  });
-
-  // A match on a block's line needs its row listed, and no more: the set's line opens, the block stays as it is.
-  it("opens the closed set a match's block is in, and records no choice for a set already open", () => {
-    const { visibility } = parseSettings(undefined);
-    const inSet = { ...row, set: "t1/tools" };
-    view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", visibility);
-    expect(useView.getState().opened).toEqual({ "t1/tools": true });
-    view.goTo({ match, row: inSet, nests: [], inContent: true, regions: [] }, "t1", visibility);
-    expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true });
-    useView.setState({ opened: {} });
-    view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
-    expect(useView.getState().opened).toEqual({});
     useView.setState({ opened: { "t1/tools": false } });
-    view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
+    view.goTo({ match, folds: ["t1/tools"] }, "t1");
     expect(useView.getState().opened).toEqual({ "t1/tools": true });
   });
 });
@@ -215,12 +185,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, row, nests: [], inContent: false, regions: [] }, "t10", parseSettings(undefined).visibility);
+    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, row, nests: [], inContent: false, regions: [] }, "t10", parseSettings(undefined).visibility);
+    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();

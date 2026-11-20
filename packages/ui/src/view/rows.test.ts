@@ -1,13 +1,14 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
-import { createSearch } from "./search.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { adjacent, createSearch } from "./search.ts";
+import { useView, view } from "./state.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -32,7 +33,7 @@ const dialogue = { ...shown, tools: "hidden", system: "hidden", parameters: "hid
 function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown) {
   const history = createHistory()(createFormatter()(exchanges(events)));
   const layOut = createLayout(visibility);
-  return (step: number, revealed?: string, opened: Opened = {}) => layOut(history, step, revealed, opened);
+  return (step: number, current?: string, opened: Opened = {}) => layOut(history, step, current, opened);
 }
 // The block's row at `key` among a layout's.
 const blockAt = ({ rows }: { rows: Row[] }, key: string) => rows.find((row): row is BlockRow => row.kind === "block" && row.key === key)!;
@@ -164,10 +165,10 @@ describe("layout", () => {
     const everyKey = first.every.rows.map(({ key }) => key);
     expect(everyKey).toContain("thread:t1/tools/tools.Read.0");
     expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
-    const revealed = at(3, "thread:t1/tools/tools.Read.0");
-    expect(revealed.every).toBe(first.every);
-    expect(revealed.keys).not.toBe(first.keys);
-    expect(at(3).keys).not.toBe(revealed.keys);
+    const withCurrent = at(3, "thread:t1/tools/tools.Read.0");
+    expect(withCurrent.every).toBe(first.every);
+    expect(withCurrent.keys).not.toBe(first.keys);
+    expect(at(3).keys).not.toBe(withCurrent.keys);
     expect(at(3).keys).toBe(at(3).keys);
     // Another step is other rows.
     expect(at(2).every).not.toBe(first.every);
@@ -215,7 +216,7 @@ describe("layout", () => {
     expect((["user", "assistant"] as const).map((category) => sectionsStartOpen(block(category, true)))).toEqual([false, false]);
   });
 
-  it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's revealed block collapsed", () => {
+  it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's block that is the search's current match collapsed", () => {
     const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     const row = (side: Block, gone = false): BlockRow => {
@@ -236,10 +237,11 @@ describe("layout", () => {
     expect(estimateHeight(long, { k: true }, { ...levels, user: "compact" })).toBe(20 + 10 * 16);
   });
 
-  it("lists a hidden category's blocks at neither level but the search's revealed one", () => {
-    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed));
+  it("lists a hidden category's blocks at neither level but the search's current match", () => {
+    const keys = (visibility: Record<Category, Visibility>, current?: string) => listed(layouts(turns(1), visibility)(1, current, { "t1/tools": true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
     expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
+    // In the set, open.
     expect(keys({ ...shown, tools: "hidden" }, "thread:t1/tools/tools.Read.0")).toContain("thread:t1/tools/tools.Read.0 added");
   });
 
@@ -293,13 +295,57 @@ describe("a set", () => {
     expect([toolsListed(closed), setAt(closed).key]).toEqual([[], "t1/tools"]);
   });
 
-  it("lists the block the search stepped to under its closed line, and no line at a hidden level but over that block", () => {
-    expect(toolsListed(layouts(events)(1, tools[1]))).toEqual([tools[1]]);
+  it("holds the search's current match while closed, and at a hidden level lists its line only over that match", () => {
+    expect(toolsListed(layouts(events)(1, tools[1]))).toEqual([]);
     const hidden = layouts(events, { ...shown, tools: "hidden" });
     expect(hidden(1).rows.some(({ kind }) => kind === "set")).toBe(false);
-    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools", `${tools[1]} added`]);
-    // Open at a hidden level, a set still lists none but the block revealed.
+    // Closed over the current match, the line is still listed, the control that opens it.
+    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools"]);
+    // Open at a hidden level, a set lists none but the current match.
     expect(toolsListed(hidden(1, tools[1], { "t1/tools": true }))).toEqual([tools[1]]);
+  });
+
+  describe("a step of the search into it", () => {
+    const hidden = { ...shown, tools: "hidden" } as const;
+    const pattern = /Runs/g;
+    beforeEach(() => useView.setState(useView.getInitialState(), true));
+    // The reader's step to the first match, Bash's description, as the view takes it: the search reads every row,
+    // whatever the levels, and the step reads none.
+    const step = () => {
+      const layout = layouts(events)(1);
+      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
+      if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
+      view.goTo(to, "t1");
+    };
+    const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
+    // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
+    // its line, if listed, open or closed as it draws, the tools listed under it, and the current match's block, if
+    // listed, open or closed, so the description holding the match is drawn or not.
+    const seen = (visibility: Record<Category, Visibility>) => {
+      const { opened, search } = useView.getState();
+      if (search.current === undefined) throw new Error("the step made no match current");
+      const { key } = search.current;
+      const layout = layouts(events, visibility)(1, key, opened);
+      const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, "t1/tools", setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";
+      const block = layout.rows.find((row): row is BlockRow => row.kind === "block" && row.key === key);
+      return { line, tools: toolsListed(layout), match: block === undefined ? "unlisted" : showsOpen(block, visibility, opened) ? "open" : "closed" };
+    };
+
+    // The step reads no level, so each level here is also the one a change of level after the step goes to.
+    for (const [level, visibility, open] of [
+      ["compact", shown, tools],
+      ["expanded", listing, tools],
+      ["hidden", hidden, [tools[2]]],
+    ] as const) {
+      it(`at ${level}, shows the set and the block holding the match open; the reader's close takes the match back into the closed line, and opening it shows it again`, () => {
+        step();
+        expect(seen(visibility)).toEqual({ line: "open", tools: open, match: "open" });
+        toggle(visibility);
+        expect(seen(visibility)).toEqual({ line: "closed", tools: [], match: "unlisted" });
+        toggle(visibility);
+        expect(seen(visibility)).toEqual({ line: "open", tools: open, match: "open" });
+      });
+    }
   });
 
   it("says on its line how many blocks it holds, which, and how large, and the last thing a step did to one of them", () => {
