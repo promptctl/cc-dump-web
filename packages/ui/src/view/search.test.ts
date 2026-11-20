@@ -2,13 +2,14 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Direction, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -220,6 +221,38 @@ describe("search", () => {
     expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
     // One whose exchange is not among the rows at all: the first match going on, the last going back.
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
+  });
+
+  describe("from a current match whose text a later step rewrote, so it is none of its block's matches now", () => {
+    const text = (text: string): Part => ({ kind: "text", form: "verbatim", text });
+    // Blocks a, k and z, one after another, a's and z's a needle each and k's parts as the step shown has them.
+    const stepFrom = (current: Match, parts: Part[], direction: Direction) => {
+      const row = (key: string, parts: Part[]): BlockRow => ({ ...added({ category: "tools", name: key, parts }), key });
+      const rows = [row("a", [text("needle")]), row("k", parts), row("z", [text("needle")])];
+      const keys = { at: (index: number) => rows[index]!.key, indexOf: (key: string) => ({ a: 0, k: 1, z: 2 })[key] };
+      const { key, at } = adjacent(createSearch()(rows, pattern), current, top, direction, pattern, keys)!.match;
+      return { key, at };
+    };
+
+    it("enters its block from the side the step moves from, after a fields part became a text", () => {
+      const current = { key: "k", at: address.field(1, 0, "value"), start: 0 };
+      const parts = [text("needle"), text("needle")];
+      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.part(0) });
+      expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.part(1) });
+    });
+
+    it("enters its block from the side the step moves from, after a text became fields", () => {
+      const current = { key: "k", at: address.part(1), start: 0 };
+      const parts: Part[] = [text("needle"), { kind: "fields", fields: [["x", "needle"]] }];
+      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.part(0) });
+      expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.field(1, 0, "value") });
+    });
+
+    it("goes on to the next or previous block when its block has no match now", () => {
+      const current = { key: "k", at: address.part(0), start: 0 };
+      expect(stepFrom(current, [text("hay")], "next")).toEqual({ key: "z", at: address.part(0) });
+      expect(stepFrom(current, [text("hay")], "previous")).toEqual({ key: "a", at: address.part(0) });
+    });
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {

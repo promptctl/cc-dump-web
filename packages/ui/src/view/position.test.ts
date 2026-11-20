@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, type Placed } from "./position.ts";
+import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -44,5 +44,12 @@ describe("position", () => {
     expect(positionAt(170, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
     expect(positionAt(0, rowAt)).toEqual({ at: "start" });
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
+  });
+
+  it("finds the nearest row a key starting with a slash is inside, and ends when there is none", () => {
+    const outer = (key: string) => (key === "/request" ? 0 : undefined);
+    expect(rowIndex("/request/http", outer)).toBe(0);
+    expect(rowIndex("/other/http", outer)).toBeUndefined();
+    expect(rowIndex("//", outer)).toBeUndefined();
   });
 });

@@ -152,8 +152,8 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
 }
 
 // The matches of a block, in the order it shows them, each with the text it is in.
-function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown }[] {
+  return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
@@ -177,21 +177,22 @@ export type Direction = "next" | "previous";
 // The match after or before `current`, in the order the conversation shows them, wrapping at either end; undefined
 // when there is no match. `order`: the places of every row, hidden or not, which `found` was made from. A current whose
 // block is not among them stands just after the row `rowIndex` gives for it, as the view does: the row it was inside
-// when the formatter replaced it. So the steps go on from where it was. With no current, the steps start from the
-// view's `position`: its top row's matches first going on, and the matches above it going back. One whose exchange is
-// not among the rows goes to the first match, or back to the last.
+// when the formatter replaced it. So the steps go on from where it was. A current that is none of its block's matches
+// now, its text rewritten by a later step, stands in its block at no match, and the steps enter the block from the
+// side they move from: a rewritten block keeps no identity for its texts, a tool's input so far replaced by its parts
+// once whole, so nothing says where among them it stood. With no current, the steps start from the view's `position`:
+// its top row's matches first going on, and the matches above it going back. One whose exchange is not among the rows
+// goes to the first match, or back to the last.
 export function adjacent(found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, order: Keys): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
-  // In its own block, the first match past it in the direction of the step.
+  // In its own block, the match after or before it.
   const own = current === undefined ? undefined : found.byKey.get(current.key);
-  if (own !== undefined) {
-    const { at, start } = current!;
-    const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
-    const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
-    if (past !== undefined) return stepTo(found, own, past);
-  }
+  const matches = own === undefined ? [] : matchesIn(own.row, pattern);
+  const index = matches.findIndex(({ match }) => same(match, current!));
+  const past = index === -1 ? undefined : matches[forward ? index + 1 : index - 1];
+  if (past !== undefined) return stepTo(found, own!, past);
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
   const placeOf = (key: string, bias: number) => {
     const own = order.indexOf(key);
@@ -199,12 +200,15 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     const inside = rowIndex(key, order.indexOf);
     return inside === undefined ? (forward ? -Infinity : Infinity) : inside + 0.5;
   };
+  // A current among its block's matches stands at its block, which the step has left; one that is none of them stands
+  // just before its block going on and just after it going back, so the step enters it.
+  const stands = index === -1 ? (forward ? -0.5 : 0.5) : 0;
   const place =
-    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
+    current !== undefined ? placeOf(current.key, stands) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
-  const matches = matchesIn(block.row, pattern);
-  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);
+  const entered = matchesIn(block.row, pattern);
+  return stepTo(found, block, (forward ? entered[0] : entered.at(-1))!);
 }
 
 function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown }: { match: Match; shown: Shown }): Step {
