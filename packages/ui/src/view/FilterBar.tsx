@@ -34,7 +34,7 @@ function CategoryToggle({ category, visibility }: { category: Category; visibili
 }
 
 // [LAW:dataflow-not-control-flow] Each level: whether the toggle is pressed, how it looks and what it shows. A listed
-// category's chip is in its hue, the one the gutter paints its blocks in, so the bar is the gutter's legend
+// category's chip is in its hue (theme/categories.ts), the gutter's, so the bar is the gutter's legend
 // (docs/design/02-design.md): filled while its blocks show in full, outlined while they show a line each. A hidden one
 // reads as struck out and uncolored.
 const visibilityStates: Record<Visibility, { pressed: boolean | "mixed"; look: string; shows: string }> = {

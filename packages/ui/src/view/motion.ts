@@ -12,10 +12,9 @@ const typed = typeof document.startViewTransition === "function" && typeof ViewT
 
 // Runs `update`, which must change the page before it returns, as a motion `way`. `kept`: how much of the
 // conversation's box, from its top, the move leaves as it is, in pixels, which stays in place while what is under it
-// slides away: none of it in a step in time, and what is above the fork's line's end in a switch of histories there.
-// Gives when the update is done, or why it failed. [LAW:no-silent-failure] A transition another move skips, or a
-// hidden document, still makes its update, so its motion not running is expected and nothing to report; the update
-// failing is reported, by what this gives.
+// slides away. Gives when the update is done, or why it failed. [LAW:no-silent-failure] A transition another move
+// skips, or a hidden document, still makes its update, so its motion not running is expected and nothing to report;
+// the update failing is reported, by what this gives.
 export function inMotion(way: Way, kept: number, update: () => void): Promise<void> {
   if (!typed) {
     update();

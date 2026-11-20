@@ -96,12 +96,12 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
-- The agent's tmux window is shown in the page, beside the conversation, live and fully interactive: its panes as tmux-control-mode-js draws them, what the agent prints appearing as it prints it, and what the user types going to the pane they clicked into.
+- The agent's tmux window is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and which panes are drawn and which one takes what the user types are tmux-control-mode-js's to decide.
 - A launch (F1) shows the window it opened.
 - After a reload the window is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it writes as one opens on a click, or is refused, by its scheme, as terminalLink.ts decides, and a web page's URL in its text is a link to that page. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link a program writes (OSC 8) opens on a click, or is refused, by its scheme, as terminalLink.ts decides, and a web page's URL in its text is a link to that page. The pointer over a link shows where it goes.
 
 ## Architecture
 
