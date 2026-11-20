@@ -57,9 +57,11 @@ function wireOf({ request, response, end }: Exchange): Wire {
     undecoded: [],
   };
   const sides = { request, response };
+  // A request is read once its body is whole: one its client stopped sending part way says no more than its head, as
+  // the API never had it. A reply is read as far as it has come.
   const read = (name: keyof typeof sides, then: (text: string) => void) => {
     const side = sides[name];
-    if (side.head === undefined || side.body.length === 0) return;
+    if (side.head === undefined || side.body.length === 0 || (name === "request" && side.completedBy?.type !== "request_trailers")) return;
     const { text, error } = createDecoding(side.head.headers).decode(side.body, side.completedBy !== undefined);
     try {
       if (error !== undefined) throw new Error(error);
@@ -94,7 +96,8 @@ function wireOf({ request, response, end }: Exchange): Wire {
   read("response", (text) => {
     // A stream's blocks by their index, and its stop; or a message's.
     const streamed = (valueOf(response.head!.headers, "content-type") ?? "").startsWith("text/event-stream");
-    const events = streamed ? text.split("\n").flatMap((line) => (line.startsWith("data: ") ? [JSON.parse(line.slice(6)) as unknown] : [])) : [];
+    // A stream's lines, less what follows its last line break, a line not yet whole.
+    const events = streamed ? text.split("\n").slice(0, -1).flatMap((line) => (line.startsWith("data: ") ? [JSON.parse(line.slice(6)) as unknown] : [])) : [];
     const message = streamed ? undefined : JSON.parse(text);
     const blocks = streamed ? events.flatMap((event) => (field(event, "type") === "content_block_start" ? [field(event, "content_block")] : [])) : list(field(message, "content"));
     wire.stopped = (streamed ? events.map((event) => field(field(event, "delta"), "stop_reason")).findLast((reason) => typeof reason === "string") : field(message, "stop_reason")) as string | undefined;
@@ -291,7 +294,9 @@ function check(history: History, wires: readonly Wire[], layoutAt: (step: number
       if (agent === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
       else {
         const stops = arrived.filter((own) => wireAt(own).told.includes(agent) || wireAt(own).named.some((one) => one.agent === agent && one.ran === "foreground"));
-        const answered = (own: number) => arrived.some((later) => later > own && agentOf(later) === agent && (wireAt(later).ended || wireAt(later).last !== undefined) && [...wireAt(own).calls].some((call) => wireAt(later).answers.has(call)));
+        // A reply waits on every call it makes, each answered by a later request of the agent's sending its result.
+        const answers = (later: number, own: number, call: string) => later > own && agentOf(later) === agent && (wireAt(later).ended || wireAt(later).last !== undefined) && wireAt(later).answers.has(call);
+        const answered = (own: number) => [...wireAt(own).calls].every((call) => arrived.some((later) => answers(later, own, call)));
         const waits = (own: number) => {
           const { ended, stopped, handback, last } = wireAt(own);
           return last !== undefined && (!ended || (stopped === "tool_use" && !handback && !answered(own)));
