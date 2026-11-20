@@ -5,7 +5,7 @@ import type { Direction } from "./search.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The search bar (docs/design/01-mvp.md, F6): the query, the options that say how it is read, how many matches it has and
+// The search bar (docs/design/features.md, F6): the query, the options that say how it is read, how many matches it has and
 // which is current, and the steps to the next and the previous. Typing counts and highlights; only a step moves the
 // view. The field hears its own keys (keyboard.ts). `error`: why the query is not a valid regular expression, when it is
 // not; it matches nothing, and the bar says so. `field`: the query's field, which the conversation's search key puts

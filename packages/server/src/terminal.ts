@@ -9,7 +9,7 @@ import { sessionId, startTime, windowId, type TmuxWindow } from "./format.ts";
 import { fromThisMachine } from "./origin.ts";
 import { attach } from "./tmux.ts";
 
-// What a page's terminal reaches tmux through (docs/design/01-mvp.md, F13): a WebSocket at a window's address
+// What a page's terminal reaches tmux through (docs/design/features.md, F13): a WebSocket at a window's address
 // (tmuxPath), taken into a bridge of the library's of its own, whose tmux client is the page's own, attached to the
 // window's session. `options` picks the tmux server, as createTmux's do.
 // [LAW:no-ambient-temporal-coupling] The page's connection does no work of its own between its request and the

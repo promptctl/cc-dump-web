@@ -1,7 +1,7 @@
 import { parseUpstream } from "./proxy.ts";
 import { settingsFile } from "@cc-dump/config/settings-file";
 
-// [LAW:one-source-of-truth] The proxy's settings (docs/design/01-mvp.md, F11): `port`, the port agents are pointed at,
+// [LAW:one-source-of-truth] The proxy's settings (docs/design/features.md, F11): `port`, the port agents are pointed at,
 // and `upstream`, the address it forwards to.
 const settings = {
   port: {

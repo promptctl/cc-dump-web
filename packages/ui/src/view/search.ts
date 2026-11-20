@@ -8,7 +8,7 @@ import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
 import { blockOf, nestsOf, type BlockRow, type Keys, type Row } from "./rows.ts";
 
-// Search (docs/design/01-mvp.md, F6): the matches of a query in the texts every block shows, whichever category it is
+// Search (docs/design/features.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
 
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text

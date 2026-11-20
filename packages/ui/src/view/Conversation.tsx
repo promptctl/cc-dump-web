@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
@@ -29,7 +29,7 @@ import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, every row of it listed, of
-// which only those on screen are mounted (docs/design/01-mvp.md, F4). `reading`: whether the read can still bring an
+// which only those on screen are mounted (docs/design/features.md, F4). `reading`: whether the read can still bring an
 // exchange its end. `theme`: what the minimap's canvas is painted in.
 export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
@@ -142,7 +142,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
-  // The search (docs/design/01-mvp.md, F6): its matches among every row, in the hidden categories as well.
+  // The search (docs/design/features.md, F6): its matches among every row, in the hidden categories as well.
   const query = useView((state) => state.search.query);
   const options = useSettings(useShallow((state) => state.search));
   const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
@@ -699,7 +699,7 @@ function PartView({ part, blockKey, index }: { part: Part; blockKey: string; ind
   );
 }
 
-function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
+function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }): ReactElement {
   switch (part.kind) {
     case "text":
       return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;

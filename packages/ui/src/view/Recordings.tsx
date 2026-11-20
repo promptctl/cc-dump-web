@@ -7,7 +7,7 @@ import { HeaderPopover } from "./HeaderPopover.tsx";
 import { entriesOf, entryOf, type Entry } from "./listings.ts";
 import { useView, view } from "./state.ts";
 
-// The recordings control (docs/design/01-mvp.md, F7): the recording open, and the list of every recording to open
+// The recordings control (docs/design/features.md, F7): the recording open, and the list of every recording to open
 // another from. The list is read each time it opens, so it holds the agents launched since it last did. `reading`: the
 // read of the recording open, which names the one on screen.
 export function Recordings({ connection, reading }: { connection: Pick<Connection, "recordings">; reading: Reading }) {

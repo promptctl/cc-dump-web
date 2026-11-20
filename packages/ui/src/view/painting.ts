@@ -4,7 +4,7 @@ import { isOpen } from "./rows.ts";
 import { find, type Searched } from "./search.ts";
 import { useView, view } from "./state.ts";
 
-// How a text shown in the conversation paints the search's matches (docs/design/01-mvp.md, F6), and what a block, a
+// How a text shown in the conversation paints the search's matches (docs/design/features.md, F6), and what a block, a
 // region, an entry of a text's contents or a sibling of a fork calls when clicked. The Conversation provides each.
 
 // The pattern the conversation's texts paint the matches of: the search's, so what is painted is what it counts.

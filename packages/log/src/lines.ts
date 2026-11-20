@@ -4,7 +4,7 @@ import { createLog, describeError, startSpan, type Handler, type Log } from "./i
 import { positionOf } from "./line.ts";
 
 // [LAW:single-enforcer] A part's log, the one its process writes: each event a JSON line on `out`, stdout, which
-// `pnpm dev` shows in its terminal, and kept, the last `keep` of them, for the logs panel (docs/design/01-mvp.md, F9),
+// `pnpm dev` shows in its terminal, and kept, the last `keep` of them, for the logs panel (docs/design/features.md, F9),
 // which `logs` serves. The lines are numbered from 0 under `run`, an id of this process, so a reader that reconnects to
 // the same process resumes after the last line it read, and one that reaches a process restarted since reads it anew.
 // [LAW:no-silent-failure] `out` failing, as stdout does once the process reading it is gone (EPIPE), is no crash: the

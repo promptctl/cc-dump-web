@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { events, useEvents } from "./store.ts";
 
-// The recording open (docs/design/01-mvp.md, F7), by its name, or none: a tab that has launched no agent and opened no
+// The recording open (docs/design/features.md, F7), by its name, or none: a tab that has launched no agent and opened no
 // recording shows neither.
 export type OpenRecording = string | null;
 
@@ -27,7 +27,7 @@ export type Frames = (callback: () => void) => () => void;
 const begun = (open: OpenRecording): Reading => (open === null ? { state: "none" } : { state: "reading", name: open });
 
 // Reads the recording open into `sink` from its start, reporting where the read stands to `changed`, until `signal`
-// aborts it. Whichever recording it is, it is the one read (docs/design/01-mvp.md, "One path to the screen"). With none
+// aborts it. Whichever recording it is, it is the one read (docs/design/features.md, "One path to the screen"). With none
 // open it reads nothing.
 // [LAW:no-ambient-temporal-coupling] The read owns its batch: events arriving between frames are appended in one call
 // at the next, because catching up delivers thousands in quick succession and one copy and render each would be

@@ -2,10 +2,10 @@ import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
-// [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-mvp.md,
+// [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/features.md,
 // F1). Imports nothing that needs node, so the UI takes these types, and their parsers, from here.
 
-// [LAW:one-source-of-truth] The launch settings (docs/design/01-mvp.md, F1, F11), in launch.json and in `GET /launch`'s
+// [LAW:one-source-of-truth] The launch settings (docs/design/features.md, F1, F11), in launch.json and in `GET /launch`'s
 // answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
 // launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
 // command, a whole command line, `claude` until the user launches another.
@@ -31,7 +31,7 @@ export function launchSession({ settings, sessions }: Launcher): string {
 export type Launch = { session: string; command: string };
 
 // `POST /launch`'s answer: the window opened, its pane, and `recording`, the name of the recording the agent's process
-// records to (docs/design/01-mvp.md, F1), which exists once the process sends its first request.
+// records to (docs/design/features.md, F1), which exists once the process sends its first request.
 export type Launched = { session: string; pane_id: PaneId; recording: string } & TmuxWindow;
 
 // [LAW:types-are-the-program] A window, as tmux addresses one in a session (`session:window`), by ids, on the one tmux

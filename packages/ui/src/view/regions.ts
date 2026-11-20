@@ -1,4 +1,4 @@
-// The long regions of a block's text, which collapse and expand as a block does (docs/design/01-mvp.md, F4): fenced code
+// The long regions of a block's text, which collapse and expand as a block does (docs/design/features.md, F4): fenced code
 // blocks and XML-tagged sections, such as the system reminders Claude Code puts in a user's message.
 
 // A text as runs of plain text and the long regions between them. A region is its opening line, its body (segmented
