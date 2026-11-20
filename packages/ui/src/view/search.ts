@@ -20,7 +20,10 @@ export type Match = { key: string; at: Address; start: number };
 // The block's name is the empty path; a part's own text, a text, its JSON or its diff, is its part's index; a line of a
 // part's fields is its part's index, the line's, and its side's, 0 its name and 1 its value. The search and the view
 // both name a text by it.
-export type Address = readonly [] | PartAddress | FieldAddress;
+export type Address = NameAddress | PartAddress | FieldAddress;
+
+// The address of the block's name.
+export type NameAddress = readonly [];
 
 // The address of a part's own text.
 export type PartAddress = readonly [part: number];
@@ -29,15 +32,16 @@ export type PartAddress = readonly [part: number];
 export type FieldAddress = readonly [part: number, line: number, side: 0 | 1];
 
 export const address = {
-  name: [] as const satisfies Address,
+  name: [] as const satisfies NameAddress,
   part: (part: number): PartAddress => [part],
-  field: (part: number, line: number, side: "name" | "value"): FieldAddress => [part, line, side === "name" ? 0 : 1],
+  fieldName: (part: number, line: number): FieldAddress => [part, line, 0],
+  fieldValue: (part: number, line: number): FieldAddress => [part, line, 1],
 };
 
 // [LAW:one-source-of-truth] Addresses in the order a block shows their texts: as paths, element by element, and a path
 // before every path that extends it, so the name before the parts and a part's own text before its lines. A block's
-// texts are listed in this order by construction, which search.test.ts holds over every part kind; the comparison is what gives an address the block no
-// longer shows, its text taken away by a later step, a place among those it shows.
+// texts are listed in this order, and it gives an address the block no longer shows, its text taken away by a later
+// step, a place among those it shows.
 export function compareAddresses(a: Address, b: Address): number {
   for (let index = 0; index < Math.min(a.length, b.length); index++) if (a[index] !== b[index]) return a[index]! - b[index]!;
   return a.length - b.length;
@@ -72,15 +76,19 @@ export function whole(text: string): Searched {
 // A text a block shows: its address, the text, and where it shows: on the block's line, always on screen; in its
 // content, while it is expanded; or in its content and inside the folds of it holding the match, while they are
 // expanded too: a text part's rendering, what the reader sees, not the text as sent.
-export type Shown = { at: Address; in: "line" | "content"; searched: Searched } | { at: PartAddress; in: "regions"; searched: Folded };
+export type Shown =
+  | { at: NameAddress; in: "line"; searched: Searched }
+  | { at: PartAddress | FieldAddress; in: "content"; searched: Searched }
+  | { at: PartAddress; in: "regions"; searched: Folded };
 
-// The texts a block's row shows, in the order it shows them, which is their addresses' order: the block's name, then
-// its parts, each part's lines in order; of a block a step took away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
+// The texts a block's row shows, in the order it shows them, their addresses' (compareAddresses): the block's name,
+// then its parts, each part's lines in order; of a block a step took away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
 // itself or a line describing it, what a step rewrote in a block is the view's account of it, and a text's contents
 // say its headings again (contents.ts), so none is searched.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  const shown: Shown[] = [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return shown.sort((a, b) => compareAddresses(a.at, b.at));
 }
 
 function partTexts(part: Part, index: number): Shown[] {
@@ -109,8 +117,8 @@ type FieldText = { at: FieldAddress; text: string };
 export function fieldTexts(fields: Field[], part: number): { depth: number; name: FieldText; value: FieldText | undefined }[] {
   return fieldLines(fields).map(({ name, value, depth }, line) => ({
     depth,
-    name: { at: address.field(part, line, "name"), text: name },
-    value: value === undefined ? undefined : { at: address.field(part, line, "value"), text: value },
+    name: { at: address.fieldName(part, line), text: name },
+    value: value === undefined ? undefined : { at: address.fieldValue(part, line), text: value },
   }));
 }
 
@@ -195,14 +203,12 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
   return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
 
-const same = (a: Match, b: Match) => a.key === b.key && compareAddresses(a.at, b.at) === 0 && a.start === b.start;
-
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.
 export function ordinal(found: Found, current: Match | undefined, pattern: RegExp): number | undefined {
   const block = current === undefined ? undefined : found.byKey.get(current.key);
   if (block === undefined) return undefined;
-  const index = matchesIn(block.row, pattern).findIndex(({ match }) => same(match, current!));
+  const index = matchesIn(block.row, pattern).findIndex(({ match }) => currentIn(current, match.key, match.at) === match.start);
   return index === -1 ? undefined : block.before + index + 1;
 }
 

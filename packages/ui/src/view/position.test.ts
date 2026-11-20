@@ -46,14 +46,13 @@ describe("position", () => {
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
   });
 
-  it("gives the row of the longest of a key's prefixes that is listed, and none when none is, whatever the key's slashes", () => {
+  it("gives the row of the longest of a key's prefixes that is listed, and none when none is, and ends for any key", () => {
     const listed = (...keys: string[]) => (key: string) => (keys.includes(key) ? keys.indexOf(key) : undefined);
     expect(rowIndex("a/b/c", listed("a", "a/b"))).toBe(1);
     expect(rowIndex("a/b/c", listed("a"))).toBe(0);
     expect(rowIndex("a/b/c", listed("a/b/c", "a"))).toBe(0);
     expect(rowIndex("a/b", listed("x"))).toBeUndefined();
-    expect(rowIndex("/request/http", listed("", "/request"))).toBe(1);
-    expect(rowIndex("/request/http", listed(""))).toBe(0);
+    expect(rowIndex("/request/http", listed("/request"))).toBe(0);
     expect(rowIndex("/request/http", listed())).toBeUndefined();
     expect(rowIndex("//", listed())).toBeUndefined();
   });

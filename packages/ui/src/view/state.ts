@@ -39,7 +39,7 @@ const initial: View = { open: null, terminal: null, opened: {}, position: { at: 
 // The stored view's version. A view stored by another version names any part of it, its recording, its moment, its
 // window or its search's current match, in a form this one does not read, so the tab opens as a new one.
 // [LAW:escape-local-minima] exception: the version is the stored view's only gate, and one field's change of shape
-// resets the whole tab; dump-design-ajl.6nq parses the stored view and keeps what it can read.
+// resets the whole tab. The parse that keeps what it can read is ticket dump-design-ajl.6nq.
 export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",

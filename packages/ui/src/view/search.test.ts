@@ -66,25 +66,25 @@ describe("search", () => {
       { at: address.name, searched: whole("tool_use: X"), in: "line" },
       { at: address.part(0), searched: render("t", "verbatim"), in: "regions" },
       { at: address.part(1), searched: whole('{\n  "a": 1\n}'), in: "content" },
-      { at: address.field(2, 0, "name"), searched: whole("id"), in: "content" },
-      { at: address.field(2, 0, "value"), searched: whole("1"), in: "content" },
+      { at: address.fieldName(2, 0), searched: whole("id"), in: "content" },
+      { at: address.fieldValue(2, 0), searched: whole("1"), in: "content" },
       // A field that holds fields is its name alone, and the fields it holds are lines of their own after it.
-      { at: address.field(2, 1, "name"), searched: whole("thinking"), in: "content" },
-      { at: address.field(2, 2, "name"), searched: whole("type"), in: "content" },
-      { at: address.field(2, 2, "value"), searched: whole("adaptive"), in: "content" },
+      { at: address.fieldName(2, 1), searched: whole("thinking"), in: "content" },
+      { at: address.fieldName(2, 2), searched: whole("type"), in: "content" },
+      { at: address.fieldValue(2, 2), searched: whole("adaptive"), in: "content" },
     ]);
   });
 
   it("orders addresses as paths: the name, then the parts by index, a part's text before its lines, a line's name before its value", () => {
-    const ordered = [address.name, address.part(0), address.field(0, 0, "name"), address.field(0, 0, "value"), address.field(0, 1, "name"), address.part(2), address.field(2, 10, "name"), address.part(10)];
+    const ordered = [address.name, address.part(0), address.fieldName(0, 0), address.fieldValue(0, 0), address.fieldName(0, 1), address.part(2), address.fieldName(2, 10), address.part(10)];
     ordered.slice(1).forEach((at, index) => {
       expect(compareAddresses(ordered[index]!, at)).toBeLessThan(0);
       expect(compareAddresses(at, ordered[index]!)).toBeGreaterThan(0);
     });
-    expect(compareAddresses(address.field(3, 1, "value"), address.field(3, 1, "value"))).toBe(0);
+    expect(compareAddresses(address.fieldValue(3, 1), address.fieldValue(3, 1))).toBe(0);
   });
 
-  it("lists a block's texts in increasing address order, for every kind of part that shows one", () => {
+  it("gives each text a block shows its own address and lists them in address order, for every kind of part that shows one", () => {
     const row = added({
       category: "tools",
       name: "n",
@@ -104,11 +104,11 @@ describe("search", () => {
   });
 
   it("tells the text the current match is in by its address's value, not the object naming it", () => {
-    const current = { key: "k", at: address.field(1, 2, "value"), start: 4 };
-    expect(currentIn(current, "k", address.field(1, 2, "value"))).toBe(4);
-    expect(currentIn(current, "k", address.field(1, 2, "name"))).toBeUndefined();
+    const current = { key: "k", at: address.fieldValue(1, 2), start: 4 };
+    expect(currentIn(current, "k", address.fieldValue(1, 2))).toBe(4);
+    expect(currentIn(current, "k", address.fieldName(1, 2))).toBeUndefined();
     expect(currentIn(current, "k", address.part(1))).toBeUndefined();
-    expect(currentIn(current, "j", address.field(1, 2, "value"))).toBeUndefined();
+    expect(currentIn(current, "j", address.fieldValue(1, 2))).toBeUndefined();
     expect(currentIn(undefined, "k", address.name)).toBeUndefined();
   });
 
@@ -264,23 +264,23 @@ describe("search", () => {
       return { key, at };
     };
 
-    it("goes from a field line gone, its part now a text, past the part's text going on and to it going back", () => {
+    it("after a fields part became a text, Next from its line's value goes to the next part and Previous to the part itself", () => {
       // Before the step, part 1 was fields, and the current match was in its first line's value.
-      const current = { key: "k", at: address.field(1, 0, "value"), start: 0 };
+      const current = { key: "k", at: address.fieldValue(1, 0), start: 0 };
       const parts = [text("needle"), text("needle now"), text("needle")];
       expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.part(2) });
       expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.part(1) });
     });
 
-    it("goes from a part's text gone, the part now fields, to the part's lines going on and before the part going back", () => {
+    it("after a text part became fields, Next from its text goes to the part's first line and Previous to the part before it", () => {
       const current = { key: "k", at: address.part(1), start: 0 };
       const parts: Part[] = [text("needle"), { kind: "fields", fields: [["needle", "needle"]] }];
-      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.field(1, 0, "name") });
+      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.fieldName(1, 0) });
       expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.part(0) });
     });
 
     it("goes on to the next or previous block when no match of its own block is past it", () => {
-      expect(stepFrom({ key: "k", at: address.field(0, 3, "value"), start: 0 }, [text("needle")], "next")).toEqual({ key: "z", at: address.name });
+      expect(stepFrom({ key: "k", at: address.fieldValue(0, 3), start: 0 }, [text("needle")], "next")).toEqual({ key: "z", at: address.name });
       expect(stepFrom({ key: "k", at: address.part(0), start: 5 }, [{ kind: "fields", fields: [["x", "needle"]] }], "previous")).toEqual({ key: "a", at: address.name });
     });
   });
