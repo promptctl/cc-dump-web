@@ -10,7 +10,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 | Proxy | The local HTTP endpoint the agent sends its API requests to. It forwards them to Anthropic. |
 | Exchange | One API request and its response. |
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
-| Heading | The word over a run of an exchange's blocks, saying whose they are: `tools`, the tools the model is offered; `system`, its system prompt, and a message in the system's role; `user` and `assistant`, a message by who speaks, the reply as much as an assistant's message sent again; `message`, a message that is not the shape a message has. The exchange's envelope has no heading: it stands under the exchange's line. |
+| Heading | The word over a run of an exchange's blocks, saying whose they are: `tools`, the tools the model is offered; `system`, its system prompt, and a message in the system's role; `user` and `assistant`, a message by who speaks, the reply as much as an assistant's message sent again; `message`, a message whose role is none of user, assistant and system, or whose content is neither text nor a list of blocks, shown as raw JSON. The exchange's envelope has no heading: it stands under the exchange's line. |
 | Set | A heading's blocks that are one line while closed: the tool definitions, under `tools`. The heading is the set's line. |
 | Category | The kind of content a block belongs to: user, assistant, tools, system, thinking, and the exchange's envelope by where it is from: parameters (what a request asks beside its prompt and messages, its cache breakpoints among them), usage (what the API reported about its reply: why it stopped, what it counted) and http (the wire as received: each side's head, a body or event not read, how the connection ended). |
 | Nest | A subagent's thread, listed under the Agent call that launched it. |
@@ -28,9 +28,9 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - An agent started by hand also works: the info panel (F8) gives the line to export.
 
 ### F2. Capture
-- Every request, whatever its path, is captured with its response. Those to the Anthropic Messages API, a POST to `/v1/messages`, streaming or not, are shown.
+- Every request, whatever its path, is captured with its response. Those to the Anthropic Messages API, a POST to `/v1/messages`, streaming or not, are shown, and so is one whose request head was not recorded.
 - The agent receives response bytes as they arrive from Anthropic. The request body reaches Anthropic byte-for-byte as the agent sent it.
-- Requests with any other method or path are forwarded and recorded, and not shown. A request whose method and path were not recorded is shown.
+- Requests with any other method or path are forwarded and recorded, and not shown.
 - Requests that overlap in time are kept as separate exchanges.
 - Failures are captured as exchanges: an HTTP error with its body, an error event in the middle of a stream, and a failed connection to Anthropic.
 - Every block type is captured, including types the app has never seen. The proxy records what was on the wire and does not interpret it.
@@ -101,7 +101,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - After a reload the pane is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
 
 ## Architecture
 
@@ -115,13 +115,11 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 
 **The proxy knows nothing about messages, blocks or streaming events.** Everything that understands the Anthropic API lives in the parts that reload.
 
-**One path to the screen.** The browser holds three kinds of state: the events it has read from the proxy, the view settings of F11, and what the reader has chosen in the view, kept for the tab (F12): the recording open, what they opened or closed, where they are, the moment shown and their search. Everything else on screen is derived from those three. Watching live traffic, reopening a past recording, refreshing the browser and reloading after a code change are one operation: read a recording from the start, then follow it.
+**One path to the screen.** The browser holds three kinds of state: the events it has read from the proxy, the view settings of F11, and what the reader has chosen in the view, kept for the tab (F12): the recording open, the window their launch opened and whether its terminal is shown, what they opened or closed, where they are, the moment shown and their search. Everything else on screen is derived from those three. Watching live traffic, reopening a past recording, refreshing the browser and reloading after a code change are one operation: read a recording from the start, then follow it.
 
 **One connection interface.** The UI reaches the proxy and the app server only through one interface: it lists the recordings, reads them, follows the proxy's status and each part's log, and launches agents. How they are reached is its implementation's alone.
 
 **One formatter.** The formatter alone reads the API's content: a new block type is one new entry in it, shown as parts the view already draws, with no change to capture or the view. Anything computed from traffic is another reader of the same events.
-
-**Who may reach it.** The app server answers only a request that names no page or names a page served from this machine, by any of loopback's names. The proxy's reader port answers any page.
 
 ## Stack
 

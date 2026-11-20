@@ -27,7 +27,7 @@ export async function startProxy(log: Log, { upstream, recordings, source, logs,
   };
   const readers: Handler = (req, res, work) => {
     // [LAW:single-enforcer] Every answer on the reader port, any route's: the browser's origin is the UI's, not the
-    // proxy's, and any page may read (docs/design/01-features.md, "Who may reach it").
+    // proxy's.
     res.setHeader("access-control-allow-origin", "*");
     (routes[new URL(req.url!, "http://reader").pathname] ?? reader)(req, res, work);
   };

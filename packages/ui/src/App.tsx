@@ -109,7 +109,7 @@ function ReadingState({ reading }: { reading: Reading }) {
   }
 }
 
-// Whether the UI reaches the proxy, and while it does, the proxy's traffic and its source (docs/design/01-features.md, F8).
+// Whether the UI reaches the proxy, and while it does, the proxy's traffic (docs/design/01-features.md, F8) and its source (F12).
 function ProxyState({ status }: { status: StatusReading }) {
   switch (status.state) {
     case "connecting":
