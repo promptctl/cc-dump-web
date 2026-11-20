@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from "react";
 import type { Range } from "./range.ts";
 import { isOpen } from "./rows.ts";
-import { compareAddresses, find, type Address, type Searched } from "./search.ts";
+import { find, sameAddress, type Address, type Searched } from "./search.ts";
 import { useView, view } from "./state.ts";
 
 // How a text shown in the conversation paints the search's matches (docs/design/01-features.md, F6), and what a block, a
@@ -20,7 +20,7 @@ export function useWhere(blockKey: string, at: Address, searched: Searched): Whe
   const pattern = useContext(Painted);
   if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);
-  const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && compareAddresses(current.at, at) === 0 ? current.start : undefined));
+  const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && sameAddress(current.at, at) ? current.start : undefined));
   return { blockKey, at, ranges, current };
 }
 

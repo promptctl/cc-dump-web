@@ -251,8 +251,6 @@ describe("search", () => {
   it("orders a block's addresses as the block shows its texts: the name, then each part in order, a part's text before its fields", () => {
     const order = [address.name, address.part(0), address.part(2), address.field(2, 0, "name"), address.field(2, 0, "value"), address.field(2, 1, "name"), address.part(10)];
     expect(order.toReversed().toSorted(compareAddresses)).toEqual(order);
-    const shown = shownTexts(added({ category: "tools", name: "X", parts: Array.from({ length: 12 }, (_, index) => (index === 2 ? { kind: "fields", fields: [["a", "1"]] } : { kind: "json", value: index })) }));
-    expect(shown.map(({ at }) => at).toSorted(compareAddresses)).toEqual(shown.map(({ at }) => at));
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {

@@ -20,37 +20,42 @@ export type Match = { key: string; at: Address; start: number };
 // part's field. The search and the view both name a text by it. [LAW:types-are-the-program] It is the text's place in
 // its block, so an address the block no longer shows, after a later step rewrote it, still has a place among those it
 // does.
-export type Address = { of: "name" } | { of: "part"; part: number } | { of: "field"; part: number; field: number; side: "name" | "value" };
+export type Address = { kind: "name" } | { kind: "part"; part: number } | { kind: "field"; part: number; field: number; side: Side };
+
+type Side = "name" | "value";
 
 export const address = {
-  name: { of: "name" } as Address,
-  part: (part: number): Address => ({ of: "part", part }),
-  field: (part: number, field: number, side: "name" | "value"): Address => ({ of: "field", part, field, side }),
+  name: { kind: "name" } satisfies Address,
+  part: (part: number): Address => ({ kind: "part", part }),
+  field: (part: number, field: number, side: Side): Address => ({ kind: "field", part, field, side }),
 };
 
 // The order of a block's texts, the one the block shows them in: its name, then each part, a part's own text before its
 // fields, its fields in order, a field's name before its value. Below 0 when `a` comes first, above 0 when `b` does, 0
 // when they are one address.
 export function compareAddresses(a: Address, b: Address): number {
-  const other = placeOf(b);
-  return placeOf(a).reduce((order, step, index) => order || step - other[index]!, 0);
+  const [partA, fieldA, sideA] = placeOf(a);
+  const [partB, fieldB, sideB] = placeOf(b);
+  return partA - partB || fieldA - fieldB || sideA - sideB;
 }
 
-// An address as its place in the block, compared position by position.
-function placeOf(at: Address): [number, number, number] {
-  switch (at.of) {
+export const sameAddress = (a: Address, b: Address): boolean => compareAddresses(a, b) === 0;
+
+const sides: Record<Side, number> = { name: 0, value: 1 };
+
+function placeOf(at: Address): [part: number, field: number, side: number] {
+  switch (at.kind) {
     case "name":
       return [-1, -1, -1];
     case "part":
       return [at.part, -1, -1];
     case "field":
-      return [at.part, at.field, at.side === "name" ? 0 : 1];
+      return [at.part, at.field, sides[at.side]];
   }
 }
 
-// An address as it is written in a key.
 function written(at: Address): string {
-  switch (at.of) {
+  switch (at.kind) {
     case "name":
       return "name";
     case "part":
@@ -90,7 +95,8 @@ export type Shown = { at: Address } & ({ in: "line" | "content"; searched: Searc
 // say its headings again (contents.ts), so none is searched. [LAW:one-source-of-truth] The order is `compareAddresses`'s.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  const texts: Shown[] = [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return texts.toSorted((a, b) => compareAddresses(a.at, b.at));
 }
 
 function partTexts(part: Part, index: number): Shown[] {
@@ -192,7 +198,7 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
   return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
 
-const same = (a: Match, b: Match) => a.key === b.key && compareAddresses(a.at, b.at) === 0 && a.start === b.start;
+const same = (a: Match, b: Match) => a.key === b.key && sameAddress(a.at, b.at) && a.start === b.start;
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.
@@ -222,21 +228,29 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
   // In its own block, the first match past it in the direction of the step, by where its text stands in the block,
   // whether the block still shows that text or a later step took it away.
-  const own = current === undefined ? undefined : found.byKey.get(current.key);
-  if (own !== undefined) {
-    const { at, start } = current!;
-    const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(compareAddresses(match.at, at) || match.start - start));
+  const own = current && found.byKey.get(current.key);
+  if (current !== undefined && own !== undefined) {
+    const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(compareAddresses(match.at, current.at) || match.start - current.start));
     if (past !== undefined) return stepTo(found, own, past);
   }
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
-  const placeOf = (key: string, bias: number) => {
-    const own = order.indexOf(key);
-    if (own !== undefined) return own + bias;
+  const rowPlace = (key: string, bias: number) => {
+    const index = order.indexOf(key);
+    if (index !== undefined) return index + bias;
     const inside = rowIndex(key, order.indexOf);
     return inside === undefined ? (forward ? -Infinity : Infinity) : inside + 0.5;
   };
-  const place =
-    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
+  const positionPlace = (position: Position) => {
+    switch (position.at) {
+      case "row":
+        return rowPlace(position.key, -0.5);
+      case "start":
+        return -Infinity;
+      case "end":
+        return Infinity;
+    }
+  };
+  const place = current !== undefined ? rowPlace(current.key, 0) : positionPlace(position);
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
