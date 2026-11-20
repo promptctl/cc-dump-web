@@ -237,7 +237,8 @@ describe("layout", () => {
   });
 
   it("lists a hidden category's blocks at neither level but the search's revealed one", () => {
-    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed));
+    // The search's step opens the revealed block's set (goTo).
+    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed, { "t1/tools": true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
     expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
     expect(keys({ ...shown, tools: "hidden" }, "thread:t1/tools/tools.Read.0")).toContain("thread:t1/tools/tools.Read.0 added");
@@ -293,13 +294,15 @@ describe("a set", () => {
     expect([toolsListed(closed), setAt(closed).key]).toEqual([[], "t1/tools"]);
   });
 
-  it("lists the block the search stepped to under its closed line, and no line at a hidden level but over that block", () => {
-    expect(toolsListed(layouts(events)(1, tools[1]))).toEqual([tools[1]]);
+  it("lists the block the search stepped to only while its set is open, and no line at a hidden level but over that block", () => {
+    // The step opens the set (goTo); closed again by the reader, it holds the block as it holds the rest.
+    expect(toolsListed(layouts(events)(1, tools[1], { "t1/tools": true }))).toEqual(tools);
+    expect(toolsListed(layouts(events)(1, tools[1], { "t1/tools": false }))).toEqual([]);
     const hidden = layouts(events, { ...shown, tools: "hidden" });
     expect(hidden(1).rows.some(({ kind }) => kind === "set")).toBe(false);
-    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools", `${tools[1]} added`]);
+    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools"]);
     // Open at a hidden level, a set still lists none but the block revealed.
-    expect(toolsListed(hidden(1, tools[1], { "t1/tools": true }))).toEqual([tools[1]]);
+    expect(listed(hidden(1, tools[1], { "t1/tools": true })).filter((row) => row.includes("/tools"))).toEqual(["t1/tools", `${tools[1]} added`]);
   });
 
   it("says on its line how many blocks it holds, which, and how large, and the last thing a step did to one of them", () => {
