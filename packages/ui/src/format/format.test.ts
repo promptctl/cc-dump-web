@@ -3,7 +3,7 @@ import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block } from "./blocks.ts";
-import { createFormatter, type FormattedExchange } from "./format.ts";
+import { createFormatter, type FormattedExchange, type KeyedBlock } from "./format.ts";
 import { doesNotFit, fieldValue } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
@@ -12,9 +12,9 @@ const at = (trace_id: string) => ({ timestamp, trace_id });
 // A body recorded in two chunks, each encoded on its own as the proxy does, so padding falls mid-body.
 const chunks = (bytes: Buffer) => [bytes.subarray(0, Math.ceil(bytes.length / 3)), bytes.subarray(Math.ceil(bytes.length / 3))].map((chunk) => chunk.toString("base64"));
 
-function request(trace: string, body: unknown, { url = "/v1/messages?beta=true", method = "POST" } = {}): RecordedEvent[] {
+function request(trace: string, body: unknown, { url = "/v1/messages?beta=true", method = "POST", headers = [] as Header[] } = {}): RecordedEvent[] {
   return [
-    { ...at(trace), type: "request", method, url, http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+    { ...at(trace), type: "request", method, url, http_version: "1.1", headers: [["Content-Type", "application/json"], ...headers] },
     ...chunks(Buffer.from(JSON.stringify(body))).map((base64): RecordedEvent => ({ ...at(trace), type: "request_body", base64 })),
     { ...at(trace), type: "request_trailers", headers: [] },
   ];
@@ -621,13 +621,15 @@ describe("format", () => {
         name: "tool_result: error",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
         failed: true,
+        stated: { kind: "result", answers: "toolu_1", named: undefined },
       },
     ]);
   });
 
   it("states the subagent an Agent tool's call launches, in a message and in the reply, and none while its input streams", () => {
     const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
-    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
+    const launch = ({ stated }: KeyedBlock) => (stated?.kind === "call" && stated.tool.name === "Agent" ? stated.tool.launch : undefined);
+    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(launch);
     expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
       { prompt: "Find the bug.\n", type: "Explore" },
       { prompt: "Go.", type: undefined },
@@ -637,19 +639,62 @@ describe("format", () => {
     const start = { type: "content_block_start", index: 0, content_block: call("Agent", {}) };
     const delta = (partial_json: string) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } });
     const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
-    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
+    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(launch);
     expect(reply(4)).toEqual([undefined]);
     expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
   });
 
-  it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
-    const call = (name: string) => ({ type: "tool_use", id: "toolu_1", name, input: { message: "Done." } });
-    const content = [call("SubagentHandback"), call("SendMessage")];
-    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
+  it("states each call by its id and the tool it calls, SubagentHandback among them, and no call without an id", () => {
+    const call = (name: string, id?: string) => ({ type: "tool_use", ...(id === undefined ? {} : { id }), name, input: { message: "Done." } });
+    const content = [call("SubagentHandback", "toolu_1"), call("SendMessage", "toolu_2"), call("SendMessage")];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ stated }) => stated)).toEqual([
+      { kind: "call", id: "toolu_1", tool: { name: "SubagentHandback" } },
+      { kind: "call", id: "toolu_2", tool: { name: "other" } },
+      undefined,
+    ]);
+  });
+
+  it("states the call a tool's result answers and the agent an Agent call's result names, in either frame", () => {
+    const result = (content: unknown) => ({ type: "tool_result", tool_use_id: "toolu_1", content });
+    const said = (content: unknown) => group(one(request("a", { model: "m", messages: [{ role: "user", content: [result(content)] }] })), "message.0").map(({ stated }) => stated);
+    const texts = (...text: string[]) => text.map((one) => ({ type: "text", text: one }));
+    const launched = "Async agent launched successfully.\nagentId: a1b2 (internal ID - do not mention to user.)\nThe agent is working in the background.";
+    expect(said(texts(launched))).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "background" } }]);
+    expect(said(launched)).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "background" } }]);
+    const returned = "agentId: a1b2 (use SendMessage with to: 'a1b2', summary: '<5-10 word recap>' to continue this agent)\n<usage>subagent_tokens: 5\ntool_uses: 1\nduration_ms: 9</usage>";
+    expect(said(texts("The report.", returned))).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "foreground" } }]);
+    // A report alone, as an Explore agent's is, names no agent; nor does a text that quotes a frame inside it.
+    expect(said(texts("The report."))).toEqual([{ kind: "result", answers: "toolu_1", named: undefined }]);
+    expect(said(texts(`It said: ${launched}`))).toEqual([{ kind: "result", answers: "toolu_1", named: undefined }]);
+    expect(said(texts(returned))).toEqual([{ kind: "result", answers: "toolu_1", named: undefined }]);
+  });
+
+  it("states the stops a user's text block that is one system reminder whole tells, and none in what a person typed", () => {
+    const note = (agent: string, call: string) => `<task-notification>\n<task-id>${agent}</task-id>\n<tool-use-id>${call}</tool-use-id>\n<status>completed</status>\n</task-notification>`;
+    const blocks = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0");
+    const reminder = (inner: string) => `<system-reminder>\n${inner}\n</system-reminder>\n`;
+    expect(blocks("user", reminder(`${note("a1", "toolu_1")}\n${note("a2", "toolu_2")}`)).map(({ stated }) => stated)).toEqual([
+      { kind: "notified", stops: [{ agent: "a1", call: "toolu_1" }, { agent: "a2", call: "toolu_2" }] },
+    ]);
+    expect(blocks("user", `Look at this:\n${reminder(note("a1", "toolu_1"))}`).map(({ stated }) => stated)).toEqual([undefined, undefined]);
+    expect(blocks("user", note("a1", "toolu_1")).map(({ stated }) => stated)).toEqual([undefined]);
+    expect(blocks("assistant", reminder(note("a1", "toolu_1"))).map(({ stated }) => stated)).toEqual([undefined]);
+    // A notification whose ids do not read is said on its block.
+    const [misfit] = blocks("user", reminder("<task-notification>\n<status>completed</status>\n</task-notification>"));
+    expect(misfit!.stated).toBeUndefined();
+    expect(misfit!.parts).toContainEqual({ kind: "text", form: "verbatim", label: "does not fit", text: "1 task notification(s) here name no task-id or tool-use-id" });
+  });
+
+  it("states who sent a request: the main agent, a subagent by the agent ids its head carries, or no one known", () => {
+    const sender = (headers: [string, string][]) => one(request("a", { model: "m", messages: [] }, { headers })).sender;
+    expect(sender([])).toEqual({ kind: "main" });
+    expect(sender([["X-Claude-Code-Agent-Id", "a1"]])).toEqual({ kind: "subagent", id: "a1", parent: undefined });
+    expect(sender([["x-claude-code-agent-id", "c1"], ["x-claude-code-parent-agent-id", "a1"]])).toEqual({ kind: "subagent", id: "c1", parent: "a1" });
   });
 
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
-    const said = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ summary }) => summary);
+    const said = (role: string, text: string) =>
+      group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ stated }) => (stated?.kind === "summary" ? stated.summary : undefined));
     expect(said("assistant", "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Did it.\n</summary>\n")).toEqual(["1. Did it."]);
     // The summary runs to the tag that ends the text, whatever it quotes.
     expect(said("assistant", "<summary>The reply held <summary>x</summary> once.</summary>")).toEqual(["The reply held <summary>x</summary> once."]);

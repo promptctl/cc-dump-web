@@ -172,7 +172,8 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         say(`${nest.key} does not stand right after its call`);
         continue;
       }
-      const { launch } = first(call);
+      const { stated } = first(call);
+      const launch = stated?.kind === "call" && stated.tool.name === "Agent" ? stated.tool.launch : undefined;
       if (launch === undefined) say(`${nest.key} stands after a block that launches nothing`);
       else if (firstMessage(history, root).trim() !== launch.prompt.trim()) say(`${nest.key} holds step ${root}, whose first message is not its call's prompt`);
       else if (nest.prompt !== launch.prompt || nest.type !== launch.type) say(`${nest.key} does not say what its call launches`);
@@ -194,7 +195,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         const ended = (own: number) => segments[own - 1]!.formatted.exchange.end !== undefined;
         const newest = arrived.findLast((own) => agentOf(own) === agent && !asks(own) && (ended(own) || replied(own) !== undefined));
         const last = newest === undefined ? undefined : replied(newest);
-        const runs = newest !== undefined && last?.handback === undefined && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
+        const runs = newest !== undefined && !(last?.stated?.kind === "call" && last.stated.tool.name === "SubagentHandback") && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
         if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest ?? root}`);
       }
       const id = fieldOf(first(call), "id");
@@ -219,7 +220,8 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         say(`${thread.key} does not stand right after its block`);
         continue;
       }
-      const { summary } = first(block);
+      const { stated } = first(block);
+      const summary = stated?.kind === "summary" ? stated.summary : undefined;
       if (summary === undefined || !firstMessage(history, own).includes(summary)) say(`${thread.key} stands after a block whose summary step ${own} does not begin with`);
       if (thread.depth !== block.depth || !block.dimmed) say(`${thread.key} is not level with its block, or its block is not dimmed`);
       if (!(indexOf.get(traceOf(own))! > at) || thread.change === "added" !== (own === step)) say(`${thread.key} does not stand above its thread's first step ${own}, or is ${thread.change}`);

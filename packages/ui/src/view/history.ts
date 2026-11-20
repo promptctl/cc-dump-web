@@ -191,12 +191,13 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
-          if (block.launch !== undefined) {
-            launches.push({ step, key, prompt: block.launch.prompt.trim() });
+          const { stated } = block;
+          if (stated?.kind === "call" && stated.tool.name === "Agent") {
+            launches.push({ step, key, prompt: stated.tool.launch.prompt.trim() });
             undo.push(() => launches.pop());
           }
-          if (block.summary !== undefined) {
-            summaries.push({ step, key, summary: block.summary });
+          if (stated?.kind === "summary") {
+            summaries.push({ step, key, summary: stated.summary });
             undo.push(() => summaries.pop());
           }
           continue;
