@@ -26,18 +26,14 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
 }
 
 // The index of the row at `key`: its own, or, for a row a category hides, the row listed before it (Keys); or, while
-// there is none, the nearest row it is inside: a key is inside each of its prefixes that ends before a slash, the
-// longest nearest, so `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter replaced, as a body so far is
-// by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as
-// after a reload before it is read.
+// there is none, the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. So a block the formatter
+// replaced with the content it parsed from it, as it does a body so far, leaves the view at the block's group.
+// Undefined while not even the outermost is among them, as after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
-  for (let prefix = key; ; ) {
-    const index = indexOf(prefix);
-    if (index !== undefined) return index;
-    const cut = prefix.lastIndexOf("/");
-    if (cut === -1) return undefined;
-    prefix = prefix.slice(0, cut);
-  }
+  const index = indexOf(key);
+  if (index !== undefined) return index;
+  const cut = key.lastIndexOf("/");
+  return cut === -1 ? undefined : rowIndex(key.slice(0, cut), indexOf);
 }
 
 // The place a scroll offset is at: the row at the top of the view and how far into it, or the start.
