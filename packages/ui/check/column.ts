@@ -1,17 +1,111 @@
-import { readFileSync } from "node:fs";
-import type { RecordedEvent } from "@cc-dump/proxy/format";
-import { exchanges } from "../src/exchanges.ts";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
+import { exchanges, type Exchange } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
+import { createDecoding } from "../src/format/body.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import type { Visibility } from "../src/settings.ts";
-import { createHistory, top, type After, type History } from "../src/view/history.ts";
+import { agentLevel, createHistory, top, type After, type History, type Placement } from "../src/view/history.ts";
 import { blockOf, createLayout, pastOf, type BlockRow, type Layout, type Row } from "../src/view/rows.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
 // what each recording holds and each promise a step breaks, and fails if one did.
-// [LAW:verifiable-goals] It reads what the history says each step stands after and decides the rest itself, the path,
-// each step's level and what a thread carries on from, so it shares the layout's premises and none of its working.
+// [LAW:verifiable-goals] It reads what the history says each step stands after and decides the rest itself, the path
+// and what a thread carries on from, so it shares the layout's premises and none of its working. Who sent each step,
+// which call each subagent stands under and when it stops it reads from the wire alone (docs/design/claude-code-wire.md),
+// never from what the formatter says of a block: its agent headers, the agent each call's result names, the
+// notifications in the harness's text, and which calls each request answers and each reply makes.
+
+// What the wire says of one exchange. `sender`: its agent headers, none where its head was not recorded. Of its
+// request's messages: the tasks `told` stopped in the harness's text, the agents `named` by a tool's
+// result, and the calls a result `answers`. Of its reply: the `calls` it makes, why it `stopped`, its `last` block's
+// name and whether that hands a report back, and whether the exchange `ended`. `undecoded`: a side whose body did not
+// decode, which says nothing.
+type Wire = {
+  sender: { agent: string | undefined; parent: string | undefined } | undefined;
+  told: string[];
+  named: { call: string; agent: string; ran: "background" | "foreground" }[];
+  answers: Set<string>;
+  calls: Set<string>;
+  stopped: string | undefined;
+  last: string | undefined;
+  handback: boolean;
+  ended: boolean;
+  undecoded: string[];
+};
+
+const valueOf = (headers: Header[], name: string) => headers.find(([field]) => field.toLowerCase() === name)?.[1];
+const field = (value: unknown, name: string): unknown => (typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined);
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const texts = (content: unknown): string[] => (typeof content === "string" ? [content] : list(content).map((block) => field(block, "text"))).filter((text): text is string => typeof text === "string");
+
+// The wire of one exchange, its bodies decoded as their content codings say.
+function wireOf({ request, response, end }: Exchange): Wire {
+  const headers = request.head?.headers;
+  const wire: Wire = {
+    sender: headers === undefined ? undefined : { agent: valueOf(headers, "x-claude-code-agent-id"), parent: valueOf(headers, "x-claude-code-parent-agent-id") },
+    told: [],
+    named: [],
+    answers: new Set(),
+    calls: new Set(),
+    stopped: undefined,
+    last: undefined,
+    handback: false,
+    ended: end !== undefined,
+    undecoded: [],
+  };
+  const sides = { request, response };
+  const read = (name: keyof typeof sides, then: (text: string) => void) => {
+    const side = sides[name];
+    if (side.head === undefined || side.body.length === 0) return;
+    const { text, error } = createDecoding(side.head.headers).decode(side.body, side.completedBy !== undefined);
+    try {
+      if (error !== undefined) throw new Error(error);
+      then(text);
+    } catch (error) {
+      wire.undecoded.push(`${name}: ${(error as Error).message}`);
+    }
+  };
+  read("request", (text) => {
+    for (const message of list(field(JSON.parse(text), "messages"))) {
+      const content = field(message, "content");
+      for (const block of typeof content === "string" ? [{ type: "text", text: content }] : list(content)) {
+        const text = field(block, "text");
+        // The harness's text: a system-role message's whole, and each system reminder of another's.
+        const harness = typeof text !== "string" ? [] : field(message, "role") === "system" ? [text] : [...text.matchAll(/^<system-reminder>[\s\S]*?^<\/system-reminder>/gm)].map(([reminder]) => reminder);
+        for (const [, inner] of harness.flatMap((one) => [...one.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)])) {
+          const task = /<task-id>([^<]+)<\/task-id>/.exec(inner!)?.[1];
+          if (task !== undefined) wire.told.push(task);
+        }
+        const call = field(block, "tool_use_id");
+        if (field(block, "type") !== "tool_result" || typeof call !== "string") continue;
+        wire.answers.add(call);
+        // Claude Code's frame of an Agent call's result: a background launch's one text, or a foreground run's last.
+        const said = texts(field(block, "content"));
+        const background = /^Async agent launched successfully\.[^\n]*\nagentId: (\S+)/.exec(said[0] ?? "")?.[1];
+        const foreground = said.length > 1 ? /^agentId: (\S+)[\s\S]*\n<usage>[\s\S]*<\/usage>$/.exec(said.at(-1)!)?.[1] : undefined;
+        if (background !== undefined) wire.named.push({ call, agent: background, ran: "background" });
+        else if (foreground !== undefined) wire.named.push({ call, agent: foreground, ran: "foreground" });
+      }
+    }
+  });
+  read("response", (text) => {
+    // A stream's blocks by their index, and its stop; or a message's.
+    const streamed = (valueOf(response.head!.headers, "content-type") ?? "").startsWith("text/event-stream");
+    const events = streamed ? text.split("\n").flatMap((line) => (line.startsWith("data: ") ? [JSON.parse(line.slice(6)) as unknown] : [])) : [];
+    const message = streamed ? undefined : JSON.parse(text);
+    const blocks = streamed ? events.flatMap((event) => (field(event, "type") === "content_block_start" ? [field(event, "content_block")] : [])) : list(field(message, "content"));
+    wire.stopped = (streamed ? events.map((event) => field(field(event, "delta"), "stop_reason")).findLast((reason) => typeof reason === "string") : field(message, "stop_reason")) as string | undefined;
+    for (const block of blocks) if (field(block, "type") === "tool_use") wire.calls.add(field(block, "id") as string);
+    const last = blocks.at(-1);
+    const type = field(last, "type");
+    wire.last = typeof type !== "string" ? undefined : type.endsWith("tool_use") ? `${type}: ${field(last, "name") as string}` : type;
+    wire.handback = field(last, "name") === "SubagentHandback";
+  });
+  return wire;
+}
 
 // What a recording holds: its steps, and each fork's, nest's and thread's line the column lists at some step, by its
 // key, with what it says where it says the most.
@@ -32,17 +126,15 @@ const textsOf = ({ parts }: KeyedBlock): string[] => parts.flatMap((part) => (pa
 // What a step's first message says: its texts, less those the harness injected.
 const firstMessage = ({ segments }: History, step: number): string =>
   (segments[step - 1]!.formatted.groups.find(({ key }) => key === "message.0")?.blocks ?? []).flatMap((block) => (block.injected === undefined ? textsOf(block) : [])).join("");
-// What the harness asks a subagent at work, in a request of its own that the subagent's thread never takes up (Claude
-// Code, 2026-11-17).
-const asking = "Describe your most recent action";
 const sameList = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((one, index) => one === b[index]);
 const kindOf =
   <Kind extends Row["kind"]>(kind: Kind) =>
   (row: Row): row is Extract<Row, { kind: Kind }> =>
     row.kind === kind;
 
-function check(history: History, layoutAt: (step: number) => Layout): { found: Found; broken: string[] } {
+function check(history: History, wires: readonly Wire[], layoutAt: (step: number) => Layout): { found: Found; broken: string[] } {
   const { segments, stepOf, placements } = history;
+  const wireAt = (step: number) => wires[step - 1]!;
   const afterOf = (step: number): After | undefined => segments[step - 1]!.after;
   const traceOf = (step: number) => segments[step - 1]!.formatted.exchange.trace_id;
   // What each step stands after, by name, and the steps of the recording that stand after each thing: siblings.
@@ -68,13 +160,32 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
   const levelListed = (level: string, path: Set<number>): boolean => outward(level, true, (call) => path.has(call), (parent) => levelListed(parent, path));
   // The step a step stands under: the one it stands after, or the step of the call its level stands under.
   const underOf = (step: number): number | undefined => afterOf(step)?.step ?? outward(segments[step - 1]!.level, undefined, (call) => call, () => undefined);
-  // The agent a step is sent as, by the id its request says: none for the main thread's. And whether a step is the
-  // harness asking a subagent what it is doing.
-  const agentOf = (step: number) => segments[step - 1]!.formatted.exchange.request.head?.headers.find(([name]) => name.toLowerCase() === "x-claude-code-agent-id")?.[1];
-  const asks = (step: number) => segments[step - 1]!.groups.some(({ items }) => items.some((item) => first(item).place?.in === "message" && textsOf(first(item)).some((text) => text.includes(asking))));
+  // The agent a step is sent as, by the id its request says: none for the main agent's.
+  const agentOf = (step: number) => wireAt(step).sender?.agent;
+  const steps = Array.from({ length: segments.length }, (_, index) => index + 1);
+
+  // What the wire says of every step whatever the column lists: its level is its sender's, and each subagent's level
+  // stands under the call the first result naming its agent names, from the step that first made the call, or else at
+  // the end of the level of the agent its first request says launched it.
+  const broken: string[] = [];
+  for (const step of steps) {
+    const { sender, undecoded } = wireAt(step);
+    for (const side of undecoded) broken.push(`step ${step}: its ${side} does not decode, so the wire says nothing of it`);
+    const level = sender === undefined ? `unrecorded:${traceOf(step)}` : sender.agent === undefined ? top : agentLevel(sender.agent);
+    if (segments[step - 1]!.level !== level) broken.push(`step ${step}: stands on level ${segments[step - 1]!.level} where its sender's is ${level}`);
+  }
+  const agents = [...new Set(steps.flatMap((step) => (agentOf(step) === undefined ? [] : [agentOf(step)!])))];
+  for (const agent of agents) {
+    const named = steps.flatMap((step) => wireAt(step).named).find((one) => one.agent === agent);
+    const callStep = named === undefined ? undefined : steps.find((step) => wireAt(step).calls.has(named.call));
+    const parent = wireAt(steps.find((step) => agentOf(step) === agent)!).sender!.parent;
+    const placement = placements.get(agentLevel(agent));
+    const expected: Placement | undefined =
+      callStep !== undefined ? (placement?.on === "call" ? { ...placement, step: callStep } : undefined) : { on: "level", level: parent === undefined ? top : agentLevel(parent) };
+    if (placement === undefined || expected === undefined || JSON.stringify(placement) !== JSON.stringify(expected)) broken.push(`agent ${agent} stands ${JSON.stringify(placement)} where the wire says ${callStep === undefined ? JSON.stringify(expected) : `under ${named!.call}, made at step ${callStep}`}`);
+  }
 
   const found: Found = { steps: segments.length, forks: new Map(), nests: new Map(), threads: new Map() };
-  const broken: string[] = [];
   for (let step = 1; step <= segments.length; step++) {
     const say = (what: string) => broken.push(`step ${step}: ${what}`);
     const arrived = Array.from({ length: step }, (_, index) => index + 1);
@@ -97,13 +208,13 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const levelDimmed = (level: string): boolean => outward(level, false, (call) => isDimmed(call), levelDimmed);
     const isDimmed = (own: number): boolean => carried.has(own) || levelDimmed(segments[own - 1]!.level);
 
-    const { rows, every, steps } = layoutAt(step);
+    const { rows, every, steps: shown } = layoutAt(step);
     const indexOf = new Map(rows.map(({ key }, index) => [key, index]));
     if (rows.length !== every.rows.length) say(`${every.rows.length - rows.length} rows are not listed with every category listed and every nest open`);
     if (indexOf.size !== rows.length) say("two rows have one key");
 
     // The column lists the path, one step after each thing, each step's line once.
-    const listed = [...steps].sort((a, b) => a - b);
+    const listed = [...shown].sort((a, b) => a - b);
     if (!sameList(listed, [...path])) say(`the column lists steps ${listed.join(" ")} where the path is ${[...path].join(" ")}`);
     const taken = new Set<string>();
     for (const own of listed) {
@@ -172,6 +283,23 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const root = [...path].find((own) => levelOf(own) === nest.key);
       if (root === undefined) continue;
       const at = indexOf.get(nest.key)!;
+      // Its line says the last thing the subagent did while it runs, which is decided here from the wire: of the
+      // replies to its agent's requests by now, sent after the last stop that names the agent, the newest with a block
+      // that is still coming, or stopped for a tool no request of the agent's has since answered, unless the block hands
+      // the report back. A request answers once its own reply has a block or its exchange has ended.
+      const agent = agentOf(root);
+      if (agent === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
+      else {
+        const stops = arrived.filter((own) => wireAt(own).told.includes(agent) || wireAt(own).named.some((one) => one.agent === agent && one.ran === "foreground"));
+        const answered = (own: number) => arrived.some((later) => later > own && agentOf(later) === agent && (wireAt(later).ended || wireAt(later).last !== undefined) && [...wireAt(own).calls].some((call) => wireAt(later).answers.has(call)));
+        const waits = (own: number) => {
+          const { ended, stopped, handback, last } = wireAt(own);
+          return last !== undefined && (!ended || (stopped === "tool_use" && !handback && !answered(own)));
+        };
+        const newest = arrived.findLast((own) => agentOf(own) === agent && own > (stops.at(-1) ?? 0) && waits(own));
+        const says = newest === undefined ? undefined : wireAt(newest).last;
+        if (nest.latest?.name !== says) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${says === undefined ? "does not run" : `last did ${says} at its step ${newest}`}`);
+      }
       if (nest.subagent.on === "level") continue;
       const call = rows[at - 1];
       if (call?.kind !== "block" || `${call.key}/nest` !== nest.key) {
@@ -188,20 +316,6 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const level = [...path].filter((own) => levelOf(own) === nest.key);
       if (!sameList(inside, level)) say(`${nest.key} holds steps ${inside.join(" ")} where its level's on the path are ${level.join(" ")}`);
       if (nest.count !== level.length) say(`${nest.key} counts ${nest.count} steps of ${level.length}`);
-      // Its line says the last thing the subagent did while it runs. That is decided here by what the layout does not
-      // read: the subagent's steps are those sent under its agent's id, less the harness's asking, and it runs while
-      // the newest of them by now whose reply has begun stopped for a tool, or has not ended, and does not hand its
-      // report back.
-      const agent = agentOf(root);
-      if (agent === undefined) say(`${nest.key}'s first step ${root} is sent under no agent's id, so whether it runs is not checked`);
-      else {
-        const replied = (own: number) => segments[own - 1]!.formatted.groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
-        const ended = (own: number) => segments[own - 1]!.formatted.exchange.end !== undefined;
-        const newest = arrived.findLast((own) => agentOf(own) === agent && !asks(own) && (ended(own) || replied(own) !== undefined));
-        const last = newest === undefined ? undefined : replied(newest);
-        const runs = newest !== undefined && last?.handback === undefined && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
-        if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest ?? root}`);
-      }
       // Of the results of the call, its level's: a fork of the thread, a level of its own, resends one of its own.
       const id = fieldOf(first(call), "id");
       const levelAt = (own: number) => segments[own - 1]!.level;
@@ -239,14 +353,14 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
 const expanded = Object.fromEntries(categories.map((category) => [category, "expanded"])) as Record<Category, Visibility>;
 let failed = false;
 for (const recording of process.argv.slice(2)) {
-  const events = readFileSync(recording, "utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as RecordedEvent);
+  // Line by line, so a recording larger than a string can be is read.
+  const events: RecordedEvent[] = [];
+  for await (const line of createInterface({ input: createReadStream(recording), crlfDelay: Infinity })) if (line !== "") events.push(JSON.parse(line) as RecordedEvent);
   const history = createHistory()(createFormatter()(exchanges(events)));
+  const wires = history.segments.map(({ formatted }) => wireOf(formatted.exchange));
   const open = Object.fromEntries([...history.placements].map(([level, placement]) => [`${placement.on === "call" ? placement.key : level}/nest`, true] as const));
   const layOut = createLayout(expanded);
-  const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
+  const { found, broken } = check(history, wires, (step) => layOut(history, step, undefined, open));
   console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);
   for (const [key, says] of [...found.forks, ...found.nests, ...found.threads]) console.log(`  ${key}: ${says}`);
   for (const what of broken.slice(0, 40)) console.error(`  ${what}`);

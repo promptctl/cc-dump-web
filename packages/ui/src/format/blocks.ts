@@ -18,21 +18,23 @@ export type Category = (typeof categories)[number];
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
-// `launch`: the subagent an Agent tool's call launches. `launched`: the agent a tool's result says it launched.
+// `call`: a client tool's call's id. `answers`: the id of the call a tool's result answers, which is how the two refer
+// to each other. `launch`: the subagent an Agent tool's call launches. `launched`: the agent a tool's result says it
+// launched.
 // `notified`: the tasks whose stop the harness's text tells of. `summary`: the summary an assistant's text ends with, as
 // the reply to a compaction does. [LAW:one-source-of-truth] The history reads each of these here (view/history.ts),
 // never back out of a block's parts. `handback`: a subagent's call of the tool that hands its report back to its
 // caller, after which it does nothing more until it is told more.
 export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; launched?: Launched; notified?: Notified[]; summary?: string; handback?: true };
+export type Stated = { call?: string; answers?: string; launch?: Launch; launched?: Launched; notified?: Notified[]; summary?: string; handback?: true };
 
 // What an Agent tool's call launches: the `prompt` it sends, which is what the subagent is first told, and the agent
-// `type` it names, where it names one; `call`, the call's id, by which its result names it.
-export type Launch = { call: string; prompt: string; type: string | undefined };
-// The agent a result of the call `call` says it launched, by the agent's id, which every request of that agent carries
+// `type` it names, where it names one.
+export type Launch = { prompt: string; type: string | undefined };
+// The agent a result says the call it answers launched, by the agent's id, which every request of that agent carries
 // (format/format.ts, Sender), and how it ran: in the background, whose result is returned as it starts, or in the
 // foreground, whose result is its report, returned as it stops.
-export type Launched = { call: string; agent: string; ran: "background" | "foreground" };
+export type Launched = { agent: string; ran: "background" | "foreground" };
 export type Notified = Extract<Notification, { task: string }>;
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
@@ -120,12 +122,13 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 // last block of a reply that stops for a tool's use, where its turn never ends.
 const called = (block: unknown): Stated => {
   const name = sentField(block, "name");
-  const call = sentField(block, "id");
+  const id = sentField(block, "id");
   const input = sentField(block, "input");
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
-  if (name === "Agent" && typeof call === "string" && typeof prompt === "string") return { launch: { call, prompt, type: typeof type === "string" ? type : undefined } };
-  return name === "SubagentHandback" ? { handback: true } : {};
+  if (typeof id !== "string") return {};
+  if (name === "Agent" && typeof prompt === "string") return { call: id, launch: { prompt, type: typeof type === "string" ? type : undefined } };
+  return name === "SubagentHandback" ? { call: id, handback: true } : { call: id };
 };
 
 // The agent an Agent tool's result says it launched, in the text Claude Code frames the result with
@@ -136,12 +139,13 @@ const called = (block: unknown): Stated => {
 const background = /^Async agent launched successfully\.[^\n]*\nagentId: (\S+)/;
 const foreground = /^agentId: (\S+)[\s\S]*\n<usage>[\s\S]*<\/usage>$/;
 const resulted = (block: unknown): Stated => {
-  const call = sentField(block, "tool_use_id");
+  const answers = sentField(block, "tool_use_id");
   const content = sentField(block, "content");
   const texts = (typeof content === "string" ? [content] : Array.isArray(content) ? content.map((part) => sentField(part, "text")) : []).filter((text) => typeof text === "string");
-  const launched = (agent: string | undefined, ran: Launched["ran"]): Stated => (agent === undefined || typeof call !== "string" ? {} : { launched: { call, agent, ran } });
+  if (typeof answers !== "string") return {};
+  const launched = (agent: string | undefined, ran: Launched["ran"]): Stated => (agent === undefined ? { answers } : { answers, launched: { agent, ran } });
   const first = background.exec(texts[0] ?? "")?.[1];
-  return first !== undefined ? launched(first, "background") : texts.length > 1 ? launched(foreground.exec(texts.at(-1)!)?.[1], "foreground") : {};
+  return first !== undefined ? launched(first, "background") : launched(texts.length > 1 ? foreground.exec(texts.at(-1)!)?.[1] : undefined, "foreground");
 };
 
 // The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the

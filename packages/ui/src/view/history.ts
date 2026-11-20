@@ -221,14 +221,14 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
-          const { launch, launched, notified, summary } = block;
+          const { call, answers, launch, launched, notified, summary } = block;
           // A call is the item that first sent it: a fork of a thread, a level of its own, resends the calls it holds.
-          if (launch !== undefined && !calls.has(launch.call)) {
-            calls.set(launch.call, { step, key });
-            undo.push(() => calls.delete(launch.call));
+          if (launch !== undefined && call !== undefined && !calls.has(call)) {
+            calls.set(call, { step, key });
+            undo.push(() => calls.delete(call));
           }
-          if (launched !== undefined && !named.has(launched.agent)) {
-            named.set(launched.agent, launched.call);
+          if (launched !== undefined && answers !== undefined && !named.has(launched.agent)) {
+            named.set(launched.agent, answers);
             undo.push(() => named.delete(launched.agent));
           }
           stops.push(...(notified ?? []).map(({ task }) => task), ...(launched?.ran === "foreground" ? [launched.agent] : []));

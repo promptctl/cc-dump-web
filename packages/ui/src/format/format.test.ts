@@ -619,6 +619,7 @@ describe("format", () => {
         place: firstMessage,
         category: "tools",
         name: "tool_result: error",
+        answers: "toolu_1",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
         failed: true,
       },
@@ -629,8 +630,8 @@ describe("format", () => {
     const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
     const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
     expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
-      { call: "toolu_1", prompt: "Find the bug.\n", type: "Explore" },
-      { call: "toolu_1", prompt: "Go.", type: undefined },
+      { prompt: "Find the bug.\n", type: "Explore" },
+      { prompt: "Go.", type: undefined },
     ]);
     // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
     expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
@@ -639,7 +640,7 @@ describe("format", () => {
     const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
     const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
     expect(reply(4)).toEqual([undefined]);
-    expect(reply(5)).toEqual([{ call: "toolu_1", prompt: "Go.", type: undefined }]);
+    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
   });
 
   it("states who sent a request, as its agent headers say, and no one for a request whose head was not recorded", () => {
@@ -657,9 +658,9 @@ describe("format", () => {
     const async = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a1 (internal ID - do not mention to user.)\nThe agent is working in the background.";
     const trailer = "agentId: a2 (use SendMessage with to: 'a2' to continue this agent)\n<usage>total_tokens: 9\ntool_uses: 1\nduration_ms: 5</usage>";
     expect(launched(texts(async), async, texts("The report.", trailer))).toEqual([
-      { call: "toolu_1", agent: "a1", ran: "background" },
-      { call: "toolu_1", agent: "a1", ran: "background" },
-      { call: "toolu_1", agent: "a2", ran: "foreground" },
+      { agent: "a1", ran: "background" },
+      { agent: "a1", ran: "background" },
+      { agent: "a2", ran: "foreground" },
     ]);
     // A one-shot agent's report alone names none, nor does a report that quotes the frame, or any other text.
     expect(launched(texts("The report."), texts(trailer), texts(`The report quotes:\n${async}`, "More."), "agentId: a3", [{ type: "image" }])).toEqual([undefined, undefined, undefined, undefined, undefined]);

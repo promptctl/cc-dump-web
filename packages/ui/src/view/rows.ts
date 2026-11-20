@@ -390,8 +390,9 @@ const agentOf = ({ formatted: { sender } }: Segment): string | undefined => (sen
 // after the last stop that names its agent (view/history.ts, Segment), so a subagent runs from a request until the
 // harness tells of its stop, and a later request runs it again. A reply waits while it stopped for a tool no step has
 // answered, unless the tool hands the subagent's report back (format/blocks.ts, `handback`); with none such, while it
-// is still coming. A step answers the one it follows once its own reply has a block or its exchange has ended, so what
-// a subagent last did is said until it does the next thing. A reply with no block yet says nothing, so one sent beside
+// is still coming. A reply's call is answered by a later request of its level that sends a result of the call, once
+// that request's own reply has a block or its exchange has ended, so what a subagent last did is said until it does the
+// next thing; the harness asking it what it is doing sends no result, so answers nothing. A reply with no block yet says nothing, so one sent beside
 // a reply still coming does not take the line from it. The newest that waits and has a block says it, and a level with
 // none does not run.
 // [LAW:one-source-of-truth] It reads every step of the level that has arrived, not the path's last: the harness asks a
@@ -399,15 +400,18 @@ const agentOf = ({ formatted: { sender } }: Segment): string | undefined => (sen
 // the newest step under a subagent at work is most often one that says its turn is over (Claude Code, 2026-11-17).
 function doingOf(arrived: readonly Segment[]): Map<string, KeyedBlock> {
   const did = ({ formatted: { groups } }: Segment) => groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
-  const answers = (segment: Segment) => segment.formatted.exchange.end !== undefined || did(segment) !== undefined;
-  const answered = new Set(arrived.flatMap((segment) => (segment.after?.on === "step" && answers(segment) ? [segment.after.step] : [])));
+  const stated = ({ formatted: { groups } }: Segment, place: "reply" | "message") => groups.flatMap(({ blocks }) => blocks).filter((block) => (block.place?.in === "reply") === (place === "reply"));
+  const answering = (segment: Segment) => segment.formatted.exchange.end !== undefined || did(segment) !== undefined;
+  // The calls answered by now, each by its level.
+  const answered = new Set(arrived.flatMap((segment) => (answering(segment) ? stated(segment, "message").flatMap(({ answers }) => (answers === undefined ? [] : [`${segment.level} ${answers}`])) : [])));
   // The step of the last stop of each agent, by its level.
   const stopped = new Map(arrived.flatMap(({ stops }, index) => stops.map((task) => [agentLevel(task), index + 1] as const)));
   const coming = new Map<string, KeyedBlock>();
   const onTool = new Map<string, KeyedBlock>();
   arrived.forEach((segment, index) => {
     const { exchange, facts } = segment.formatted;
-    const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && !answered.has(index + 1) ? onTool : undefined;
+    const open = stated(segment, "reply").some(({ call }) => call !== undefined && !answered.has(`${segment.level} ${call}`));
+    const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && open ? onTool : undefined;
     if (waits === undefined || index + 1 <= (stopped.get(segment.level) ?? 0)) return;
     const last = did(segment);
     if (last !== undefined && !last.handback) waits.set(segment.level, last);

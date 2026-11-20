@@ -609,6 +609,11 @@ describe("the column", () => {
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
     // The harness may ask while a reply is still coming: its asking, with no block of a reply yet, says nothing.
     expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read) }, by("a1")), ...working.slice(-3)], 4)).toBe("tool_use: Grep");
+    // The harness may ask after the whole of the step waiting on the tool, which its asking follows, and sends no
+    // result of the call: it answers nothing (20261117T143819.271Z.jsonl, steps 55 and 58).
+    const after = working.findIndex(({ trace_id }) => trace_id === "asked");
+    const asking = [...request("asked", { ...agent, messages: [...read, assistant(use("toolu_3", "Grep")), user(text("What are you doing?"))] }, by("a1")), ...reply("asked", [text("Searching.")])];
+    expect(latest([...working.slice(0, after), ...asking, ...working.slice(-3)], 4)).toBe("tool_use: Grep");
   });
 
   it("says a subagent stops where the harness tells of its stop, and runs again with its next request", () => {
