@@ -42,7 +42,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     return writer;
   };
   // [LAW:single-enforcer] The one way a new agent's recording gets its name: the file is made with O_EXCL, so two
-  // launches in one millisecond, or one at the moment of a recording already there, never share a recording; the next
+  // made in one millisecond, or one at the moment of a recording already there, never share a recording; the next
   // millisecond is the next name.
   const create = () => {
     for (let at = now().getTime(); ; at++) {

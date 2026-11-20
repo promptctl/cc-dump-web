@@ -10,8 +10,8 @@ export async function fetchProxyInfo(readerPort = READER_PORT, timeoutMs = 2000)
   return ask(`http://${LOOPBACK}:${readerPort}/info`, { signal: AbortSignal.timeout(timeoutMs) }, parseProxyInfo);
 }
 
-// A new agent's recording: the proxy names and creates it, since it is the one that
-// writes it, and the same ask ends the same way.
+// A new agent's recording: the proxy names and creates it, since it is the one that writes it, and the ask fails as
+// fetchProxyInfo's does.
 export async function requestRecording(readerPort = READER_PORT, timeoutMs = 2000): Promise<Listing> {
   return ask(`http://${LOOPBACK}:${readerPort}/recordings`, { method: "POST", signal: AbortSignal.timeout(timeoutMs) }, parseListing);
 }

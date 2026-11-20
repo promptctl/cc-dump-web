@@ -747,7 +747,7 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
 }
 
 // [LAW:one-source-of-truth] The one table of the ground, weight and color a diff, a part's or a block's, gives a line or
-// a word by what the change did to it (its sigil is format/diff.ts's): a line on its ground, a word a block's diff
+// a word by what the change did to it (its mark is format/diff.ts's `marks`): a line on its ground, a word a block's diff
 // marks within a line in its weight and color.
 const diffMarks: Record<Edit["change"], { ground: string; color: string; weight: string }> = {
   same: { ground: "", color: "", weight: "" },
