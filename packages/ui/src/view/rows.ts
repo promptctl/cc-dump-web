@@ -3,7 +3,8 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
-import { forksOf, placeOf, sameFields, type After, type History, type Item, type Segment, type Version } from "./history.ts";
+import type { Sender } from "../format/wire.ts";
+import { forksOf, levelKey, main, placeOf, saidIn, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -18,8 +19,8 @@ export const changeColors: Record<Change, `--${string}` | undefined> = { added: 
 
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title or a
 // set's line `<trace_id>/<group key>`, a block its item's key (view/history.ts), and a fork's, a nest's or a thread's
-// line the key of what it stands after and its kind (`<trace_id>/fork`, `<item's key>/nest`), so it is the same row at
-// every moment and however many rows arrive around it. `change`: what the step shown did to the row, which brings an
+// line the key of what it stands for (`<trace_id>/fork`, `nest:<agent id>`, `<summary's key>/thread`), so it is the same
+// row at every moment and however many rows arrive around it, and a nest's wherever its subagent stands. `change`: what the step shown did to the row, which brings an
 // exchange's line and a group's title or leaves them, and rewrites or takes away a block alone. A block's row shows
 // one version of its item, the last a step the column lists gave it, `versions[at]`: its block, or, once a step took
 // the item away, the block it was, which stays listed at its place (blockOf). `versions` is the item's own, the same
@@ -52,12 +53,17 @@ export type SetRow = { kind: "set"; key: string; title: Heading; change: "added"
 // it: it says what the recording holds.
 export type ForkRow = { kind: "fork"; key: string; change: "same"; siblings: readonly Sibling[]; shown: number | undefined } & Standing;
 export type Sibling = { step: number; preview: string };
-// [LAW:types-are-the-program] A nest's line: the subagent an Agent tool's call launched, which stands right after the
-// call and holds the subagent's rows, one level in, closed until the reader opens it (Opened, by this row's key). It
-// says the subagent's `type`, where the call says one, the `prompt` it was launched with, the `count` of its steps the
-// column lists, and, while it runs, the `latest` thing it did (`doingOf`). `change`: the step shown brought the
-// subagent's first step, is another step inside the nest, or neither.
-export type NestRow = { kind: "nest"; key: string; change: "added" | "same" | "changed"; type: string | undefined; prompt: string; count: number; latest: KeyedBlock | undefined } & Standing;
+// [LAW:types-are-the-program] A nest's line: a subagent, which holds its rows, one level in, closed until the reader
+// opens it (Opened, by this row's key, the agent's, so it stays as the reader left it wherever it stands). It says
+// where the subagent `stands` at the step shown, the `prompt` its first request was sent, the `count` of its steps the
+// column lists, whether it `runs` then, and the `latest` thing it did while it runs, where it did one (`doingOf`).
+// `change`: the step shown brought the subagent's first step, is another step inside the nest, or neither.
+export type NestRow = { kind: "nest"; key: string; agent: string; change: "added" | "same" | "changed"; stands: Stands; prompt: string; count: number; runs: boolean; latest: KeyedBlock | undefined } & Standing;
+// Where a subagent stands at the step shown: right after the call that launched it, which says its `type`, an Agent
+// call's agent type where it names one or a Skill call's skill; or, until a step ties it to its call, at the end of its
+// parent's thread, not yet tied, with the agent its requests name as their parent where that one sent no step before
+// it, which stands at the main agent's end (`unrecorded`).
+export type Stands = { kind: "call"; type: string | undefined } | { kind: "end"; unrecorded: string | undefined };
 // A thread's line: after the block whose summary a compaction's next thread begins with, where the thread above, now
 // dimmed, ends and the thread that carries it on begins, at the same depth. `change`: whether the step shown is the
 // new thread's first.
@@ -161,8 +167,8 @@ export const isOpen = (opened: Opened, key: string, starts: boolean): boolean =>
 export const pastKey = (key: string) => `past:${key}`;
 
 // Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
-// level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
-// closed until the reader opens it (`opened`), and of each step's own rows those shownOf lists, by the levels
+// level's in the order its steps arrived, a subagent's under its nest's line where it stands, which holds them closed
+// until the reader opens it (`opened`), and of each step's own rows those shownOf lists, by the levels
 // `visibility`, the reader's choices and the key `currentKey` of the search's current match. A step of 0 is the
 // conversation before anything arrived.
 export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, currentKey: string | undefined, opened: Opened) => Layout {
@@ -216,29 +222,26 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
       listedForks.set(key, kept);
       list({ kind: "fork", key, change: "same", siblings: kept, shown: column.shown.get(place), ...standing }, open);
     };
-    // [LAW:dataflow-not-control-flow] What stands after a block that steps hang on, by how they hang: a nest's line,
-    // which stands as its call's step does, then, one level in and listed while the nest is open, the fork of the
-    // subagents that call launched and the rows of the one listed; or a thread's line and the fork of the threads that
-    // carry the summary on, which stand as the level does, the thread's line being where what is dimmed ends, and
-    // whose rows are their level's, in the order they arrived.
-    const hang: Record<Hung, (block: BlockRow, standing: Standing, around: Standing, open: boolean) => void> = {
-      nest: (call, standing, _, open) => {
-        const key = nestKey(call.key);
-        const inside = { ...standing, depth: standing.depth + 1 };
-        const within = open && isOpen(opened, key, nestStartsOpen);
-        list(nestRow(call, key, column, step, standing), open);
-        fork(call.key, inside, within);
-        level(key, inside, within);
-      },
-      thread: (block, _, around, open) => {
-        list({ kind: "thread", key: `${block.key}/thread`, change: column.shown.get(block.key) === step ? "added" : "same", ...around }, open);
-        fork(block.key, around, open);
-      },
+    // [LAW:dataflow-not-control-flow] A subagent's nest: its line, standing as `standing` says, then, one level in and
+    // listed while the nest is open, its level's rows.
+    const nest = (agent: string, standing: Standing, open: boolean) => {
+      const inside = { ...standing, depth: standing.depth + 1 };
+      const within = open && isOpen(opened, nestKey(agent), nestStartsOpen);
+      list(nestRow(agent, column, segments, step, standing), open);
+      level({ kind: "agent", id: agent }, inside, within);
     };
-    // The rows of a level's steps, in the order the steps arrived: each step's own, what hangs on a block of them after
-    // that block's row, and the fork of the steps that follow it after them all. `open`: whether no nest they are in is
-    // closed.
-    const level = (key: string, around: Standing, open: boolean) => {
+    // A thread's line and the fork of the threads that carry the summary on, which stand as the level does, the
+    // thread's line being where what is dimmed ends, and whose rows are their level's, in the order they arrived.
+    const thread = (block: BlockRow, around: Standing, open: boolean) => {
+      list({ kind: "thread", key: `${block.key}/thread`, change: column.shown.get(block.key) === step ? "added" : "same", ...around }, open);
+      fork(block.key, around, open);
+    };
+    // The rows of a level's steps, in the order the steps arrived: each step's own, the nests of the subagents tied to a
+    // call of them and the line of a thread that carries a summary of them on after that block's row, and the fork of
+    // the steps that follow it after them all; then the nests of the subagents not yet tied that stand at its end.
+    // `open`: whether no nest they are in is closed.
+    const level = (of: Level, around: Standing, open: boolean) => {
+      const key = levelKey(of);
       for (const own of column.levels.get(key) ?? []) {
         const segment = segments[own - 1]!;
         const standing = { depth: around.depth, dimmed: around.dimmed || column.dimmed.has(own) };
@@ -247,13 +250,14 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
         rows.forEach((row, index) => {
           list(row, open && shown[index]!);
           if (row.kind !== "block") return;
-          const hung = column.hung.get(row.key);
-          if (hung !== undefined) hang[hung](row, standing, around, open);
+          for (const agent of column.nests.get(row.key) ?? []) nest(agent, standing, open);
+          if (column.threads.has(row.key)) thread(row, around, open);
         });
         fork(segment.formatted.exchange.trace_id, standing, open);
       }
+      for (const agent of column.ending.get(key) ?? []) nest(agent, around, open);
     };
-    level(top, { depth: 0, dimmed: false }, true);
+    level(main, { depth: 0, dimmed: false }, true);
     forks = listedForks;
 
     const rows = every.filter((_, index) => isShown[index]);
@@ -287,110 +291,178 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
   };
 }
 
-// The column at a moment (docs/design/02-design.md, "Two axes"). Every step stands after one thing, a step or a block
-// (view/history.ts), and the steps after one thing are siblings: histories that part there. The column lists one
-// history, so of the siblings that have arrived by the moment at each place it lists one, the one under which the
-// latest step by the moment stands, which is the chosen step's own wherever its path passes; and a step is listed when
-// it is the one listed at its place and what it stands after is listed. A step that stands after nothing is always
-// listed. `steps`: those listed. `levels`: each level's, in the order they arrived: a level is the steps that hang on
-// nothing with what follows and carries them on, or those under one Agent call, by the key of its nest's line.
-// `inside`: the nests the chosen step is in. `forks`: the siblings at each place where the recording has two or more,
-// arrived or not, as the strip marks every step (view/strip.ts), so a line where histories part lists each it can
-// switch to. `shown`: the sibling listed at each place. `hung`: how the listed steps that hang on a block hang on it,
-// by the block's key. `dimmed`: the listed steps a thread that is listed carries on from, which its summary replaced.
-// `doing`: the last thing each subagent that runs did, by its level (`doingOf`).
+// The column at a moment (docs/design/02-design.md, "Two axes"). Every step stands after one thing, a step, a summary
+// or its level (view/history.ts), and a subagent's level stands after the call that launched it once a step has tied
+// it, or else after its parent's level: so at the moment, everything stands in one tree, the main agent's level at its
+// root. The steps after one step or one summary are siblings, histories that part there, and the column lists one
+// history, so of the siblings at each place it lists one, the one under which the latest step by the moment stands,
+// which is the chosen step's own wherever its path passes, a subagent's path running through its call. A step is listed
+// when what it stands after is listed and it is the one listed at its place, where it has one; a level, when what it
+// stands after is listed. So the chosen step is always listed, and a subagent is listed with the history that holds
+// its call. `steps`: those listed. `levels`: each level's listed steps, in the order they arrived. `inside`: the nests
+// the chosen step is in. `forks`: the siblings at each place where the recording has two or more, arrived or not, as
+// the strip marks every step (view/strip.ts), so a line where histories part lists each it can switch to. `shown`: the
+// sibling listed at each place. `nests`: the listed subagents tied to each call, by the call's key; `ending`: the
+// listed subagents not yet tied, by the level they stand at the end of. `threads`: the summaries a listed thread
+// carries on. `dimmed`: the listed steps a listed thread carries on from, which its summary replaced. `agents`: each
+// subagent that has arrived, as it stands and runs at the moment.
 type Column = {
   steps: Set<number>;
   levels: Map<string, number[]>;
   inside: Set<string>;
   forks: Map<string, number[]>;
   shown: Map<string, number>;
-  hung: Map<string, Hung>;
+  nests: Map<string, string[]>;
+  ending: Map<string, string[]>;
+  threads: Set<string>;
   dimmed: Set<number>;
-  doing: Map<string, KeyedBlock>;
+  agents: Map<string, AgentAt>;
 };
-type Hung = Extract<After, { on: "block" }>["as"];
+// A subagent at the moment: its first step, the agent its requests name as their parent, its tie to its call, if a
+// step has tied it, and whether it runs, with the last thing it did.
+type AgentAt = { first: number; parent: Parent; tie: Tie | undefined } & Doing;
+// A subagent's parent: the level of the agent its first request names as its parent, where that one sent a step
+// before, or the main agent's; or one named that sent none before, which the nest's line says.
+type Parent = { kind: "level"; level: Level } | { kind: "unrecorded"; id: string };
+const parentOf = (sender: Sender, agents: ReadonlyMap<string, unknown>): Parent =>
+  sender.kind !== "subagent" || sender.parent === undefined
+    ? { kind: "level", level: main }
+    : agents.has(sender.parent)
+      ? { kind: "level", level: { kind: "agent", id: sender.parent } }
+      : { kind: "unrecorded", id: sender.parent };
+const levelIn = (parent: Parent): Level => (parent.kind === "level" ? parent.level : main);
 
-// The level of the steps that hang on nothing.
-const top = "";
-// The key of the line of the nest under an Agent call, by the call's row's key.
-const nestKey = (call: string) => `${call}/nest`;
+// The key of a subagent's nest's line, by the agent's id.
+const nestKey = (agent: string) => `nest:${agent}`;
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 
+// A node of the tree at the moment: a step, by its number, or a level, by its key.
+type Node = number | string;
+
 function columnOf({ segments }: History, step: number): Column {
-  const places = segments.map(({ after }) => (after === undefined ? undefined : placeOf(after, segments)));
-  const add = <K>(lists: Map<K, number[]>, key: K, own: number) => lists.set(key, lists.get(key) ?? []).get(key)!.push(own);
+  const add = <K, V>(lists: Map<K, V[]>, key: K, one: V) => lists.set(key, lists.get(key) ?? []).get(key)!.push(one);
   const arrived = segments.slice(0, step);
-  // The latest step by the moment under each step, itself or one that stands after it or after a block of it and so
-  // on: those are all later than it, so, read from the last, each has its own before it is counted for the one it
-  // stands after.
-  const latest = [0, ...arrived.map((_, index) => index + 1)];
-  arrived.forEach((_, index, { length }) => {
-    const own = length - index;
-    const after = arrived[own - 1]!.after;
-    if (after !== undefined) latest[after.step] = Math.max(latest[after.step]!, latest[own]!);
-  });
-  const shown = new Map<string, number>();
-  arrived.forEach((_, index) => {
-    const place = places[index];
-    if (place !== undefined && latest[index + 1]! > latest[shown.get(place) ?? 0]!) shown.set(place, index + 1);
-  });
-  const steps = new Set<number>();
-  const levels = new Map<string, number[]>();
-  const hung = new Map<string, Hung>();
-  const dimmed = new Set<number>();
-  // Each step's level, and the level each nest's line stands in.
-  const levelOf = [top];
-  const outside = new Map<string, string>();
-  arrived.forEach(({ after }, index) => {
+  // What the steps by the moment say of the subagents: each one's first step and parent, each tie by the level whose
+  // step made it, the calls each level's results answered, and the steps each agent's stops arrive at.
+  // [LAW:one-source-of-truth] A subagent's ties are those made on its parent's level, whose requests hold its call.
+  const agents = new Map<string, { first: number; parent: Parent }>();
+  const tiesOn = new Map<string, Map<string, Tie>>();
+  const answered = new Map<string, Set<string>>();
+  const stops = new Map<string, number[]>();
+  arrived.forEach(({ formatted: { sender }, level, groups, ties }, index) => {
     const own = index + 1;
-    const nests = after?.on === "block" && after.as === "nest";
-    const level = after === undefined ? top : nests ? nestKey(after.key) : levelOf[after.step]!;
-    levelOf.push(level);
-    if (after === undefined) return void (steps.add(own), add(levels, level, own));
-    if (nests) outside.set(level, levelOf[after.step]!);
-    if (!steps.has(after.step) || shown.get(places[index]!) !== own) return;
-    steps.add(own);
-    add(levels, level, own);
-    if (after.on !== "block") return;
-    hung.set(after.key, after.as);
-    // What a thread carries on: the step whose summary it begins with, and each that one follows or carries on, up
-    // to the first of its level.
-    for (let on: After | undefined = after.as === "thread" ? after : undefined; on !== undefined && !dimmed.has(on.step); ) {
-      dimmed.add(on.step);
-      const up: After | undefined = arrived[on.step - 1]!.after;
-      on = up?.on === "block" && up.as === "nest" ? undefined : up;
+    const key = levelKey(level);
+    if (level.kind === "agent" && !agents.has(level.id)) agents.set(level.id, { first: own, parent: parentOf(sender, agents) });
+    for (const tie of ties) tiesOn.set(key, (tiesOn.get(key) ?? new Map<string, Tie>()).set(tie.agent, tie));
+    for (const { versions } of groups.flatMap(({ items }) => items)) {
+      const { stated } = blockIn(versions[0]!);
+      if (stated?.kind === "result") answered.set(key, (answered.get(key) ?? new Set()).add(stated.answers));
+      if (stated?.kind === "notification") for (const { agent } of stated.told) add(stops, agent, own);
     }
   });
+  const tieOf = (agent: string) => tiesOn.get(levelKey(levelIn(agents.get(agent)!.parent)))?.get(agent);
+  // The tree at the moment, each node under what it stands after, with the place a step shares with its siblings.
+  const up = new Map<Node, Node>();
+  const children = new Map<Node, Node[]>();
+  const placeAt = new Map<number, string>();
+  const under = (node: Node, parent: Node) => {
+    up.set(node, parent);
+    add(children, parent, node);
+  };
+  arrived.forEach(({ after, level }, index) => {
+    const own = index + 1;
+    under(own, after.on === "level" ? levelKey(level) : after.step);
+    const place = placeOf(after, segments);
+    if (place !== undefined) placeAt.set(own, place);
+  });
+  for (const [id, { parent }] of agents) under(levelKey({ kind: "agent", id }), tieOf(id)?.step ?? levelKey(levelIn(parent)));
+  // Each node, every one after what it stands under; and, read from the last, the latest step under each.
+  const order: Node[] = [];
+  for (const stack: Node[] = [levelKey(main)]; stack.length > 0; ) {
+    const node = stack.pop()!;
+    order.push(node);
+    stack.push(...(children.get(node) ?? []));
+  }
+  const latest = new Map<Node, number>();
+  for (const node of order.toReversed()) latest.set(node, (children.get(node) ?? []).reduce<number>((most, child) => Math.max(most, latest.get(child)!), typeof node === "number" ? node : 0));
+  const shown = new Map<string, number>();
+  for (const [own, place] of placeAt) {
+    const before = shown.get(place);
+    if (before === undefined || latest.get(own)! > latest.get(before)!) shown.set(place, own);
+  }
+  const listed = new Set<Node>([levelKey(main)]);
+  for (const node of order) {
+    const place = typeof node === "number" ? placeAt.get(node) : undefined;
+    if (listed.has(up.get(node)!) && (place === undefined || shown.get(place) === node)) listed.add(node);
+  }
+  const steps = new Set<number>();
+  const levels = new Map<string, number[]>();
+  const threads = new Set<string>();
+  const dimmed = new Set<number>();
+  arrived.forEach(({ after, level }, index) => {
+    const own = index + 1;
+    if (!listed.has(own)) return;
+    steps.add(own);
+    add(levels, levelKey(level), own);
+    if (after.on !== "summary") return;
+    threads.add(after.key);
+    // What a thread carries on: the step whose summary it begins with, and each that one follows or carries on, up
+    // to the first of its level.
+    for (let on: After = after; on.on !== "level" && !dimmed.has(on.step); on = arrived[on.step - 1]!.after) dimmed.add(on.step);
+  });
+  const doing = doingOf(arrived, answered, stops);
+  const nests = new Map<string, string[]>();
+  const ending = new Map<string, string[]>();
+  const at = new Map<string, AgentAt>();
+  for (const [id, { first, parent }] of agents) {
+    const tie = tieOf(id);
+    at.set(id, { first, parent, tie, ...(doing.get(id) ?? { runs: false, latest: undefined }) });
+    if (!listed.has(levelKey({ kind: "agent", id }))) continue;
+    if (tie === undefined) add(ending, levelKey(levelIn(parent)), id);
+    else add(nests, tie.key, id);
+  }
+  // The nests the chosen step is in: its level's, then the level its nest stands in, and so on out.
   const inside = new Set<string>();
-  for (let level = levelOf[step] ?? top; level !== top; level = outside.get(level)!) inside.add(level);
-  return { steps, levels, inside, forks: forksOf(segments), shown, hung, dimmed, doing: doingOf(arrived, levelOf) };
+  for (let level: Level = arrived[step - 1]?.level ?? main; level.kind === "agent"; ) {
+    inside.add(level.id);
+    const { parent, tie } = at.get(level.id)!;
+    level = tie === undefined ? levelIn(parent) : arrived[tie.step - 1]!.level;
+  }
+  return { steps, levels, inside, forks: forksOf(segments), shown, nests, ending, threads, dimmed, agents: at };
 }
 
-// The last thing each subagent that runs did, by its level: the last block of a reply of the level that waits. A reply
-// waits while it stopped for a tool no step has answered, unless the tool hands the subagent's report back
-// (format/blocks.ts, `handback`); with none such, while it is still coming. A step answers the one it follows once its
-// own reply has a block or its exchange has ended, so what a subagent last did is said until it does the next thing.
-// A reply with no block yet says nothing, so one sent beside a reply still coming does not take the line from it. The
-// newest that waits and has a block says it, and a level with none does not run.
-// [LAW:one-source-of-truth] It reads every step of the level that has arrived, not the path's last: the harness asks a
-// subagent what it is doing in a request that stands beside the step waiting on the tool and ends its turn at once, so
-// the newest step under a subagent at work is most often one that says its turn is over (Claude Code, 2026-11-17).
-function doingOf(arrived: readonly Segment[], levelOf: readonly string[]): Map<string, KeyedBlock> {
-  const did = ({ formatted: { groups } }: Segment) => groups.flatMap(({ blocks }) => blocks).findLast(({ place }) => place?.in === "reply");
-  const answers = (segment: Segment) => segment.formatted.exchange.end !== undefined || did(segment) !== undefined;
-  const answered = new Set(arrived.flatMap((segment) => (segment.after?.on === "step" && answers(segment) ? [segment.after.step] : [])));
-  const coming = new Map<string, KeyedBlock>();
-  const onTool = new Map<string, KeyedBlock>();
-  arrived.forEach((segment, index) => {
-    const { exchange, facts } = segment.formatted;
-    const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && !answered.has(index + 1) ? onTool : undefined;
-    if (waits === undefined) return;
-    const last = did(segment);
-    if (last !== undefined && !(last.stated?.kind === "call" && last.stated.tool.kind === "handback")) waits.set(levelOf[index + 1]!, last);
+// Whether a subagent runs at the moment, step `arrived.length`, and the last thing it did. [LAW:no-ambient-temporal-coupling]
+// All of it is as it stood then. A reply of a subagent waits while it is still coming at the moment, its exchange not
+// ended by the time the step shown ended (an open step's: now), or while it stopped for a tool's use with a call that
+// waits, not its SubagentHandback (format/blocks.ts), whose result no request of the subagent by the moment sends,
+// matched by the call's id; and a stop that names the subagent after such a reply, by the moment, ends its wait. So a
+// request that resends a waiting step with no result, as the harness's question of what a subagent is doing does,
+// answers nothing (docs/design/claude-code-wire.md). A subagent runs while a reply of its waits; the newest that waits
+// says what it did with its last block, and one with no block yet, or whose last is its handback, says nothing, so the
+// line keeps what an older reply of its turn did, the tool the waiting request answers.
+type Doing = { runs: boolean; latest: KeyedBlock | undefined };
+function doingOf(arrived: readonly Segment[], answered: ReadonlyMap<string, ReadonlySet<string>>, stops: ReadonlyMap<string, readonly number[]>): Map<string, Doing> {
+  const ended = arrived.at(-1)?.formatted.exchange.end;
+  const moment = ended === undefined ? Infinity : Date.parse(ended.timestamp);
+  const doing = new Map<string, Doing>();
+  arrived.forEach(({ level, formatted: { exchange, facts, groups } }, index) => {
+    if (level.kind !== "agent") return;
+    const reply = groups.flatMap(({ blocks }) => blocks).filter(({ place }) => place?.in === "reply");
+    const waits = (block: KeyedBlock) => block.stated?.kind === "call" && block.stated.tool.kind !== "handback";
+    const coming = exchange.end === undefined || Date.parse(exchange.end.timestamp) > moment;
+    const onTool = facts.stopReason === "tool_use" && reply.some((block) => waits(block) && block.stated?.kind === "call" && !answered.get(levelKey(level))?.has(block.stated.id));
+    const stopped = (stops.get(level.id) ?? []).some((at) => at > index + 1);
+    const last = reply.at(-1);
+    const did = last === undefined || (last.stated?.kind === "call" && !waits(last)) ? undefined : last;
+    const prior = doing.get(level.id) ?? { runs: false, latest: undefined };
+    // What it did is said by a reply of its turn's, one coming or stopped for a tool; a reply that ends a turn of its
+    // own, as its answer to the harness's question does, says nothing of its work.
+    const working = coming || facts.stopReason === "tool_use";
+    doing.set(level.id, { runs: prior.runs || ((coming || onTool) && !stopped), latest: (working ? did : undefined) ?? prior.latest });
   });
-  return new Map([...coming, ...onTool]);
+  // What it last did is said only while it runs.
+  return new Map([...doing].map(([id, { runs, latest }]) => [id, { runs, latest: runs ? latest : undefined }]));
 }
 
 // A row a step lists of its own: its exchange's line, a group's title, a set's line, or a block.
@@ -422,23 +494,31 @@ function itemRow({ key, versions }: Item, step: number, steps: ReadonlySet<numbe
   return { kind: "block", key, change: versions[at]!.step === step ? eventOf(versions[at]!).change : "same", versions, at, set, ...standing };
 }
 
-// The line of the nest under the Agent call at `call`'s row, at step `step`. The call's item is one a subagent hangs
-// on, so its first version says what it launches (view/history.ts).
-function nestRow(call: BlockRow, key: string, column: Column, step: number, standing: Standing): NestRow {
-  const steps = column.levels.get(key)!;
-  const { stated } = blockIn(call.versions[0]!);
-  if (stated?.kind !== "call" || stated.tool.kind !== "agent") throw new Error(`${key} hangs on a block that launches no agent`);
-  const { type, prompt } = stated.tool;
+// The line of `agent`'s nest at step `step`: where it stands, by its tie's call, whose item's first version says what
+// it launches (view/history.ts); the prompt its first step's first message says; and its steps the column lists.
+function nestRow(agent: string, column: Column, segments: readonly Segment[], step: number, standing: Standing): NestRow {
+  const { first, parent, tie, runs, latest } = column.agents.get(agent)!;
+  const steps = column.levels.get(levelKey({ kind: "agent", id: agent }))!;
+  const firstMessage = segments[first - 1]!.formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
   return {
     kind: "nest",
-    key,
-    change: steps[0] === step ? "added" : column.inside.has(key) ? "changed" : "same",
-    type,
-    prompt,
+    key: nestKey(agent),
+    agent,
+    change: steps[0] === step ? "added" : column.inside.has(agent) ? "changed" : "same",
+    stands: tie === undefined ? { kind: "end", unrecorded: parent.kind === "unrecorded" ? parent.id : undefined } : { kind: "call", type: typeOf(segments[tie.step - 1]!, tie.key) },
+    prompt: saidIn(firstMessage),
     count: steps.length,
-    latest: column.doing.get(key),
+    runs,
+    latest,
     ...standing,
   };
+}
+
+// The type a launching call names, by its item's key in its segment: an Agent call's agent type, a Skill call's skill.
+function typeOf({ groups }: Segment, key: string): string | undefined {
+  const { stated } = blockIn(groups.flatMap(({ items }) => items).find((item) => item.key === key)!.versions[0]!);
+  if (stated?.kind !== "call") throw new Error(`${key} is no call`);
+  return stated.tool.kind === "agent" ? stated.tool.type : stated.tool.kind === "skill" ? stated.tool.skill : undefined;
 }
 
 // A sibling as its fork's line lists it: its step, and the start of the first thing it says of its own, what the user

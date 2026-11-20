@@ -465,8 +465,9 @@ function ForkLine({ row }: { row: ForkRow }) {
   );
 }
 
-// A nest's line (rows.ts, NestRow), under the Agent call that launched the subagent: its type, the prompt's first
-// words, how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
+// A nest's line (rows.ts, NestRow), under the call that launched the subagent, with the type it names, or, until a step
+// ties it there, at the end of its parent's thread, not yet tied: then the prompt's first words, how many steps it has
+// taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
 // lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the reader
 // left it. Its arrow and its words stand under those of the call's line.
 function NestLine({ row }: { row: NestRow }) {
@@ -474,12 +475,18 @@ function NestLine({ row }: { row: NestRow }) {
   return (
     <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
       <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
-      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
+      {row.stands.kind === "call" ? (
+        row.stands.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.stands.type}</span>
+      ) : (
+        <span className="shrink-0 italic" title={row.stands.unrecorded === undefined ? undefined : `its requests name ${row.stands.unrecorded} as their parent, which sent no request before it`}>
+          {row.stands.unrecorded === undefined ? "not yet tied" : "not yet tied · parent not recorded"}
+        </span>
+      )}
       <span className="min-w-0 truncate" title={row.prompt}>
         {row.prompt}
       </span>
       <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
-      {row.latest === undefined ? null : <span className="min-w-0 flex-1 truncate text-success">{`● ${row.latest.name} ${preview(row.latest)}`}</span>}
+      {row.runs ? <span className="min-w-0 flex-1 truncate text-success">{row.latest === undefined ? "● running" : `● ${row.latest.name} ${preview(row.latest)}`}</span> : null}
     </button>
   );
 }

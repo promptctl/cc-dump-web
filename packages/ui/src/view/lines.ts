@@ -1,5 +1,5 @@
 // The step each request follows in its thread (docs/design/02-design.md, "Two axes"). A thread's requests are not one
-// line: a side question, a compaction, a probe or a twin subagent resends part of the thread and goes its own way. So
+// line: a side question, a compaction or a probe resends part of the thread and goes its own way. So
 // each request stands after one of the requests before it, the last whose whole, reply included, it resends, and the
 // requests standing after one are siblings, of which the column lists one.
 
@@ -20,8 +20,8 @@ type Line = { steps: number[]; sibling: number | undefined };
 // - a request that leaves inside what another added edits its line's history in place when it sends more messages than
 //   the line's last request, and follows that last (old tool results cleared, a changed message);
 // - any other that leaves inside what `X` added follows the nearest of the steps `X` follows, and so on up, whose reply
-//   comes before the message it leaves in (a compaction, a probe, a side question): a twin, which leaves in the
-//   thread's second message, so follows nothing.
+//   comes before the message it leaves in (a compaction, a probe, a side question), so one that leaves in the thread's
+//   second message follows nothing.
 // [LAW:no-ambient-temporal-coupling] What a request follows is decided by the requests before it alone, so a request
 // arriving later moves none: only which line an edit carries on is kept between them, and of two requests that each
 // resend a line and go their own way, the one continued while the line has had nothing since is the line's.

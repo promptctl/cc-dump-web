@@ -2,25 +2,10 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
+import { assistant, launch, launched, reply, request, result, returned, skill, stopped, text, toolUse, user } from "./fixtures.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
-const timestamp = "2026-11-15T14:00:00.000Z";
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64(body) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
-];
-const reply = (trace_id: string, content: unknown[]): RecordedEvent[] => [
-  { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { timestamp, trace_id, type: "response_trailers", headers: [] },
-  { timestamp, trace_id, type: "end", outcome: "ok" },
-];
-const text = (text: string) => ({ type: "text", text });
-const user = (...content: unknown[]) => ({ role: "user", content });
-const assistant = (...content: unknown[]) => ({ role: "assistant", content });
 const main = { model: "m", system: [text("You are Claude Code.")], tools: [{ name: "Read", input_schema: {} }] };
 
 // The history of `events`, as one formatter and one history read them, the way the view does, batch after batch.
@@ -201,12 +186,13 @@ const versioned = ({ segments }: History) =>
 const keysAt = ({ segments }: History, step: number) => segments[step - 1]!.groups.flatMap(({ items }) => items.map(({ key }) => key));
 const afters = ({ segments }: History) => segments.map(({ after }) => after);
 const follows = (step: number) => ({ step, on: "step" });
+const root = { on: "level" };
 const itemAt = ({ segments }: History, key: string) => segments.flatMap(({ groups }) => groups.flatMap(({ items }) => items)).find((item) => item.key === key)!;
 
 describe("what a step stands after", () => {
   it("has a side question and the thread's next turn both stand after the turn they resend, each with its own message and reply", () => {
     const after = history([...process, ...btw, ...t3]);
-    expect(afters(after)).toEqual([undefined, undefined, undefined, follows(2), follows(4), follows(4)]);
+    expect(afters(after)).toEqual([root, root, root, follows(2), follows(4), follows(4)]);
     expect(keysAt(after, 5)).toEqual(["btw/request/http", "btw/response/http", "btw/response/stop reason", "btw/response/usage", "btw/response/fields", "thread:btw/message.4/content.0", "thread:btw/message.5/content.0"]);
     // The turn's message and reply are its own, not versions of the question's.
     expect(keysAt(after, 6)).toEqual(expect.arrayContaining(["thread:t3/message.4/content.0", "thread:t3/message.5/content.0"]));
@@ -217,7 +203,7 @@ describe("what a step stands after", () => {
     const continued = request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] });
     const after = history([...process, ...compact, ...t3, ...continued]);
     // The compaction resends t1 whole and t2's message with the instruction, never t2's reply: its message is its own.
-    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "block", key: "thread:compact/message.3/content.0", as: "thread" }]);
+    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "summary", key: "thread:compact/message.3/content.0" }]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
       "compact/response/http",
@@ -234,36 +220,72 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
-  it("hangs each subagent on the Agent tool's call that launched it, twins on the calls of their one prompt in order, and a probe of one on the last", () => {
-    const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
-    const task = user(text("<system-reminder>\nBe brief.\n</system-reminder>\nFind the longest word.\n"));
+  it("puts each request on its sender's level, the first request of each of a level's threads after the level, whatever it says first", () => {
     const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+    const task = user(text("Find the longest word."));
     const after = history([
       ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")]),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
-      ...reply("s2", [text("B.")]),
-      ...request("other", { ...agent, messages: [user(text("Count the words."))] }),
-      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
-      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
-      ...request("probe", { ...agent, messages: [task] }),
-      ...reply("probe", [text("Reading.")]),
+      ...reply("t1", [launch("toolu_1", "Find the longest word."), launch("toolu_2", "Find the longest word.")], "tool_use"),
+      // Two agents launched with one prompt send one first message, and each is its own.
+      ...request("a", { ...agent, messages: [task] }, { agent: "a1" }),
+      ...reply("a", [text("A.")]),
+      ...request("b", { ...agent, messages: [task] }, { agent: "a2" }),
+      ...reply("b", [text("B.")]),
+      // The harness's side request of a1's, with a first message of its own.
+      ...request("aside", { model: "m", messages: [user(text("Summarize this page."))] }, { agent: "a1" }),
+      ...request("a+", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }, { agent: "a1" }),
     ]);
-    const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
-    expect(afters(after)).toEqual([undefined, under(1), under(2), under(3), follows(2), follows(3), under(2)]);
-    // Twins send the same first message and are each a history of their own.
-    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s2/message.0/content.0.0", "thread:s2/message.0/content.0.1", "thread:s2/message.1/content.0"]));
-    expect(keysAt(after, 5)).toContain("thread:s3/message.2/content.0");
-    expect(keysAt(after, 6)).toContain("thread:s4/message.2/content.0");
+    expect(after.segments.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a1" }, { kind: "agent", id: "a2" }, { kind: "agent", id: "a1" }, { kind: "agent", id: "a1" }]);
+    expect(afters(after)).toEqual([root, root, root, root, follows(2)]);
+    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:b/message.0/content.0", "thread:b/message.1/content.0"]));
     expect(versioned(after)).toEqual([]);
   });
 
-  it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {
+  it("ties a subagent by the result of the call that launched it, at the step that brings the result, to the call's item on that step's path", () => {
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("On it."), launch("toolu_1", "Look."), toolUse("toolu_9", "Bash")], "tool_use"),
+      ...request("a", { model: "m", messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...request("t2", { ...main, messages: [hi, assistant(text("On it."), launch("toolu_1", "Look."), toolUse("toolu_9", "Bash")), user(launched("toolu_1", "a1"), launched("toolu_9", "a9"))] }),
+      // Resent as history, the result ties nothing again.
+      ...request("t3", { ...main, messages: [hi, assistant(text("On it."), launch("toolu_1", "Look."), toolUse("toolu_9", "Bash")), user(launched("toolu_1", "a1"), launched("toolu_9", "a9")), assistant(text("Waiting.")), user(text("Go."))] }),
+    ]);
+    // A result of a call that launches nothing, here a Bash call's quoting the frame, ties nothing.
+    expect(after.segments.map(({ ties }) => ties)).toEqual([[], [], [{ agent: "a1", step: 1, key: "thread:t1/message.1/content.1" }], []]);
+  });
+
+  it("ties a subagent again where a history that parted before its call resends the call and its result as items of its own", () => {
+    const turn = (trace: string, said: string) => request(trace, { ...main, messages: [user(text(said)), assistant(launch("toolu_1", "Look.")), user(launched("toolu_1", "a1"))] });
+    const after = history([...turn("t1", "Hi."), ...turn("t2", "Hi, rewritten.")]);
+    expect(after.segments.map(({ ties }) => ties)).toEqual([[{ agent: "a1", step: 1, key: "thread:t1/message.1/content.0" }], [{ agent: "a1", step: 2, key: "thread:t2/message.1/content.0" }]]);
+  });
+
+  it("ties a forked skill's agent by the notification that names it and the Skill call, across a compaction of its caller, and nothing by one that names no call", () => {
+    const summary = "<summary>\n1. Called the skill.\n</summary>";
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [skill("toolu_1", "review")], "tool_use"),
+      ...request("compact", { ...main, messages: [hi, assistant(skill("toolu_1", "review")), user(result("toolu_1", 'Skill "review" launched (forked execution, running in the background).'), text("Summarize."))] }),
+      ...reply("compact", [text(summary)]),
+      ...request("c1", { ...main, messages: [user(text("Continued.\nSummary:\n1. Called the skill.\n"), stopped("a1", "toolu_1"), stopped("a2"))] }),
+    ]);
+    expect(after.segments.map(({ ties }) => ties)).toEqual([[], [], [{ agent: "a1", step: 1, key: "thread:t1/message.1/content.0" }]]);
+  });
+
+  it("ties a foreground agent by the result that names it as it returns", () => {
+    const after = history([
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [launch("toolu_1", "Look.")], "tool_use"),
+      ...request("a", { model: "m", messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...request("t2", { ...main, messages: [hi, assistant(launch("toolu_1", "Look.")), user(returned("toolu_1", "a1", "Found it."))] }),
+    ]);
+    expect(after.segments.map(({ ties }) => ties)).toEqual([[], [], [{ agent: "a1", step: 1, key: "thread:t1/message.1/content.0" }]]);
+  });
+
+  it("stands a request that sends a thread's first message with a system prompt of its own after its level, a history of its own", () => {
     const side = [...request("side", { model: "m", system: [text("Is this a new topic?")], messages: [hi] }), ...reply("side", [text("Yes.")])];
     const after = history([...process, ...side, ...t3]);
-    expect(afters(after).slice(4)).toEqual([undefined, follows(4)]);
+    expect(afters(after).slice(4)).toEqual([root, follows(4)]);
     expect(keysAt(after, 5)).toEqual(expect.arrayContaining(["thread:side/system/system.0", "thread:side/message.0/content.0", "thread:side/message.1/content.0"]));
     expect(versioned(after)).toEqual([]);
   });
@@ -293,7 +315,7 @@ describe("what a step stands after", () => {
     const first = [...request("t1", { ...main, tools: [...main.tools, edit], messages: [hi] }), ...reply("t1", hello)];
     const turn = (trace: string, tools: unknown[], said: string) => request(trace, { ...main, tools, messages: [hi, assistant(...hello), user(text(said))] });
     const after = history([...first, ...turn("t2", main.tools, "More."), ...turn("a1", [...main.tools, edit], "Aside?")]);
-    expect(afters(after)).toEqual([undefined, follows(1), follows(1)]);
+    expect(afters(after)).toEqual([root, follows(1), follows(1)]);
     // The question's path is t1 alone, which holds the tool, so the tool is as it was to it.
     expect(itemAt(after, "thread:t1/tools/tools.Edit.0").versions).toMatchObject([{ step: 1 }, { step: 2, block: undefined, previous: 0 }]);
   });
@@ -305,7 +327,7 @@ describe("what a step stands after", () => {
       ...reply("t1", hello),
       ...request("t2", { ...main, messages: [hi, assistant(...hello), user(text("More."))] }),
     ]);
-    expect(afters(after)).toEqual([undefined, follows(1)]);
+    expect(afters(after)).toEqual([root, follows(1)]);
     expect(keysAt(after, 2)).toEqual(["t2/request/http", "thread:t2/message.2/content.0"]);
     expect(versioned(after)).toEqual(["thread:t1/message.1.system.0/content.0"]);
     expect(itemAt(after, "thread:t1/message.1.system.0/content.0").versions).toMatchObject([{ step: 1 }, { step: 2, block: undefined }]);

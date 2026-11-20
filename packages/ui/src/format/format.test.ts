@@ -651,11 +651,16 @@ describe("format", () => {
     const launched = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a1b2 (internal ID - do not mention to user.)\nThe agent is working in the background.";
     expect(stated(launched)).toEqual({ kind: "result", answers: "toolu_1", names: "a1b2" });
     expect(stated([{ type: "text", text: launched }])).toEqual({ kind: "result", answers: "toolu_1", names: "a1b2" });
+    const usage = "<usage>subagent_tokens: 5\ntool_uses: 1\nduration_ms: 9</usage>";
     const returned = [
       { type: "text", text: "The report." },
-      { type: "text", text: "agentId: c3d4 (use SendMessage with to: 'c3d4' to continue this agent)\n<usage>total_tokens: 5</usage>" },
+      { type: "text", text: `agentId: c3d4 (use SendMessage with to: 'c3d4', summary: '<5-10 word recap>' to continue this agent)\n${usage}` },
     ];
     expect(stated(returned)).toEqual({ kind: "result", answers: "toolu_1", names: "c3d4" });
+    // A report of one text ends with the trailer; one that cannot be continued says no way to, and one in a worktree
+    // says it.
+    expect(stated([{ type: "text", text: `The report.\nagentId: c3d4\n${usage}` }])).toEqual({ kind: "result", answers: "toolu_1", names: "c3d4" });
+    expect(stated([{ type: "text", text: `The report.\nagentId: c3d4\nworktreePath: /w\nworktreeBranch: b\n${usage}` }])).toEqual({ kind: "result", answers: "toolu_1", names: "c3d4" });
     // A frame quoted inside other text, or a trailer with text after its usage, names nothing.
     expect(stated(`The log says:\n${launched}`)).toEqual({ kind: "result", answers: "toolu_1", names: undefined });
     expect(stated([returned[1], { type: "text", text: "more" }])).toEqual({ kind: "result", answers: "toolu_1", names: undefined });

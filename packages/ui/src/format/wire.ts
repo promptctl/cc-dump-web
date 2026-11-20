@@ -24,11 +24,12 @@ export function senderOf(headers: Header[] | undefined): Sender {
 
 // The agent a tool's result names, from its texts. A background agent's result arrives as it starts: a text that opens
 // `Async agent launched successfully.` and holds a line `agentId: <id> (internal ID…`. A foreground agent's arrives as it
-// returns, its report and then a last text `agentId: <id> (use SendMessage…` ending with its `<usage>…</usage>`, a frame
-// read from Claude Code 2.1.197's source that no recording holds yet. Any other result names none. Only a result of a
-// call that launches an agent names one (view/history.ts): this reads the frame, not whose result it is.
+// returns: its report, then a trailer that ends its last text, on lines of its own: `agentId: <id>`, the way to continue
+// it where it can be, its worktree where it has one, and its `<usage>…</usage>`. Any other result names none, as an
+// agent of a type Claude Code returns bare does. Only a result of a call that launches an agent names one
+// (view/history.ts): this reads the frame, not whose result it is.
 const background = /^agentId: (\S+) \(internal ID/m;
-const foreground = /^agentId: (\S+) \(use SendMessage[\s\S]*<usage>[\s\S]*<\/usage>\s*$/;
+const foreground = /^agentId: (\S+)(?: \(use [^\n]*\))?(?:\nworktree(?:Path|Branch): [^\n]*)*\n<usage>[^<]*<\/usage>(?![\s\S])/m;
 export function namedIn(texts: readonly string[]): string | undefined {
   const launched = texts.find((text) => text.startsWith("Async agent launched successfully."));
   return (launched === undefined ? undefined : background.exec(launched)?.[1]) ?? foreground.exec(texts.at(-1) ?? "")?.[1];
