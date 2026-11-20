@@ -219,7 +219,7 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
-  it("records on each step whose it is, the agent a result or a notification ties to the call that launched it, the stops, the calls answered and waited on, and a side question", () => {
+  it("records on each step whose it is, the agent a result or a notification ties to the call that launched it, the stops, and the calls answered and waited on", () => {
     const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
     const task = user(text("Find the longest word."));
     const launch = assistant(text("On it."), agentCall("toolu_1", "Find the longest word.", "Explore"));
@@ -229,9 +229,6 @@ describe("what a step stands after", () => {
       ...reply("t1", launch.content, "tool_use"),
       ...request("s1", { ...agent, messages: [task] }, { agent: "a1" }),
       ...reply("s1", [read], "tool_use"),
-      // The harness asks the waiting agent what it is doing, resending the waiting step with no result.
-      ...request("probe", { ...agent, messages: [task, assistant(read), user(text("Describe your most recent action."))] }, { agent: "a1" }),
-      ...reply("probe", [text("Reading.")]),
       ...request("t2", { ...main, messages: [hi, launch, user(result("toolu_1", [text(launched("a1"))]))] }),
       ...reply("t2", [text("Waiting.")]),
       ...request("s2", { ...agent, messages: [task, assistant(read), user(result("toolu_r", "words"))] }, { agent: "a1" }),
@@ -242,22 +239,21 @@ describe("what a step stands after", () => {
       ...request("t4", { ...main, messages: [hi, launch, user(result("toolu_1", [text(launched("a1"))])), assistant(text("Waiting.")), user(notification("a1", "completed", "toolu_1")), assistant(text("Done.")), user(text("Thanks."))] }),
     ]);
     const wires = after.segments.map(({ wire }) => wire);
-    expect(wires.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a1" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "main" }]);
-    expect(wires.map(({ opens }) => opens)).toEqual([undefined, { names: undefined, says: "Find the longest word." }, undefined, undefined, undefined, undefined, undefined]);
+    expect(wires.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "main" }]);
+    expect(wires.map(({ opens }) => opens)).toEqual([undefined, { names: undefined, says: "Find the longest word." }, undefined, undefined, undefined, undefined]);
     const call = { found: true, key: "thread:t1/message.1/content.1", launches: { tool: "Agent", type: "Explore", prompt: "Find the longest word." } };
-    expect(wires.map(({ ties }) => ties)).toEqual([[], [], [], [{ agent: "a1", call: "toolu_1", ...call }], [], [{ agent: "a1", call: "toolu_1", ...call }], []]);
-    expect(wires.map(({ stops }) => stops)).toEqual([[], [], [], [], [], [{ agent: "a1", status: "completed" }], []]);
-    expect(wires.map(({ waits, answers, side, did }) => [waits, answers, side, did?.name])).toEqual([
-      [["toolu_1"], [], false, "tool_use: Agent"],
-      [["toolu_r"], [], false, "tool_use: Read"],
-      [[], [], true, "text"],
-      [[], ["toolu_1"], false, "text"],
-      [[], ["toolu_r"], false, "text"],
-      [[], [], false, "text"],
-      [[], [], false, undefined],
+    expect(wires.map(({ ties }) => ties)).toEqual([[], [], [{ agent: "a1", call: "toolu_1", ...call }], [], [{ agent: "a1", call: "toolu_1", ...call }], []]);
+    expect(wires.map(({ stops }) => stops)).toEqual([[], [], [], [], [{ agent: "a1", status: "completed" }], []]);
+    expect(wires.map(({ waits, answers, did }) => [waits, answers, did?.name])).toEqual([
+      [["toolu_1"], [], "tool_use: Agent"],
+      [["toolu_r"], [], "tool_use: Read"],
+      [[], ["toolu_1"], "text"],
+      [[], ["toolu_r"], "text"],
+      [[], [], "text"],
+      [[], [], undefined],
     ]);
     // A subagent's request is its level's own thread, never the main agent's, so nothing of it is a version of main's.
-    expect(afters(after)).toEqual([undefined, undefined, follows(2), follows(1), follows(2), follows(4), follows(6)]);
+    expect(afters(after)).toEqual([undefined, undefined, follows(1), follows(2), follows(3), follows(5)]);
     expect(versioned(after)).toEqual([]);
   });
 

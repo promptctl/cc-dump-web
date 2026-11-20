@@ -275,7 +275,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const nests = rows.filter(kindOf("nest"));
     const levels = [...firsts].filter(([, own]) => own <= step);
     if (!sameList(nests.map(({ key }) => key).sort(), levels.map(([, own]) => nestKey(sayOf(own).level)).sort())) say(`the nests' lines are ${nests.map(({ key }) => key).join(" ")} where the levels by now are ${levels.map(([key]) => key).join(" ")}`);
-    const doingNow = doingOf(said, segments, step, { stopped, answered, agents });
+    const doingNow = doingOf(said, step, { stopped, answered, agents });
     for (const [key, own] of levels) {
       const level = sayOf(own).level;
       const nest = nests.find((one) => one.key === nestKey(level));
@@ -347,14 +347,12 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
   return { found, broken };
 }
 
-// What each agent is doing at step `step`, by its id. Of its steps by now after the last that stops it, less those
-// that answer none of the calls the step they follow waits on, it runs while one's reply has not ended by the time the
-// chosen step's had (the chosen one not ended: now), or waits on a call no step of it by now answers; and, while it
-// runs, the newest of those running replies that did something says what it last did. It rests as its last stop by now
-// says it ended.
+// What each agent is doing at step `step`, by its id. Of its steps by now after the last that stops it, it runs while
+// one's reply has not ended by the time the chosen step's had (the chosen one not ended: now), or waits on a call no
+// step of it by now answers; and, while it runs, the newest of those running replies that did something says what it
+// last did. It rests as its last stop by now says it ended.
 function doingOf(
   said: readonly Said[],
-  segments: History["segments"],
   step: number,
   { stopped, answered, agents }: { stopped: ReadonlyMap<string, { status: string }>; answered: ReadonlyMap<string, ReadonlySet<string>>; agents: ReadonlyMap<string, readonly number[]> },
 ): Map<string, Doing> {
@@ -363,9 +361,6 @@ function doingOf(
   return new Map(
     [...agents].map(([id, steps]): [string, Doing] => {
       const running = steps.filter((own) => {
-        const followed = segments[own - 1]!.after;
-        const waited = followed?.on === "step" ? said[followed.step - 1]!.waits : [];
-        if (waited.length > 0 && !waited.some((call) => said[own - 1]!.answers.has(call))) return false;
         const { end, waits } = said[own - 1]!;
         return end === undefined || (now !== undefined && new Date(end).getTime() > now) || waits.some((call) => !answered.get(id)?.has(call));
       });

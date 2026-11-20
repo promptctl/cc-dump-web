@@ -433,14 +433,14 @@ function columnOf({ segments, forks }: History, step: number): Column {
 }
 
 // What each subagent is doing at step `step`, by its id, from what its steps say on the wire (view/history.ts,
-// StepWire). Of its steps by the moment after the last notification that it stopped, less the side questions, it
-// runs while a reply of one is still coming as the chosen step's exchange ended (the chosen one still open: now), or
-// waits for a call no step of it by the moment answers whose reply has begun, so the step waiting on a tool runs until
-// the step its result goes back in has something to say. `latest`, while it runs: the last block of the newest of
-// those replies that has one (StepWire.did), so a reply before its first block leaves the line to what it did before;
-// never the SubagentHandback that hands a subagent's report back, which ends its work and is none of it. `ended`,
-// while it rests: how the last notification by the moment said it stopped. An agent that ends its turn when its caller
-// never takes another gets no notification, so it rests once no reply of its runs.
+// StepWire). Of its steps by the moment after the last notification that it stopped, it runs while a reply of one is
+// still coming as the chosen step's exchange ended (the chosen one still open: now), or waits for a call no step of it
+// by the moment answers whose reply has begun, so the step waiting on a tool runs until the step its result goes back
+// in has something to say. `latest`, while it runs: the last block of the newest of those replies that has one
+// (StepWire.did), so a reply before its first block leaves the line to what it did before; never the SubagentHandback
+// that hands a subagent's report back, which ends its work and is none of it. `ended`, while it rests: how the last
+// notification by the moment said it stopped. An agent that ends its turn when its caller never takes another gets no
+// notification, so it rests once no reply of its runs.
 function doingOf(arrived: readonly Segment[], step: number): Map<string, Doing> {
   const ended = step === 0 ? undefined : arrived[step - 1]!.formatted.exchange.end;
   const now = ended === undefined ? undefined : Date.parse(ended.timestamp);
@@ -456,8 +456,8 @@ function doingOf(arrived: readonly Segment[], step: number): Map<string, Doing> 
   });
   const runs = new Map<string, KeyedBlock | undefined>();
   arrived.forEach((segment, index) => {
-    const { level, waits, side, did } = segment.wire;
-    if (level.kind !== "agent" || side || index + 1 <= (stopped.get(level.id)?.own ?? 0)) return;
+    const { level, waits, did } = segment.wire;
+    if (level.kind !== "agent" || index + 1 <= (stopped.get(level.id)?.own ?? 0)) return;
     if (!coming(segment) && waits.every((call) => answered.get(level.id)!.has(call))) return;
     runs.set(level.id, did === undefined || did.call?.waits === false ? runs.get(level.id) : did);
   });

@@ -42,8 +42,7 @@ export const levelKey = (level: Level): string => (level.kind === "agent" ? `age
 // `ties`: each agent a result of an Agent call or a notification names with the call that launched it (Tie). `stops`:
 // each agent a notification tells stopped, and how it ended. `answers`: the calls its results answer. `waits`: the
 // calls its reply stopped for, each a call whose result it waits on. `did`: its reply's last block, none before its
-// reply's first. `side`: whether it follows a step that waits without answering any call that step waits on, as the
-// harness's question of what a subagent at work is doing does, which says nothing of its work.
+// reply's first.
 export type StepWire = {
   level: Level;
   opens: { names: string | undefined; says: string | undefined } | undefined;
@@ -52,7 +51,6 @@ export type StepWire = {
   answers: readonly string[];
   waits: readonly string[];
   did: KeyedBlock | undefined;
-  side: boolean;
 };
 // [LAW:types-are-the-program] That a step names `agent` with the call that launched it, on the step's own level: the
 // call's item, at `key`, and what it `launches`, found on the step's reach; or `found: false`, for a notification that
@@ -301,18 +299,13 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const reply = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "reply"));
     const waits = formatted.facts.stopReason === "tool_use" ? reply.flatMap(({ call }) => (call?.waits ? [call.id] : [])) : [];
     const did = reply.at(-1);
-    const waited = followed === undefined ? [] : folded[followed - 1]!.segment.wire.waits;
     const names = formatted.sender.kind === "agent" ? formatted.sender.parent : undefined;
     const opens = begun.has(levelName) || level.kind === "main" ? undefined : { names, says: thread?.said };
     if (!begun.has(levelName)) {
       begun.add(levelName);
       undo.push(() => begun.delete(levelName));
     }
-    // [LAW:parse-dont-validate] The Messages API answers a reply that stops for tools only with a user message that
-    // starts with their results, so a request after one that answers none of them is not that agent's next turn: it is
-    // a question asked beside the work, which the harness sends while the agent's tools still run.
-    const side = waited.length > 0 && !waited.some((call) => answers.includes(call));
-    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, did, side } }, chain, undo };
+    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, did } }, chain, undo };
   };
 
   return (formatted) => {

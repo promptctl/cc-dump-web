@@ -88,3 +88,13 @@ jq -r '[.body.messages[]?.content[]? | objects | select(.type == "text") | .text
   | select(test("^\\s*<system-reminder>\n") and test("<task-notification>"))
   | capture("<task-id>(?<id>[^<]+)</task-id>").id] | unique[]' requests.jsonl | sort | uniq -c | sort -rn
 ```
+
+## What an agent is doing
+
+While a subagent works, Claude Code asks it every 30 seconds to describe its latest action in a few words (`services/AgentSummary/agentSummary.ts` in `~/code/cc-source-study/reference-cc-2.1.88`; the same code is in 2.1.299). The request carries the subagent's own `x-claude-code-agent-id`, and through cc-dump no header marks it: `x-claude-code-request-class: auxiliary` is sent only when the base URL is `api.anthropic.com`. It resends the subagent's messages without the reply that waits on a tool, so the question is appended to the last result, and the request stands beside the agent's next step. Its reply is the agent's own account of what it is doing, and like any step it runs only while it streams. In 20261117T143819.271Z, 9 such requests come from 5 agents:
+
+```sh
+jq -r 'select(.headers != null) | select(.body.messages[-1].content | type == "array")
+  | select(.body.messages[-1].content[-1].text? // "" | test("^Describe your most recent action"; "m"))
+  | (.headers[] | select(.[0] == "x-claude-code-agent-id") | .[1])' requests.jsonl | sort | uniq -c
+```

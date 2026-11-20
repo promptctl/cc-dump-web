@@ -684,16 +684,15 @@ describe("the column", () => {
   });
 
   it("says what a subagent last did while a reply of its waits on a tool or is still coming, and never what it told the harness's question or a handback", () => {
-    // A subagent that reads, then searches, then hands its report back. While each tool runs the harness asks it what
-    // it is doing, in a request that resends the step waiting on the tool with no result.
+    // A subagent that reads, then searches, then hands its report back. While a tool runs the harness asks it what it
+    // is doing: it leaves out the reply that waits, so the question is appended to the last result, and stands beside
+    // the step waiting on the tool.
     const tool = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
     const read = [task, assistant(tool("toolu_2", "Read")), user(result("toolu_2", "A."))];
     const searched = [...read, assistant(tool("toolu_3", "Grep")), user(result("toolu_3", "B."))];
-    const child = [...read, assistant(tool("toolu_3", "Grep")), user(text("Describe your most recent action."))];
-    // Or in one that stands beside the step waiting on the tool, the question appended to the result it resends.
-    const sibling = [...read.slice(0, -1), user(result("toolu_2", "A."), text("What are you doing?"))];
+    const asked = [...read.slice(0, -1), user(result("toolu_2", "A."), text("What are you doing?"))];
     const a1 = { agent: "a1" };
-    const working = (asked: unknown[]) => [
+    const working = [
       ...request("t1", { ...main, messages: [hi] }),
       ...reply("t1", [agentCall("toolu_1", "Find the longest word.")], "tool_use"),
       ...request("s1", { ...agent, messages: [task] }, a1),
@@ -711,15 +710,15 @@ describe("the column", () => {
       const { level } = nest(layouts(events)(step));
       return level.kind === "agent" && level.doing.runs ? level.doing.latest?.name : undefined;
     };
-    for (const asked of [child, sibling]) expect([2, 3, 4, 5, 6].map((step) => latest(working(asked), step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
+    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
     // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
     // the line says what the subagent did last.
-    const events = working(child);
+    const events = working;
     const from = events.findIndex(({ trace_id }) => trace_id === "s2");
     const coming = (count: number) => latest(events.slice(0, from + count), 3);
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
     // The harness may ask while a reply is still coming: its asking says nothing.
-    expect(latest([...events.slice(0, from + 6), ...request("asked", { ...agent, messages: child }, a1)], 4)).toBe("tool_use: Grep");
+    expect(latest([...events.slice(0, from + 6), ...request("asked", { ...agent, messages: asked }, a1)], 4)).toBe("tool_use: Grep");
     // A last reply still coming that hands the report back says nothing of the handback.
     const handing = events.findIndex(({ trace_id, type }) => trace_id === "s3" && type === "response");
     const handback = (...content: Parameters<typeof streaming>[1]) => latest([...events.slice(0, handing), ...streaming("s3", content)], 5);
