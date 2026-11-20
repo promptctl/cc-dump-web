@@ -64,8 +64,8 @@ function LaunchSession({ connection }: { connection: Pick<Connection, "launcher"
 }
 
 // The `ANTHROPIC_BASE_URL=…` line that gives the agent started with it a recording of its own. The recording is made as
-// the line is copied, each copy a new one, so no two agents are given one line and no recording is made for an agent
-// nobody starts. The line copied last stays in view, saying which recording that agent's traffic goes to.
+// the line is copied, each copy a new one, so no two agents are given one line. The line copied last stays in view,
+// saying which recording that agent's traffic goes to.
 function AgentLine({ connection, baseUrl }: { connection: Pick<Connection, "agentRecording">; baseUrl: string }) {
   const [copied, setCopied] = useState<string | null>(null);
   const line = () => connection.agentRecording().then(({ name }) => `ANTHROPIC_BASE_URL=${agentBaseUrl(baseUrl, name)}`);

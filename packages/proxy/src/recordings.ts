@@ -5,7 +5,7 @@ import { recordingName } from "./format.ts";
 import { createWriter, eventLine, type Recorder, type Writer } from "./recording.ts";
 
 // The recordings of the proxy's run: where they are, `run`, the name of the one that takes the traffic no agent
-// claims, how to record an exchange into one, how to make one for an agent about to launch, and what a reader may ask
+// claims, how to record an exchange into one, how to make one for a new agent, and what a reader may ask
 // of them. A reader never creates a writer, a file or a listing entry: only `record` and `create` do.
 // - `create()`: a new agent's recording, named for this moment, its file made empty and its writer this run's; the name.
 // - `readable(name)`: the bytes of a recording this run writes that a reader may read, its writer's `written`. A
@@ -41,8 +41,8 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     writers.set(name, writer);
     return writer;
   };
-  // [LAW:single-enforcer] The one way an agent's recording gets its name: the file is made with O_EXCL, so two launches
-  // in one millisecond, or one at the moment of a recording already there, never share a recording; the next
+  // [LAW:single-enforcer] The one way a new agent's recording gets its name: the file is made with O_EXCL, so two
+  // made in one millisecond, or one at the moment of a recording already there, never share a recording; the next
   // millisecond is the next name.
   const create = () => {
     for (let at = now().getTime(); ; at++) {

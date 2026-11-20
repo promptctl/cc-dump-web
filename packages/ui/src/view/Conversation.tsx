@@ -28,9 +28,9 @@ import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 
-// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, every row of it listed, of
-// which only those on screen are mounted. `reading`: whether the read can still bring an
-// exchange its end. `theme`: what the minimap's canvas is painted in.
+// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
+// and near the view are mounted. `reading`: whether the read can still bring an exchange its end. `theme`: what the
+// minimap's canvas is painted in.
 export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
@@ -746,8 +746,9 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
   }
 }
 
-// [LAW:one-source-of-truth] The one table of how a diff, a part's or a block's, shows a line or a word by what the change
-// did to it: a line on its ground, a word a block's diff marks within a line in its weight and color.
+// [LAW:one-source-of-truth] The one table of the ground, weight and color a diff, a part's or a block's, gives a line or
+// a word by what the change did to it (its mark is format/diff.ts's `marks`): a line on its ground, a word a block's diff
+// marks within a line in its weight and color.
 const diffMarks: Record<Edit["change"], { ground: string; color: string; weight: string }> = {
   same: { ground: "", color: "", weight: "" },
   removed: { ground: "bg-removed", color: "text-error", weight: "font-semibold" },

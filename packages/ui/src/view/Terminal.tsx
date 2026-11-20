@@ -13,11 +13,10 @@ import type { Theme } from "../theme/theme.ts";
 import { view } from "./state.ts";
 import { hideTarget, LINK_FRAME, linkHandler, openLink, showTarget } from "./terminalLink.ts";
 
-// The agent's tmux window, live, beside the conversation (docs/design/01-features.md, F13): every pane as tmux lays it out,
-// what the agent prints as it prints it, and what the person types, once they click into a pane, sent to that pane. Its
-// box sets the window's size, as an attached terminal's would. A reload mounts it again from tmux, so it is shown as it
-// is now. Above it, chrome on the surface: which window it is, where its connection stands, the last thing that failed
-// since the connection was last live, and the control that puts it away. One is mounted per window: another window is
+// The agent's tmux window, live, beside the conversation (docs/design/01-features.md, F13). Its box sets the window's
+// size, as an attached terminal's would. A reload mounts it again from tmux, so it is shown as it is now. Above it,
+// chrome on the surface: which window it is, where its connection stands, the last thing that failed since the
+// connection was last live, and the control that puts it away. One is mounted per window: another window is
 // another terminal, with a connection of its own.
 export function Terminal({ connection, window, theme }: { connection: Pick<Connection, "tmux">; window: TmuxWindow; theme: Theme }) {
   // [LAW:no-ambient-temporal-coupling] The terminal owns its connection: made once, as it mounts, connected while it is
@@ -32,8 +31,8 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
   const [state, setState] = useState<WindowTerminalState>({ phase: "connecting" });
   const [error, setError] = useState<WindowTerminalError | undefined>(undefined);
   // [LAW:one-source-of-truth] The terminal's face is the stylesheet's (index.css), read where xterm.js needs a name: the
-  // mono, then the icons a statusline draws. Each link opens on a click (terminalLink.ts); Unicode 11's widths are the
-  // proposed API's.
+  // mono, then the icons a statusline draws. What a click on a link does is terminalLink.ts's; Unicode 11's widths are
+  // the proposed API's.
   const xterm = useMemo(
     () => ({
       theme: terminalTheme(theme),
@@ -72,9 +71,9 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
 
 // What each pane draws with, in xterm.js's DOM renderer, the one whose cell the library lays panes out in (a renderer
 // addon draws a narrower one): Unicode 11's widths, as tmux counts them, so an emoji is two cells and what follows it is
-// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the URLs a program prints as text, as links,
-// opened as those it writes as links are. A face that arrives after a pane drew, the icons' among them, the library has
-// xterm.js measure again (sizing/cell-metrics.js).
+// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the web URLs a program prints as text, as
+// links, a click on one opened by terminalLink.ts. A face that arrives after a pane drew, the icons' among them, the
+// library has xterm.js measure again (sizing/cell-metrics.js).
 const addons: XtermAddons = () => [
   {
     activate(terminal: Xterm) {

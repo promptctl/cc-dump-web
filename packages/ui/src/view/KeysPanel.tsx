@@ -1,6 +1,6 @@
 import { heard } from "./keyboard.ts";
 
-// The keys panel (docs/design/02-design.md, "Keys"): every key the app hears, by the place it is heard in, each beside
+// The keys panel (docs/design/02-design.md, "Keys"): every key of the table, by the place it is heard in, each beside
 // what it does. It lists the table the keys are pressed from (keyboard.ts) and takes no key itself, so one can be tried
 // while its line is read.
 export function KeysPanel() {
