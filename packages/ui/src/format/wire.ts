@@ -17,13 +17,14 @@ export function senderOf(head: { headers: Header[] } | undefined): Sender {
 }
 
 // The agent an Agent tool's result names, and how it ran: in the background, whose result arrives as it starts, or in
-// the foreground, whose result is its report and arrives as it stops. As Claude Code 2.1.197 writes them: a background
-// launch's text opens `Async agent launched successfully.` and names the agent on its next line; a foreground agent's
+// the foreground, whose result is its report and arrives as it stops. As Claude Code writes them (2.1.197's source, and
+// its traffic of 2026-11-17, whose first line goes on past the period): a background launch's text opens
+// `Async agent launched successfully.` and names the agent on its next line; a foreground agent's
 // report is followed by a text that names it and ends with its `<usage>`. An Explore or a Plan agent run in the
 // foreground returns its report alone, which names no agent.
 export type Named = { agent: string; ran: "background" | "foreground" };
 
-const background = /^Async agent launched successfully\.\nagentId: (\S+) /;
+const background = /^Async agent launched successfully\.[^\n]*\nagentId: (\S+) /;
 const foreground = /^agentId: (\S+) \(use SendMessage[\s\S]*\n<usage>[\s\S]*<\/usage>$/;
 
 // The agent the texts of a tool result's content name, in order, if they are either frame.

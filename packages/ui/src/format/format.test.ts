@@ -661,6 +661,8 @@ describe("format", () => {
     const launched = "Async agent launched successfully.\nagentId: a1b2 (internal ID - do not mention to user.)\nThe agent is working in the background.";
     expect(said(texts(launched))).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "background" } }]);
     expect(said(launched)).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "background" } }]);
+    const noted = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a1b2 (internal ID - do not mention to user.)";
+    expect(said(noted)).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "background" } }]);
     const returned = "agentId: a1b2 (use SendMessage with to: 'a1b2', summary: '<5-10 word recap>' to continue this agent)\n<usage>subagent_tokens: 5\ntool_uses: 1\nduration_ms: 9</usage>";
     expect(said(texts("The report.", returned))).toEqual([{ kind: "result", answers: "toolu_1", named: { agent: "a1b2", ran: "foreground" } }]);
     // A report alone, as an Explore agent's is, names no agent; nor does a text that quotes a frame inside it.

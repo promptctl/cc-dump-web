@@ -2,25 +2,10 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
+import { agentCall, assistant, by, launched, notice, reply, request, text, toolUse, user } from "./fixtures.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
-const timestamp = "2026-11-15T14:00:00.000Z";
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
-  { timestamp, trace_id, type: "request_body", base64: base64(body) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
-];
-const reply = (trace_id: string, content: unknown[]): RecordedEvent[] => [
-  { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { timestamp, trace_id, type: "response_trailers", headers: [] },
-  { timestamp, trace_id, type: "end", outcome: "ok" },
-];
-const text = (text: string) => ({ type: "text", text });
-const user = (...content: unknown[]) => ({ role: "user", content });
-const assistant = (...content: unknown[]) => ({ role: "assistant", content });
 const main = { model: "m", system: [text("You are Claude Code.")], tools: [{ name: "Read", input_schema: {} }] };
 
 // The history of `events`, as one formatter and one history read them, the way the view does, batch after batch.
@@ -217,7 +202,7 @@ describe("what a step stands after", () => {
     const continued = request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] });
     const after = history([...process, ...compact, ...t3, ...continued]);
     // The compaction resends t1 whole and t2's message with the instruction, never t2's reply: its message is its own.
-    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "block", key: "thread:compact/message.3/content.0", as: "thread" }]);
+    expect(afters(after).slice(4)).toEqual([follows(2), follows(4), { step: 5, on: "summary", key: "thread:compact/message.3/content.0" }]);
     expect(keysAt(after, 5)).toEqual([
       "compact/request/http",
       "compact/response/http",
@@ -234,30 +219,34 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
-  it("hangs each subagent on the Agent tool's call that launched it, twins on the calls of their one prompt in order, and a probe of one on the last", () => {
-    const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
-    const task = user(text("<system-reminder>\nBe brief.\n</system-reminder>\nFind the longest word.\n"));
+  it("puts every request on the level of the agent its head names, and records the result that names each agent, its parent and its stops, each at its step", () => {
+    const task = user(text("Find the longest word."));
     const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+    const calls = assistant(agentCall("toolu_1", "Find the longest word."), agentCall("toolu_2", "Find the longest word."), toolUse("toolu_3", "Bash"));
     const after = history([
       ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word."), call("toolu_2", "Find the longest word."), call("toolu_3", "Count the words.")]),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
-      ...reply("s2", [text("B.")]),
-      ...request("other", { ...agent, messages: [user(text("Count the words."))] }),
-      ...request("s3", { ...agent, messages: [task, assistant(text("A.")), user(text("Read."))] }),
-      ...request("s4", { ...agent, messages: [task, assistant(text("B.")), user(text("Read."))] }),
-      ...request("probe", { ...agent, messages: [task] }),
-      ...reply("probe", [text("Reading.")]),
+      ...reply("t1", calls.content, "tool_use"),
+      // The agent launched second speaks first, and the first's request opens with the harness's text alone.
+      ...request("s2", { ...agent, messages: [task] }, by("a2")),
+      ...request("s1", { ...agent, messages: [user(text("<system-reminder>\nBe brief.\n</system-reminder>\n"))] }, by("a1")),
+      // A Bash result that quotes the frame names no agent.
+      ...request("t2", { ...main, messages: [hi, calls, user(launched("toolu_3", "a3"), launched("toolu_1", "a1"), launched("toolu_2", "a2"))] }),
+      ...request("c1", { ...agent, messages: [user(text("Count."))] }, by("c1", "a1")),
+      ...request("a3", { ...agent, messages: [user(text("Who?"))] }, by("a3", "gone")),
+      ...request("t3", { ...main, messages: [hi, calls, user(launched("toolu_3", "a3"), launched("toolu_1", "a1"), launched("toolu_2", "a2")), assistant(text("Waiting.")), user(notice("a1", "toolu_1"))] }),
+      // A later request resends the notice: no stop. A woken agent's second is.
+      ...request("t4", { ...main, messages: [hi, calls, user(launched("toolu_3", "a3"), launched("toolu_1", "a1"), launched("toolu_2", "a2")), assistant(text("Waiting.")), user(notice("a1", "toolu_1")), assistant(text("Again.")), user(notice("a1", "toolu_1"))] }),
     ]);
-    const under = (content: number) => ({ step: 1, on: "block", key: `thread:t1/message.1/content.${content}`, as: "nest" });
-    expect(afters(after)).toEqual([undefined, under(1), under(2), under(3), follows(2), follows(3), under(2)]);
-    // Twins send the same first message and are each a history of their own.
-    expect(keysAt(after, 3)).toEqual(expect.arrayContaining(["thread:s2/message.0/content.0.0", "thread:s2/message.0/content.0.1", "thread:s2/message.1/content.0"]));
-    expect(keysAt(after, 5)).toContain("thread:s3/message.2/content.0");
-    expect(keysAt(after, 6)).toContain("thread:s4/message.2/content.0");
-    expect(versioned(after)).toEqual([]);
+    expect(after.segments.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a2" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "c1" }, { kind: "agent", id: "a3" }, { kind: "main" }, { kind: "main" }]);
+    const call = (content: number) => ({ step: 1, key: `thread:t1/message.1/content.${content}`, launch: { prompt: "Find the longest word.", type: "Explore" } });
+    expect(Object.fromEntries(after.agents)).toEqual({
+      a2: { first: 2, parent: { kind: "main" }, named: { step: 4, call: call(1) }, stops: [] },
+      a1: { first: 3, parent: { kind: "main" }, named: { step: 4, call: call(0) }, stops: [7, 8] },
+      c1: { first: 5, parent: { kind: "agent", id: "a1" }, named: undefined, stops: [] },
+      a3: { first: 6, parent: { kind: "main" }, named: undefined, stops: [] },
+    });
+    // Two agents launched with one prompt are two threads: neither's request resends the other's.
+    expect(afters(after)).toEqual([undefined, undefined, undefined, follows(1), undefined, undefined, follows(4), follows(7)]);
   });
 
   it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {

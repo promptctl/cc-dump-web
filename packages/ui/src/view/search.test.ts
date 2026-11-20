@@ -246,7 +246,7 @@ describe("search", () => {
   });
 
   it("opens the nests a match's block is inside, the innermost first", () => {
-    const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
+    const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", agent: key, launch: undefined, count: 1, runs: false, latest: undefined, depth, dimmed: false });
     const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
     const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
     expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);

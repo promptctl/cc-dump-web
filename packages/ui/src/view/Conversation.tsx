@@ -465,21 +465,29 @@ function ForkLine({ row }: { row: ForkRow }) {
   );
 }
 
-// A nest's line (rows.ts, NestRow), under the Agent call that launched the subagent: its type, the prompt's first
-// words, how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
-// lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the reader
-// left it. Its arrow and its words stand under those of the call's line.
+// A nest's line (rows.ts, NestRow): a subagent, under the Agent call that launched it, by its type and the prompt's first
+// words; or, until the wire ties it to its call, at the end of its parent's thread, by its id, saying so. Then how many
+// steps it has taken by the moment shown and, while it runs, the last thing it did, or that it works. A click, or
+// Enter, lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the
+// reader left it, wherever it stands. Its arrow and its words stand under those of the line above.
 function NestLine({ row }: { row: NestRow }) {
   const { open, toggle } = useToggle(row.key, nestStartsOpen);
+  const { launch } = row;
   return (
     <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
       <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
-      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
-      <span className="min-w-0 truncate" title={row.prompt}>
-        {row.prompt}
-      </span>
+      {launch?.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{launch.type}</span>}
+      {launch === undefined ? (
+        <span className="min-w-0 truncate">
+          agent <span className="font-mono">{row.agent}</span>, not yet tied to its call
+        </span>
+      ) : (
+        <span className="min-w-0 truncate" title={launch.prompt}>
+          {launch.prompt}
+        </span>
+      )}
       <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
-      {row.latest === undefined ? null : <span className="min-w-0 flex-1 truncate text-success">{`● ${row.latest.name} ${preview(row.latest)}`}</span>}
+      {row.runs ? <span className="min-w-0 flex-1 truncate text-success">{row.latest === undefined ? "● working" : `● ${row.latest.name} ${preview(row.latest)}`}</span> : null}
     </button>
   );
 }
