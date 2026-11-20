@@ -2,13 +2,14 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, compareAddresses, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -63,14 +64,14 @@ describe("search", () => {
       ),
     ).toEqual([
       { at: address.name, searched: whole("tool_use: X"), in: "line" },
-      { at: "0", searched: render("t", "verbatim"), in: "regions" },
-      { at: "1", searched: whole('{\n  "a": 1\n}'), in: "content" },
-      { at: "2/0/name", searched: whole("id"), in: "content" },
-      { at: "2/0/value", searched: whole("1"), in: "content" },
+      { at: address.part(0), searched: render("t", "verbatim"), in: "regions" },
+      { at: address.part(1), searched: whole('{\n  "a": 1\n}'), in: "content" },
+      { at: address.field(2, 0, "name"), searched: whole("id"), in: "content" },
+      { at: address.field(2, 0, "value"), searched: whole("1"), in: "content" },
       // A field that holds fields is its name alone, and the fields it holds are lines of their own after it.
-      { at: "2/1/name", searched: whole("thinking"), in: "content" },
-      { at: "2/2/name", searched: whole("type"), in: "content" },
-      { at: "2/2/value", searched: whole("adaptive"), in: "content" },
+      { at: address.field(2, 1, "name"), searched: whole("thinking"), in: "content" },
+      { at: address.field(2, 2, "name"), searched: whole("type"), in: "content" },
+      { at: address.field(2, 2, "value"), searched: whole("adaptive"), in: "content" },
     ]);
   });
 
@@ -122,7 +123,7 @@ describe("search", () => {
 
   it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
     const [, shown] = shownTexts(added({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] }));
-    expect(shown).toMatchObject({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
+    expect(shown).toMatchObject({ at: address.part(0), searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
     expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
   });
@@ -220,6 +221,38 @@ describe("search", () => {
     expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
     // One whose exchange is not among the rows at all: the first match going on, the last going back.
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
+  });
+
+  it("steps on from a current match whose text a later step took away, from where that text stood in its block", () => {
+    const text = (text: string) => ({ kind: "text", form: "verbatim", text }) as const;
+    const block = (part: Part): Block => ({ category: "tools", name: "tool_use: X", parts: [text("needle a"), part, text("needle c")] });
+    const keys = layOut().every.keys;
+    // The current match is the block's second, in part 1; then a later step rewrites part 1 from `before` to `after`.
+    const steps = (before: Part, after: Part) => {
+      const shown = createSearch()([added(block(before))], pattern);
+      const current = adjacent(shown, adjacent(shown, undefined, top, "next", pattern, keys)!.match, top, "next", pattern, keys)!.match;
+      const found = createSearch()([added(block(after))], pattern);
+      return { current, next: adjacent(found, current, top, "next", pattern, keys)!.match.at, previous: adjacent(found, current, top, "previous", pattern, keys)!.match.at };
+    };
+    // A field gone: its part, rewritten to text, comes before where it stood.
+    expect(steps({ kind: "fields", fields: [["id", "needle b"]] }, text("needle b"))).toEqual({
+      current: { key: "k", at: address.field(1, 0, "value"), start: 0 },
+      next: address.part(2),
+      previous: address.part(1),
+    });
+    // A part's text gone: its fields, rewritten from it, come after where it stood.
+    expect(steps(text("needle b"), { kind: "fields", fields: [["needle", "b"]] })).toEqual({
+      current: { key: "k", at: address.part(1), start: 0 },
+      next: address.field(1, 0, "name"),
+      previous: address.part(0),
+    });
+  });
+
+  it("orders a block's addresses as the block shows its texts: the name, then each part in order, a part's text before its fields", () => {
+    const order = [address.name, address.part(0), address.part(2), address.field(2, 0, "name"), address.field(2, 0, "value"), address.field(2, 1, "name"), address.part(10)];
+    expect(order.toReversed().toSorted(compareAddresses)).toEqual(order);
+    const shown = shownTexts(added({ category: "tools", name: "X", parts: Array.from({ length: 12 }, (_, index) => (index === 2 ? { kind: "fields", fields: [["a", "1"]] } : { kind: "json", value: index })) }));
+    expect(shown.map(({ at }) => at).toSorted(compareAddresses)).toEqual(shown.map(({ at }) => at));
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {
