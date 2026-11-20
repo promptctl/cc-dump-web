@@ -238,13 +238,15 @@ describe("what a step stands after", () => {
       ...request("t4", { ...main, messages: [hi, calls, user(launched("toolu_3", "a3"), launched("toolu_1", "a1"), launched("toolu_2", "a2")), assistant(text("Waiting.")), user(notice("a1", "toolu_1")), assistant(text("Again.")), user(notice("a1", "toolu_1"))] }),
     ]);
     expect(after.segments.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a2" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "c1" }, { kind: "agent", id: "a3" }, { kind: "main" }, { kind: "main" }]);
-    const call = (content: number) => ({ step: 1, key: `thread:t1/message.1/content.${content}`, launch: { prompt: "Find the longest word.", type: "Explore" } });
+    const call = (content: number) => ({ id: `toolu_${content + 1}`, launch: { prompt: "Find the longest word.", type: "Explore" } });
     expect(Object.fromEntries(after.agents)).toEqual({
       a2: { first: 2, parent: { kind: "main" }, named: { step: 4, call: call(1) }, stops: [] },
       a1: { first: 3, parent: { kind: "main" }, named: { step: 4, call: call(0) }, stops: [7, 8] },
       c1: { first: 5, parent: { kind: "agent", id: "a1" }, named: undefined, stops: [] },
       a3: { first: 6, parent: { kind: "main" }, named: undefined, stops: [] },
     });
+    // Each launching call is made once, by the step whose reply first says it: a request resending it makes none.
+    expect(Object.fromEntries(after.made)).toEqual({ toolu_1: [{ step: 1, key: "thread:t1/message.1/content.0" }], toolu_2: [{ step: 1, key: "thread:t1/message.1/content.1" }] });
     // Two agents launched with one prompt are two threads: neither's request resends the other's.
     expect(afters(after)).toEqual([undefined, undefined, undefined, follows(1), undefined, undefined, follows(4), follows(7)]);
   });
@@ -259,7 +261,7 @@ describe("what a step stands after", () => {
       ...request("t2", { ...main, messages: called }),
       ...request("t3", { ...main, messages: [...called, assistant(text("Waiting.")), user(notice("a1", "toolu_1"))] }),
     ]);
-    expect(after.agents.get("a1")).toEqual({ first: 2, parent: { kind: "main" }, named: { step: 4, call: { step: 1, key: "thread:t1/message.1/content.0", launch: { prompt: "high", type: "review" } } }, stops: [4] });
+    expect(after.agents.get("a1")).toEqual({ first: 2, parent: { kind: "main" }, named: { step: 4, call: { id: "toolu_1", launch: { prompt: "high", type: "review" } } }, stops: [4] });
   });
 
   it("hangs a request that sends a thread's first message with a system prompt of its own on nothing, a history of its own", () => {

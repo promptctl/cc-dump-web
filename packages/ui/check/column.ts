@@ -43,10 +43,10 @@ type WireAgent = { steps: number[]; parent: string | undefined; named: { step: n
 // A reply of a subagent's: its step, when its exchange ended, why it stopped, the ids of the calls it makes but its
 // handback, and its last block.
 type Reply = { step: number; ended: number | undefined; stopReason: string | undefined; calls: string[]; last: KeyedBlock | undefined };
-// `calledAt`: the step whose reply first makes each call, by its id.
+// `carriedBy`: the steps whose request or reply carries each call, by its id, in step order.
 type Wire = {
   agents: Map<string, WireAgent>;
-  calledAt: Map<string, number>;
+  carriedBy: Map<string, number[]>;
   senderIdOf: (step: number) => string | undefined;
   doing: (agent: string, step: number) => { runs: boolean; latest: KeyedBlock | undefined };
 };
@@ -59,7 +59,7 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
   // The step at which each call's result is first sent, by the call's id.
   const answered = new Map<string, number>();
   const launchers = new Set<string>();
-  const calledAt = new Map<string, number>();
+  const carriedBy = new Map<string, number[]>();
   const notices = new Set<string>();
   const ended = ({ exchange: { end } }: FormattedExchange) => (end === undefined ? undefined : Date.parse(end.timestamp));
   formatted.forEach((exchange, index) => {
@@ -72,10 +72,11 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
       agents.set(sender.id, agent);
     }
     const blocks = groups.flatMap((group) => group.blocks);
-    for (const { stated, place } of blocks) {
+    for (const { stated } of blocks) {
       if (stated?.kind !== "call") continue;
       if ("launch" in stated.tool) launchers.add(stated.id);
-      if (place?.in === "reply" && !calledAt.has(stated.id)) calledAt.set(stated.id, step);
+      const carried = carriedBy.get(stated.id) ?? [];
+      if (carried.at(-1) !== step) carriedBy.set(stated.id, [...carried, step]);
     }
     for (const block of blocks) {
       const { stated, place } = block;
@@ -109,7 +110,7 @@ function wireOf(formatted: readonly FormattedExchange[]): Wire {
   for (const [id, agent] of agents) if (agent.steps.length === 0) agents.delete(id);
   return {
     agents,
-    calledAt,
+    carriedBy,
     senderIdOf: (step) => {
       const { sender } = formatted[step - 1]!;
       return sender.kind === "subagent" ? sender.id : undefined;
@@ -149,17 +150,17 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
   const broken: string[] = [];
   for (let step = 1; step <= segments.length; step++) {
     const say = (what: string) => broken.push(`step ${step}: ${what}`);
-    // Where a subagent's level stands at the step, by the wire: under its naming call's step once a request has carried
-    // the result, or at its parent's level's end. How far in a step stands, and whether it is dimmed, follow.
-    const standsOn = (agent: string): { call: number } | { parent: string | undefined } => {
+    // Where a subagent's level stands at the step, by the wire: under its naming call once a request has carried the
+    // result, or at its parent's level's end. On the path, the call stands in the first step that carries it.
+    const standsOn = (agent: string): { call: string } | { parent: string | undefined } => {
       const { named, parent } = wire.agents.get(agent)!;
-      const call = named === undefined || named.step > step ? undefined : wire.calledAt.get(named.call);
-      return call === undefined ? { parent } : { call };
+      return named === undefined || named.step > step ? { parent } : { call: named.call };
     };
+    const carrierOf = (call: string): number | undefined => wire.carriedBy.get(call)!.find((own) => own <= step && path.has(own));
     const levelDepth = (agent: string | undefined): number => {
       if (agent === undefined) return 0;
       const on = standsOn(agent);
-      return 1 + ("call" in on ? depthOf(on.call) : levelDepth(on.parent));
+      return 1 + ("call" in on ? depthOf(carrierOf(on.call)!) : levelDepth(on.parent));
     };
     const depthOf = (own: number): number => levelDepth(senderIdOf(own));
     // The path to the step: a step that stands after nothing, and, of the siblings that have arrived after a thing on
@@ -171,11 +172,17 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const after = afterOf(own);
       if (after === undefined || (path.has(after.step) && siblings.get(places[own - 1]!)!.every((other) => other > step || latest[other]! <= latest[own]!))) path.add(own);
     }
-    // A subagent's steps are on the path where what it stands in is: its call's step, or its parent's level.
+    // A subagent's steps are on the path where what it stands in is: a step of a listed level that carries its call,
+    // or its parent's level. One that stands, through its calls, in itself is on it nowhere.
+    const visiting = new Set<string>();
     const levelListed = (agent: string | undefined): boolean => {
       if (agent === undefined) return true;
+      if (visiting.has(agent)) return false;
+      visiting.add(agent);
       const on = standsOn(agent);
-      return "call" in on ? path.has(on.call) && levelListed(senderIdOf(on.call)) : levelListed(on.parent);
+      const listed = "call" in on ? wire.carriedBy.get(on.call)!.some((own) => own <= step && path.has(own) && levelListed(senderIdOf(own))) : levelListed(on.parent);
+      visiting.delete(agent);
+      return listed;
     };
     for (const own of [...path]) if (!levelListed(senderIdOf(own))) path.delete(own);
     // What a thread on the path carries on from: the step whose summary it begins with, and each that one follows
@@ -188,7 +195,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const levelDimmed = (agent: string | undefined): boolean => {
       if (agent === undefined) return false;
       const on = standsOn(agent);
-      return "call" in on ? isDimmed(on.call) : levelDimmed(on.parent);
+      return "call" in on ? isDimmed(carrierOf(on.call)!) : levelDimmed(on.parent);
     };
     const isDimmed = (own: number): boolean => carried.has(own) || levelDimmed(senderIdOf(own));
 
@@ -197,6 +204,8 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     if (rows.length !== every.rows.length) say(`${every.rows.length - rows.length} rows are not listed with every category listed and every nest open`);
     if (indexOf.size !== rows.length) say("two rows have one key");
 
+    // The column lists the history the chosen step is on, so the chosen step is on the path.
+    if (!path.has(step)) say("the chosen step is not listed");
     // The column lists the path, one step after each thing, each step's line once.
     const listed = [...steps].sort((a, b) => a - b);
     if (!sameList(listed, [...path])) say(`the column lists steps ${listed.join(" ")} where the path is ${[...path].join(" ")}`);

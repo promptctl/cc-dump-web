@@ -4,7 +4,7 @@ import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../form
 import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
 import type { Launch } from "../format/blocks.ts";
-import { forksOf, levelKey, main, placeOf, sameFields, type After, type Agent, type Call, type History, type Item, type Level, type Segment, type Version } from "./history.ts";
+import { forksOf, levelKey, main, placeOf, sameFields, type After, type Agent, type Call, type History, type Item, type Level, type Made, type Segment, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -300,7 +300,8 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
 // latest step by the moment stands, which is the chosen step's own wherever its path passes; and a step is listed when
 // it is the one listed at its place and what it stands after is listed. A step that stands after nothing is always
 // listed. `steps`: those listed. `levels`: each level's, by its key, in the order they arrived. `stands`: where each
-// subagent whose first step has arrived stands (standsAt); `under`, those under each call, by the call's item's key,
+// subagent whose first step has arrived stands (standsAt); `under`, those under each call, by the key of the call's item
+// the column lists,
 // and `ending`, those at the end of each level, by its key. `inside`: the subagents whose nests the chosen step is in.
 // `forks`: the siblings at each place where the recording has two or more, arrived or not, as the strip marks every
 // step (view/strip.ts), so a line where histories part lists each it can switch to. `shown`: the sibling listed at each
@@ -321,8 +322,8 @@ type Column = {
   doing: Map<string, Doing>;
 };
 
-// [LAW:types-are-the-program] Where a subagent stands: `under` the Agent call whose result names it, by the call's
-// step and item, with what the call launched; or at the `ending` of its parent's level, not yet tied to a call.
+// [LAW:types-are-the-program] Where a subagent stands: `under` the call the wire names as its launcher, with what the
+// call launched; or at the `ending` of its parent's level, not yet tied to a call.
 export type Stand = { under: Call } | { ending: Level };
 // [LAW:no-ambient-temporal-coupling] Where a subagent stands at step `step`: under its call from the step whose request
 // first carries the result that names it, and at the end of its parent's level before, as the wire has said by then.
@@ -333,7 +334,7 @@ export const nestKey = (agent: string) => `nest:${agent}`;
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 
-function columnOf({ segments, agents }: History, step: number): Column {
+function columnOf({ segments, agents, made }: History, step: number): Column {
   const places = segments.map(({ after }) => (after === undefined ? undefined : placeOf(after, segments)));
   const add = <K, V>(lists: Map<K, V[]>, key: K, one: V) => lists.set(key, lists.get(key) ?? []).get(key)!.push(one);
   const arrived = segments.slice(0, step);
@@ -367,28 +368,31 @@ function columnOf({ segments, agents }: History, step: number): Column {
     for (let on: After | undefined = after; on !== undefined && !dimmed.has(on.step); on = arrived[on.step - 1]!.after) dimmed.add(on.step);
   });
   const stands = new Map<string, Stand>();
+  for (const [id, agent] of agents) if (agent.first <= step) stands.set(id, standsAt(agent, step));
+  // A subagent's steps are listed where what it stands in is: the item of its call a listed step of a listed level
+  // made, or its parent's level. One whose call only a sibling history made is that history's, not the one listed.
+  // [LAW:no-silent-failure] One that stands, through its calls, in itself is listed nowhere: it is marked unlisted
+  // before what it stands in is read.
+  const listed = new Map<string, Made | Level | undefined>();
+  const standing = (id: string): Made | Level | undefined => {
+    if (listed.has(id)) return listed.get(id);
+    listed.set(id, undefined);
+    const stand = stands.get(id)!;
+    const isListed = (level: Level) => level.kind === "main" || standing(level.id) !== undefined;
+    const found = "under" in stand ? (made.get(stand.under.id) ?? []).find((one) => steps.has(one.step) && isListed(segments[one.step - 1]!.level)) : isListed(stand.ending) ? stand.ending : undefined;
+    listed.set(id, found);
+    return found;
+  };
   const under = new Map<string, string[]>();
   const ending = new Map<string, string[]>();
-  for (const [id, agent] of agents) {
-    if (agent.first > step) continue;
-    const stand = standsAt(agent, step);
-    stands.set(id, stand);
-    if ("under" in stand) add(under, stand.under.key, id);
-    else add(ending, levelKey(stand.ending), id);
-  }
-  // A subagent's steps are listed where what it stands in is: its call's step, or its parent's level. One whose call
-  // a sibling history made is that history's, not the one listed.
-  const listed = new Map<string, boolean>();
-  const isListed = (level: Level): boolean => {
-    if (level.kind === "main") return true;
-    const stand = stands.get(level.id)!;
-    const known = listed.get(level.id) ?? ("under" in stand ? steps.has(stand.under.step) && isListed(segments[stand.under.step - 1]!.level) : isListed(stand.ending));
-    listed.set(level.id, known);
-    return known;
-  };
   for (const id of stands.keys()) {
+    const found = standing(id);
+    if (found !== undefined) {
+      if ("key" in found) add(under, found.key, id);
+      else add(ending, levelKey(found), id);
+      continue;
+    }
     const level = levelKey({ kind: "agent", id });
-    if (isListed({ kind: "agent", id })) continue;
     for (const own of levels.get(level) ?? []) steps.delete(own);
     levels.delete(level);
   }
@@ -396,8 +400,8 @@ function columnOf({ segments, agents }: History, step: number): Column {
   const inside = new Set<string>();
   for (let level: Level = arrived[step - 1]?.level ?? main; level.kind === "agent"; ) {
     inside.add(level.id);
-    const stand = stands.get(level.id)!;
-    level = "under" in stand ? segments[stand.under.step - 1]!.level : stand.ending;
+    const found = standing(level.id)!;
+    level = "key" in found ? segments[found.step - 1]!.level : found;
   }
   return { steps, levels, stands, under, ending, inside, forks: forksOf(segments), shown, hung, dimmed, doing: doingOf(arrived, agents) };
 }

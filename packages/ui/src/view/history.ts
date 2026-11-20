@@ -56,8 +56,11 @@ const levelOf = (sender: Sender): Level => (sender.kind === "subagent" ? { kind:
 // of the moment shown, which the column reads off them (view/rows.ts).
 export type Agent = { first: number; parent: Level; named: Naming | undefined; stops: readonly number[] };
 export type Naming = { step: number; call: Call };
-// A call that launches a subagent: the step that first sent it, its item's key, and what it launches.
-export type Call = { step: number; key: string; launch: Launch };
+// A call that launches a subagent: its id, by which the wire names it, and what it launches.
+export type Call = { id: string; launch: Launch };
+// Where a call is made: a step whose new item states it, and the item's key. A history that parts from another
+// before the call and resends it makes it again, as an item of its own.
+export type Made = { step: number; key: string };
 
 // The place a step stands after, by name: the trace_id of the step it follows, or the key of the block it hangs on.
 export const placeOf = (after: After, segments: readonly Segment[]): string => (after.on === "step" ? segments[after.step - 1]!.formatted.exchange.trace_id : after.key);
@@ -78,7 +81,7 @@ export function agentsOf(segments: readonly Segment[]): Map<string, Agent> {
       const parent: Level = sender.parent !== undefined && firsts.has(sender.parent) ? { kind: "agent", id: sender.parent } : main;
       firsts.set(sender.id, { step, parent });
     }
-    for (const { key, versions } of groups.flatMap(({ items }) => items)) {
+    for (const { versions } of groups.flatMap(({ items }) => items)) {
       const { stated } = versions[0]!.block!;
       const name = (agent: string, id: string) => {
         const call = calls.get(id);
@@ -86,7 +89,7 @@ export function agentsOf(segments: readonly Segment[]): Map<string, Agent> {
         if (named) namings.set(agent, { step, call });
         return named;
       };
-      if (stated?.kind === "call" && "launch" in stated.tool && !calls.has(stated.id)) calls.set(stated.id, { step, key, launch: stated.tool.launch });
+      if (stated?.kind === "call" && "launch" in stated.tool && !calls.has(stated.id)) calls.set(stated.id, { id: stated.id, launch: stated.tool.launch });
       if (stated?.kind === "notified")
         for (const { agent, call } of stated.stops) {
           name(agent, call);
@@ -96,6 +99,19 @@ export function agentsOf(segments: readonly Segment[]): Map<string, Agent> {
     }
   });
   return new Map([...firsts].map(([id, { step, parent }]) => [id, { first: step, parent, named: namings.get(id), stops: stops.get(id) ?? [] }]));
+}
+
+// [LAW:one-source-of-truth] Where each call that launches a subagent is made, in step order: the column lists a
+// subagent under the one its path lists (view/rows.ts).
+export function madeOf(segments: readonly Segment[]): Map<string, Made[]> {
+  const made = new Map<string, Made[]>();
+  segments.forEach(({ groups }, index) => {
+    for (const { key, versions } of groups.flatMap(({ items }) => items)) {
+      const { stated } = versions[0]!.block!;
+      if (stated?.kind === "call" && "launch" in stated.tool) made.set(stated.id, [...(made.get(stated.id) ?? []), { step: index + 1, key }]);
+    }
+  });
+  return made;
 }
 
 // [LAW:one-source-of-truth] The recording's forks: each place two or more of its steps stand after, with those steps,
@@ -111,9 +127,9 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
   return new Map([...siblings].filter(([, steps]) => steps.length > 1));
 }
 
-// The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, and the
-// subagents (agentsOf).
-export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; agents: ReadonlyMap<string, Agent> };
+// The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, the
+// subagents (agentsOf) and where the calls that launch them are made (madeOf).
+export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; agents: ReadonlyMap<string, Agent>; made: ReadonlyMap<string, readonly Made[]> };
 
 // A thread: the level its requests are on, the first message every request of it sends, what that message says, and the
 // tree of the paths its requests have sent. [LAW:one-source-of-truth] A thread is one level's: who sent a request is
@@ -150,7 +166,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   const folded: Folded[] = [];
   // What a thread can carry on, in the order it arrived: each summary a reply's text ends with, by its level.
   const summaries: { level: string; step: number; key: string; summary: string }[] = [];
-  let last: History = { segments: [], stepOf: () => undefined, agents: new Map() };
+  let last: History = { segments: [], stepOf: () => undefined, agents: new Map(), made: new Map() };
 
   const itemAt = ({ step, group, index }: Location) => folded[step - 1]!.segment.groups[group]!.items[index]!;
   const replace = ({ step, group, index }: Location, item: Item) => {
@@ -290,7 +306,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares
     // only what it folds again.
     folded.forEach((step, index) => (step.segment = segments[index]!));
-    last = { segments, stepOf: (trace) => steps.get(trace), agents: agentsOf(segments) };
+    last = { segments, stepOf: (trace) => steps.get(trace), agents: agentsOf(segments), made: madeOf(segments) };
     return last;
   };
 }

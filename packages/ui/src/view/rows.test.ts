@@ -587,6 +587,22 @@ describe("the column", () => {
     expect(at(5).steps).toEqual(new Set([1, 5]));
   });
 
+  it("stands a subagent under the item of its call that the listed history makes, where a history that parted before the call resends it", () => {
+    const made = assistant(call("toolu_1", "Find the longest word."));
+    const resent = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("Hello.")]),
+      ...request("t2", { ...main, messages: [hi, assistant(text("Hello.")), user(text("Look."))] }),
+      ...reply("t2", made.content, "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }, by("a1")),
+      // The harness rewrote the question it resends, so this history parts from step 2's after step 1, the call its own item.
+      ...request("t3", { ...main, messages: [hi, assistant(text("Hello.")), user(text("Look, please.")), made, user(launched("toolu_1", "a1"))] }),
+    ];
+    const keys = keysOf(layouts(resent, { ...dialogue, tools: "compact" })(4));
+    expect(keys).not.toContain("t2");
+    expect(keys.slice(keys.indexOf("thread:t3/message.3/content.0"))).toEqual(["thread:t3/message.3/content.0", outer, "t3/message.4", "thread:t3/message.4/content.0"]);
+  });
+
   it("says on a nest's line what it launched, how many steps it holds, and whether it runs and what it last did", () => {
     const at = layouts(nested);
     expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([
