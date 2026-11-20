@@ -489,7 +489,7 @@ function NestLine({ row }: { row: NestRow }) {
 // gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
 // exchange its end.
-function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+function ExchangeLine({ exchange: { exchange, sender, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
@@ -498,9 +498,14 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
       </time>
-      {/* A request whose head was not recorded has no model to name; the line says why. */}
+      {/* A request whose head was not recorded has no model to name, and one whose head names its sender as no request
+          of Claude Code's does is no agent's: the line says why. */}
       {exchange.request.head === undefined ? (
         <span className="text-foreground-muted">request not recorded</span>
+      ) : sender.kind === "unknown" ? (
+        <span className="text-foreground-muted" title={sender.why}>
+          sender unknown
+        </span>
       ) : (
         <span className="font-mono" title={facts.model}>
           {facts.model === undefined ? null : modelName(facts.model)}

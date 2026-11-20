@@ -1,14 +1,19 @@
 // What the harness puts into the text of a message, and the text around it: the pieces a text splits into, so each is a
 // block of its own, named for what it is (docs/design/01-features.md, F3). The harness is Claude Code; its own content is a
-// system reminder, hook output, the contents of a CLAUDE.md file, or, in a system-role message, a section it titles.
+// system reminder, a task notification, hook output, the contents of a CLAUDE.md file, or, in a system-role message, a
+// section it titles.
+
+import { noticesIn, type Notice } from "./wire.ts";
 
 // [LAW:types-are-the-program] A piece is what said it, and what that says about it: a hook has its name, a CLAUDE.md
-// its path and a section its title, which nothing else has. `said`: the text of whoever sent the message, which is all of
-// a text nothing was injected into. `content`: what its text holds, without what marks it as what it is (the tag it is
-// wrapped in, the line naming its hook or file, its title's heading), which its name already says.
+// its path, a section its title and a notification what it tells (format/wire.ts), which nothing else has. `said`: the
+// text of whoever sent the message, which is all of a text nothing was injected into. `content`: what its text holds,
+// without what marks it as what it is (the tag it is wrapped in, the line naming its hook or file, its title's heading),
+// which its name already says.
 export type Piece = { text: string; content: string } & (
   | { kind: "said" }
   | { kind: "reminder" }
+  | { kind: "notification"; told: [Notice, ...Notice[]] }
   | { kind: "hook"; name: string }
   | { kind: "claude_md"; path: string }
   | { kind: "section"; title: string }
@@ -96,7 +101,15 @@ export function split(text: string, own: OwnText): Piece[] {
     end = match.index + match[0].length;
   }
   pieces.push(...within(text.slice(end), rest, topLevel));
-  return pieces.length === 0 ? [rest(text, 0)] : pieces;
+  return (pieces.length === 0 ? [rest(text, 0)] : pieces).map(noticed);
+}
+
+// A reminder that holds task notifications is the notification it tells: the harness puts each in a reminder of its
+// own, or in a system-role message's text. Only the harness's pieces are read, so what a person typed tells nothing.
+function noticed(piece: Piece): Piece {
+  if (piece.kind !== "reminder") return piece;
+  const [first, ...more] = noticesIn(piece.content);
+  return first === undefined ? piece : { kind: "notification", told: [first, ...more], text: piece.text, content: piece.content };
 }
 
 // The pieces of one tag and the whitespace around it: the pieces of what it wraps, which is never empty, since a tag's

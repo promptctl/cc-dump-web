@@ -2,6 +2,7 @@ import { split, type Piece } from "./injected.ts";
 import { doesNotFit, fieldsParts, fieldValue, type Field, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
+import { namedIn, type Notice } from "./wire.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -18,16 +19,20 @@ export type Category = (typeof categories)[number];
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
-// `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
-// reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
-// it (view/history.ts), which reads them here and never back out of a block's parts. `handback`: a subagent's call of
-// the tool that hands its report back to its caller, after which it does nothing more until it is told more.
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; summary?: string; handback?: true };
+// `stated`: what the block says that places a request in the conversation, where it says any (Stated).
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true; stated?: Stated };
 
-// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
-// agent `type` it names, where it names one.
-export type Launch = { prompt: string; type: string | undefined };
+// [LAW:types-are-the-program] What a block states that the history reads (view/history.ts), here and never back out of
+// a block's parts: a tool's call by its id, which a result answers and a subagent's tie names; a tool's result, the
+// call it answers and the agent it names (format/wire.ts); the stops a task notification tells; or the summary an
+// assistant's text ends with, as the reply to a compaction does, which the thread that carries it on begins with.
+export type Stated = { kind: "call"; id: string; tool: CalledTool } | { kind: "result"; answers: string; names: string | undefined } | { kind: "notification"; told: Notice[] } | { kind: "summary"; summary: string };
+
+// The tool a call is of, by what it does to the agents (seen on Claude Code's traffic, 2026-11-17): the Agent tool
+// launches a subagent, sending its input's `prompt` to the agent `type` its `subagent_type` names, where it names one;
+// a Skill call's skill may fork, running in a subagent; a subagent hands its report back with SubagentHandback, the last
+// call of a reply where its turn never ends, which waits for nothing; any other tool's call waits for its result.
+export type CalledTool = { kind: "agent"; prompt: string; type: string | undefined } | { kind: "skill"; skill: string } | { kind: "handback" } | { kind: "other" };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -73,13 +78,13 @@ export function restBlock(fields: Fields, category: Category, name: string): Blo
 // Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text block's text
 // reads where the block is: Markdown in a message, verbatim in what a tool or a document returned. `failed`: whether a
 // tool's result says its tool failed, read off the block as sent, so one its entry cannot read says so too. `stated`:
-// what the block states that a thread stands after (Stated), read off the block as sent too.
+// what the block states (Stated), read off the block as sent too, where it says it.
 type Entry = {
   category: (role: Role, block: unknown) => Category;
   name?: (fields: Fields, role: Role) => string;
   parts: (fields: Fields, role: Role, form: Form) => Part[];
   failed?: (block: unknown) => boolean;
-  stated?: (block: unknown, role: Role) => Stated;
+  stated?: (block: unknown, role: Role) => Stated | undefined;
 };
 
 // A field of what was sent, if it is an object that has it.
@@ -108,17 +113,28 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
     return [...parts, { kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
-// What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
-// a subagent: it sends its input's `prompt` as the subagent's first message, to the agent its `subagent_type` names.
-// An input still streaming is text, and launches none yet. A subagent hands its report back with SubagentHandback, the
-// last block of a reply that stops for a tool's use, where its turn never ends.
-const called = (block: unknown): Stated => {
-  const name = sentField(block, "name");
-  const input = sentField(block, "input");
+// What a client tool's call states: its id and its tool (CalledTool). An input still streaming is text, and launches
+// nothing yet. A call with no id states nothing: its entry cannot read it, so it is shown as sent, with why.
+const called = (block: unknown): Stated | undefined => {
+  const id = sentField(block, "id");
+  return typeof id === "string" ? { kind: "call", id, tool: toolOf(sentField(block, "name"), sentField(block, "input")) } : undefined;
+};
+function toolOf(name: unknown, input: unknown): CalledTool {
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
-  if (name === "Agent" && typeof prompt === "string") return { launch: { prompt, type: typeof type === "string" ? type : undefined } };
-  return name === "SubagentHandback" ? { handback: true } : {};
+  const skill = sentField(input, "skill");
+  if (name === "Agent" && typeof prompt === "string") return { kind: "agent", prompt, type: typeof type === "string" ? type : undefined };
+  if (name === "Skill" && typeof skill === "string") return { kind: "skill", skill };
+  return name === "SubagentHandback" ? { kind: "handback" } : { kind: "other" };
+}
+
+// What a tool's result states: the call it answers, and the agent it names, from the texts it holds. One with no
+// call's id states nothing: its entry cannot read it, so it is shown as sent, with why.
+const answered = (block: unknown): Stated | undefined => {
+  const answers = sentField(block, "tool_use_id");
+  const content = sentField(block, "content");
+  const texts = typeof content === "string" ? [content] : Array.isArray(content) ? content.flatMap((one) => (isText(one) ? [one.text] : [])) : [];
+  return typeof answers === "string" ? { kind: "result", answers, names: namedIn(texts) } : undefined;
 };
 
 // The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the
@@ -126,10 +142,10 @@ const called = (block: unknown): Stated => {
 // space around it, which the harness drops as it sends the summary on. A Markdown `<details>` holds its
 // `<summary>` inside a line and ends after it, so it is none; nor is a summary of nothing.
 const summaryEnding = /(?<![^\n])<summary>([\s\S]*)<\/summary>\s*$/;
-const summarized = (block: unknown, role: Role): Stated => {
+const summarized = (block: unknown, role: Role): Stated | undefined => {
   const text = sentField(block, "text");
   const summary = role === "assistant" && typeof text === "string" ? summaryEnding.exec(text)?.[1]!.trim() : undefined;
-  return summary === undefined || summary === "" ? {} : { summary };
+  return summary === undefined || summary === "" ? undefined : { kind: "summary", summary };
 };
 
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
@@ -137,6 +153,7 @@ const summarized = (block: unknown, role: Role): Stated => {
 // which follows the id where it was sent.
 const toolResult: Entry = {
   category: tools,
+  stated: answered,
   failed: (block) => sentField(block, "is_error") === true,
   parts: (fields, role) => {
     const content = fields.value("content");
@@ -219,7 +236,8 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
     },
     (reason) => raw(entry.category(role, block), type, reason, { kind: "json", value: block }),
   );
-  const stating = { ...shown, ...entry.stated?.(block, role) };
+  const stated = entry.stated?.(block, role);
+  const stating = stated === undefined ? shown : { ...shown, stated };
   // A tool's result that says its tool failed is named for it.
   return entry.failed?.(block) ? { ...stating, name: `${stating.name}: error`, failed: true } : stating;
 }
@@ -227,12 +245,11 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
 // shown as what was said (docs/design/01-features.md, F3). A text block's other fields follow its last piece, which states
-// what the text ends with.
+// what the text ends with; a notification's piece states what it tells.
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
   const [, ...fields] = formatted.parts;
-  const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
     const form = pieceForm[piece.kind];
@@ -240,7 +257,8 @@ export function formatContent(block: unknown, role: Role): Block[] {
     const rest = last ? fields : [];
     const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
+    const stated: Stated | undefined = piece.kind === "notification" ? { kind: "notification", told: piece.told } : last ? formatted.stated : undefined;
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(stated === undefined ? {} : { stated }) };
   });
 }
 
@@ -250,7 +268,7 @@ function isText(block: unknown): block is { type: "text"; text: string } {
 
 // How a piece's text reads (docs/design/02-design.md, "Two voices"): a hook's output is what a program printed,
 // verbatim; every other piece is prose a sender or the harness wrote, Markdown.
-const pieceForm: Record<Piece["kind"], Form> = { said: "markdown", reminder: "markdown", hook: "verbatim", claude_md: "markdown", section: "markdown" };
+const pieceForm: Record<Piece["kind"], Form> = { said: "markdown", reminder: "markdown", notification: "markdown", hook: "verbatim", claude_md: "markdown", section: "markdown" };
 
 // A piece as a block: what was said is named as its text block is, and what was injected for what it is.
 function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[]): Block {
@@ -259,6 +277,8 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
       return { category, name: said, parts };
     case "reminder":
       return { category, name: "system reminder", parts, injected: true };
+    case "notification":
+      return { category, name: "task notification", parts, injected: true };
     case "hook":
       return { category, name: `${piece.name} hook`, parts, injected: true };
     case "claude_md":

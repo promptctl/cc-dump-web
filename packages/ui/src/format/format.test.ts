@@ -621,35 +621,65 @@ describe("format", () => {
         name: "tool_result: error",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
         failed: true,
+        stated: { kind: "result", answers: "toolu_1", names: undefined },
       },
     ]);
   });
 
-  it("states the subagent an Agent tool's call launches, in a message and in the reply, and none while its input streams", () => {
-    const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
-    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
-    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
-      { prompt: "Find the bug.\n", type: "Explore" },
-      { prompt: "Go.", type: undefined },
+  it("states each tool's call by its id and its tool, in a message and in the reply, and what an Agent call launches only once its input is whole", () => {
+    const call = (name: string, input: unknown) => ({ type: "tool_use", id: `toolu_${name}`, name, input });
+    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ stated }) => stated);
+    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Skill", { skill: "review" }), call("SubagentHandback", { message: "Done." }), call("WebFetch", { prompt: "Find." })])).toEqual([
+      { kind: "call", id: "toolu_Agent", tool: { kind: "agent", prompt: "Find the bug.\n", type: "Explore" } },
+      { kind: "call", id: "toolu_Skill", tool: { kind: "skill", skill: "review" } },
+      { kind: "call", id: "toolu_SubagentHandback", tool: { kind: "handback" } },
+      { kind: "call", id: "toolu_WebFetch", tool: { kind: "other" } },
     ]);
-    // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
-    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
+    // An Agent call that sends no prompt launches nothing; a call with no id states nothing.
+    expect(sent([call("Agent", { prompt: 5 }), { type: "tool_use", name: "Agent", input: { prompt: "Go." } }])).toEqual([{ kind: "call", id: "toolu_Agent", tool: { kind: "other" } }, undefined]);
     const start = { type: "content_block_start", index: 0, content_block: call("Agent", {}) };
     const delta = (partial_json: string) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } });
     const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
-    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
-    expect(reply(4)).toEqual([undefined]);
-    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
+    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ stated }) => stated);
+    expect(reply(4)).toEqual([{ kind: "call", id: "toolu_Agent", tool: { kind: "other" } }]);
+    expect(reply(5)).toEqual([{ kind: "call", id: "toolu_Agent", tool: { kind: "agent", prompt: "Go.", type: undefined } }]);
   });
 
-  it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
-    const call = (name: string) => ({ type: "tool_use", id: "toolu_1", name, input: { message: "Done." } });
-    const content = [call("SubagentHandback"), call("SendMessage")];
-    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
+  it("states the call a tool's result answers and the agent its launch frame names, background or foreground, and none for any other text", () => {
+    const result = (content: unknown) => ({ type: "tool_result", tool_use_id: "toolu_1", content });
+    const stated = (content: unknown) => group(one(request("a", { model: "m", messages: [{ role: "user", content: [result(content)] }] })), "message.0")[0]!.stated;
+    const launched = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a1b2 (internal ID - do not mention to user.)\nThe agent is working in the background.";
+    expect(stated(launched)).toEqual({ kind: "result", answers: "toolu_1", names: "a1b2" });
+    expect(stated([{ type: "text", text: launched }])).toEqual({ kind: "result", answers: "toolu_1", names: "a1b2" });
+    const returned = [
+      { type: "text", text: "The report." },
+      { type: "text", text: "agentId: c3d4 (use SendMessage with to: 'c3d4' to continue this agent)\n<usage>total_tokens: 5</usage>" },
+    ];
+    expect(stated(returned)).toEqual({ kind: "result", answers: "toolu_1", names: "c3d4" });
+    // A frame quoted inside other text, or a trailer with text after its usage, names nothing.
+    expect(stated(`The log says:\n${launched}`)).toEqual({ kind: "result", answers: "toolu_1", names: undefined });
+    expect(stated([returned[1], { type: "text", text: "more" }])).toEqual({ kind: "result", answers: "toolu_1", names: undefined });
+  });
+
+  it("states the stops a task notification in the harness's text tells, with the call where it names one, and none in what a person typed", () => {
+    const notice = (id: string, call?: string) =>
+      `<task-notification>\n<task-id>${id}</task-id>\n${call === undefined ? "" : `<tool-use-id>${call}</tool-use-id>\n`}<status>completed</status>\n<result>Quoted:\n<task-id>x9</task-id></result>\n</task-notification>`;
+    const blocks = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), role === "system" ? "message.0.system.0" : "message.0");
+    const told = (role: string, text: string) => blocks(role, text).map(({ name, stated }) => [name, stated]);
+    expect(told("user", `<system-reminder>\n[SYSTEM NOTIFICATION]\n${notice("a1", "toolu_1")}\n</system-reminder>\nGo on.`)).toEqual([
+      ["task notification", { kind: "notification", told: [{ agent: "a1", call: "toolu_1" }] }],
+      ["text", undefined],
+    ]);
+    expect(told("user", `<system-reminder>\n${notice("a1")}\n${notice("a2", "toolu_2")}\n</system-reminder>`)).toEqual([
+      ["task notification", { kind: "notification", told: [{ agent: "a1", call: undefined }, { agent: "a2", call: "toolu_2" }] }],
+    ]);
+    expect(told("system", `Only you see that.\n${notice("a1")}`)).toEqual([["task notification", { kind: "notification", told: [{ agent: "a1", call: undefined }] }]]);
+    expect(told("user", notice("a1"))).toEqual([["text", undefined]]);
   });
 
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
-    const said = (role: string, text: string) => group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ summary }) => summary);
+    const said = (role: string, text: string) =>
+      group(one(request("a", { model: "m", messages: [{ role, content: [{ type: "text", text }] }] })), "message.0").map(({ stated }) => (stated?.kind === "summary" ? stated.summary : undefined));
     expect(said("assistant", "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Did it.\n</summary>\n")).toEqual(["1. Did it."]);
     // The summary runs to the tag that ends the text, whatever it quotes.
     expect(said("assistant", "<summary>The reply held <summary>x</summary> once.</summary>")).toEqual(["The reply held <summary>x</summary> once."]);

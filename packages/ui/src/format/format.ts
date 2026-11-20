@@ -6,6 +6,7 @@ import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, 
 import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
+import { senderOf, type Sender } from "./wire.ts";
 
 // A run of an exchange's blocks (docs/design/01-features.md, "Vocabulary"). `title`: the heading over it, which says who
 // speaks, in the same word whether the content arrived as a reply or is resent as a message, or what the model is given
@@ -37,7 +38,8 @@ export type Place =
 // One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
 // the system prompt and each message, then the reply; the facts its line prints; and how many messages of a speaker's
 // the request sends, which is the reply's index among them.
-export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
+// `sender`: who sent its request (format/wire.ts).
+export type FormattedExchange = { exchange: Exchange; sender: Sender; facts: Facts; groups: Group[]; messages: number };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
@@ -97,6 +99,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       const ended = ending(end);
       const shown: FormattedExchange = {
         exchange,
+        sender: senderOf(exchange.request.head?.headers),
         facts: {
           ordinal,
           began: opened.timestamp,
