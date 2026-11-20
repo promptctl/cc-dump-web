@@ -22,8 +22,8 @@ export function linkOpening(uri: string): LinkOpening {
 // asking first, and whatever the frame shows instead, an error page for a scheme nothing handles, is never the app's.
 export const LINK_FRAME = "terminal-links";
 
-// [LAW:single-enforcer] Every link the terminal shows opens here on a click: those the program wrote as links (OSC 8),
-// of every scheme, and the URLs it printed as text.
+// [LAW:single-enforcer] Every link the terminal shows is opened here on a click, or refused, by linkOpening: those the
+// program wrote as links (OSC 8) and the web addresses it printed as text.
 export function openLink(uri: string) {
   switch (linkOpening(uri)) {
     case "tab":

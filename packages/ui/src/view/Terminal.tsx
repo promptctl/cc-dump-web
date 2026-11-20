@@ -32,7 +32,7 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
   const [state, setState] = useState<WindowTerminalState>({ phase: "connecting" });
   const [error, setError] = useState<WindowTerminalError | undefined>(undefined);
   // [LAW:one-source-of-truth] The terminal's face is the stylesheet's (index.css), read where xterm.js needs a name: the
-  // mono, then the icons a statusline draws. A link opens on a click, or is refused, by its scheme (terminalLink.ts);
+  // mono, then the icons a statusline draws. What a click on a link does is terminalLink.ts's;
   // Unicode 11's widths are the proposed API's.
   const xterm = useMemo(
     () => ({
@@ -72,8 +72,8 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
 
 // What each pane draws with, in xterm.js's DOM renderer, the one whose cell the library lays panes out in (a renderer
 // addon draws a narrower one): Unicode 11's widths, as tmux counts them, so an emoji is two cells and what follows it is
-// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the URLs a program prints as text, as links,
-// opened as those it writes as links are. A face that arrives after a pane drew, the icons' among them, the library has
+// where tmux put it (xterm.js's own table, Unicode 6's, counts one); and the web addresses a program prints as text,
+// as links, opened as those it writes as links are. A face that arrives after a pane drew, the icons' among them, the library has
 // xterm.js measure again (sizing/cell-metrics.js).
 const addons: XtermAddons = () => [
   {

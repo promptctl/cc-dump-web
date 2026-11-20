@@ -42,8 +42,8 @@ function createInfo(info: ProxyInfo): Handler {
   };
 }
 
-// `POST /recordings` on the reader port: makes the recording of an agent about to launch, and answers it as the list
-// does. One it cannot make is the request's failure, which the app server's launch is refused by.
+// `POST /recordings` on the reader port: makes a new agent's recording, for a launch or a copied line (F8), and answers
+// it as the list does. One it cannot make is the request's failure, which the app server's launch is refused by.
 function createRecording(recordings: Recordings): Handler {
   return (_req, res, { fail }) => {
     try {

@@ -96,12 +96,12 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
-- The agent's tmux window is shown in the page, beside the conversation, live and fully interactive: every pane as tmux lays it out, what the agent prints appearing as it prints it, and typing going to the pane clicked into, as in the user's own terminal.
-- A launch (F1) shows the window it opened.
-- After a reload the window is shown again as it is now.
+- The current window of the agent's tmux session is shown in the page, beside the conversation, live and fully interactive: every pane as tmux lays it out, what the agent prints appearing as it prints it, and typing going to the pane clicked into, as in the user's own terminal attached to that session.
+- A launch (F1) opens its window as the session's current one, so it is the window shown.
+- After a reload the session's current window is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it writes as one opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. A web address it prints as text is a link to that page. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it writes as one opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. A web address it prints as text, one that begins `http://` or `https://`, is a link to that page. The pointer over a link shows where it goes.
 
 ## Architecture
 

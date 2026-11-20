@@ -87,7 +87,7 @@
 
 /* Moving in time (view/motion.ts): the conversation the moment leaves slides away by half its width while the next
    moment fades in, the way the steps run in the strip above it: forward, to the left, as the strip's marks pass; back,
-   to the right. A switch that keeps what is above a fork's line is the exception below. Under reduced motion nothing
+   to the right. A switch that keeps a fork's line in place is the exception below. Under reduced motion nothing
    moves. */
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-group(conversation) {
@@ -100,7 +100,7 @@
     animation: 200ms ease-in both slide-out-right;
   }
   /* A move that keeps the top of the conversation's box as it is (view/motion.ts, `kept`), as a switch of histories
-     keeps what is above the fork's line: only what is under it slides away, over the next moment, which is there at
+     keeps the fork's line and what is above it: only what is under it slides away, over the next moment, which is there at
      once, so what is kept neither moves nor fades. How much is kept is the move's to say, on the root. */
   :root {
     --motion-kept: 0px;
