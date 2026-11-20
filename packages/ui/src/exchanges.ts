@@ -25,43 +25,48 @@ export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefi
 // The exchanges of `events`, in the order they began.
 export function exchanges(events: RecordedEvent[]): Exchange[] {
   const byTrace = new Map<string, Exchange>();
-  for (const event of events) {
-    const exchange = byTrace.get(event.trace_id) ?? {
-      trace_id: event.trace_id,
-      request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
-      response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
-      end: undefined,
-      first: event,
-      latest: event,
-    };
-    exchange.latest = event;
-    byTrace.set(event.trace_id, exchange);
-    switch (event.type) {
-      case "request":
-        exchange.request.head = event;
-        break;
-      case "request_body":
-        exchange.request.body.push(event);
-        break;
-      case "request_trailers":
-        exchange.request.trailers = event;
-        exchange.request.completedBy = event;
-        break;
-      case "response":
-        exchange.response.head = event;
-        break;
-      case "response_body":
-        exchange.response.body.push(event);
-        break;
-      case "response_trailers":
-        exchange.response.trailers = event;
-        exchange.response.completedBy = event;
-        break;
-      case "end":
-        exchange.end = event;
-        for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
-        break;
-    }
-  }
+  for (const event of events) record(byTrace, event);
   return [...byTrace.values()];
+}
+
+// Records `event` into its exchange in `byTrace`, whose exchanges stand in the order they began, and returns that
+// exchange, so a reader of a recording too large to hold builds its exchanges an event at a time.
+export function record(byTrace: Map<string, Exchange>, event: RecordedEvent): Exchange {
+  const exchange = byTrace.get(event.trace_id) ?? {
+    trace_id: event.trace_id,
+    request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
+    response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
+    end: undefined,
+    first: event,
+    latest: event,
+  };
+  exchange.latest = event;
+  byTrace.set(event.trace_id, exchange);
+  switch (event.type) {
+    case "request":
+      exchange.request.head = event;
+      break;
+    case "request_body":
+      exchange.request.body.push(event);
+      break;
+    case "request_trailers":
+      exchange.request.trailers = event;
+      exchange.request.completedBy = event;
+      break;
+    case "response":
+      exchange.response.head = event;
+      break;
+    case "response_body":
+      exchange.response.body.push(event);
+      break;
+    case "response_trailers":
+      exchange.response.trailers = event;
+      exchange.response.completedBy = event;
+      break;
+    case "end":
+      exchange.end = event;
+      for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
+      break;
+  }
+  return exchange;
 }
