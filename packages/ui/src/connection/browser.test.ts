@@ -33,7 +33,7 @@ async function proxyAndConnection() {
   const logged = async (matches: (event: Event) => boolean) => {
     for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
   };
-  // The recording the proxy makes for an agent about to launch, which is the one it follows.
+  // A new agent's recording, as the proxy makes one, which is the one it follows.
   const newRecording = async () => parseListing((await buffer(await send(proxy.readerPort, { method: "POST", path: "/recordings" }))).toString()).name;
   return { dir, proxy, logged, newRecording, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
 }

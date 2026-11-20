@@ -25,7 +25,8 @@ export type Connection = {
   // reported as failed, and ends. A connection lost, or not made, is reported as dropped while it is tried again, and as
   // opened once it is made. A signal already aborted throws its reason.
   logs: (part: Part, watcher: LogWatcher, signal: AbortSignal) => void;
-  // Makes a new recording for an agent started by hand, which the proxy follows from its first event (F8).
+  // Makes a new recording for an agent started by hand, each call a new one, which the proxy follows from its first
+  // event (F8).
   agentRecording: () => Promise<Listing>;
   // The launch settings and the sessions on the user's tmux server, read now (docs/design/01-features.md, F1). A refusal
   // fails it in the app server's words, tmux's own when tmux refused, as when it has no server or no sessions.

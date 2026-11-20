@@ -23,7 +23,7 @@ export function linkOpening(uri: string): LinkOpening {
 export const LINK_FRAME = "terminal-links";
 
 // [LAW:single-enforcer] Every link the terminal shows is opened here on a click, or refused, by linkOpening: those the
-// program wrote as links (OSC 8) and the web addresses it printed as text.
+// program wrote as links (OSC 8) and the web pages' URLs it printed as text.
 export function openLink(uri: string) {
   switch (linkOpening(uri)) {
     case "tab":
