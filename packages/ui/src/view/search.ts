@@ -24,6 +24,19 @@ export const address = {
   field: (part: number, field: number, side: "name" | "value") => `${part}/${field}/${side}`,
 };
 
+// Where an address stands in its block, as `address`'s inverse: the name first, then each part, a part's fields after
+// its start, a field's name before its value; the order a block shows its texts in. So an address a later step took
+// away from its block still has a place among the texts it shows.
+function placeInBlock(at: string): number[] {
+  return at === address.name ? [] : at.split("/").map((step) => (step === "name" ? 0 : step === "value" ? 1 : Number(step)));
+}
+
+// Which of two places comes first: below 0 when `a` does, above 0 when `b` does, 0 when they are one.
+function comparePlaces(a: number[], b: number[]): number {
+  const differ = a.findIndex((step, index) => index >= b.length || step !== b[index]);
+  return differ === -1 ? a.length - b.length : differ >= b.length ? 1 : a[differ]! - b[differ]!;
+}
+
 // The key of a block's part, under which its regions are kept: the block's row key and the part's address.
 export function partKey(key: string, at: string): string {
   return `${key}/${at}`;
@@ -152,8 +165,8 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
 }
 
 // The matches of a block, in the order it shows them, each with the text it is in.
-function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown }[] {
+  return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
@@ -184,12 +197,13 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
-  // In its own block, the first match past it in the direction of the step.
+  // In its own block, the first match past it in the direction of the step, by where its text stands, whether or not
+  // the block still shows that text.
   const own = current === undefined ? undefined : found.byKey.get(current.key);
   if (own !== undefined) {
     const { at, start } = current!;
-    const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
-    const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
+    const place = placeInBlock(at);
+    const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(comparePlaces(placeInBlock(match.at), place) || match.start - start));
     if (past !== undefined) return stepTo(found, own, past);
   }
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.

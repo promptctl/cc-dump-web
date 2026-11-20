@@ -222,6 +222,21 @@ describe("search", () => {
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
   });
 
+  it("steps on from a current match whose text a later step took away from its block, from where that text was", () => {
+    const needle = { kind: "text", form: "verbatim", text: "a needle" } as const;
+    const before = added({ category: "tools", name: "input", parts: [needle, { kind: "fields", fields: [["query", "needle"]] }, needle] });
+    const keys = layOut().every.keys;
+    const first = adjacent(createSearch()([before], pattern), undefined, top, "next", pattern, keys)!.match;
+    const current = adjacent(createSearch()([before], pattern), first, top, "next", pattern, keys)!.match;
+    expect(current).toEqual({ key: "k", at: address.field(1, 0, "value"), start: 0 });
+    // The step after shows part 1 as text, so the current's address names no text of its block.
+    const after = added({ category: "tools", name: "input", parts: [needle, needle, needle] });
+    const found = createSearch()([after], pattern);
+    expect(ordinal(found, current, pattern)).toBeUndefined();
+    expect(adjacent(found, current, top, "next", pattern, keys)!.match).toEqual({ key: "k", at: address.part(2), start: 2 });
+    expect(adjacent(found, current, top, "previous", pattern, keys)!.match).toEqual({ key: "k", at: address.part(1), start: 2 });
+  });
+
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
