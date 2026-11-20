@@ -4,8 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { LOOPBACK } from "@cc-dump/log/address";
-import { parseLogLine } from "@cc-dump/log/line";
-import { send, serving, subscribe } from "@cc-dump/log/testing";
+import { nextRequestEvent, send, serving, subscribe } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseListing, parseListings, parseProxyInfo, parseProxyStatus, recordingStart } from "./format.ts";
 import { proxyProcess } from "./testing.ts";
@@ -41,16 +40,23 @@ describe("the reader port", () => {
     const { res, next } = await subscribe(readerPort, "/logs");
     onTestFinished(() => void res.destroy());
     // The lines of the proxy's start come first; the request's comes once it has failed.
-    const failed = (async () => {
-      for (;;) {
-        const { data, id } = await next();
-        const line = parseLogLine(data, id!);
-        if ("event" in line && line.event.event === "request") return line.event;
-      }
-    })();
+    const failed = nextRequestEvent(next);
     const answered = fetch(`http://${LOOPBACK}:${proxyPort}/v1/messages`, { method: "POST", body: "{}" });
     expect(await failed).toMatchObject({ service: "proxy", event: "request", outcome: "error", error: expect.stringContaining("ECONNREFUSED"), facts: { method: "POST", url: "/v1/messages", status: 502 } });
     expect((await answered).status).toBe(502);
+  });
+
+  it("logs each request the reader port refuses as failed, by its answer's status line", async () => {
+    const { readerPort } = await proxy();
+    const { res, next } = await subscribe(readerPort, "/logs");
+    onTestFinished(() => void res.destroy());
+
+    const refused = [await send(readerPort, { path: "/elsewhere" }), await send(readerPort, { method: "POST", path: "/logs" })];
+
+    expect(refused.map(({ statusCode }) => statusCode)).toEqual([404, 405]);
+    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: "404 Not Found", facts: { url: "/elsewhere", status: 404 } });
+    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: "405 Method Not Allowed", facts: { method: "POST", url: "/logs", status: 405 } });
+    for (const answer of refused) answer.destroy();
   });
 
   it("makes a new agent's recording, answering its name, and lists none until it holds something", async () => {
