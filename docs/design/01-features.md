@@ -60,7 +60,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 ### F5. Filter
 - Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line, and a set is its one line) or expanded (each block is expanded, and a set is open).
 - The levels start as: user and assistant expanded; tools, system and thinking compact; parameters, usage and http hidden.
-- A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
+- A filter bar, on screen while a recording is open, shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones and what a closed nest holds included.
@@ -101,7 +101,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - After a reload the pane is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it, by Unicode 11's table. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and each character as wide as Unicode 11's table says, so an emoji the table has is two cells wide, as tmux counts it. A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, a scheme the browser does not handle by the app the OS has for it, and any other not at all. The pointer over a link shows where it goes.
 
 ## Architecture
 
