@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { parseLogLine, type LinePosition, type LoggedEvent } from "./line.ts";
 import { processLog } from "./lines.ts";
-import { serving, subscribe, workEvent as event } from "./testing.ts";
+import { serving, subscribe, traceIdOf, workEvent as event } from "./testing.ts";
 
 // A stdout of the test's own: what was written to it, and the error a reader leaving it would raise.
 function output() {
@@ -39,7 +39,7 @@ describe("processLog", () => {
       [1, "proxy", "second"],
     ]);
     expect(lines[0]!.id).toMatch(/^[0-9a-f]{16}:0$/);
-    expect(lines[0]!.line.event).toEqual({ service: "proxy", event: "first", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok", facts: { trace_id: "t" } });
+    expect(lines[0]!.line.event).toEqual({ service: "proxy", event: "first", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok", facts: { trace_id: traceIdOf("t") } });
   });
 
   it("keeps the last lines only, numbered as they were written, so a reader sees how many it was not sent", async () => {

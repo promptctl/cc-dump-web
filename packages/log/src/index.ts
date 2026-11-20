@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
@@ -6,14 +5,15 @@ import type { Duplex } from "node:stream";
 import { inspect } from "node:util";
 import { LOOPBACK } from "./address.ts";
 import type { Ending } from "./ending.ts";
+import { mintTraceId, type TraceId } from "./trace.ts";
 
-export type { Ending };
+export type { Ending, TraceId };
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
 // fields. Parts add facts beside them and never rename them; `service` is added by the sink.
 export type Event = {
   event: string;
-  trace_id: string;
+  trace_id: TraceId;
   started_at: string;
   duration_ms: number;
   service?: never;
@@ -53,7 +53,7 @@ export function logged<T>(
 
 // An asynchronous unit of work done inside another, in its trace (a request's): its event is written once `work`
 // settles, with the facts `found` reads off its result, or when it rejects, and then the error is rethrown.
-export async function loggedIn<T>(log: Log, trace_id: string, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
+export async function loggedIn<T>(log: Log, trace_id: TraceId, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
   const end = endEvent(log, event, facts, startSpan(trace_id));
   try {
     const result = await work();
@@ -67,7 +67,7 @@ export async function loggedIn<T>(log: Log, trace_id: string, event: string, fac
 
 // A unit of work, inside another's trace, that something else did and timed, reported once it has ended: it took
 // `duration_ms`, up to now, and failed with `error`, or did not, when `error` is undefined.
-export function loggedAfter(log: Log, trace_id: string, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
+export function loggedAfter(log: Log, trace_id: TraceId, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
   const span = { end: () => ({ trace_id, started_at: new Date(Date.now() - duration_ms).toISOString(), duration_ms }) };
   const end = endEvent(log, event, facts, span);
   if (error === undefined) end.ok({});
@@ -88,7 +88,7 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
 // `ended` resolves when the response closes, with the ending the event records.
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
-export type Work = { trace_id: string; fail: (error: unknown) => void; ended: Promise<Ending> };
+export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
 
 export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
 
@@ -279,9 +279,8 @@ export function describeError(error: unknown): string {
 }
 
 // The floor's span fields, for any unit of work a part times itself. A unit of work inside another's
-// trace (a request's recording) takes that trace_id; a new one is W3C Trace Context's: 16 random bytes
-// as lowercase hex.
-export function startSpan(trace_id = randomBytes(16).toString("hex")) {
+// trace (a request's recording) takes that trace_id; a new one is minted (trace.ts).
+export function startSpan(trace_id: TraceId = mintTraceId()) {
   const started_at = new Date().toISOString();
   const started = performance.now();
   return { trace_id, end: () => ({ trace_id, started_at, duration_ms: performance.now() - started }) };

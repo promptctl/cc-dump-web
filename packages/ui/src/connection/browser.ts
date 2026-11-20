@@ -2,7 +2,7 @@ import { LOOPBACK } from "@cc-dump/log/address";
 import { parseLogLine } from "@cc-dump/log/line";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { ask } from "@cc-dump/proxy/ask";
-import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordingEnd, recordedEvents, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
@@ -22,7 +22,7 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       const url = `${origin}/recordings/${encodeURIComponent(name)}`;
       const stream = eventStream(url, signal, reader.failed);
       // A message that does not parse ends the read: what follows it cannot be trusted to be the recording.
-      stream.on("message", parseRecordedEvent, reader.event, stream.fail);
+      stream.on("message", recordedEvents(), reader.event, stream.fail);
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
       // reconnects and reads the recording again, or into the same failure.
       stream.on(

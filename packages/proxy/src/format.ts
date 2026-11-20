@@ -1,5 +1,6 @@
 import { outcomes, type Ending } from "@cc-dump/log/ending";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
+import { isTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
 // messages. Imports nothing that needs node, so the UI and any other reader take these types, and their
@@ -21,7 +22,7 @@ export type Recorded =
   | { type: "response_body"; base64: string }
   | { type: "response_trailers"; headers: Header[] }
   | ({ type: "end" } & Ending);
-export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
+export type RecordedEvent = { timestamp: string; trace_id: TraceId } & Recorded;
 
 // One recording in `GET /recordings`: a `.jsonl` file in the recordings directory. `POST /recordings` answers the one it
 // created.
@@ -155,7 +156,7 @@ export function parseRecordedEvent(line: string): RecordedEvent {
   const json = parseJson(line, "recorded event");
   const type = fields(json, "recorded event").oneOf("type", recordedTypes);
   const f = fields(json, `recorded ${type} event`);
-  const event = { timestamp: f.string("timestamp"), trace_id: f.string("trace_id") };
+  const event = { timestamp: f.string("timestamp"), trace_id: f.read("trace_id", isTraceId, "a trace id (32 lowercase hex)") };
   switch (type) {
     case "request":
       return { ...event, type, method: f.string("method"), url: f.string("url"), http_version: f.string("http_version"), headers: f.headers("headers") };
@@ -174,6 +175,22 @@ export function parseRecordedEvent(line: string): RecordedEvent {
   }
 }
 
+// The parse of one recording's lines in the order it holds them: each line's event, and a refusal of a second request
+// head, response head or end of one trace, of which the proxy writes one each. A read keeps one for its whole length,
+// a resumed one included, since it resumes after the last line it was sent.
+export function recordedEvents(): (line: string) => RecordedEvent {
+  const seen = new Set<string>();
+  return (line) => {
+    const event = parseRecordedEvent(line);
+    if (oncePerTrace[event.type]) {
+      const once = `${event.trace_id} ${event.type}`;
+      if (seen.has(once)) throw new Error(`recorded ${event.type} event: trace ${event.trace_id} already has one`);
+      seen.add(once);
+    }
+    return event;
+  };
+}
+
 // Keyed by the unions they list, so a type or an outcome added to the format is a compile error here until
 // the parse knows it.
 const recordedTypes: Record<Recorded["type"], true> = {
@@ -183,6 +200,15 @@ const recordedTypes: Record<Recorded["type"], true> = {
   response: true,
   response_body: true,
   response_trailers: true,
+  end: true,
+};
+const oncePerTrace: Record<Recorded["type"], boolean> = {
+  request: true,
+  request_body: false,
+  request_trailers: false,
+  response: true,
+  response_body: false,
+  response_trailers: false,
   end: true,
 };
 const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };

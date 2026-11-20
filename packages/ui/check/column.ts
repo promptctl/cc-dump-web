@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { RecordedEvent } from "@cc-dump/proxy/format";
+import { recordedEvents } from "@cc-dump/proxy/format";
 import { exchanges } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
@@ -234,7 +234,7 @@ for (const recording of process.argv.slice(2)) {
   const events = readFileSync(recording, "utf8")
     .split("\n")
     .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as RecordedEvent);
+    .map(recordedEvents());
   const history = createHistory()(createFormatter()(exchanges(events)));
   const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
   const layOut = createLayout(expanded);

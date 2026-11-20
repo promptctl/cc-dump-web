@@ -1,5 +1,6 @@
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
+import { traceIdOf } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import type { Block } from "./blocks.ts";
@@ -8,7 +9,7 @@ import { doesNotFit, fieldValue } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
 const timestamp = "2026-11-13T08:00:00.000Z";
-const at = (trace_id: string) => ({ timestamp, trace_id });
+const at = (label: string) => ({ timestamp, trace_id: traceIdOf(label) });
 // A body recorded in two chunks, each encoded on its own as the proxy does, so padding falls mid-body.
 const chunks = (bytes: Buffer) => [bytes.subarray(0, Math.ceil(bytes.length / 3)), bytes.subarray(Math.ceil(bytes.length / 3))].map((chunk) => chunk.toString("base64"));
 
@@ -475,7 +476,7 @@ describe("format", () => {
       ...request("messages", { model: "m", messages: [] }),
       ...response("unrecorded", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, stop_reason: "end_turn" }))),
     ]);
-    expect(formatted.map(({ exchange }) => exchange.trace_id)).toEqual(["messages", "unrecorded"]);
+    expect(formatted.map(({ exchange }) => exchange.trace_id)).toEqual([traceIdOf("messages"), traceIdOf("unrecorded")]);
     expect(lines(group(formatted[1]!, "request"))).toEqual(["http HTTP request"]);
   });
 
@@ -486,7 +487,7 @@ describe("format", () => {
     const first = formatter(exchanges([...headless, ...messages]));
     expect(first.map(({ facts }) => facts.ordinal)).toEqual([1, 2]);
     const later = formatter(exchanges([...headless, ...messages, ...request("other", {}, { method: "GET", url: "/v1/models" })]));
-    expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([["messages", 1]]);
+    expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([[traceIdOf("messages"), 1]]);
     expect(group(later[0]!, "request")).toBe(group(first[1]!, "request"));
   });
 

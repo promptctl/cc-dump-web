@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Ending, Event } from "@cc-dump/log";
-import { arrivals, eventLog, send, serving } from "@cc-dump/log/testing";
+import { arrivals, eventLog, send, serving, traceIdOf } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
@@ -94,7 +94,7 @@ describe("countTraffic", () => {
   const request = (traffic: ReturnType<typeof countTraffic>) => {
     const { promise: ended, resolve } = Promise.withResolvers<Ending>();
     const handled: unknown[] = [];
-    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: "t", fail: () => {}, ended });
+    traffic.counted((req) => void handled.push(req))({} as IncomingMessage, {} as ServerResponse, { trace_id: traceIdOf("t"), fail: () => {}, ended });
     return { handled, end: () => resolve({ outcome: "ok" }) };
   };
 

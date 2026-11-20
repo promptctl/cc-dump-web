@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { traceIdOf } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   agentBaseUrl,
@@ -13,6 +14,7 @@ import {
   parseRecordedEvent,
   parseRecordingEnd,
   parseRecordingName,
+  recordedEvents,
   recordingName,
   recordingStart,
   runRecordingName,
@@ -40,7 +42,7 @@ describe("parseRecordedEvent", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const recordings = createRecordings(() => {}, dir, "run.jsonl");
-    const trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+    const trace_id = traceIdOf("t");
     seen.forEach(recordings.record("run.jsonl", trace_id));
     const lines = readFileSync(join(dir, "run.jsonl"), "utf8").split("\n").filter(Boolean);
     expect(lines.map(parseRecordedEvent)).toEqual(
@@ -64,6 +66,38 @@ describe("parseRecordedEvent", () => {
     ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "recorded end event: error is not a string"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
     expect(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line))).toThrow(message);
+  });
+
+  // A trace id is a row key's first segment, cut at '/', and its thread's namespace: only the minted shape is one.
+  it.each(["", "a/b", "thread:4bf92f3577b34da6a3ce929d0e0e4736", "4BF92F3577B34DA6A3CE929D0E0E4736", "4bf92f3577b34da6a3ce929d0e0e473", "4bf92f3577b34da6a3ce929d0e0e47360", 7])(
+    "refuses the trace id %j",
+    (trace_id) => {
+      expect(() => parseRecordedEvent(JSON.stringify({ ...event, trace_id, type: "request_body", base64: "" }))).toThrow(
+        "recorded request_body event: trace_id is not a trace id (32 lowercase hex)",
+      );
+    },
+  );
+});
+
+describe("recordedEvents", () => {
+  const line = (trace: string, type: string, fields: object) => JSON.stringify({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: traceIdOf(trace), type, ...fields });
+  const head = { method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] };
+  const once = [
+    ["request", head],
+    ["response", { status: 200, reason: "OK", http_version: "1.1", headers: [] }],
+    ["end", { outcome: "ok" }],
+  ] as const;
+
+  it("reads one of each head and end per trace, and as many bodies as were recorded, across traces that interleave", () => {
+    const read = recordedEvents();
+    const lines = [...once.flatMap(([type, fields]) => [line("a", type, fields), line("b", type, fields)]), line("a", "response_body", { base64: "" }), line("a", "response_body", { base64: "" })];
+    expect(lines.map(read).map(({ trace_id, type }) => [trace_id, type])).toEqual(lines.map((text) => [JSON.parse(text).trace_id, JSON.parse(text).type]));
+  });
+
+  it.each(once)("refuses a trace's second %s, naming the trace", (type, fields) => {
+    const read = recordedEvents();
+    read(line("a", type, fields));
+    expect(() => read(line("a", type, fields))).toThrow(`recorded ${type} event: trace ${traceIdOf("a")} already has one`);
   });
 });
 

@@ -7,7 +7,7 @@ import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { processLog } from "@cc-dump/log/lines";
-import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testing";
+import { arrivals, send, serving, traceIdOf, workEvent as event } from "@cc-dump/log/testing";
 import { PassThrough } from "node:stream";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -16,8 +16,8 @@ import type { Part } from "./connection.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
-  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: "a", type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
-  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: "a", type: "end", outcome: "aborted" },
+  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: traceIdOf("a"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
+  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: traceIdOf("a"), type: "end", outcome: "aborted" },
 ];
 
 // The proxy as its own process, recording into a directory that holds a past run's recording a write left cut off,
@@ -134,6 +134,24 @@ describe("the browser connection", () => {
       },
     ]);
     // The lines after it arrive in the same chunk, so any event dispatched after the read closed is queued by now.
+    expect(read.queued()).toBe(0);
+  });
+
+  it("ends a read at a trace's second end, reporting it as failed and nothing after it", async () => {
+    const { dir, proxy, connection } = await proxyAndConnection();
+    const name = "20261113T083000.000Z.jsonl";
+    const [request, end] = finishedEvents.map((event) => JSON.stringify(event));
+    writeFileSync(join(dir, name), `${request}\n${end}\n${end}\n${request}\n`);
+    const read = reading(connection, name);
+    expect([await read.next(), await read.next(), await read.next()]).toEqual([
+      ...finishedEvents.map((event) => ({ event })),
+      {
+        failed: expect.objectContaining({
+          message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${name}`,
+          cause: expect.objectContaining({ message: `recorded end event: trace ${traceIdOf("a")} already has one` }),
+        }),
+      },
+    ]);
     expect(read.queued()).toBe(0);
   });
 

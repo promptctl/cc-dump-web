@@ -1,10 +1,11 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
+import { traceIdOf } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
-const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: `t${n}`, type: "request_body", base64: "" });
+const event = (n: number): RecordedEvent => ({ timestamp: "2026-11-13T08:00:00.000Z", trace_id: traceIdOf(`t${n}`), type: "request_body", base64: "" });
 
 // A connection the test drives: it hands the test each read's reader. A read begun aborted throws, as the browser's does.
 function fakeConnection() {

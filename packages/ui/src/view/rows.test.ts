@@ -1,3 +1,5 @@
+import { traceIdOf, traceIds } from "@cc-dump/log/testing";
+import type { TraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -11,8 +13,10 @@ import { useView, view } from "./state.ts";
 import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
+// The traces of the exchanges below, by label.
+const id = traceIds("aside", "asked", "c1", "compact", "inner", "left", "probe", "s1", "s2", "s3", "t1", "t2", "t3", "t4");
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace_id: string, body: unknown): RecordedEvent[] => [
+const request = (trace_id: TraceId, body: unknown): RecordedEvent[] => [
   { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
   { timestamp, trace_id, type: "request_body", base64: base64(body) },
   { timestamp, trace_id, type: "request_trailers", headers: [] },
@@ -21,7 +25,7 @@ const text = (text: string) => ({ type: "text", text });
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
   Array.from({ length: count }, (_, turn) =>
-    request(`t${turn + 1}`, { model: "m", system: [text(system)], tools: [{ name: "Read" }], messages: Array.from({ length: turn + 1 }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] })) }),
+    request(traceIdOf(`t${turn + 1}`), { model: "m", system: [text(system)], tools: [{ name: "Read" }], messages: Array.from({ length: turn + 1 }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] })) }),
   ).flat();
 // Every category listed, a block a line, and a set its one line.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
@@ -43,17 +47,17 @@ describe("layout", () => {
   it("lays out the conversation at a step: each step's exchange, then what first arrived with it, the step shown's added", () => {
     const at = layouts(turns(2));
     expect(listed(at(1))).toEqual([
-      "t1",
-      "t1/request/http added",
-      "thread:t1/request/parameters added",
-      "t1/tools",
-      "t1/system",
-      "thread:t1/system/system.0 added",
-      "t1/message.0",
-      "thread:t1/message.0/content.0 added",
+      id.t1,
+      `${id.t1}/request/http added`,
+      `thread:${id.t1}/request/parameters added`,
+      `${id.t1}/tools`,
+      `${id.t1}/system`,
+      `thread:${id.t1}/system/system.0 added`,
+      `${id.t1}/message.0`,
+      `thread:${id.t1}/message.0/content.0 added`,
     ]);
     // The second turn resends the first: only its HTTP and its new message are its, and the first's rows are unchanged.
-    expect(listed(at(2)).slice(8)).toEqual(["t2", "t2/request/http added", "t2/message.1", "thread:t2/message.1/content.0 added"]);
+    expect(listed(at(2)).slice(8)).toEqual([id.t2, `${id.t2}/request/http added`, `${id.t2}/message.1`, `thread:${id.t2}/message.1/content.0 added`]);
     expect(at(2).rows.slice(0, 8).every((row) => row.kind !== "block" || row.change === "same")).toBe(true);
     expect(at(2).rows.filter((row) => row.kind !== "block").map((row) => row.change)).toEqual(["same", "same", "same", "same", "added", "added"]);
     // A block as it arrived has no past, at its step or after; a step of 0 shows nothing.
@@ -63,9 +67,9 @@ describe("layout", () => {
 
   it("marks a block a step rewrote as changed, and keeps what the step rewrote as its past at every step after", () => {
     // The second turn edits the system prompt in place, carrying the thread on; the third resends it as the second left it.
-    const turn = (trace: string, count: number) => request(trace, { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages: say(count) });
-    const at = layouts([...turns(1), ...turn("t2", 2), ...turn("t3", 3)]);
-    const system = (step: number) => blockAt(at(step), "thread:t1/system/system.0");
+    const turn = (trace: TraceId, count: number) => request(trace, { model: "m", system: [text("Be briefer.")], tools: [{ name: "Read" }], messages: say(count) });
+    const at = layouts([...turns(1), ...turn(id.t2, 2), ...turn(id.t3, 3)]);
+    const system = (step: number) => blockAt(at(step), `thread:${id.t1}/system/system.0`);
     const rewrite = { step: 2, change: "changed", before: { parts: [{ kind: "text", text: "Be brief." }] }, after: { parts: [{ kind: "text", text: "Be briefer." }] } };
     expect([system(2).change, blockOf(system(2))]).toMatchObject(["changed", rewrite.after]);
     expect(pastOf(system(2))).toMatchObject([rewrite]);
@@ -82,55 +86,55 @@ describe("layout", () => {
   it("marks exactly the tool a request changed, dropped or added, the rest unchanged, and a prompt block dropped as removed the step it goes", () => {
     const tool = (name: string, description: string) => ({ name, description, input_schema: {} });
     const messages = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
-    const turn = (trace: string, count: number, tools: unknown[], system: string[]) => request(trace, { model: "m", system: system.map(text), tools, messages: messages(count) });
+    const turn = (trace: TraceId, count: number, tools: unknown[], system: string[]) => request(trace, { model: "m", system: system.map(text), tools, messages: messages(count) });
     const at = layouts(
       [
-        ...turn("t1", 1, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs")], ["Be brief.", "Mind the tools."]),
-        ...turn("t2", 2, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
-        ...turn("t3", 3, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
-        ...turn("t4", 4, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+        ...turn(id.t1, 1, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs")], ["Be brief.", "Mind the tools."]),
+        ...turn(id.t2, 2, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+        ...turn(id.t3, 3, [tool("Read", "Reads"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
+        ...turn(id.t4, 4, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs a command"), tool("Grep", "Searches")], ["Be brief."]),
       ],
       listing,
     );
     const prompt = (step: number) => listed(at(step)).filter((row) => /\/(tools|system)\//.test(row));
     // Each tool is its own item, lined up by its name: Bash changed, Edit gone, Grep come, Read as it was.
     expect(prompt(2)).toEqual([
-      "thread:t1/tools/tools.Read.0 same",
-      "thread:t1/tools/tools.Edit.0 removed",
-      "thread:t1/tools/tools.Bash.0 changed",
-      "thread:t1/system/system.0 same",
-      "thread:t1/system/system.1 removed",
-      "thread:t2/tools/tools.Grep.0 added",
+      `thread:${id.t1}/tools/tools.Read.0 same`,
+      `thread:${id.t1}/tools/tools.Edit.0 removed`,
+      `thread:${id.t1}/tools/tools.Bash.0 changed`,
+      `thread:${id.t1}/system/system.0 same`,
+      `thread:${id.t1}/system/system.1 removed`,
+      `thread:${id.t2}/tools/tools.Grep.0 added`,
     ]);
-    const edit = (step: number) => blockAt(at(step), "thread:t1/tools/tools.Edit.0");
+    const edit = (step: number) => blockAt(at(step), `thread:${id.t1}/tools/tools.Edit.0`);
     // Its row shows the block it was.
     expect(blockOf(edit(2))).toMatchObject({ name: "Edit" });
     expect(isGone(edit(2))).toBe(true);
     // Taken away, it stays listed where it stood, the step after leaving it and every other row as they were; its past
     // and its mark still say it went.
     expect(prompt(3)).toEqual([
-      "thread:t1/tools/tools.Read.0 same",
-      "thread:t1/tools/tools.Edit.0 same",
-      "thread:t1/tools/tools.Bash.0 same",
-      "thread:t1/system/system.0 same",
-      "thread:t1/system/system.1 same",
-      "thread:t2/tools/tools.Grep.0 same",
+      `thread:${id.t1}/tools/tools.Read.0 same`,
+      `thread:${id.t1}/tools/tools.Edit.0 same`,
+      `thread:${id.t1}/tools/tools.Bash.0 same`,
+      `thread:${id.t1}/system/system.0 same`,
+      `thread:${id.t1}/system/system.1 same`,
+      `thread:${id.t2}/tools/tools.Grep.0 same`,
     ]);
     expect([isGone(edit(3)), pastOf(edit(3)), markOf(edit(3))]).toEqual([true, [{ step: 2, change: "removed" }], "removed"]);
     // Offered again, it is there again, added, with both steps in its past.
-    expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual(["thread:t1/tools/tools.Edit.0 added"]);
+    expect(prompt(4).filter((row) => !row.endsWith("same"))).toEqual([`thread:${id.t1}/tools/tools.Edit.0 added`]);
     expect([isGone(edit(4)), pastOf(edit(4))]).toEqual([false, [{ step: 2, change: "removed" }, { step: 4, change: "added" }]]);
     expect([2, 3, 4].map((step) => lastOf(edit(step)))).toEqual([2, 3, 4].map((step) => pastOf(edit(step)).at(-1)));
   });
 
   it("marks a block a step took away and a later one sends with other content as rewritten, from the block it was", () => {
     const tool = (name: string, description: string) => ({ name, description, input_schema: {} });
-    const turn = (trace: string, count: number, tools: unknown[]) => request(trace, { model: "m", tools, messages: say(count) });
+    const turn = (trace: TraceId, count: number, tools: unknown[]) => request(trace, { model: "m", tools, messages: say(count) });
     const at = layouts(
-      [...turn("t1", 1, [tool("Read", "Reads"), tool("Edit", "Edits")]), ...turn("t2", 2, [tool("Read", "Reads")]), ...turn("t3", 3, [tool("Read", "Reads"), tool("Edit", "Edits a file")])],
+      [...turn(id.t1, 1, [tool("Read", "Reads"), tool("Edit", "Edits")]), ...turn(id.t2, 2, [tool("Read", "Reads")]), ...turn(id.t3, 3, [tool("Read", "Reads"), tool("Edit", "Edits a file")])],
       listing,
     );
-    const edit = (step: number) => blockAt(at(step), "thread:t1/tools/tools.Edit.0");
+    const edit = (step: number) => blockAt(at(step), `thread:${id.t1}/tools/tools.Edit.0`);
     expect([edit(1), edit(2), edit(3)].map(({ change }) => change)).toEqual(["added", "removed", "changed"]);
     // The step that took it away showed the block it was, which is what the rewrite is read against.
     expect(blockOf(edit(2))).toBe(blockOf(edit(1)));
@@ -140,32 +144,32 @@ describe("layout", () => {
 
   it("marks a block a request stops sending inside a message it resends removed, the step it goes", () => {
     const at = layouts([
-      ...request("t1", { model: "m", messages: [...say(1), { role: "user", content: [text("Say 1."), text("Mind it.")] }] }),
-      ...request("t2", { model: "m", messages: [...say(3)] }),
+      ...request(id.t1, { model: "m", messages: [...say(1), { role: "user", content: [text("Say 1."), text("Mind it.")] }] }),
+      ...request(id.t2, { model: "m", messages: [...say(3)] }),
     ]);
-    const minded = blockAt(at(2), "thread:t1/message.1/content.1");
+    const minded = blockAt(at(2), `thread:${id.t1}/message.1/content.1`);
     expect([minded.change, blockOf(minded)]).toMatchObject(["removed", { parts: [{ text: "Mind it." }] }]);
-    expect(listed(at(2))).toContain("thread:t1/message.1/content.0 same");
-    expect(listed(at(2))).toContain("thread:t2/message.2/content.0 added");
+    expect(listed(at(2))).toContain(`thread:${id.t1}/message.1/content.0 same`);
+    expect(listed(at(2))).toContain(`thread:${id.t2}/message.2/content.0 added`);
   });
 
   it("leaves out a hidden category's blocks, and a group with none left, and puts a row not listed at the row listed before it", () => {
     const at = layouts(turns(2), dialogue);
-    expect(listed(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0 same", "t2", "t2/message.1", "thread:t2/message.1/content.0 added"]);
+    expect(listed(at(2))).toEqual([id.t1, `${id.t1}/message.0`, `thread:${id.t1}/message.0/content.0 same`, id.t2, `${id.t2}/message.1`, `thread:${id.t2}/message.1/content.0 added`]);
     const { keys } = at(2);
-    expect(keys.at(keys.indexOf("t1/request/http")!)).toBe("t1");
-    expect(keys.at(keys.indexOf("thread:t1/system/system.0")!)).toBe("t1");
-    expect(keys.at(keys.indexOf("t2/request/http")!)).toBe("t2");
-    expect(keys.indexOf("t3")).toBeUndefined();
+    expect(keys.at(keys.indexOf(`${id.t1}/request/http`)!)).toBe(id.t1);
+    expect(keys.at(keys.indexOf(`thread:${id.t1}/system/system.0`)!)).toBe(id.t1);
+    expect(keys.at(keys.indexOf(`${id.t2}/request/http`)!)).toBe(id.t2);
+    expect(keys.indexOf(id.t3)).toBeUndefined();
   });
 
   it("keeps every row, listed or not, in order, as one object while no block of it changed, and the keys while no row moved", () => {
     const at = layouts(turns(3), { ...shown, tools: "hidden" });
     const first = at(3);
     const everyKey = first.every.rows.map(({ key }) => key);
-    expect(everyKey).toContain("thread:t1/tools/tools.Read.0");
+    expect(everyKey).toContain(`thread:${id.t1}/tools/tools.Read.0`);
     expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
-    const withCurrent = at(3, "thread:t1/tools/tools.Read.0");
+    const withCurrent = at(3, `thread:${id.t1}/tools/tools.Read.0`);
     expect(withCurrent.every).toBe(first.every);
     expect(withCurrent.keys).not.toBe(first.keys);
     expect(at(3).keys).not.toBe(withCurrent.keys);
@@ -185,28 +189,28 @@ describe("layout", () => {
   });
 
   it("keeps every row as one object at a step while a later step arrives, though it takes away a block the step shows", () => {
-    const ask = (trace: string, count: number, tools: string[]) => request(trace, { model: "m", tools: tools.map((name) => ({ name })), messages: say(count) });
-    const events = [...ask("t1", 1, ["Read", "Edit"]), ...ask("t2", 2, ["Read"])];
+    const ask = (trace: TraceId, count: number, tools: string[]) => request(trace, { model: "m", tools: tools.map((name) => ({ name })), messages: say(count) });
+    const events = [...ask(id.t1, 1, ["Read", "Edit"]), ...ask(id.t2, 2, ["Read"])];
     const [format, fold, layOut] = [createFormatter(), createHistory(), createLayout(listing)];
     const after = (count: number, step: number) => layOut(fold(format(exchanges(events.slice(0, count)))), step, undefined, {});
     const first = after(3, 1);
     expect(after(events.length, 1).every).toBe(first.every);
     // At the step that took it away, the row shows the same block, as one taken away, and every row is made again.
-    const [was, gone] = [first, after(events.length, 2)].map((layout) => blockAt(layout, "thread:t1/tools/tools.Edit.0"));
+    const [was, gone] = [first, after(events.length, 2)].map((layout) => blockAt(layout, `thread:${id.t1}/tools/tools.Edit.0`));
     expect([blockOf(gone!) === blockOf(was!), isGone(was!), isGone(gone!)]).toEqual([true, false, true]);
   });
 
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
     const t1 = turns(1);
     const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
-    const t2 = request("t2", { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
+    const t2 = request(id.t2, { model: "m", system: [text("Be brief."), text("Mind the tools.")], tools: [{ name: "Read" }], messages });
     const history = createHistory();
     const format = createFormatter();
     const layOut = createLayout({ ...shown, user: "hidden", system: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" });
     const before = layOut(history(format(exchanges([...t1, ...t2.slice(0, 1)]))), 2, undefined, {});
     const after = layOut(history(format(exchanges([...t1, ...t2]))), 2, undefined, {});
     expect(listed(after)).toEqual(listed(before));
-    expect(after.every.rows.map(({ key }) => key)).toContain("thread:t2/system/system.1");
+    expect(after.every.rows.map(({ key }) => key)).toContain(`thread:${id.t2}/system/system.1`);
     expect(after.keys).not.toBe(before.keys);
   });
 
@@ -238,16 +242,16 @@ describe("layout", () => {
   });
 
   it("lists a hidden category's blocks at neither level but the search's current match", () => {
-    const keys = (visibility: Record<Category, Visibility>, current?: string) => listed(layouts(turns(1), visibility)(1, current, { "t1/tools": true }));
+    const keys = (visibility: Record<Category, Visibility>, current?: string) => listed(layouts(turns(1), visibility)(1, current, { [`${id.t1}/tools`]: true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
-    expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
+    expect(keys({ ...shown, tools: "hidden" })).not.toContain(`thread:${id.t1}/tools/tools.Read.0 added`);
     // In the set, open.
-    expect(keys({ ...shown, tools: "hidden" }, "thread:t1/tools/tools.Read.0")).toContain("thread:t1/tools/tools.Read.0 added");
+    expect(keys({ ...shown, tools: "hidden" }, `thread:${id.t1}/tools/tools.Read.0`)).toContain(`thread:${id.t1}/tools/tools.Read.0 added`);
   });
 
   // The virtualizer keeps a row's measured height by this key, so a height measured open is not read for the row closed.
   it("measures a block's row by its key and whether it shows open, and keeps the keys while neither changes", () => {
-    const system = "thread:t1/system/system.0";
+    const system = `thread:${id.t1}/system/system.0`;
     const at = (visibility: Record<Category, Visibility>, opened: Opened = {}) => {
       const layOut = layouts(turns(2), visibility);
       const { keys, rows } = layOut(2, undefined, opened);
@@ -269,30 +273,30 @@ describe("layout", () => {
 
 describe("a set", () => {
   const tool = (name: string, description: string) => ({ name, description, input_schema: {} });
-  const turn = (trace: string, count: number, tools: unknown[]) => request(trace, { model: "m", tools, messages: say(count) });
+  const turn = (trace: TraceId, count: number, tools: unknown[]) => request(trace, { model: "m", tools, messages: say(count) });
   // Three tools; the second step rewrites Bash and takes Edit away, the third leaves them so, the fourth takes Bash away.
   const events = [
-    ...turn("t1", 1, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs")]),
-    ...turn("t2", 2, [tool("Read", "Reads"), tool("Bash", "Runs a command")]),
-    ...turn("t3", 3, [tool("Read", "Reads"), tool("Bash", "Runs a command")]),
-    ...turn("t4", 4, [tool("Read", "Reads")]),
+    ...turn(id.t1, 1, [tool("Read", "Reads"), tool("Edit", "Edits"), tool("Bash", "Runs")]),
+    ...turn(id.t2, 2, [tool("Read", "Reads"), tool("Bash", "Runs a command")]),
+    ...turn(id.t3, 3, [tool("Read", "Reads"), tool("Bash", "Runs a command")]),
+    ...turn(id.t4, 4, [tool("Read", "Reads")]),
   ];
-  const tools = ["Read", "Edit", "Bash"].map((name) => `thread:t1/tools/tools.${name}.0`);
+  const tools = ["Read", "Edit", "Bash"].map((name) => `thread:${id.t1}/tools/tools.${name}.0`);
   const setAt = ({ rows }: { rows: Row[] }) => rows.find((row): row is SetRow => row.kind === "set")!;
   const toolsListed = (layout: { rows: Row[] }) => layout.rows.filter((row) => row.kind === "block" && blockOf(row).category === "tools").map(({ key }) => key);
 
   it("is one line that stands for its blocks at compact, and lists them under it at expanded or once the reader opens it", () => {
     const compact = layouts(events)(1);
     expect(toolsListed(compact)).toEqual([]);
-    expect(setAt(compact)).toMatchObject({ key: "t1/tools", title: "tools", change: "added" });
+    expect(setAt(compact)).toMatchObject({ key: `${id.t1}/tools`, title: "tools", change: "added" });
     // Its blocks are still the search's, each naming the line a step to it opens, and stand where its line does.
-    expect(compact.every.rows.flatMap((row) => (row.kind === "block" && row.set !== undefined ? [[row.key, row.set]] : []))).toEqual(tools.map((key) => [key, "t1/tools"]));
-    expect(tools.map((key) => compact.keys.indexOf(key))).toEqual(tools.map(() => compact.keys.indexOf("t1/tools")));
+    expect(compact.every.rows.flatMap((row) => (row.kind === "block" && row.set !== undefined ? [[row.key, row.set]] : []))).toEqual(tools.map((key) => [key, `${id.t1}/tools`]));
+    expect(tools.map((key) => compact.keys.indexOf(key))).toEqual(tools.map(() => compact.keys.indexOf(`${id.t1}/tools`)));
     expect(toolsListed(layouts(events, listing)(1))).toEqual(tools);
     // The reader's choice outranks how the level starts it, either way; the line is listed both ways.
-    expect(toolsListed(layouts(events)(1, undefined, { "t1/tools": true }))).toEqual(tools);
-    const closed = layouts(events, listing)(1, undefined, { "t1/tools": false });
-    expect([toolsListed(closed), setAt(closed).key]).toEqual([[], "t1/tools"]);
+    expect(toolsListed(layouts(events)(1, undefined, { [`${id.t1}/tools`]: true }))).toEqual(tools);
+    const closed = layouts(events, listing)(1, undefined, { [`${id.t1}/tools`]: false });
+    expect([toolsListed(closed), setAt(closed).key]).toEqual([[], `${id.t1}/tools`]);
   });
 
   it("holds the search's current match while closed, and at a hidden level lists its line only over that match", () => {
@@ -300,9 +304,9 @@ describe("a set", () => {
     const hidden = layouts(events, { ...shown, tools: "hidden" });
     expect(hidden(1).rows.some(({ kind }) => kind === "set")).toBe(false);
     // Closed over the current match, the line is still listed, the control that opens it.
-    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools"]);
+    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual([`${id.t1}/tools`]);
     // Open at a hidden level, a set lists none but the current match.
-    expect(toolsListed(hidden(1, tools[1], { "t1/tools": true }))).toEqual([tools[1]]);
+    expect(toolsListed(hidden(1, tools[1], { [`${id.t1}/tools`]: true }))).toEqual([tools[1]]);
   });
 
   describe("a step of the search into it", () => {
@@ -315,9 +319,9 @@ describe("a set", () => {
       const layout = layouts(events)(1);
       const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
-      view.goTo(to, "t1");
+      view.goTo(to, id.t1);
     };
-    const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
+    const toggle = (visibility: Record<Category, Visibility>) => view.toggle(`${id.t1}/tools`, setStartsOpen("tools", visibility));
     // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
     // its line, if listed, open or closed as it draws, the tools listed under it, and the current match's block, if
     // listed, open or closed, so the description holding the match is drawn or not.
@@ -326,7 +330,7 @@ describe("a set", () => {
       if (search.current === undefined) throw new Error("the step made no match current");
       const { key } = search.current;
       const layout = layouts(events, visibility)(1, key, opened);
-      const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, "t1/tools", setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";
+      const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, `${id.t1}/tools`, setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";
       const block = layout.rows.find((row): row is BlockRow => row.kind === "block" && row.key === key);
       return { line, tools: toolsListed(layout), match: block === undefined ? "unlisted" : showsOpen(block, visibility, opened) ? "open" : "closed" };
     };
@@ -440,7 +444,7 @@ describe("an exchange's line", () => {
 const say = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
 
 // A reply, which ends its turn unless it says why else it stopped.
-const reply = (trace_id: string, content: unknown[], stop_reason = "end_turn"): RecordedEvent[] => [
+const reply = (trace_id: TraceId, content: unknown[], stop_reason = "end_turn"): RecordedEvent[] => [
   { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
   { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
   { timestamp, trace_id, type: "response_trailers", headers: [] },
@@ -459,27 +463,27 @@ describe("the column", () => {
   const more = [hi, assistant(text("Hello.")), user(text("More."))];
   const answered = [...more, assistant(text("More hello."))];
   const parted = [
-    ...request("t1", { ...main, messages: [hi] }),
-    ...reply("t1", [text("Hello.")]),
-    ...request("t2", { ...main, messages: more }),
-    ...reply("t2", [text("More hello.")]),
-    ...request("aside", { ...main, system: [text("Answer briefly.")], messages: [...answered, user(text("Aside?"))] }),
-    ...reply("aside", [text("Aside.")]),
-    ...request("t3", { ...main, messages: [...answered, user(text("Again."))] }),
-    ...reply("t3", [text("Again hello.")]),
+    ...request(id.t1, { ...main, messages: [hi] }),
+    ...reply(id.t1, [text("Hello.")]),
+    ...request(id.t2, { ...main, messages: more }),
+    ...reply(id.t2, [text("More hello.")]),
+    ...request(id.aside, { ...main, system: [text("Answer briefly.")], messages: [...answered, user(text("Aside?"))] }),
+    ...reply(id.aside, [text("Aside.")]),
+    ...request(id.t3, { ...main, messages: [...answered, user(text("Again."))] }),
+    ...reply(id.t3, [text("Again hello.")]),
   ];
-  const fork = (layout: { rows: Row[] }): ForkRow => rowAt(layout, "fork", "t2/fork");
+  const fork = (layout: { rows: Row[] }): ForkRow => rowAt(layout, "fork", `${id.t2}/fork`);
 
   it("lists one history: of the steps that part after one, the one the latest step stands under, below the line where they part", () => {
     const at = layouts(parted);
-    const below = (step: number) => keysOf(at(step)).slice(keysOf(at(step)).indexOf("t2/fork") + 1);
-    expect(below(3)).toEqual(["aside", "aside/request/http", "aside/response/http", "aside/response/stop reason", "aside/response/usage", "aside/response/fields", "aside/message.4", "thread:aside/message.4/content.0", "aside/reply", "thread:aside/message.5/content.0"]);
-    expect(below(4)).toEqual(["t3", "t3/request/http", "t3/response/http", "t3/response/stop reason", "t3/response/usage", "t3/response/fields", "t3/message.4", "thread:t3/message.4/content.0", "t3/reply", "thread:t3/message.5/content.0"]);
+    const below = (step: number) => keysOf(at(step)).slice(keysOf(at(step)).indexOf(`${id.t2}/fork`) + 1);
+    expect(below(3)).toEqual([id.aside, `${id.aside}/request/http`, `${id.aside}/response/http`, `${id.aside}/response/stop reason`, `${id.aside}/response/usage`, `${id.aside}/response/fields`, `${id.aside}/message.4`, `thread:${id.aside}/message.4/content.0`, `${id.aside}/reply`, `thread:${id.aside}/message.5/content.0`]);
+    expect(below(4)).toEqual([id.t3, `${id.t3}/request/http`, `${id.t3}/response/http`, `${id.t3}/response/stop reason`, `${id.t3}/response/usage`, `${id.t3}/response/fields`, `${id.t3}/message.4`, `thread:${id.t3}/message.4/content.0`, `${id.t3}/reply`, `thread:${id.t3}/message.5/content.0`]);
     // A sibling's rows are in neither list, so the search reads the column's alone.
-    expect(at(4).every.rows.filter(({ key }) => key.includes("aside"))).toEqual([]);
+    expect(at(4).every.rows.filter(({ key }) => key.includes(id.aside))).toEqual([]);
     expect([3, 4].map((step) => createSearch()(at(step).every.rows, /Aside/g).count)).toEqual([2, 0]);
     // The rows above the line are the same rows whichever sibling is listed.
-    const above = (step: number) => keysOf(at(step)).slice(0, keysOf(at(step)).indexOf("t2/fork"));
+    const above = (step: number) => keysOf(at(step)).slice(0, keysOf(at(step)).indexOf(`${id.t2}/fork`));
     expect(above(4)).toEqual(above(3));
     expect([...at(3).steps]).toEqual([1, 2, 3]);
     expect([...at(4).steps]).toEqual([1, 2, 4]);
@@ -492,8 +496,8 @@ describe("the column", () => {
       { step: 4, preview: "Again." },
     ];
     // The line stands after the step's rows from the step on, before any sibling arrived, when none is listed.
-    expect(keysOf(at(1))).not.toContain("t2/fork");
-    expect(keysOf(at(2)).at(-1)).toBe("t2/fork");
+    expect(keysOf(at(1))).not.toContain(`${id.t2}/fork`);
+    expect(keysOf(at(2)).at(-1)).toBe(`${id.t2}/fork`);
     expect([2, 3, 4].map((step) => fork(at(step)))).toMatchObject([
       { siblings, shown: undefined, change: "same", depth: 0 },
       { siblings, shown: 3 },
@@ -502,18 +506,18 @@ describe("the column", () => {
     // Its siblings are one array while they say the same, so its row is made again with the fields it had.
     expect(fork(at(4)).siblings).toBe(fork(at(3)).siblings);
     // Steps that hang on nothing are each listed, with no line between them.
-    const apart = layouts([...request("probe", { model: "m", messages: [user(text("quota"))] }), ...request("t1", { ...main, messages: [hi] })]);
-    expect(keysOf(apart(2)).filter((key) => !key.includes("/"))).toEqual(["probe", "t1"]);
+    const apart = layouts([...request(id.probe, { model: "m", messages: [user(text("quota"))] }), ...request(id.t1, { ...main, messages: [hi] })]);
+    expect(keysOf(apart(2)).filter((key) => !key.includes("/"))).toEqual([id.probe, id.t1]);
   });
 
   it("shows of a block the version its own history gave it, never a sibling's", () => {
     const at = layouts(parted);
-    const system = (step: number) => blockAt(at(step), "thread:t1/system/system.0");
+    const system = (step: number) => blockAt(at(step), `thread:${id.t1}/system/system.0`);
     expect([system(3).change, pastOf(system(3))]).toMatchObject(["changed", [{ step: 3, change: "changed", after: { parts: [{ text: "Answer briefly." }] } }]]);
     // The turn sends the thread's prompt, which the question rewrote for itself alone.
     expect([system(4).change, pastOf(system(4)), markOf(system(4)), lastOf(system(4))]).toEqual(["same", [], "same", undefined]);
     expect(blockOf(system(4))).toMatchObject({ parts: [{ text: "Be brief." }] });
-    expect(at(4).rows.filter((row) => row.change !== "same").every(({ key }) => key.startsWith("t3") || key.startsWith("thread:t3"))).toBe(true);
+    expect(at(4).rows.filter((row) => row.change !== "same").every(({ key }) => key.startsWith(id.t3) || key.startsWith(`thread:${id.t3}`))).toBe(true);
   });
 
   // A turn whose reply calls the Agent tool; the subagent, whose own reply calls it again; the subagent that launched;
@@ -523,42 +527,42 @@ describe("the column", () => {
   const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read" }] };
   const task = user(text("Find the longest word."));
   const nested = [
-    ...request("t1", { ...main, messages: [hi] }),
-    ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word.")], "tool_use"),
-    ...request("s1", { ...agent, messages: [task] }),
-    ...reply("s1", [text("Looking."), call("toolu_2", "Count the words.")], "tool_use"),
-    ...request("inner", { ...agent, messages: [user(text("Count the words."))] }),
-    ...reply("inner", [text("Three.")]),
-    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }),
-    ...reply("s2", [text("Done.")]),
-    ...request("t2", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done."))] }),
+    ...request(id.t1, { ...main, messages: [hi] }),
+    ...reply(id.t1, [text("On it."), call("toolu_1", "Find the longest word.")], "tool_use"),
+    ...request(id.s1, { ...agent, messages: [task] }),
+    ...reply(id.s1, [text("Looking."), call("toolu_2", "Count the words.")], "tool_use"),
+    ...request(id.inner, { ...agent, messages: [user(text("Count the words."))] }),
+    ...reply(id.inner, [text("Three.")]),
+    ...request(id.s2, { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }),
+    ...reply(id.s2, [text("Done.")]),
+    ...request(id.t2, { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done."))] }),
   ];
-  const [outer, inner] = ["thread:t1/message.1/content.1/nest", "thread:s1/message.1/content.1/nest"];
+  const [outer, inner] = [`thread:${id.t1}/message.1/content.1/nest`, `thread:${id.s1}/message.1/content.1/nest`];
   const nest = (layout: { rows: Row[] }, key = outer): NestRow => rowAt(layout, "nest", key);
 
   it("nests a subagent's rows under its Agent call, on one line that holds them closed until the reader opens it", () => {
     const at = layouts(nested, { ...dialogue, tools: "compact" });
-    const above = ["t1", "t1/tools", "t1/message.0", "thread:t1/message.0/content.0", "t1/reply", "thread:t1/message.1/content.0", "thread:t1/message.1/content.1", outer];
-    const below = ["t2", "t2/message.2", "thread:t2/message.2/content.0"];
+    const above = [id.t1, `${id.t1}/tools`, `${id.t1}/message.0`, `thread:${id.t1}/message.0/content.0`, `${id.t1}/reply`, `thread:${id.t1}/message.1/content.0`, `thread:${id.t1}/message.1/content.1`, outer];
+    const below = [id.t2, `${id.t2}/message.2`, `thread:${id.t2}/message.2/content.0`];
     expect(keysOf(at(5))).toEqual([...above, ...below]);
     // What it holds is still the search's, and stands where its line does.
     const { every, keys } = at(5);
     expect(createSearch()(every.rows, /Three/g).count).toBe(2);
-    expect(["s1", "thread:inner/message.1/content.0", "thread:s2/message.3/content.0"].map((key) => keys.at(keys.indexOf(key)!))).toEqual([outer, outer, outer]);
+    expect([id.s1, `thread:${id.inner}/message.1/content.0`, `thread:${id.s2}/message.3/content.0`].map((key) => keys.at(keys.indexOf(key)!))).toEqual([outer, outer, outer]);
     // Open, it lists its subagent's steps in the order they arrived, one level in, between the call and its result; a
     // subagent's own subagent is a nest under its call there, closed.
     const open = at(5, undefined, { [outer]: true });
-    const within = ["s1", "s1/tools", "s1/message.0", "thread:s1/message.0/content.0", "s1/reply", "thread:s1/message.1/content.0", "thread:s1/message.1/content.1", inner, "s2", "s2/message.2", "thread:s2/message.2/content.0", "s2/reply", "thread:s2/message.3/content.0"];
+    const within = [id.s1, `${id.s1}/tools`, `${id.s1}/message.0`, `thread:${id.s1}/message.0/content.0`, `${id.s1}/reply`, `thread:${id.s1}/message.1/content.0`, `thread:${id.s1}/message.1/content.1`, inner, id.s2, `${id.s2}/message.2`, `thread:${id.s2}/message.2/content.0`, `${id.s2}/reply`, `thread:${id.s2}/message.3/content.0`];
     expect(keysOf(open)).toEqual([...above, ...within, ...below]);
     expect(open.rows.map(({ depth }) => depth)).toEqual([...above.map(() => 0), ...within.map(() => 1), ...below.map(() => 0)]);
     const both = at(5, undefined, { [outer]: true, [inner]: true });
-    expect(both.rows.filter(({ depth }) => depth === 2).map(({ key }) => key)).toEqual(["inner", "inner/tools", "inner/message.0", "thread:inner/message.0/content.0", "inner/reply", "thread:inner/message.1/content.0"]);
+    expect(both.rows.filter(({ depth }) => depth === 2).map(({ key }) => key)).toEqual([id.inner, `${id.inner}/tools`, `${id.inner}/message.0`, `thread:${id.inner}/message.0/content.0`, `${id.inner}/reply`, `thread:${id.inner}/message.1/content.0`]);
     // A nest open inside one that is closed lists nothing.
     expect(keysOf(at(5, undefined, { [inner]: true }))).toEqual([...above, ...below]);
     // The nests a row is inside, the innermost first, which a step of the search to it opens.
     const rows = every.rows;
     const nestsAt = (key: string) => nestsOf(rows, rows.findIndex((row) => row.key === key));
-    expect(["thread:inner/message.1/content.0", inner, "s2", outer, "t2"].map(nestsAt)).toEqual([[inner, outer], [outer], [outer], [], []]);
+    expect([`thread:${id.inner}/message.1/content.0`, inner, id.s2, outer, id.t2].map(nestsAt)).toEqual([[inner, outer], [outer], [outer], [], []]);
   });
 
   it("says on a nest's line what it launched, how many steps it holds, and what it last did while its turn is not ended", () => {
@@ -583,44 +587,44 @@ describe("the column", () => {
     const searched = [...read, assistant(use("toolu_3", "Grep")), user(result("toolu_3", "B."))];
     const asked = (messages: { role: string; content: unknown[] }[]) => [...messages.slice(0, -1), user(...messages.at(-1)!.content, text("What are you doing?"))];
     const working = [
-      ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [use("toolu_2", "Read")], "tool_use"),
-      ...request("s2", { ...agent, messages: read }),
-      ...reply("s2", [use("toolu_3", "Grep")], "tool_use"),
-      ...request("asked", { ...agent, messages: asked(read) }),
-      ...reply("asked", [text("Searching.")]),
-      ...request("s3", { ...agent, messages: searched }),
-      ...reply("s3", [use("toolu_4", "SubagentHandback")], "tool_use"),
-      ...request("left", { ...agent, messages: asked(searched) }),
-      { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
+      ...request(id.t1, { ...main, messages: [hi] }),
+      ...reply(id.t1, [call("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request(id.s1, { ...agent, messages: [task] }),
+      ...reply(id.s1, [use("toolu_2", "Read")], "tool_use"),
+      ...request(id.s2, { ...agent, messages: read }),
+      ...reply(id.s2, [use("toolu_3", "Grep")], "tool_use"),
+      ...request(id.asked, { ...agent, messages: asked(read) }),
+      ...reply(id.asked, [text("Searching.")]),
+      ...request(id.s3, { ...agent, messages: searched }),
+      ...reply(id.s3, [use("toolu_4", "SubagentHandback")], "tool_use"),
+      ...request(id.left, { ...agent, messages: asked(searched) }),
+      { timestamp, trace_id: id.left, type: "end", outcome: "aborted" } as const,
     ];
-    const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
+    const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), `thread:${id.t1}/message.1/content.0/nest`).latest?.name;
     expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
     // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
     // the line says what the subagent did last, the tool its request answers.
-    const from = working.findIndex(({ trace_id }) => trace_id === "s2");
+    const from = working.findIndex(({ trace_id }) => trace_id === id.s2);
     const coming = (events: number) => latest(working.slice(0, from + events), 3);
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
     // The harness may ask while a reply is still coming: its asking, with no block of a reply yet, says nothing.
-    expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read) })], 4)).toBe("tool_use: Grep");
+    expect(latest([...working.slice(0, from + 6), ...request(id.asked, { ...agent, messages: asked(read) })], 4)).toBe("tool_use: Grep");
   });
 
   it("puts the line where subagents of one call part first inside the call's nest", () => {
     // A second request with the subagent's first message hangs on the same call: a sibling of the first.
     const twice = [
-      ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
+      ...request(id.t1, { ...main, messages: [hi] }),
+      ...reply(id.t1, [call("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request(id.s1, { ...agent, messages: [task] }),
+      ...reply(id.s1, [text("A.")]),
+      ...request(id.s2, { ...agent, messages: [task] }),
     ];
     const at = layouts(twice, dialogue);
-    const [line, parts] = ["thread:t1/message.1/content.0/nest", "thread:t1/message.1/content.0/fork"];
+    const [line, parts] = [`thread:${id.t1}/message.1/content.0/nest`, `thread:${id.t1}/message.1/content.0/fork`];
     expect(keysOf(at(3))).not.toContain(parts);
     const open = at(3, undefined, { [line]: true });
-    expect(keysOf(open).slice(keysOf(open).indexOf(line))).toEqual([line, parts, "s2", "s2/message.0", "thread:s2/message.0/content.0"]);
+    expect(keysOf(open).slice(keysOf(open).indexOf(line))).toEqual([line, parts, id.s2, `${id.s2}/message.0`, `thread:${id.s2}/message.0/content.0`]);
     expect(rowAt(open, "fork", parts)).toMatchObject({ siblings: [{ step: 2, preview: "Find the longest word." }, { step: 3 }], shown: 3, depth: 1 });
     expect(rowAt(at(2, undefined, { [line]: true }), "fork", parts)).toMatchObject({ shown: 2 });
   });
@@ -628,25 +632,25 @@ describe("the column", () => {
   it("lists the thread that begins with a compaction's summary after one line under the summary, and dims the steps it carries on from", () => {
     const summary = "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Said hello.\n</summary>\n";
     const compacted = [
-      ...request("probe", { model: "m", messages: [user(text("quota"))] }),
-      ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [text("Hello.")]),
-      ...request("t2", { ...main, messages: more }),
-      ...reply("t2", [text("More hello.")]),
-      ...request("compact", { ...main, messages: [hi, assistant(text("Hello.")), user(text("More."), text("Summarize."))] }),
-      ...reply("compact", [text(summary)]),
-      ...request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] }),
+      ...request(id.probe, { model: "m", messages: [user(text("quota"))] }),
+      ...request(id.t1, { ...main, messages: [hi] }),
+      ...reply(id.t1, [text("Hello.")]),
+      ...request(id.t2, { ...main, messages: more }),
+      ...reply(id.t2, [text("More hello.")]),
+      ...request(id.compact, { ...main, messages: [hi, assistant(text("Hello.")), user(text("More."), text("Summarize."))] }),
+      ...reply(id.compact, [text(summary)]),
+      ...request(id.c1, { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] }),
     ];
     const at = layouts(compacted, dialogue);
-    const line = "thread:compact/message.3/content.0/thread";
+    const line = `thread:${id.compact}/message.3/content.0/thread`;
     // The compaction stands after the first turn, as the second does, whose message it rewrites.
     expect(keysOf(at(4))).not.toContain(line);
     expect(at(4).rows.some(({ dimmed }) => dimmed)).toBe(false);
-    expect(keysOf(at(5)).slice(keysOf(at(5)).indexOf("compact"))).toEqual(["compact", "compact/message.2", "thread:compact/message.2/content.0", "thread:compact/message.2/content.1", "compact/reply", "thread:compact/message.3/content.0", line, "c1", "c1/message.0", "thread:c1/message.0/content.0"]);
+    expect(keysOf(at(5)).slice(keysOf(at(5)).indexOf(id.compact))).toEqual([id.compact, `${id.compact}/message.2`, `thread:${id.compact}/message.2/content.0`, `thread:${id.compact}/message.2/content.1`, `${id.compact}/reply`, `thread:${id.compact}/message.3/content.0`, line, id.c1, `${id.c1}/message.0`, `thread:${id.c1}/message.0/content.0`]);
     expect(rowAt(at(5), "thread", line)).toMatchObject({ change: "added", depth: 0, dimmed: false });
     const dimmed = at(5).rows.filter(({ dimmed }) => dimmed).map(({ key }) => key);
-    expect(dimmed.filter((key) => !key.includes("/"))).toEqual(["t1", "compact"]);
-    expect(dimmed).toContain("t1/fork");
-    expect(dimmed.some((key) => key.includes("probe") || key.includes("c1"))).toBe(false);
+    expect(dimmed.filter((key) => !key.includes("/"))).toEqual([id.t1, id.compact]);
+    expect(dimmed).toContain(`${id.t1}/fork`);
+    expect(dimmed.some((key) => key.includes(id.probe) || key.includes(id.c1))).toBe(false);
   });
 });

@@ -38,7 +38,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
-  const readSettings = async (trace_id: string) =>
+  const readSettings = async (trace_id: Work["trace_id"]) =>
     (
       await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
     ).settings;

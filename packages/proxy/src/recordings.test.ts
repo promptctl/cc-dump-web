@@ -2,6 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Event, Log } from "@cc-dump/log";
+import { traceIdOf } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { recordingName } from "./format.ts";
 import { createRecordings } from "./recordings.ts";
@@ -22,7 +23,7 @@ describe("record", () => {
     const name = create();
     rmSync(join(dir, name));
 
-    record(name, "4bf92f3577b34da6a3ce929d0e0e4736")({ type: "end", outcome: "ok" });
+    record(name, traceIdOf("t"))({ type: "end", outcome: "ok" });
 
     expect(readdirSync(dir)).toEqual([]);
     expect(logged).toMatchObject([{ event: "record", outcome: "error", error: expect.stringContaining("ENOENT") }]);
@@ -56,7 +57,7 @@ describe("readable", () => {
   it("is the bytes of a recording this run writes, and fails for one it does not", () => {
     const { create, record, readable } = recordings();
     const name = create();
-    record(name, "4bf92f3577b34da6a3ce929d0e0e4736")({ type: "request_trailers", headers: [] });
+    record(name, traceIdOf("t"))({ type: "request_trailers", headers: [] });
 
     expect(readable(name)).toBeGreaterThan(0);
     expect(() => readable("20261101T000000.000Z.jsonl")).toThrow("this run holds no writer for it");
@@ -75,7 +76,7 @@ describe("follows", () => {
 
     // The run's own recording from its first event, and an agent's that this run did not make from the request that
     // continues it, as after a restart of the proxy.
-    for (const name of [run, continued]) record(name, "4bf92f3577b34da6a3ce929d0e0e4736")({ type: "request_trailers", headers: [] });
+    for (const name of [run, continued]) record(name, traceIdOf("t"))({ type: "request_trailers", headers: [] });
 
     expect([run, past, made, continued, "notes.jsonl"].map(follows)).toEqual([true, false, true, true, false]);
   });

@@ -1,4 +1,5 @@
 import { createJSONStorage } from "zustand/middleware";
+import { traceIdOf } from "@cc-dump/log/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
@@ -47,7 +48,7 @@ describe("opening a recording", () => {
   });
 
   it("never has it open with the last recording's events", () => {
-    events.append([{ timestamp: "2026-11-13T08:00:00.000Z", trace_id: "t1", type: "request_body", base64: "" }]);
+    events.append([{ timestamp: "2026-11-13T08:00:00.000Z", trace_id: traceIdOf("t1"), type: "request_body", base64: "" }]);
     const seen: number[] = [];
     const unsubscribe = useView.subscribe(({ open }) => open === agent && seen.push(useEvents.getState().events.length));
     view.open(agent);
