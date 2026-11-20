@@ -18,7 +18,7 @@ A request is read as having no known sender when:
 - a header repeats or is empty;
 - its parent is itself.
 
-In 20261117T143819.271Z, 112 requests carry no agent header. 14 agents send the rest, and three of those name a6787ff8b38e6890b as their parent:
+In 20261117T143819.271Z, 115 requests carry no agent header. 14 agents send the rest, and three of those name a6787ff8b38e6890b as their parent:
 
 ```sh
 jq -r '([.headers[] | select(.[0] | ascii_downcase == "x-claude-code-agent-id") | .[1]] | first // "main") as $a

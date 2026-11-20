@@ -22,7 +22,7 @@ export function fieldOf(json: unknown, name: string): unknown {
 }
 
 // The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it. `read` takes
-// any type a part's format has a test for.
+// any type a part's format has a test for, and `parsed` any it has a parser for, failing in the parser's words.
 export function fields(json: unknown, what: string) {
   const object = jsonObject(json, what);
   const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
@@ -30,8 +30,16 @@ export function fields(json: unknown, what: string) {
     if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);
     return value;
   };
+  const parsed = <T>(name: string, parse: (value: unknown) => T): T => {
+    try {
+      return parse(object[name]);
+    } catch (error) {
+      throw new Error(`${what}: ${name}`, { cause: error });
+    }
+  };
   return {
     read,
+    parsed,
     object: (name: string) => jsonObject(object[name], `${what}: ${name}`),
     string: (name: string) => read(name, (value) => typeof value === "string", "a string"),
     boolean: (name: string) => read(name, (value) => typeof value === "boolean", "a boolean"),

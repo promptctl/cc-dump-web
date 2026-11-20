@@ -120,7 +120,8 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 });
 // What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
 // a subagent: it sends its input's `prompt` as the subagent's first message, to the agent its `subagent_type` names.
-// Its Skill tool runs the `skill` its input names. An input still streaming is text, and launches none yet. A subagent
+// Its Skill tool runs the `skill` its input names, so one whose input is still streaming text launches none yet, while
+// an Agent call launches an agent whatever its input holds, of the type it names once it is read. A subagent
 // hands its report back with SubagentHandback, the last block of a reply that stops for a tool's use, where its turn
 // never ends. A call with no id is shown as not fitting (`toolUse`), and states none.
 const launchOf = (name: unknown, input: unknown): Launch | undefined => {

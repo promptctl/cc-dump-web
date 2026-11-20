@@ -1,11 +1,12 @@
-import { record, type Exchange } from "../src/exchanges.ts";
+import { describe } from "@cc-dump/log/describe";
+import type { ByTrace } from "../src/exchanges.ts";
 import { categories, launchName, type Category, type Launch } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";
 import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, replyOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
 import { blockIn, createLayout, nestKey, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
-import { eventsOf } from "./recording.ts";
+import { foldOf } from "./recording.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
@@ -374,17 +375,17 @@ function doingOf(
   );
 }
 
-// A recording's history, read an event at a time: each exchange is formatted as it ends, and its body's events let go.
-// [LAW:no-ambient-temporal-coupling] That is sound because the proxy writes an exchange's end last: the formatter keeps
-// what it made of each side under the side's latest event (format/format.ts), so a side with no event after the end is
-// read from that, never from its emptied body again. An event after its exchange's end stops the read, by its line and
-// its trace, rather than be read against a body let go.
+// A recording's history, read an event at a time: each exchange is formatted as it ends, and its body's events let go,
+// and what a write cut short left after its last whole event is said and not read. [LAW:no-ambient-temporal-coupling]
+// That is sound because a trace takes nothing after its end (exchanges.ts, add): the formatter keeps what it made of
+// each side under the side's latest event (format/format.ts), so an ended exchange is read from that, never from its
+// emptied body again.
 async function historyOf(recording: string): Promise<History> {
-  const byTrace = new Map<string, Exchange>();
+  const byTrace: ByTrace = new Map();
   const format = createFormatter();
-  for await (const { event, where } of eventsOf(recording)) {
-    if (byTrace.get(event.trace_id)?.end !== undefined) throw new Error(`${where}: ${event.type} of ${event.trace_id} after its exchange's end`);
-    const exchange = record(byTrace, event);
+  const { unterminated, events } = foldOf(recording, byTrace);
+  if (unterminated > 0) console.log(`${recording}: its last ${unterminated} bytes are cut off, and not read`);
+  for await (const { exchange } of events) {
     if (exchange.latest.type !== "end") continue;
     format([...byTrace.values()]);
     exchange.request.body.length = 0;
@@ -397,13 +398,19 @@ const expanded = Object.fromEntries(categories.map((category) => [category, "exp
 if (process.argv.length < 3) throw new Error("Give the recordings to check: node packages/ui/check/column.ts <recording.jsonl>...");
 let failed = false;
 for (const recording of process.argv.slice(2)) {
-  const history = await historyOf(recording);
-  const open = Object.fromEntries(history.segments.map(({ formatted }) => [nestKey(levelOf(senderOf(formatted.exchange.request.head))), true]));
-  const layOut = createLayout(expanded);
-  const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
-  console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);
-  for (const [key, says] of [...found.forks, ...found.nests, ...found.threads]) console.log(`  ${key}: ${says}`);
-  for (const what of broken.slice(0, 40)) console.error(`  ${what}`);
-  failed ||= broken.length > 0;
+  // A recording that cannot be read is reported by its name, and the next is checked.
+  try {
+    const history = await historyOf(recording);
+    const open = Object.fromEntries(history.segments.map(({ formatted }) => [nestKey(levelOf(senderOf(formatted.exchange.request.head))), true]));
+    const layOut = createLayout(expanded);
+    const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
+    console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);
+    for (const [key, says] of [...found.forks, ...found.nests, ...found.threads]) console.log(`  ${key}: ${says}`);
+    for (const what of broken.slice(0, 40)) console.error(`  ${what}`);
+    failed ||= broken.length > 0;
+  } catch (error) {
+    console.error(`${recording}: ${describe(error)}`);
+    failed = true;
+  }
 }
 process.exitCode = failed ? 1 : 0;

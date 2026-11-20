@@ -1,9 +1,12 @@
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
+import { recordedAt } from "../src/testing.ts";
 
 // Recorded events as the proxy writes them, in the shapes Claude Code puts on the wire (docs/design/claude-code-wire.md),
 // for the tests that build a recording: requests by who sent them, replies, and the blocks that say what agents do.
 
 export const timestamp = "2026-11-15T14:00:00.000Z";
+// The fields of an event of the trace labelled `trace`, recorded at `timestamp`.
+export const at = recordedAt(timestamp);
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 
 // Who sends a request: the main agent, with no agent header; a subagent, by its id and the agent that launched it; or
@@ -12,25 +15,25 @@ export type From = { agent?: string; parent?: string } | { headers: Header[] };
 const headersOf = (from: From): Header[] =>
   "headers" in from ? from.headers : [...(from.agent === undefined ? [] : [["x-claude-code-agent-id", from.agent] as Header]), ...(from.parent === undefined ? [] : [["x-claude-code-parent-agent-id", from.parent] as Header])];
 
-export const request = (trace_id: string, body: unknown, from: From = {}): RecordedEvent[] => [
-  { timestamp, trace_id, type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: headersOf(from) },
-  { timestamp, trace_id, type: "request_body", base64: base64(body) },
-  { timestamp, trace_id, type: "request_trailers", headers: [] },
+export const request = (trace: string, body: unknown, from: From = {}): RecordedEvent[] => [
+  { ...at(trace), type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: headersOf(from) },
+  { ...at(trace), type: "request_body", base64: base64(body) },
+  { ...at(trace), type: "request_trailers", headers: [] },
 ];
 
 // A reply, which ends its turn unless it says why else it stopped. `ended`: when its exchange ended, or false for one
 // still coming.
-export const reply = (trace_id: string, content: unknown[], stop_reason = "end_turn", ended: string | false = timestamp): RecordedEvent[] => [
-  { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { timestamp, trace_id, type: "response_body", base64: base64({ id: `msg_${trace_id}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
-  ...(ended === false ? [] : ([{ timestamp, trace_id, type: "response_trailers", headers: [] }, { timestamp: ended, trace_id, type: "end", outcome: "ok" }] as RecordedEvent[])),
+export const reply = (trace: string, content: unknown[], stop_reason = "end_turn", ended: string | false = timestamp): RecordedEvent[] => [
+  { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
+  ...(ended === false ? [] : ([{ ...at(trace), type: "response_trailers", headers: [] }, { ...recordedAt(ended)(trace), type: "end", outcome: "ok" }] as RecordedEvent[])),
 ];
 
 // A reply still coming, streamed as the API streams one: its message's start and each of its content blocks whole, and
 // nothing after, so the message has not stopped and the exchange has not ended.
-export const streaming = (trace_id: string, content: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown })[]): RecordedEvent[] => {
+export const streaming = (trace: string, content: ({ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown })[]): RecordedEvent[] => {
   const events = [
-    { type: "message_start", message: { id: `msg_${trace_id}`, type: "message", role: "assistant", content: [], usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: "message_start", message: { id: `msg_${trace}`, type: "message", role: "assistant", content: [], usage: { input_tokens: 1, output_tokens: 1 } } },
     ...content.flatMap((block, index) => [
       { type: "content_block_start", index, content_block: block.type === "text" ? { type: "text", text: "" } : { ...block, input: {} } },
       { type: "content_block_delta", index, delta: block.type === "text" ? { type: "text_delta", text: block.text } : { type: "input_json_delta", partial_json: JSON.stringify(block.input) } },
@@ -39,8 +42,8 @@ export const streaming = (trace_id: string, content: ({ type: "text"; text: stri
   ];
   const sse = events.map((data) => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
   return [
-    { timestamp, trace_id, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "text/event-stream"]] },
-    { timestamp, trace_id, type: "response_body", base64: Buffer.from(sse).toString("base64") },
+    { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "text/event-stream"]] },
+    { ...at(trace), type: "response_body", base64: Buffer.from(sse).toString("base64") },
   ];
 };
 

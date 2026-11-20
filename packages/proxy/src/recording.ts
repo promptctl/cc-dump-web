@@ -1,4 +1,5 @@
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
+import type { TraceId } from "@cc-dump/log/trace";
 import type { Recorded, RecordedEvent } from "./format.ts";
 
 const { O_APPEND, O_CREAT, O_WRONLY } = constants;
@@ -8,7 +9,7 @@ type Body = Extract<Recorded, { base64: string }>;
 export type Seen = Exclude<Recorded, Body> | { type: Body["type"]; chunk: Buffer };
 
 // One exchange's recording into the recording `name`, opened when its request arrives.
-export type Recorder = (name: string, trace_id: string) => (seen: Seen) => void;
+export type Recorder = (name: string, trace_id: TraceId) => (seen: Seen) => void;
 
 // [LAW:one-source-of-truth] The measure of a recording's file that every part uses, the one source of how much of it
 // may be read: the bytes through its last newline, which are whole events, and the bytes after it, which a write that
@@ -73,7 +74,7 @@ export function createWriter(path: string): Writer {
 }
 
 // The line the recording holds for `seen`: one JSON event, the credentials removed.
-export function eventLine(trace_id: string, seen: Seen): Buffer {
+export function eventLine(trace_id: TraceId, seen: Seen): Buffer {
   const event: RecordedEvent = { timestamp: new Date().toISOString(), trace_id, ...recorded(seen) };
   return Buffer.from(`${JSON.stringify(event)}\n`);
 }

@@ -1,7 +1,7 @@
+import { exchanges } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
-import { agentCall, assistant, call, launched, notification, reply, request, result, returned, streaming, text, timestamp, user } from "../../test/fixtures.ts";
-import { exchanges } from "../exchanges.ts";
+import { agentCall, assistant, at, call, launched, notification, reply, request, result, returned, streaming, text, user } from "../../test/fixtures.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
@@ -704,7 +704,7 @@ describe("the column", () => {
       ...request("s3", { ...agent, messages: searched }, a1),
       ...reply("s3", [tool("toolu_4", "SubagentHandback")], "tool_use"),
       ...request("left", { ...agent, messages: searched }, a1),
-      { timestamp, trace_id: "left", type: "end", outcome: "aborted" } as const,
+      { ...at("left"), type: "end", outcome: "aborted" } as const,
     ];
     const latest = (events: RecordedEvent[], step: number) => {
       const { level } = nest(layouts(events)(step));

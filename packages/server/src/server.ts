@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buffer } from "node:stream/consumers";
-import { loggedIn, type Handler, type Log, type Work } from "@cc-dump/log";
+import { loggedIn, type Handler, type Log, type TraceId, type Work } from "@cc-dump/log";
 import { describe } from "@cc-dump/log/describe";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
@@ -38,7 +38,7 @@ type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
   // rest being their defaults.
-  const readSettings = async (trace_id: string) =>
+  const readSettings = async (trace_id: TraceId) =>
     (
       await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
     ).settings;

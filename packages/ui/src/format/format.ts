@@ -1,6 +1,6 @@
 import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
-import { latest, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
+import { latest, trailersOf, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
@@ -184,7 +184,8 @@ function isMessages({ request: { head } }: Exchange): boolean {
 }
 
 function requestShown(sides: Sides, side: RequestSide): RequestShown {
-  const { head, trailers } = side;
+  const { head } = side;
+  const trailers = trailersOf(side);
   const { body, whole } = sides.decode(side);
   const http = head === undefined ? notRecorded("request") : httpBlock("HTTP request", `${head.method} ${head.url} HTTP/${head.http_version}`, head.headers, trailers);
   const { own, ...sent } = requestBody(body.text, whole);
@@ -350,7 +351,8 @@ function toolName(tool: unknown): string {
 
 // The response's blocks, up to how its exchange ended, and its message's facts.
 function responseShown(sides: Sides, side: ResponseSide): ResponseShown {
-  const { head, trailers } = side;
+  const { head } = side;
+  const trailers = trailersOf(side);
   const { body, whole } = sides.decode(side);
   // A response that has not begun has no head to miss.
   const http: BlockOrNone =

@@ -60,8 +60,14 @@ export type LogWatcher = {
   failed: (error: Error) => void;
 };
 
+// `offset`: where in the recording the event's line ends, the byte just past it.
 export type Reader = {
-  event: (event: RecordedEvent) => void;
+  event: (event: RecordedEvent, offset: number) => void;
   end: (end: RecordingEnd) => void;
   failed: (error: Error) => void;
 };
+
+// [LAW:single-enforcer] Where a recording's event is refused, by whichever check refuses it, the parse of its line or
+// its place in its exchange, in every read of a recording (the connection's, the read's own, the column check's): the
+// event whose line ends at `offset`, and why.
+export const refusedAt = (offset: number, why: unknown) => new Error(`the event ending at byte ${offset}`, { cause: why });

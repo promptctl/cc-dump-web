@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Writable } from "node:stream";
-import { createLog, describeError, startSpan, type Handler, type Log } from "./index.ts";
+import { createLog, describeError, startTrace, type Handler, type Log } from "./index.ts";
 import { positionOf } from "./line.ts";
 
 // [LAW:single-enforcer] A part's log, the one its process writes: each event a JSON line on `out`, stdout, which
@@ -18,7 +18,7 @@ export function processLog(service: string, out: Writable = process.stdout, keep
   const first = () => Math.max(0, written - keep);
   const readers = new Set<() => void>();
   let writing = true;
-  const span = startSpan();
+  const span = startTrace();
 
   const log = createLog(service, (line) => {
     if (writing) out.write(line);

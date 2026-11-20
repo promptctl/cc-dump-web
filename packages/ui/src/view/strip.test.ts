@@ -1,6 +1,6 @@
+import { exchanges } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { exchanges } from "../exchanges.ts";
 import { createFormatter } from "../format/format.ts";
 import { assistant, call as toolCall, request as fixtureRequest, text, user } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
