@@ -40,23 +40,32 @@ describe("position", () => {
     expect(resolve({ at: "row", key: "b/hidden", offset: 30 }, hidden, placed)).toBe(100);
   });
 
-  it("finds the nearest row a key is inside, each prefix ending before a slash, the empty key's row included, and ends on every key", () => {
-    // A key has one prefix to probe per segment; a probe past them throws, rather than letting a loop that never ends hang the run.
-    const inside = (key: string, keys: string[]) => {
-      let probes = key.split("/").length;
-      return rowIndex(key, (prefix) => {
-        if (probes-- === 0) throw new Error(`rowIndex probed past the prefixes of ${JSON.stringify(key)}, at ${JSON.stringify(prefix)}`);
-        const index = keys.indexOf(prefix);
-        return index === -1 ? undefined : index;
-      });
-    };
-    expect(inside("/request/http", ["", "x"])).toBe(0);
-    expect(inside("//", ["", "x"])).toBe(0);
-    expect(inside("/request/http", ["x"])).toBeUndefined();
-    expect(inside("//", ["x"])).toBeUndefined();
+  // The row rowIndex finds for `key` among rows keyed `keys`. A key has length + 1 prefixes; a probe past that many
+  // throws, so a walk that never ends fails the run rather than hanging it.
+  const inside = (key: string, keys: string[]) => {
+    let probes = key.length + 1;
+    return rowIndex(key, (prefix) => {
+      if (probes-- === 0) throw new Error(`rowIndex probed more keys than ${JSON.stringify(key)} has prefixes`);
+      const index = keys.indexOf(prefix);
+      return index === -1 ? undefined : index;
+    });
+  };
+
+  it("finds the nearest row a key is inside, the longest of its prefixes ending before a slash", () => {
+    expect(inside("a/b/c", ["a", "a/b"])).toBe(1);
     expect(inside("a/b/c", ["x", "a"])).toBe(1);
+    expect(inside("/x/y", ["", "/x"])).toBe(1);
+    expect(inside("/request/http", ["", "x"])).toBe(0);
+    expect(inside("", [""])).toBe(0);
     expect(inside("a/b", [""])).toBeUndefined();
     expect(inside("x", [""])).toBeUndefined();
+    expect(inside("", ["x"])).toBeUndefined();
+  });
+
+  it("ends on every key, one starting with a slash among them", () => {
+    expect(inside("//", ["", "x"])).toBe(0);
+    expect(inside("//", ["x"])).toBeUndefined();
+    expect(inside("/request/http", ["x"])).toBeUndefined();
   });
 
   it("reads the position back from an offset: the row at the top and how far into it, or the start", () => {

@@ -26,17 +26,18 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
 }
 
 // The index of the row at `key`: its own, or, for a row a category hides, the row listed before it (Keys); or, while
-// there is none, the nearest row it is inside: a key is inside each of its prefixes that ends before a slash, so `a/b/c`
-// is inside `a/b`, which is inside `a`, and `/a` is inside the row keyed "" (no key without a leading slash is).
-// [LAW:types-are-the-program] The walk relies on no segment of a key holding a `/`; one that did would land in a row it is not inside. A block the formatter
-// replaced, as a body so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
+// there is none, the nearest row it is inside: a key is inside each of its prefixes that ends before a slash, the
+// longest nearest, so `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter replaced, as a body so far is
+// by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as
+// after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
-  const segments = key.split("/");
-  for (let count = segments.length; count > 0; count--) {
-    const index = indexOf(segments.slice(0, count).join("/"));
+  for (let prefix = key; ; ) {
+    const index = indexOf(prefix);
     if (index !== undefined) return index;
+    const cut = prefix.lastIndexOf("/");
+    if (cut === -1) return undefined;
+    prefix = prefix.slice(0, cut);
   }
-  return undefined;
 }
 
 // The place a scroll offset is at: the row at the top of the view and how far into it, or the start.
