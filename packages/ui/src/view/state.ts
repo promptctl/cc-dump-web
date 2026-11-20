@@ -7,7 +7,7 @@ import { settings, type SearchOptions, type Visibility } from "../settings.ts";
 import { events } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
-import { closedSetOf, isOpen, showsOpen, type Opened } from "./rows.ts";
+import { isOpen, showsOpen, type Opened } from "./rows.ts";
 import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
@@ -86,15 +86,15 @@ export const view = {
   },
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the nests its block is inside and
   // the set it is in show open, its block, unless the match is on its line, and the regions holding it show expanded,
-  // and the view moves to its row, which the step then refines to the match's line. The step chooses only what it
-  // changes: a set or a block already open, as the levels `visibility` start it or as the reader chose, is left as it
-  // is, and so is a nest, a region or a section the choices hold open, so a step among the matches of what they hold
-  // open leaves the choices the record they were. A section that starts open is chosen open by the first step into it,
-  // which shows nothing new: a step is told which folds hold its match, not how each starts.
+  // and the view moves to its row, which the step then refines to the match's line. The nests, the set, the regions and
+  // the sections holding the match are chosen open, so a later change of level, which moves how a set starts, never
+  // takes the current match back into its set's line (docs/design/01-features.md, F4): a set that starts open is chosen
+  // open by the first step into it, which shows nothing new, as a section is. A block already open, as the levels
+  // `visibility` start it or as the reader chose, is left as it is. A step among the matches of what the choices hold
+  // open leaves the choices the record they were.
   goTo: ({ match, row, nests, inContent, regions }: Step, now: string | undefined, visibility: Record<Category, Visibility>) =>
     useView.setState((state) => {
-      const set = closedSetOf(row, visibility, state.opened);
-      const opens = [...nests, ...(set === undefined ? [] : [set]), ...(!inContent || showsOpen(row, visibility, state.opened) ? [] : [row.key]), ...regions];
+      const opens = [...nests, ...(row.set === undefined ? [] : [row.set]), ...(!inContent || showsOpen(row, visibility, state.opened) ? [] : [row.key]), ...regions];
       return { ...movedTo(state, match.key, opens, now), search: { ...state.search, current: match } };
     }),
   // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show

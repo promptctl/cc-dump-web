@@ -1,13 +1,14 @@
 import type { RecordedEvent } from "@cc-dump/proxy/format";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
-import { createSearch } from "./search.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { adjacent, createSearch } from "./search.ts";
+import { useView, view } from "./state.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -236,10 +237,11 @@ describe("layout", () => {
     expect(estimateHeight(long, { k: true }, { ...levels, user: "compact" })).toBe(20 + 10 * 16);
   });
 
-  it("lists a hidden category's blocks at neither level but the search's revealed one", () => {
-    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed));
+  it("lists a hidden category's blocks at neither level but the search's current match", () => {
+    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed, { "t1/tools": true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
     expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
+    // In the set the step to it opened.
     expect(keys({ ...shown, tools: "hidden" }, "thread:t1/tools/tools.Read.0")).toContain("thread:t1/tools/tools.Read.0 added");
   });
 
@@ -293,13 +295,57 @@ describe("a set", () => {
     expect([toolsListed(closed), setAt(closed).key]).toEqual([[], "t1/tools"]);
   });
 
-  it("lists the block the search stepped to under its closed line, and no line at a hidden level but over that block", () => {
-    expect(toolsListed(layouts(events)(1, tools[1]))).toEqual([tools[1]]);
+  it("holds the search's current match while closed, and at a hidden level lists its line only over that match", () => {
+    expect(toolsListed(layouts(events)(1, tools[1]))).toEqual([]);
     const hidden = layouts(events, { ...shown, tools: "hidden" });
     expect(hidden(1).rows.some(({ kind }) => kind === "set")).toBe(false);
-    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools", `${tools[1]} added`]);
-    // Open at a hidden level, a set still lists none but the block revealed.
+    // Closed over the current match, the line is still listed, the control that opens it.
+    expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools"]);
+    // Open at a hidden level, a set lists none but the current match.
     expect(toolsListed(hidden(1, tools[1], { "t1/tools": true }))).toEqual([tools[1]]);
+  });
+
+  describe("a step of the search into it", () => {
+    const hidden = { ...shown, tools: "hidden" } as const;
+    const pattern = /Runs/g;
+    beforeEach(() => useView.setState(useView.getInitialState(), true));
+    // The reader's step to the first match, Bash's description, at the levels `visibility`, as the view takes it.
+    const step = (visibility: Record<Category, Visibility>) => {
+      const layout = layouts(events, visibility)(1);
+      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
+      if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
+      view.goTo(to, "t1", visibility);
+    };
+    const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
+    // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
+    // its line, if listed, open or closed as it draws, and the tools listed under it.
+    const seen = (visibility: Record<Category, Visibility>) => {
+      const { opened, search } = useView.getState();
+      const layout = layouts(events, visibility)(1, search.current?.key, opened);
+      const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, "t1/tools", setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";
+      return { line, tools: toolsListed(layout) };
+    };
+
+    for (const [level, visibility, open] of [
+      ["compact", shown, tools],
+      ["expanded", listing, tools],
+      ["hidden", hidden, [tools[2]]],
+    ] as const) {
+      it(`opens it at ${level}; the reader's close takes the current match back into the closed line, and opening it lists the match again`, () => {
+        step(visibility);
+        expect(seen(visibility)).toEqual({ line: "open", tools: open });
+        toggle(visibility);
+        expect(seen(visibility)).toEqual({ line: "closed", tools: [] });
+        toggle(visibility);
+        expect(seen(visibility)).toEqual({ line: "open", tools: open });
+      });
+    }
+
+    it("leaves the current match listed under an open line when the level changes after a step into a set that started open", () => {
+      step(listing);
+      expect(seen(shown)).toEqual({ line: "open", tools });
+      expect(seen(hidden)).toEqual({ line: "open", tools: [tools[2]] });
+    });
   });
 
   it("says on its line how many blocks it holds, which, and how large, and the last thing a step did to one of them", () => {

@@ -44,8 +44,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
   const layOut = useMemo(() => createLayout(visibility), [visibility]);
-  // The search's current match is listed whichever its category (F6), so a step to a hidden category's block shows it, and
-  // the step after, which makes another current, hides it again.
+  // The search's current match is listed whichever its category (F6), unless a set or nest the reader closed holds it, so
+  // a step to a hidden category's block shows it, and the step after, which makes another current, hides it again.
   const current = useView((state) => state.search.current);
   const revealed = current?.key;
   const opened = useView((state) => state.opened);

@@ -137,8 +137,9 @@ describe("the search", () => {
     expect(useView.getState().opened).toBe(opened);
   });
 
-  // A match on a block's line needs its row listed, and no more: the set's line opens, the block stays as it is.
-  it("opens the closed set a match's block is in, and records no choice for a set already open", () => {
+  // A match on a block's line needs its row listed, and no more: the set's line opens, the block stays as it is. The set
+  // is chosen open however it starts, so a change of level never closes it over the current match.
+  it("chooses open the set a match's block is in, whether it started closed or open", () => {
     const { visibility } = parseSettings(undefined);
     const inSet = { ...row, set: "t1/tools" };
     view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", visibility);
@@ -147,7 +148,7 @@ describe("the search", () => {
     expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true });
     useView.setState({ opened: {} });
     view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
-    expect(useView.getState().opened).toEqual({});
+    expect(useView.getState().opened).toEqual({ "t1/tools": true });
     useView.setState({ opened: { "t1/tools": false } });
     view.goTo({ match, row: inSet, nests: [], inContent: false, regions: [] }, "t1", { ...visibility, tools: "expanded" });
     expect(useView.getState().opened).toEqual({ "t1/tools": true });

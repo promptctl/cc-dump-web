@@ -135,8 +135,8 @@ export function summaryOf(set: SetRow): Summary {
 }
 
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
-// category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block revealed
-// among them wherever no closed nest holds it; `every` row, listed or not, which the search reads, since a hidden
+// category but the search's current match, and of a closed set, the titles over no block a level lists or the current match, and what a closed nest
+// holds; `every` row, listed or not, which the search reads, since a hidden
 // category's blocks, a closed set's and a closed nest's are searched (docs/design/01-features.md, F6); and the `steps` the
 // column lists, whose rows these are (columnOf).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
@@ -164,9 +164,9 @@ export const pastKey = (key: string) => `past:${key}`;
 // Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
 // level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
 // closed until the reader opens it (`opened`). It leaves out the blocks of each category `visibility` hides
-// (docs/design/01-features.md, F5) and of each set that shows closed (F4) but the one at the key `revealed`, which the
-// search has stepped to (F6), and a group or a set with no block a level lists, rather than a title over nothing. A
-// step of 0 is the conversation before anything arrived.
+// (docs/design/01-features.md, F5) but the one at the key `revealed`, the search's current match (F6), and the blocks
+// of each set that shows closed (F4), and a group or a set over no block a level lists or the current match, rather
+// than a title over nothing. A step of 0 is the conversation before anything arrived.
 export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
   let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, steps: new Set() };
   // Each fork's siblings as its line last listed them, by its key.
@@ -185,9 +185,10 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
       every.push(row);
       isShown.push(shown);
     };
-    // Whether each row of a step's is listed. A title, a group's or a set's, is listed over a block of it a level
-    // lists: read from the end, whether one follows before the next title. A set's block is listed under its line only
-    // while the set is open.
+    // Whether each row of a step's is listed. A block is listed where its level lists it or it is the search's current
+    // match, and its set, if any, shows open. A title, a group's or a set's, is listed over such a block, open or not,
+    // so a closed set's line stays the control that opens it: read from the end, whether one follows before the next
+    // title.
     const shownOf = (rows: Own[]): boolean[] => {
       const shown = rows.map(() => true);
       let titled = false;
@@ -195,8 +196,9 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
         const row = rows[index]!;
         if (row.kind === "block") {
           const levelLists = levels[visibility[blockOf(row).category]].listed;
-          shown[index] = row.key === revealed || (levelLists && closedSetOf(row, visibility, opened) === undefined);
-          titled ||= levelLists || row.key === revealed;
+          const listedBy = levelLists || row.key === revealed;
+          shown[index] = listedBy && closedSetOf(row, visibility, opened) === undefined;
+          titled ||= listedBy;
           continue;
         }
         if (row.kind !== "exchange") shown[index] = titled;
