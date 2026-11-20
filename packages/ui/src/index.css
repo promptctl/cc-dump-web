@@ -87,7 +87,8 @@
 
 /* Moving in time (view/motion.ts): the conversation the moment leaves slides away by half its width while the next
    moment fades in, the way the steps run in the strip above it: forward, to the left, as the strip's marks pass; back,
-   to the right. Under reduced motion nothing moves. */
+   to the right. A switch that keeps what is above a fork's line is the exception below. Under reduced motion nothing
+   moves. */
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-group(conversation) {
     animation-duration: 200ms;

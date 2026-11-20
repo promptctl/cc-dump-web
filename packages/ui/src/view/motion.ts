@@ -1,7 +1,7 @@
 // Moving in time as one motion (docs/design/02-design.md, "Two axes"): the conversation the moment leaves slides away,
-// the way the move goes, while the next moment fades in, by the View Transitions API, its motion the stylesheet's
-// (index.css), which has none when the OS asks for reduced motion. Only a move the reader makes runs one; what arrives
-// live is not animated.
+// the way the move goes, while the next moment fades in, or is there at once under what a switch keeps (`kept`), by the
+// View Transitions API, its motion the stylesheet's (index.css), which has none when the OS asks for reduced motion.
+// Only a move the reader makes runs one; what arrives live is not animated.
 
 // Which way a move in time goes: back to an earlier step, or forward to a later one.
 export type Way = "back" | "forward";

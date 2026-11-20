@@ -28,9 +28,9 @@ import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 
-// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, every row of it listed, of
-// which only those on screen are mounted. `reading`: whether the read can still bring an
-// exchange its end. `theme`: what the minimap's canvas is painted in.
+// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column of the rows createLayout
+// (rows.ts) lists, of which only those on screen are mounted. `reading`: whether the read can still bring an exchange
+// its end. `theme`: what the minimap's canvas is painted in.
 export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
