@@ -33,7 +33,7 @@ The category colors are app-specific variables: derived from the base colors, he
 
 ## Type
 
-IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. Content wraps at about 110 characters whatever the window's width.
+IBM Plex Sans for the app's voice; IBM Plex Mono for the wire. Content wraps at about 110 characters, or at the window's width where it is narrower.
 
 ## Layout
 

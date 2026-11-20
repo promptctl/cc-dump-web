@@ -76,7 +76,7 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
 
   return (req, res, work) => {
     // [LAW:single-enforcer] Every answer, any route's: the browser's origin is the UI's, and who may reach the server is
-    // fromThisMachine's to say (docs/design/01-features.md, "Who may reach it").
+    // fromThisMachine's to say.
     res.setHeader("access-control-allow-origin", "*");
     if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} is not one this machine serves`));
     const route = routes[new URL(req.url!, "http://server").pathname];
