@@ -40,21 +40,23 @@ describe("position", () => {
     expect(resolve({ at: "row", key: "b/hidden", offset: 30 }, hidden, placed)).toBe(100);
   });
 
-  it("finds the nearest row a key is inside, a key starting with a slash inside the row keyed with nothing", () => {
-    // Throws, rather than letting a loop that never ends hang the run.
-    const bounded = (keys: string[]) => {
-      let calls = 0;
-      return (key: string) => {
-        if (++calls > 10) throw new Error(`rowIndex probed more than 10 keys, the last ${JSON.stringify(key)}`);
-        const index = keys.indexOf(key);
+  it("finds the nearest row a key is inside, each prefix ending before a slash, the empty key's row included, and ends on every key", () => {
+    // A key has one prefix to probe per segment; a probe past them throws, rather than letting a loop that never ends hang the run.
+    const inside = (key: string, keys: string[]) => {
+      let probes = key.split("/").length;
+      return rowIndex(key, (prefix) => {
+        if (probes-- === 0) throw new Error(`rowIndex probed past the prefixes of ${JSON.stringify(key)}, at ${JSON.stringify(prefix)}`);
+        const index = keys.indexOf(prefix);
         return index === -1 ? undefined : index;
-      };
+      });
     };
-    expect(rowIndex("/request/http", bounded(["", "x"]))).toBe(0);
-    expect(rowIndex("//", bounded(["", "x"]))).toBe(0);
-    expect(rowIndex("/request/http", bounded(["x"]))).toBeUndefined();
-    expect(rowIndex("a/b/c", bounded(["", "a"]))).toBe(1);
-    expect(rowIndex("x", bounded([""]))).toBeUndefined();
+    expect(inside("/request/http", ["", "x"])).toBe(0);
+    expect(inside("//", ["", "x"])).toBe(0);
+    expect(inside("/request/http", ["x"])).toBeUndefined();
+    expect(inside("//", ["x"])).toBeUndefined();
+    expect(inside("a/b/c", ["x", "a"])).toBe(1);
+    expect(inside("a/b", [""])).toBeUndefined();
+    expect(inside("x", [""])).toBeUndefined();
   });
 
   it("reads the position back from an offset: the row at the top and how far into it, or the start", () => {

@@ -26,7 +26,9 @@ export function resolve(position: Position, indexOf: (key: string) => number | u
 }
 
 // The index of the row at `key`: its own, or, for a row a category hides, the row listed before it (Keys); or, while
-// there is none, the nearest row it is inside: `a/b/c` is inside `a/b`, which is inside `a`. A block the formatter
+// there is none, the nearest row it is inside: a key is inside each of its prefixes that ends before a slash, so `a/b/c`
+// is inside `a/b`, which is inside `a`, and `/a` is inside the row keyed "" (no key without a leading slash is).
+// [LAW:types-are-the-program] The walk relies on no segment of a key holding a `/`; one that did would land in a row it is not inside. A block the formatter
 // replaced, as a body so far is by the content parsed from it, leaves the view at its group. Undefined while not even the outermost is among them, as after a reload before it is read.
 export function rowIndex(key: string, indexOf: (key: string) => number | undefined): number | undefined {
   const segments = key.split("/");
