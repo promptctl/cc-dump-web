@@ -1,14 +1,12 @@
-# cc-dump: MVP scope
+# cc-dump: features
 
-**Owner:** Brandon · **Status:** draft, scope set by Brandon 2026-11-12 · **Builds on:** `00-premise.md`
-
-The MVP is a web application that launches Claude Code in tmux, captures its Anthropic API traffic through a local proxy, and shows that traffic as a live, filterable, searchable conversation that is recorded and can be reopened. It is a from-scratch rewrite of the Python/Textual cc-dump. Its display and some of its behavior differ, and it may do more than the original (managing many agents, say), but how a user monitors a session is the original's (`divergences.md`).
+cc-dump is a web application that launches Claude Code in tmux, captures its Anthropic API traffic through a local proxy, and shows that traffic as a live, filterable, searchable conversation that is recorded and can be reopened.
 
 ## Vocabulary
 
 | Term | Meaning |
 |---|---|
-| Agent | The coding tool being observed. In the MVP, Claude Code. |
+| Agent | The coding tool being observed: Claude Code. |
 | Proxy | The local HTTP endpoint the agent sends its API requests to. It forwards them to Anthropic. |
 | Exchange | One API request and its response. |
 | Block | One piece of an exchange: a system prompt, a text block, a tool call, a thinking block, a usage line. |
@@ -19,8 +17,6 @@ The MVP is a web application that launches Claude Code in tmux, captures its Ant
 | Recording | The stored file holding everything the proxy saw from one Claude Code process: one user session, from the process's start to its exit. Every request the process makes is in it, its quota probes, title requests and subagents' included, whatever session IDs they carry. Requests that name no process are in the proxy run's recording. |
 
 ## Features
-
-Each feature is stated as what the person using the app can do and see.
 
 ### F1. Launch
 - The user picks a tmux session from a list of the sessions on their tmux server and presses Launch.
@@ -55,21 +51,21 @@ Each feature is stated as what the person using the app can do and see.
 - **Follow mode:** while on, the view stays at the newest content. Scrolling away pauses it and returning to the bottom resumes it. A control shows whether it is on, paused or off.
 - **Expanding:** every block has a collapsed form (one line naming the block and its size) and an expanded form (all of its content). Clicking the block switches between them.
 - A long region inside a block, such as a code fence or an XML-tagged section, collapses and expands the same way.
-- A Markdown heading in a block's text is the line of what stands under it, up to the next heading of its depth or a shallower one: a click on the heading hides that, the deeper headings and what is under them with it, and a click shows it again. Closed, the line says how many lines it hides. What the user and the assistant said, and what the assistant thought, starts with all of it shown, so the headings only add places to fold; the system prompt, a tool's description and the content the harness injects start with each heading closed, as their outline. What the user opened or closed stays that way.
+- A Markdown heading in a block's text is the line of what stands under it, up to the next heading of its depth or a shallower one: a click on the heading hides that, the deeper headings and what is under them with it, and a click shows it again. Closed, the line says how many lines it hides. What the user and the assistant said, and what the assistant thought, starts with all of it shown; the system prompt, a tool's description and the content the harness injects start with each heading closed, as their outline. What the user opened or closed stays that way.
 - A Markdown text whose headings stand far apart has its contents above it: one line, closed until clicked, that opens to a list of every heading in the text, each set in under the heading it stands under, with how many lines stand under it. A click on an entry shows its heading, whatever was closed around it, and what stands under it, and puts the view there.
 - A block starts collapsed or expanded as its category's level says (F5), except the content the harness injects (F3), which always starts collapsed. A block the user expanded or collapsed stays that way when its category's level changes.
 - A set is one line while closed, and its blocks are listed under that line while open; a click on the line switches between them. The line says how many blocks the set holds, their names, as many as fit, and their size together, and the last thing a step did to one of them, so a tool a step rewrote or took away is found from the closed line. A set starts closed at its category's compact level and open at its expanded level, and one the user opened or closed stays that way when the level changes.
 
 ### F5. Filter
 - Each category is set independently to one of three levels: hidden (its blocks are not listed), compact (each block is its collapsed line, and a set is its one line) or expanded (each block is expanded, and a set is open).
-- The levels start as in cc-dump: user and assistant expanded; tools, system and thinking compact; parameters, usage and http, which cc-dump lists as one category, metadata, hidden (Brandon, 2026-11-16: "metadata is too broad of a category").
+- The levels start as: user and assistant expanded; tools, system and thinking compact; parameters, usage and http hidden.
 - A filter bar that is always on screen shows each category's level, telling the three apart. It is also the control that changes it: a click moves a category to the next level, from hidden to compact to expanded and back to hidden.
 
 ### F6. Search
 - The user types a query and every match is highlighted as they type, with a count. Every category is searched, hidden ones included.
 - The query is a regular expression, matched without regard to case. Each of case, whole word and regular expression can be switched.
 - Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match under a closed heading opens it, moving to a match in a closed set opens the set, and moving to a match in a hidden category shows its block.
-- A text's contents (F4) say its headings a second time, so they are not searched: a match in a heading is counted once, where the heading is.
+- A text's contents (F4) are not searched: a match in a heading is counted once, where the heading is.
 
 ### F7. Record and reopen
 - Every exchange is written to its process's recording as it happens, with no action from the user.
@@ -99,67 +95,34 @@ Each feature is stated as what the person using the app can do and see.
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
-Added 2026-11-14, from using the app: the agent is watched and used in the same window.
 - The agent's tmux pane is shown in the page, beside the conversation, live and fully interactive: what the agent prints appears as it prints it, and what the user types goes to the agent, as in their own terminal.
 - A launch (F1) shows the pane it opened.
 - After a reload the pane is shown again as it is now.
 - The terminal is put away and shown again by a control in the header, there while the launch's window is known, after a reload too. The agent runs on in its window either way.
 - The terminal is in the theme (F10).
-- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it (by Unicode 11's table; tmux-control-mode-js tmux-terminal-444.8s9 for later emoji and those written with VS16). A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, any other scheme (a statusline's cc-candybar://) by the app the OS has for it. The pointer over a link shows where it goes.
+- It draws a statusline's Nerd Font icons and powerline separators from a face served with the app, and an emoji two cells wide, as tmux counts it (by Unicode 11's table). A link it prints, as a link or as a URL in its text, opens on a click: a web page in a new tab, any other scheme by the app the OS has for it. The pointer over a link shows where it goes.
 
-## How hot reload shapes the design
-
-Hot reload is designed in first, because it decides where every other piece lives.
+## Architecture
 
 **Three parts, one of which never reloads:**
 
 | Part | Reloads | Does |
 |---|---|---|
-| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, lists the recordings, and serves a recording to readers from any position: one the proxy run is writing to its end and then live, any other to its end. Reads its port and upstream from its settings file at its start. |
-| App server | Restarts on change | Launches agents through tmux (using tmux-control-mode-js), stores the settings it launches with, serves its log lines to the logs panel, as the proxy serves its own on its reader port (F9). |
+| Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, every event as it arrived, lists the recordings, and serves a recording to readers from any position: one the proxy run is writing to its end and then live, any other to its end. Reads its port and upstream from its settings file at its start. |
+| App server | Restarts on change | Launches agents through tmux, stores the settings it launches with, serves its log lines to the logs panel, as the proxy serves its own on its reader port (F9). |
 | Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
 
-**The proxy stays small so that it rarely changes.** It knows nothing about messages, blocks or streaming events. Everything that understands the Anthropic API lives where it can be reloaded. This is also what makes "every block type is captured" true by construction: the proxy cannot drop what it never parses.
+**The proxy knows nothing about messages, blocks or streaming events.** Everything that understands the Anthropic API lives in the parts that reload.
 
-**One path to the screen.** The browser holds two kinds of state: the events it has read from the proxy, and the view settings of F11. Everything else on screen is derived from those two. So these four cases are the same operation, which is to read a recording from the start and then follow it:
+**One path to the screen.** The browser holds two kinds of state: the events it has read from the proxy, and the view settings of F11. Everything else on screen is derived from those two. Watching live traffic, reopening a past recording, refreshing the browser and reloading after a code change are one operation: read a recording from the start, then follow it.
 
-- watching live traffic,
-- reopening a past recording,
-- refreshing the browser,
-- reloading after a code change.
+**One connection interface.** The UI reaches the backend only through a single interface.
 
-**One connection interface.** The UI reaches the backend only through a single interface, with one implementation today (the browser talking to the local servers). An Electron shell is then a second implementation of that interface and changes no UI code.
-
-**Security is a non-goal.** Whatever is needed is built in the most direct way. Launching an agent already means running a shell command the user configured.
-
-## Scaffold for later layers
-
-The MVP is the base the intermediate and advanced features are added to, so its seams are placed where those features attach:
-
-- A new block type or a richer rendering is one new entry in the formatter, with no change to capture or the view.
-- A category's state is a value, its level, that can grow more levels without changing the blocks that read it.
-- Anything computed from traffic (cost, timelines, change tracking) is another reader of the same events.
-- A terminal pane, more agents, and other providers attach at the launch feature and the connection interface.
+**One formatter.** A new block type or a richer rendering is one new entry in the formatter, with no change to capture or the view. Anything computed from traffic is another reader of the same events.
 
 ## Stack
 
 - TypeScript throughout. Node for the proxy and the app server.
 - React with Vite for the UI. Zustand for state.
-- Tailwind, reading the theme's variables (docs/design/02-design.md, "Themes"); no component library.
+- Tailwind, reading the theme's variables; no component library.
 - tmux-control-mode-js for all tmux operations, and its terminal export, on xterm.js, for the terminal (F13).
-
-## Not in the MVP
-
-- Per-tool renderers, markdown rendering, and token-cost figures. These were proposed as the next layer and are not part of this scope.
-- A tool result linked to its call, as in the original: named for its tool and the call's detail (the path, command or pattern), in a color shared with the call.
-- Everything in the intermediate and advanced layers.
-
-## Open issues
-
-| Item | Type |
-|---|---|
-| The recording holds what was on the wire, every event as it arrived, so a reopened recording is read by the same path as live traffic and reaches the same state. The original's HAR files hold a non-streaming summary of each exchange, so they will not open here. | question |
-| Whether launching again resumes the session the recording holds, as the original's `auto_resume` does. Open until the basics of how the app works are settled. | question |
-| Re-deriving a very long conversation on every reload may be slow. Not measured. | risk |
-| The session ID in the info panel depends on Claude Code's `metadata.user_id` format, which is unofficial: the JSON text of an object holding `session_id`, as Claude Code sent it on 2026-11-16. | risk |
-| A restart of the proxy ends the live view of an agent launched before it, since the proxy cannot know whether the agent's process is still running. The recording is followed again once the agent's next request reaches the new proxy and it is reopened. | risk |
