@@ -8,7 +8,7 @@ import { view } from "./state.ts";
 
 type Launching = Pick<Connection, "launcher" | "launch">;
 
-// The launch control (docs/design/features.md, F1): the user picks a session on their tmux server and launches the agent
+// The launch control (docs/design/01-features.md, F1): the user picks a session on their tmux server and launches the agent
 // command in a new window there. A launch opens the agent's recording, so the conversation is that agent's alone. What it
 // starts from, the sessions and the settings the last launch asked for, is read each time it opens, so it holds the
 // sessions opened since it last did. The launch is the control's, not the open popover's: one under way when it closes

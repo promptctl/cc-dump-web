@@ -4,7 +4,7 @@ import { categoryVars } from "../theme/theme.ts";
 import { levelKeys, withKeys } from "./keyboard.ts";
 import { Toggle } from "./Toggle.tsx";
 
-// The filter (docs/design/features.md, F5): each category's level, always on screen, and the control that changes it.
+// The filter (docs/design/01-features.md, F5): each category's level, always on screen, and the control that changes it.
 export function FilterBar() {
   const visibility = useSettings((state) => state.visibility);
   return (

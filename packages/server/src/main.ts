@@ -17,5 +17,5 @@ const settingsPath = join(baseDirectory("XDG_CONFIG_HOME", process.env, homedir(
 // and says where it was started in INIT_CWD, or, run as a command of its own, this process's.
 const directory = process.env.INIT_CWD ?? process.cwd();
 const app = createApp({ log, logs, settingsPath, tmux: createTmux(), proxyInfo: () => fetchProxyInfo(), proxyRecording: () => requestRecording(), directory });
-// The pages' terminals reach the user's tmux server through the app server's port (docs/design/features.md, F13).
+// The pages' terminals reach the user's tmux server through the app server's port (docs/design/01-features.md, F13).
 shutdownOnSignal(log, [await serve(log, app, SERVER_PORT, createTerminal(log))]);

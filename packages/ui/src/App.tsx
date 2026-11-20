@@ -72,7 +72,7 @@ export function App({ connection }: { connection: Connection }) {
       {/* The conversation, and the launched agent's window beside it, each half the width (F13). */}
       <div className="flex min-h-0 flex-1">
         {/* Each opening is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the
-            one way (docs/design/features.md, "One path to the screen"). With no recording open there is none to show. */}
+            one way (docs/design/01-features.md, "One path to the screen"). With no recording open there is none to show. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {open === null ? (
             <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
@@ -109,7 +109,7 @@ function ReadingState({ reading }: { reading: Reading }) {
   }
 }
 
-// Whether the UI reaches the proxy, and while it does, the proxy's traffic and its source (docs/design/features.md, F8).
+// Whether the UI reaches the proxy, and while it does, the proxy's traffic and its source (docs/design/01-features.md, F8).
 function ProxyState({ status }: { status: StatusReading }) {
   switch (status.state) {
     case "connecting":
@@ -151,7 +151,7 @@ function LastRequest({ at }: { at: number }) {
   );
 }
 
-// A change to the proxy's source takes effect only when the proxy restarts (docs/design/features.md, F12).
+// A change to the proxy's source takes effect only when the proxy restarts (docs/design/01-features.md, F12).
 function SourceState({ source }: { source: SourceStatus }) {
   if (source.state === "failed") {
     return <p className="text-error" title={source.message}>Proxy source not watched, a restart watches it again: {source.message}</p>;

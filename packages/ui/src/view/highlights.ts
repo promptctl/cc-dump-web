@@ -1,6 +1,6 @@
 import type { Range as Characters } from "./range.ts";
 
-// The search's matches as the page paints them (docs/design/features.md, F6), with the CSS Custom Highlight API: a match
+// The search's matches as the page paints them (docs/design/01-features.md, F6), with the CSS Custom Highlight API: a match
 // is a range of a text node, painted by the stylesheet's ::highlight(match) and ::highlight(match-current). A text with
 // tens of thousands of matches stays one node to lay out, where an element per match takes seconds.
 // [LAW:no-shared-mutable-globals] The page's highlights are the browser's registry; this module is the one owner of

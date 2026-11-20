@@ -28,7 +28,7 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
 export type Listing = { name: string };
 
 // [LAW:one-source-of-truth] The names of recordings, the writer's formats and their reader, side by side. A recording is
-// one Claude Code process's (docs/design/features.md, Vocabulary), named for the moment the app launched it, in ISO 8601
+// one Claude Code process's (docs/design/01-features.md, Vocabulary), named for the moment the app launched it, in ISO 8601
 // basic format (no colons, which Finder and Windows refuse). Traffic that names no process goes to the proxy run's
 // recording, named for the moment the run started, so the two kinds are told apart by the name alone.
 const basicStart = (start: Date) => start.toISOString().replace(/[-:]/g, "");
@@ -88,7 +88,7 @@ export type RecordingEnd = { unterminated_bytes: number };
 // The whole error, stack and all, is the request's log event's.
 export type ReadFailure = { message: string };
 
-// Each message of `GET /status`: the proxy's state now, whole (docs/design/features.md, F8, F12): what it is, so a reader
+// Each message of `GET /status`: the proxy's state now, whole (docs/design/01-features.md, F8, F12): what it is, so a reader
 // following it across a restart knows the restarted proxy, whether it runs its source on disk, and its traffic.
 export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traffic };
 

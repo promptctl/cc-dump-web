@@ -7,7 +7,7 @@ import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./part
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
-// A run of an exchange's blocks (docs/design/features.md, "Vocabulary"). `title`: the heading over it, which says who
+// A run of an exchange's blocks (docs/design/01-features.md, "Vocabulary"). `title`: the heading over it, which says who
 // speaks, in the same word whether the content arrived as a reply or is resent as a message, or what the model is given
 // beside the messages, its tools and its system prompt; `message` over a message that names no speaker this view knows.
 // The envelope's groups, the request's own and the response's own, have none: they stand under the exchange's line, which
@@ -34,7 +34,7 @@ export type Place =
   | { in: "system message"; before: number; index: number }
   | { in: "reply" };
 
-// One exchange of the conversation (docs/design/features.md, F3): its envelope, then what its request sends, the tools,
+// One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
 // the system prompt and each message, then the reply; the facts its line prints; and how many messages of a speaker's
 // the request sends, which is the reply's index among them.
 export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };

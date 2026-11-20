@@ -10,7 +10,7 @@ import { keyAt, partKey } from "./search.ts";
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
 // A Markdown text's prose is set in the sans, its code and tags in the mono; a verbatim text is all mono, as it came.
 // Its long regions collapse and expand as a block does, and each of its headings hides and shows what stands under it
-// (docs/design/features.md, F4), and every leaf paints the search's matches. Headings that stand far apart are listed
+// (docs/design/01-features.md, F4), and every leaf paints the search's matches. Headings that stand far apart are listed
 // above it, as its contents.
 export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
   const rendering = renderingOf(part);

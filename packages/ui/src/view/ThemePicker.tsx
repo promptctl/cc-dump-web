@@ -5,7 +5,7 @@ import { resolve, systemThemes, themeNames, themeOf, type Theme, type ThemeChoic
 import { usePrefersDark } from "../theme/useTheme.ts";
 import { HeaderPopover } from "./HeaderPopover.tsx";
 
-// The theme control (docs/design/features.md, F10): the choice in effect, and every theme to choose from, each shown
+// The theme control (docs/design/01-features.md, F10): the choice in effect, and every theme to choose from, each shown
 // with its ground and its category colors, so the derived colors are seen before they are chosen. The system
 // choice is shown as the theme it resolves to now.
 export function ThemePicker() {

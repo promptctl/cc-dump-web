@@ -2,7 +2,7 @@ import type { ProxyStatus } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
 
-// [LAW:types-are-the-program] Where the UI's connection to the proxy stands (docs/design/features.md, F8): being made,
+// [LAW:types-are-the-program] Where the UI's connection to the proxy stands (docs/design/01-features.md, F8): being made,
 // made and holding the proxy's latest status, lost or not made and being tried again, or failed.
 export type StatusReading = { state: "connecting" } | { state: "connected"; status: ProxyStatus } | { state: "dropped" } | { state: "failed"; error: Error };
 
