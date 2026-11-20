@@ -24,15 +24,17 @@ function fakeConnection() {
   return { connection, reads };
 }
 
-// Frames the test runs by hand.
+// Frames the test runs by hand, as requestAnimationFrame schedules them: each call its own frame, cancelled only by its
+// own handle.
 function handFrames() {
-  const scheduled = new Set<() => void>();
+  const scheduled = new Map<object, () => void>();
   const frames: Frames = (callback) => {
-    scheduled.add(callback);
-    return () => void scheduled.delete(callback);
+    const handle = {};
+    scheduled.set(handle, callback);
+    return () => void scheduled.delete(handle);
   };
   const run = () => {
-    const due = [...scheduled];
+    const due = [...scheduled.values()];
     scheduled.clear();
     due.forEach((callback) => callback());
   };
@@ -64,6 +66,17 @@ describe("readRecording", () => {
     frames.run();
     expect(shown).toEqual([[], exchanges([1, 2, 3].map(event)), exchanges([1, 2, 3, 4].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }]);
+  });
+
+  it("shows the many events of one trace between frames in one frame", () => {
+    const { frames, shown, deliver } = started();
+    deliver(event(1), event(1), event(1));
+    expect(frames.pending()).toBe(1);
+    frames.run();
+    deliver(event(1), event(1));
+    expect(frames.pending()).toBe(1);
+    frames.run();
+    expect(shown).toEqual([[], exchanges([1, 1, 1].map(event)), exchanges([1, 1, 1, 1, 1].map(event))]);
   });
 
   it("shows what is pending before it reports its end, and no frame of it runs after", () => {

@@ -49,15 +49,21 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
   const byTrace: ByTrace = new Map();
   const shown = new Map<TraceId, Exchange>();
   const touched = new Map<TraceId, Exchange>();
-  let cancelFrame = () => {};
   const flush = () => {
     for (const [trace, exchange] of touched) shown.set(trace, snapshot(exchange));
     touched.clear();
     sink([...shown.values()]);
   };
+  // The one frame pending, by the function that cancels it: scheduled by the first event after a frame, none once it
+  // has run.
+  let frame: (() => void) | undefined;
+  const shownAtFrame = () => {
+    frame = undefined;
+    flush();
+  };
   const ended = new AbortController();
   const reading = AbortSignal.any([signal, ended.signal]);
-  reading.addEventListener("abort", () => cancelFrame());
+  reading.addEventListener("abort", () => frame?.());
   const settle = (outcome: Reading) => {
     flush();
     ended.abort();
@@ -69,7 +75,8 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
       event: (event, offset) => {
         const placed = add(byTrace, event);
         if (typeof placed === "string") return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
-        if (touched.set(event.trace_id, placed).size === 1) cancelFrame = frames(flush);
+        touched.set(event.trace_id, placed);
+        frame ??= frames(shownAtFrame);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
       failed: (error) => settle({ state: "failed", error }),
