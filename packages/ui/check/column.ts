@@ -5,7 +5,7 @@ import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import type { Visibility } from "../src/settings.ts";
 import { createHistory, type After, type History } from "../src/view/history.ts";
-import { blockOf, createLayout, pastOf, type BlockRow, type Layout, type Row } from "../src/view/rows.ts";
+import { blockOf, createLayout, nestKey, pastOf, type BlockRow, type Layout, type Row } from "../src/view/rows.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
@@ -151,9 +151,9 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         if (line === undefined || from! > at || fork.depth !== line.depth || fork.dimmed !== line.dimmed) say(`${fork.key} does not stand under its step as the step stands`);
         else if (rows.slice(from! + 1, at).some((row) => row.kind === "exchange" && row.depth <= fork.depth)) say(`${fork.key} stands after another step's rows`);
       } else {
-        // First under the line of what hangs there: one level in under a nest's, level with a thread's.
+        // First under the line of the thread it hangs on, level with it.
         const line = rows[at - 1];
-        if (line?.key !== `${after.key}/${after.as}` || fork.depth !== line.depth + (after.as === "nest" ? 1 : 0)) say(`${fork.key} is not first under the ${after.as}'s line`);
+        if (line?.key !== `${after.key}/${after.as}` || fork.depth !== line.depth) say(`${fork.key} is not first under the ${after.as}'s line`);
       }
     }
 
@@ -236,7 +236,7 @@ for (const recording of process.argv.slice(2)) {
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line) as RecordedEvent);
   const history = createHistory()(createFormatter()(exchanges(events)));
-  const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
+  const open = Object.fromEntries(history.segments.flatMap(({ wire }) => (wire.level.kind === "main" ? [] : [[nestKey(wire.level), true] as const])));
   const layOut = createLayout(expanded);
   const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
   console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);

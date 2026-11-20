@@ -13,7 +13,7 @@ const brought = (shown: KeyedBlock) => ({ step: 1, block: shown, reply: false, r
 // A set of one block, which step 1 brought and step 2 took away, at the step after.
 const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", items: [{ key: "t1/c", versions: [brought(block()), { step: 2, block: undefined, was: block(), previous: 0 }] }], step: 3, steps: new Set([1, 2, 3]), ...standing };
 const fork = (key: string, depth = 0): ForkRow => ({ kind: "fork", key, change: "same", siblings: [], shown: undefined, depth, dimmed: false });
-const nest = (depth: number): Row => ({ kind: "nest", key: "t1/b/nest", change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
+const nest = (depth: number): Row => ({ kind: "nest", key: "t1/b/nest", change: "same", level: { kind: "agent", id: "a1" }, type: undefined, prompt: "", count: 1, tied: undefined, unfound: false, parent: { kind: "main" }, runs: false, latest: undefined, ended: undefined, depth, dimmed: false });
 const thread: Row = { kind: "thread", key: "t1/b/thread", change: "same", ...standing };
 const added = (shown: KeyedBlock, depth = 0): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [brought(shown)], at: 0, set: undefined, depth, dimmed: false });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.

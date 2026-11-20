@@ -1,5 +1,5 @@
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
-import type { Segment } from "./history.ts";
+import type { History } from "./history.ts";
 import { conversationKeys, withKeys } from "./keyboard.ts";
 import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
@@ -12,13 +12,13 @@ import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 // from 1. `onGo`: a move to a step; `onStep`: a move of one step, back or forward. More steps than the strip has pixels
 // for scroll it sideways, the mark shown kept in view, so every mark can be reached.
 export const TurnStrip = memo(function TurnStrip({
-  segments,
+  history: { segments, forks },
   shown,
   listed,
   onGo,
   onStep,
 }: {
-  segments: readonly Segment[];
+  history: History;
   shown: number;
   listed: ReadonlySet<number>;
   onGo: (step: number) => void;
@@ -27,7 +27,7 @@ export const TurnStrip = memo(function TurnStrip({
   // Of the history, not the step shown, so a move in time walks none of it.
   const most = useMemo(() => mostOf(segments), [segments]);
   const failures = useMemo(() => failuresOf(segments), [segments]);
-  const parted = useMemo(() => partedOf(segments), [segments]);
+  const parted = useMemo(() => partedOf(forks), [forks]);
   return (
     <nav aria-label="Steps" className="flex h-7 items-center gap-2 bg-surface px-4 font-sans text-xs">
       <button type="button" className="control" disabled={shown <= 1} title={withKeys("The step before", conversationKeys.back)} onClick={() => onStep(-1)}>

@@ -1,5 +1,5 @@
 import type { FormattedExchange } from "../format/format.ts";
-import { forksOf, type Segment } from "./history.ts";
+import type { History, Segment } from "./history.ts";
 import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
 
 // The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's shape and what it
@@ -22,7 +22,7 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
 
 // The steps of the recording that have a sibling, a step that stands after what they do (view/history.ts): each is
 // where a history parts from another, which its mark says with a notch.
-export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => new Set([...forksOf(segments).values()].flat());
+export const partedOf = (forks: History["forks"]): ReadonlySet<number> => new Set([...forks.values()].flat());
 
 // The largest output and duration among the steps, which a mark's shape is relative to; 0 while none is known.
 export type Most = { output: number; duration: number };

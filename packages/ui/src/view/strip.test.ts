@@ -64,12 +64,9 @@ describe("partedOf", () => {
     const again = { role: "user", content: [{ type: "text", text: "Again." }] };
     const other = { role: "user", content: [{ type: "text", text: "Another way." }] };
     // The second and the third each resend the first and go on their own way; the fourth follows the third alone.
-    const segments = segmentsOf([
-      ...request("t1", [ask]),
-      ...request("t2", [ask, answer, again]),
-      ...request("t3", [ask, answer, other]),
-      ...request("t4", [ask, answer, other, answer, again]),
-    ]);
-    expect([...partedOf(segments)]).toEqual([2, 3]);
+    const { forks } = createHistory()(
+      createFormatter()(exchanges([...request("t1", [ask]), ...request("t2", [ask, answer, again]), ...request("t3", [ask, answer, other]), ...request("t4", [ask, answer, other, answer, again])])),
+    );
+    expect([...partedOf(forks)]).toEqual([2, 3]);
   });
 });
