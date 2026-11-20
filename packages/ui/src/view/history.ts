@@ -53,9 +53,9 @@ export type StepWire = {
   did: KeyedBlock | undefined;
 };
 // [LAW:types-are-the-program] That a step names `agent` with the call that launched it, on the step's own level: the
-// call's item, at `key`, and what it `launches`, found on the step's reach; or `found: false`, for a notification that
-// names a call no call on its reach that launches anything has, which the agent's nest line says. A result names an
-// agent only as the answer of an Agent call on its reach, so a result that names one is always found.
+// call's item, at `key`, and what it `launches`, found on the step's reach; or `found: false`, where no call of that id
+// that launches anything is on its reach, which the agent's nest line says. A result names an agent only as the answer
+// of an Agent call: one that answers a call of another tool on its reach, as a Bash that prints a result, names none.
 export type Tie = { agent: string; call: string } & ({ found: true; key: string; launches: Launch } | { found: false });
 
 // An item: its key, and each version it has had, in the order of their steps, the first the one it arrived with.
@@ -131,9 +131,9 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   const folded: Folded[] = [];
   // What a thread can hang on, in the order it arrived: each summary a reply's text ends with, by its level.
   const summaries: { level: string; step: number; key: string; summary: string }[] = [];
-  // Each client tool's call that launches something, by its level and its id, in the order its items arrived: a call
+  // Each client tool's call, by its level and its id, in the order its items arrived, with what it launches: a call
   // that two sibling histories each send is two items with one id.
-  const calls = new Map<string, { step: number; key: string; launches: Launch }[]>();
+  const calls = new Map<string, { step: number; key: string; launches: Launch | undefined }[]>();
   // The levels that have a step, by their keys.
   const begun = new Set<string>();
   let last: History = { segments: [], stepOf: () => undefined, forks: new Map() };
@@ -220,14 +220,20 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const ties: Tie[] = [];
     const stops: StepWire["stops"][number][] = [];
     const answers: string[] = [];
-    // The item on the step's reach that holds the call of id `call` that launches what `launching` asks, the last to
-    // arrive.
-    const callOf = (call: string, launching: (launches: Launch) => boolean) => calls.get(`${levelName}/${call}`)?.findLast((one) => reach.has(one.step) && launching(one.launches));
+    // That `agent` was launched by the call of id `call`: the item on the step's reach that holds that call, the last
+    // to arrive, where it launches something, and found: false where none does. `by` says what named it: a result
+    // names an agent only as an Agent call's answer, so one of another tool's call on the reach, as a Bash that prints
+    // a result, ties nothing.
+    const tie = (agent: string, call: string, by: "result" | "notice") => {
+      const found = calls.get(`${levelName}/${call}`)?.findLast((one) => reach.has(one.step));
+      if (by === "result" && found !== undefined && found.launches?.tool !== "Agent") return;
+      ties.push(found?.launches === undefined ? { agent, call, found: false } : { agent, call, found: true, key: found.key, launches: found.launches });
+    };
     // [LAW:single-enforcer] What a block the step brings to its path, at the item `key`, states (format/blocks.ts): the
     // call it makes, the call it answers, the agent its result or notification names, the stop it tells, the summary
     // it ends with. Every block the step brings is read here, a new item or a new version, and no other.
     const state = (block: KeyedBlock, key: string) => {
-      if (block.call?.launches !== undefined) {
+      if (block.call !== undefined) {
         const named = `${levelName}/${block.call.id}`;
         const list = calls.get(named) ?? [];
         calls.set(named, list);
@@ -237,14 +243,12 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       if (block.result !== undefined) {
         const { answers: call, names } = block.result;
         answers.push(call);
-        const found = callOf(call, (launches) => launches.tool === "Agent");
-        if (names !== undefined && found !== undefined) ties.push({ agent: names, call, found: true, key: found.key, launches: found.launches });
+        if (names !== undefined) tie(names, call, "result");
       }
       if (block.notice?.kind === "stop") {
         const { agent, status, call } = block.notice;
         stops.push({ agent, status });
-        const found = call === undefined ? undefined : callOf(call, () => true);
-        if (call !== undefined) ties.push(found === undefined ? { agent, call, found: false } : { agent, call, found: true, key: found.key, launches: found.launches });
+        if (call !== undefined) tie(agent, call, "notice");
       }
       if (block.summary !== undefined) {
         summaries.push({ level: levelName, step, key, summary: block.summary });
@@ -259,7 +263,9 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       for (const block of group.blocks) {
         const arrived = (key: string, reply: boolean): Item => ({ key, versions: [{ step, block, reply, rewrote: undefined, previous: undefined }] });
         if (block.place === undefined || chain === undefined) {
-          items.push(arrived(`${trace}/${group.key}/${block.key}`, false));
+          const key = `${trace}/${group.key}/${block.key}`;
+          items.push(arrived(key, false));
+          state(block, key);
           continue;
         }
         const at = `${placeName(block.place, formatted.messages)}/${block.key}`;
@@ -296,7 +302,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was, previous }] });
       undo.push(() => replace(location, item));
     }
-    const reply = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "reply"));
+    const reply = replyOf(formatted);
     const waits = formatted.facts.stopReason === "tool_use" ? reply.flatMap(({ call }) => (call?.waits ? [call.id] : [])) : [];
     const did = reply.at(-1);
     const names = formatted.sender.kind === "agent" ? formatted.sender.parent : undefined;
@@ -374,8 +380,8 @@ const keptWire = (before: StepWire | undefined, made: StepWire): StepWire =>
     opens: made.opens && keptAs(before?.opens, made.opens),
     ties: keptEach(before?.ties, made.ties, keptAs),
     stops: keptEach(before?.stops, made.stops, keptAs),
-    answers: keptEach(before?.answers, made.answers, (_, one) => one),
-    waits: keptEach(before?.waits, made.waits, (_, one) => one),
+    answers: keptAs(before?.answers, made.answers),
+    waits: keptAs(before?.waits, made.waits),
   });
 
 // Whether two objects say the same: the same fields, each the same value. A field that holds undefined is a field, so
@@ -398,10 +404,14 @@ function pathOf(formatted: FormattedExchange): { at: string; message: number; he
   );
 }
 
+// [LAW:one-source-of-truth] An exchange's blocks of its first message, which its thread is known by, and of its reply.
+export const firstMessageOf = ({ groups }: FormattedExchange): KeyedBlock[] => groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
+export const replyOf = ({ groups }: FormattedExchange): KeyedBlock[] => groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "reply"));
+
 // The thread of its level an exchange is part of: the one whose first message it sends, or, when none was sent before, a
 // new one it begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.
 function threadOf(formatted: FormattedExchange, level: Level, threads: Thread[], alike: Comparison, step: number, undo: (() => void)[]): Thread | undefined {
-  const first = formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
+  const first = firstMessageOf(formatted);
   if (first.length === 0) return undefined;
   const key = levelKey(level);
   const found = threads.find((thread) => levelKey(thread.level) === key && thread.first.length === first.length && thread.first.every((block, index) => alike.blocks(block, first[index]!)));

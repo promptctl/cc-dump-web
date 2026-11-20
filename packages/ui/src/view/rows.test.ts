@@ -717,8 +717,11 @@ describe("the column", () => {
     const from = events.findIndex(({ trace_id }) => trace_id === "s2");
     const coming = (count: number) => latest(events.slice(0, from + count), 3);
     expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
-    // The harness may ask while a reply is still coming: its asking says nothing.
+    // The harness may ask while a reply is still coming: its asking says nothing. Its answer, while it streams, is the
+    // agent's own account of what it is doing, and once ended, the step waiting on the tool's says it again.
     expect(latest([...events.slice(0, from + 6), ...request("asked", { ...agent, messages: asked }, a1)], 4)).toBe("tool_use: Grep");
+    const answering = events.findIndex(({ trace_id, type }) => trace_id === "asked" && type === "response");
+    expect([latest([...events.slice(0, answering), ...streaming("asked", [text("Searching.")])], 4), latest(working, 4)]).toEqual(["text", "tool_use: Grep"]);
     // A last reply still coming that hands the report back says nothing of the handback.
     const handing = events.findIndex(({ trace_id, type }) => trace_id === "s3" && type === "response");
     const handback = (...content: Parameters<typeof streaming>[1]) => latest([...events.slice(0, handing), ...streaming("s3", content)], 5);

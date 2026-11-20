@@ -37,7 +37,8 @@ export function namedIn(texts: readonly string[]): string | undefined {
 
 // [LAW:types-are-the-program] What a notification says: that an agent stopped, `stop`, the agent by its `<task-id>`,
 // how it ended by its `<status>`, and the call that launched it by its `<tool-use-id>`, where it says one; or, for one
-// that lacks the agent or the status, that it is `unread`, and `why`, so it is shown as a notification and stops nothing.
+// that lacks the agent or the status, or holds more than one notification's, that it is `unread`, and `why`, so it is
+// shown as a notification and stops nothing.
 export type Notice = { kind: "stop"; agent: string; status: string; call: string | undefined } | { kind: "unread"; why: string };
 
 // The notification a text is, its `notice` and `content`, the `<task-notification>` element: a text whose whole is one
@@ -48,9 +49,11 @@ const tag = (element: string, name: string) => new RegExp(`<${name}>([^<]+)</${n
 export function notificationIn(text: string): { notice: Notice; content: string } | undefined {
   const content = notification.exec(text)?.[1];
   if (content === undefined) return undefined;
+  const unread = (why: string) => ({ notice: { kind: "unread", why } as const, content });
+  if (content.split("<task-notification>").length > 2) return unread("more than one <task-notification>");
   const agent = tag(content, "task-id");
   const status = tag(content, "status");
-  const notice: Notice =
-    agent === undefined || status === undefined ? { kind: "unread", why: `no ${agent === undefined ? "<task-id>" : "<status>"}` } : { kind: "stop", agent, status, call: tag(content, "tool-use-id") };
-  return { notice, content };
+  if (agent === undefined) return unread("no <task-id>");
+  if (status === undefined) return unread("no <status>");
+  return { notice: { kind: "stop", agent, status, call: tag(content, "tool-use-id") }, content };
 }

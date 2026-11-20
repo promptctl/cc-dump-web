@@ -30,9 +30,9 @@ export type Stated = { call?: Call; result?: Answer; notice?: Notice; summary?: 
 // that runs a subagent; and whether the reply that makes it `waits` for its result, which every call's does but a
 // subagent's SubagentHandback, which hands its report back and ends its work.
 export type Call = { id: string; launches: Launch | undefined; waits: boolean };
-// What a call launches: an Agent call a subagent of the agent `type` it names, sent `prompt` as its first message; a
-// Skill call the skill it names, which runs in a subagent when the skill forks.
-export type Launch = { tool: "Agent"; type: string | undefined; prompt: string } | { tool: "Skill"; skill: string };
+// What a call launches: an Agent call a subagent, of the agent `type` it names where it names one; a Skill call the
+// skill it names, which runs in a subagent when the skill forks.
+export type Launch = { tool: "Agent"; type: string | undefined } | { tool: "Skill"; skill: string };
 // [LAW:one-source-of-truth] What a launch is called where it is shown: an Agent call's agent type, where it names one,
 // and a Skill call's skill as the command that runs it, so a skill and an agent type of one name read apart.
 export const launchName = (launches: Launch): string | undefined => (launches.tool === "Agent" ? launches.type : `/${launches.skill}`);
@@ -124,10 +124,9 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 // hands its report back with SubagentHandback, the last block of a reply that stops for a tool's use, where its turn
 // never ends. A call with no id is shown as not fitting (`toolUse`), and states none.
 const launchOf = (name: unknown, input: unknown): Launch | undefined => {
-  const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
   const skill = sentField(input, "skill");
-  if (name === "Agent" && typeof prompt === "string") return { tool: "Agent", type: typeof type === "string" ? type : undefined, prompt };
+  if (name === "Agent") return { tool: "Agent", type: typeof type === "string" ? type : undefined };
   return name === "Skill" && typeof skill === "string" ? { tool: "Skill", skill } : undefined;
 };
 const called = (block: unknown): Stated => {

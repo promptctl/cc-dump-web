@@ -1,13 +1,11 @@
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
-import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { record, type Exchange } from "../src/exchanges.ts";
 import { categories, launchName, type Category, type Launch } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";
-import { createHistory, levelKey, levelOf, placeOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
+import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, replyOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
 import { blockIn, createLayout, nestKey, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
+import { eventsOf } from "./recording.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
@@ -37,7 +35,7 @@ type Said = {
   notices: Map<string, { agent: string; status: string }>;
   waits: string[];
   replied: KeyedBlock | undefined;
-  calls: Map<string, Launch>;
+  calls: Map<string, Launch | undefined>;
   end: string | undefined;
 };
 
@@ -55,12 +53,13 @@ function saidOf({ formatted }: History["segments"][number]): Said {
     calls: new Map(),
     end: formatted.exchange.end?.timestamp,
   };
-  said.replied = blocks.findLast(({ place }) => place?.in === "reply");
-  for (const { result, notice, call, place, parts } of blocks) {
+  const reply = replyOf(formatted);
+  said.replied = reply.at(-1);
+  if (formatted.facts.stopReason === "tool_use") for (const { call } of reply) if (call?.waits) said.waits.push(call.id);
+  for (const { result, notice, call, parts } of blocks) {
     if (result !== undefined) said.answers.add(result.answers);
     if (result?.names !== undefined) said.ties.set(`result ${result.names} ${result.answers}`, { agent: result.names, call: result.answers, result: true });
-    if (call?.launches !== undefined) said.calls.set(call.id, call.launches);
-    if (call?.waits && place?.in === "reply" && formatted.facts.stopReason === "tool_use") said.waits.push(call.id);
+    if (call !== undefined) said.calls.set(call.id, call.launches);
     if (notice?.kind !== "stop") continue;
     if (notice.call !== undefined) said.ties.set(`notice ${notice.agent} ${notice.call}`, { agent: notice.agent, call: notice.call, result: false });
     if (parts[0]?.kind === "text") said.notices.set(parts[0].text, notice);
@@ -70,7 +69,7 @@ function saidOf({ formatted }: History["segments"][number]): Said {
 
 // What a step's first message says (view/history.ts, saidIn), none while its request sends none.
 const firstMessage = ({ segments }: History, step: number): string | undefined => {
-  const blocks = segments[step - 1]!.formatted.groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
+  const blocks = firstMessageOf(segments[step - 1]!.formatted);
   return blocks.length === 0 ? undefined : saidIn(blocks);
 };
 // Whether two say one thing an agent is doing: both run, having done one last thing, or both rest, ended alike.
@@ -122,13 +121,13 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
     const before = after?.on === "step" ? sayOf(after.step) : undefined;
     for (const [signature, { agent, call, result }] of one.ties) {
       if (before?.ties.has(signature)) continue;
-      let found: Launch | undefined;
-      for (let on: number | undefined = own; on !== undefined && found === undefined; on = afterOf(on)?.step) {
-        const launches = sayOf(on).calls.get(call);
-        if (launches !== undefined && (!result || launches.tool === "Agent")) found = launches;
-      }
-      // A result names an agent only as an Agent call's answer, so one whose call is not found ties nothing.
-      if (result && found === undefined) continue;
+      // The call of that id on its reach, the nearest; a result of another tool's call, as a Bash that prints one,
+      // ties nothing.
+      let on: number | undefined = own;
+      while (on !== undefined && !sayOf(on).calls.has(call)) on = afterOf(on)?.step;
+      const made = on === undefined ? undefined : { launches: sayOf(on).calls.get(call) };
+      if (result && made !== undefined && made.launches?.tool !== "Agent") continue;
+      const found = made?.launches;
       const tied = levelKey({ kind: "agent", id: agent });
       ties.set(tied, ties.get(tied) ?? []).get(tied)!.push({ own, by: key, call, found });
     }
@@ -308,6 +307,9 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       if (placed === undefined) {
         if (stands.kind === "tied") say(`${nest.key} is tied to ${stands.call} where no listed step ties it`);
         else if (stands.unfound !== (tied.length > 0 && tied.at(-1)!.found === undefined)) say(`${nest.key} says its latest listed tie is ${stands.unfound ? "" : "not "}unfound`);
+        // At its parent's end, it stands as the parent's rows do: as the parent's nest, or undimmed at the main agent's.
+        const parentKey = parents.get(key)!;
+        if (nest.dimmed !== (parentKey !== top && nestOf(parentKey)?.dimmed === true)) say(`${nest.key} does not stand as its parent's rows do`);
         atEnd();
       } else {
         let before = at - 1;
@@ -317,7 +319,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         else if (nest.depth !== call.depth || nest.dimmed !== call.dimmed) say(`${nest.key} does not stand as its call does`);
         if (stands.kind === "tied" && stands.launches !== launchName(placed.found!)) say(`${nest.key} does not say what its call launches`);
       }
-      const does = doingNow.get(nest.level.id) ?? { runs: false, ended: undefined };
+      const does = doingNow.get(nest.level.id)!;
       const says = (one: Doing) => (one.runs ? `runs, ${one.latest?.name ?? "nothing yet"}` : `rests, ${one.ended ?? "no stop"}`);
       if (!sameDoing(doing, does)) say(`${nest.key} says it ${says(doing)} where its agent ${says(does)}`);
     }
@@ -380,12 +382,8 @@ function doingOf(
 async function historyOf(recording: string): Promise<History> {
   const byTrace = new Map<string, Exchange>();
   const format = createFormatter();
-  let number = 0;
-  for await (const line of createInterface({ input: createReadStream(recording), crlfDelay: Infinity })) {
-    number++;
-    if (line === "") continue;
-    const event = JSON.parse(line) as RecordedEvent;
-    if (byTrace.get(event.trace_id)?.end !== undefined) throw new Error(`${recording}:${number}: ${event.type} of ${event.trace_id} after its exchange's end`);
+  for await (const { event, where } of eventsOf(recording)) {
+    if (byTrace.get(event.trace_id)?.end !== undefined) throw new Error(`${where}: ${event.type} of ${event.trace_id} after its exchange's end`);
     const exchange = record(byTrace, event);
     if (exchange.latest.type !== "end") continue;
     format([...byTrace.values()]);
@@ -400,7 +398,7 @@ if (process.argv.length < 3) throw new Error("Give the recordings to check: node
 let failed = false;
 for (const recording of process.argv.slice(2)) {
   const history = await historyOf(recording);
-  const open = Object.fromEntries(history.segments.map(({ wire }) => [nestKey(wire.level), true]));
+  const open = Object.fromEntries(history.segments.map(({ formatted }) => [nestKey(levelOf(senderOf(formatted.exchange.request.head))), true]));
   const layOut = createLayout(expanded);
   const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
   console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);

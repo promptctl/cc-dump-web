@@ -241,7 +241,7 @@ describe("what a step stands after", () => {
     const wires = after.segments.map(({ wire }) => wire);
     expect(wires.map(({ level }) => level)).toEqual([{ kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "agent", id: "a1" }, { kind: "main" }, { kind: "main" }]);
     expect(wires.map(({ opens }) => opens)).toEqual([undefined, { names: undefined, says: "Find the longest word." }, undefined, undefined, undefined, undefined]);
-    const call = { found: true, key: "thread:t1/message.1/content.1", launches: { tool: "Agent", type: "Explore", prompt: "Find the longest word." } };
+    const call = { found: true, key: "thread:t1/message.1/content.1", launches: { tool: "Agent", type: "Explore" } };
     expect(wires.map(({ ties }) => ties)).toEqual([[], [], [{ agent: "a1", call: "toolu_1", ...call }], [], [{ agent: "a1", call: "toolu_1", ...call }], []]);
     expect(wires.map(({ stops }) => stops)).toEqual([[], [], [], [], [{ agent: "a1", status: "completed" }], []]);
     expect(wires.map(({ waits, answers, did }) => [waits, answers, did?.name])).toEqual([
@@ -257,7 +257,22 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
-  it("ties an agent by a result only as the answer of an Agent call on the step's reach, never by a result that quotes one", () => {
+  it("keeps twins, two subagents sent one prompt that answer it alike, each on its own thread", () => {
+    const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
+    const task = user(text("Find the longest word."));
+    const more = [task, assistant(text("Long.")), user(text("More."))];
+    const after = history([
+      ...request("a", { ...agent, messages: [task] }, { agent: "a1" }),
+      ...reply("a", [text("Long.")]),
+      ...request("b", { ...agent, messages: [task] }, { agent: "b1" }),
+      ...reply("b", [text("Long.")]),
+      ...request("b2", { ...agent, messages: more }, { agent: "b1" }),
+      ...request("a2", { ...agent, messages: more }, { agent: "a1" }),
+    ]);
+    expect(afters(after)).toEqual([undefined, undefined, follows(2), follows(1)]);
+  });
+
+  it("ties an agent by a result as the answer of an Agent call, unfound where no call of its id is on the step's reach, and never by another tool's result that quotes one", () => {
     const bash = { type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "cat log" } };
     const after = history([
       ...request("t1", { ...main, messages: [hi] }),
@@ -269,7 +284,7 @@ describe("what a step stands after", () => {
     expect(after.segments.map(({ wire }) => [wire.answers, wire.ties])).toEqual([
       [[], []],
       [["toolu_b"], []],
-      [["toolu_x"], []],
+      [["toolu_x"], [{ agent: "a2", call: "toolu_x", found: false }]],
     ]);
   });
 
