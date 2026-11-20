@@ -241,7 +241,7 @@ describe("layout", () => {
     const keys = (visibility: Record<Category, Visibility>, current?: string) => listed(layouts(turns(1), visibility)(1, current, { "t1/tools": true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
     expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
-    // In the set the step to it opened.
+    // In the set, open.
     expect(keys({ ...shown, tools: "hidden" }, "thread:t1/tools/tools.Read.0")).toContain("thread:t1/tools/tools.Read.0 added");
   });
 
