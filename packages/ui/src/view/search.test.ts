@@ -256,7 +256,8 @@ describe("search", () => {
       { kind: "text", form: "verbatim", text: "t" },
       { kind: "fields", fields: [["a", "1"], ["b", "2"]] },
       { kind: "json", value: 1 },
-      ...Array.from({ length: 8 }, (): Part => ({ kind: "json", value: 0 })),
+      { kind: "diff", before: "old", after: "new" },
+      ...Array.from({ length: 7 }, (): Part => ({ kind: "json", value: 0 })),
       { kind: "fields", fields: [["c", "3"]] },
     ];
     const shown = shownTexts(added({ category: "tools", name: "X", parts })).map(({ at }) => at);
@@ -269,6 +270,10 @@ describe("search", () => {
     expect(currentIn(current, "k", address.field(1, 0, "name"))).toBeUndefined();
     expect(currentIn(current, "j", address.field(1, 0, "value"))).toBeUndefined();
     expect(currentIn(undefined, "k", address.field(1, 0, "value"))).toBeUndefined();
+  });
+
+  it("keys a part's regions by the block's key and the address, the form the stored view keeps its folds under", () => {
+    expect([address.name, address.part(3), address.field(3, 1, "value")].map((at) => partKey("k", at))).toEqual(["k/name", "k/3", "k/3/1/value"]);
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {

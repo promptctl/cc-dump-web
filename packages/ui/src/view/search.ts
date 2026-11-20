@@ -198,11 +198,11 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
   return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
 
-const same = (a: Match, b: Match) => a.key === b.key && sameAddress(a.at, b.at) && a.start === b.start;
-
 // Where the current match starts in the text at `at` in the block's row `blockKey`, or undefined when it is not in it.
 export const currentIn = (current: Match | undefined, blockKey: string, at: Address): number | undefined =>
   current !== undefined && current.key === blockKey && sameAddress(current.at, at) ? current.start : undefined;
+
+const same = (a: Match, b: Match) => currentIn(a, b.key, b.at) === b.start;
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.
