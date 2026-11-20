@@ -148,8 +148,8 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 
 // [LAW:one-source-of-truth] What the reader chose to show of each block, region or nest they opened or closed, by key:
-// open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts
-// now or not, since how a block starts moves with its category's level (docs/design/01-features.md, F4).
+// open, or closed. A key with no choice shows as it starts. A choice is kept even where it is how the key starts now,
+// since how a block starts moves with its category's level (docs/design/01-features.md, F4).
 export type Opened = Record<string, boolean>;
 export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
 
@@ -600,7 +600,7 @@ export function startsExpanded(row: BlockRow, visibility: Record<Category, Visib
 
 // [LAW:one-source-of-truth] Whether the sections under the headings of a block's texts start open, before any choice of
 // the reader's (docs/design/01-features.md, F4): what a speaker wrote reads as it was written, and what was written for
-// the model reads as its outline.
+// the model, the harness's injections among it, reads as its outline.
 export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
   injected === undefined && (category === "user" || category === "assistant" || category === "thinking");
 

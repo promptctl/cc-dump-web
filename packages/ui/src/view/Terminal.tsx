@@ -13,7 +13,7 @@ import type { Theme } from "../theme/theme.ts";
 import { view } from "./state.ts";
 import { hideTarget, LINK_FRAME, linkHandler, openLink, showTarget } from "./terminalLink.ts";
 
-// The agent's tmux window (docs/design/01-features.md, F13), every pane as tmux lays it out. Its box sets the window's size, as an attached terminal's
+// The agent's tmux window (docs/design/01-features.md, F13). Its box sets the window's size, as an attached terminal's
 // would. One is mounted per window: another window is another terminal, with a connection of its own.
 export function Terminal({ connection, window, theme }: { connection: Pick<Connection, "tmux">; window: TmuxWindow; theme: Theme }) {
   // [LAW:no-ambient-temporal-coupling] The terminal owns its connection: made once, as it mounts, connected while it is
@@ -28,12 +28,13 @@ export function Terminal({ connection, window, theme }: { connection: Pick<Conne
   const [state, setState] = useState<WindowTerminalState>({ phase: "connecting" });
   const [error, setError] = useState<WindowTerminalError | undefined>(undefined);
   // [LAW:one-source-of-truth] The terminal's face is the stylesheet's (index.css), read where xterm.js needs a name: the
-  // mono, then the icons a statusline draws. The proposed API is for Unicode 11's widths (addons).
+  // mono, then the icons a statusline draws.
   const xterm = useMemo(
     () => ({
       theme: terminalTheme(theme),
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-terminal"),
       linkHandler,
+      // Unicode11Addon's widths are a proposed API (addons).
       allowProposedApi: true,
     }),
     [theme],

@@ -4,9 +4,9 @@ import { conversationKeys, withKeys } from "./keyboard.ts";
 import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
 // The turn strip (docs/design/02-design.md, "Two axes"): each mark's shape is strip.ts's, and whether it is solid the
-// column's (`listed`, view/rows.ts). `shown`: the step shown, from 1. `onGo`: a move to a step; `onStep`: a move of one
-// step, back or forward. More steps than the strip has pixels for scroll it sideways, the mark shown kept in view, so
-// every mark can be reached.
+// column's (Layout's `steps`, view/rows.ts). `shown`: the step shown, from 1. `onGo`: a move to a step; `onStep`: a move
+// of one step, back or forward. More steps than the strip has pixels for scroll it sideways, the mark shown kept in view,
+// so every mark can be reached.
 export const TurnStrip = memo(function TurnStrip({
   segments,
   shown,

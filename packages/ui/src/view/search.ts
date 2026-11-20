@@ -42,7 +42,7 @@ export function whole(text: string): Searched {
   return { text, passages: [{ start: 0, end: text.length }] };
 }
 
-// A text a block shows: its address, the text, and where it shows: on the block's line, always on screen; in its
+// A text a block shows: its address, the text, and where it shows: on the block's line, expanded or not; in its
 // content, while it is expanded; or in its content and inside the folds of it holding the match, while they are
 // expanded too: a text part's rendering, what the reader sees, not the text as sent.
 export type Shown = { at: string } & ({ in: "line" | "content"; searched: Searched } | { in: "regions"; searched: Folded });

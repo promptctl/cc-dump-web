@@ -42,7 +42,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - What the request sends is the tool definitions under `tools`, the system prompt under `system`, and every message with its content blocks under who speaks, `user` or `assistant`.
 - The reply is the response's content blocks under `assistant`, the heading the same content has when a later request sends it again as a message. An error that ended the exchange stands with the reply.
 - A heading and the block under it do not say the same thing: a block of text is named `text` under whoever speaks.
-- A thinking block that holds no text says only what the API reported, how long its signature is: it is usage, not thinking, so it is no row among what was said until the usage is shown.
+- A thinking block that holds no text, and a redacted one, says only what the API reported, how long its signature or its data is: it is usage, not thinking, so it is no row among what was said until the usage is shown.
 - Content the harness injects into a user message is split out of it into blocks of its own, each named for what it is: a system reminder, hook output, the contents of a CLAUDE.md file named by its path.
 - Every content block type has a rendering: text, thinking, redacted thinking, tool use, tool result, image, document, server tool use and its results.
 - A block of a type the app does not know is shown under its type name as raw JSON. No block is ever dropped.

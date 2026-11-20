@@ -15,7 +15,8 @@ export type Visibility = (typeof visibilities)[number];
 export const levelAfter = (visibility: Visibility): Visibility => visibilities[(visibilities.indexOf(visibility) + 1) % visibilities.length]!;
 
 // Each category's level until the reader sets one, as in the original cc-dump (~/code/cc-dump,
-// src/cc_dump/core/filter_registry.py).
+// src/cc_dump/core/filter_registry.py): what the user and the model said in full, the harness's machinery a line a
+// block, the exchange's envelope, which the original listed as metadata, not at all.
 export const defaultVisibility: Record<Category, Visibility> = {
   user: "expanded",
   assistant: "expanded",
