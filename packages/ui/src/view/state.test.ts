@@ -1,4 +1,4 @@
-import { parseTraceId } from "@cc-dump/log/trace";
+import { recordedAt } from "../testing.ts";
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { KeyedBlock } from "../format/format.ts";
@@ -49,7 +49,7 @@ describe("opening a recording", () => {
   });
 
   it("never has it open with the last recording's exchanges", () => {
-    recording.show(exchanges([{ timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("t1"), type: "request_body", base64: "" }]));
+    recording.show(exchanges([{ ...recordedAt("2026-11-13T08:00:00.000Z")("t1"), type: "request_body", base64: "" }]));
     const seen: number[] = [];
     const unsubscribe = useView.subscribe(({ open }) => open === agent && seen.push(useExchanges.getState().exchanges.length));
     view.open(agent);

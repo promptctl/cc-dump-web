@@ -4,12 +4,10 @@
 declare const traceId: unique symbol;
 export type TraceId = string & { readonly [traceId]: true };
 
-export const traceIdShape = "a word: one or more letters, digits, '-' or '_'";
-
-export const isTraceId = (value: unknown): value is TraceId => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value);
+const isTraceId = (value: unknown): value is TraceId => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value);
 
 export function parseTraceId(value: unknown): TraceId {
-  if (!isTraceId(value)) throw new Error(`trace id ${JSON.stringify(value)}: is not ${traceIdShape}`);
+  if (!isTraceId(value)) throw new Error(`${JSON.stringify(value)} is not a word: one or more letters, digits, '-' or '_'`);
   return value;
 }
 

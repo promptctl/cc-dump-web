@@ -6,7 +6,7 @@ import { offsetOf, parseListing, parseListings, parseProxyStatus, parseReadFailu
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
-import type { Connection } from "./connection.ts";
+import { refusedAt, type Connection } from "./connection.ts";
 
 // The browser talking to the proxy's reader and the app server, on the address they are bound to, whatever host the
 // page was opened at: `fetch` for the list and for launching, one EventSource per read, per status and per log, which
@@ -26,7 +26,11 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       const recorded = (data: string, id: string) => {
         const offset = offsetOf(id);
         if (offset === undefined) throw new Error(`recorded event: id ${JSON.stringify(id)} is not a byte offset`);
-        return { event: parseRecordedEvent(data), offset };
+        try {
+          return { event: parseRecordedEvent(data), offset };
+        } catch (error) {
+          throw refusedAt(offset, error);
+        }
       };
       stream.on("message", recorded, ({ event, offset }) => reader.event(event, offset), stream.fail);
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource

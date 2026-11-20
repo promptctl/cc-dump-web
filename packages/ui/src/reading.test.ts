@@ -1,14 +1,15 @@
-import { parseTraceId } from "@cc-dump/log/trace";
+import { describe as said } from "@cc-dump/log/describe";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
 import { exchanges, type Exchange } from "./exchanges.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
+import { recordedAt } from "./testing.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
-const timestamp = "2026-11-13T08:00:00.000Z";
-const event = (n: number): RecordedEvent => ({ timestamp, trace_id: parseTraceId(`t${n}`), type: "request_body", base64: "" });
-const end = (n: number): RecordedEvent => ({ timestamp, trace_id: parseTraceId(`t${n}`), type: "end", outcome: "ok" });
+const at = recordedAt("2026-11-13T08:00:00.000Z");
+const event = (n: number): RecordedEvent => ({ ...at(`t${n}`), type: "request_body", base64: "" });
+const end = (n: number): RecordedEvent => ({ ...at(`t${n}`), type: "end", outcome: "ok" });
 
 // A connection the test drives: it hands the test each read's reader, and its signal. A read begun aborted throws, as
 // the browser's does.
@@ -71,6 +72,7 @@ describe("readRecording", () => {
     reads[0]!.reader.end({ unterminated_bytes: 3 });
     expect(shown).toEqual([[], exchanges([1, 2].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "ended", name: agent, end: { unterminated_bytes: 3 } }]);
+    expect(reads[0]!.signal.aborted).toBe(true);
     expect(frames.pending()).toBe(0);
   });
 
@@ -81,6 +83,7 @@ describe("readRecording", () => {
     reads[0]!.reader.failed(error);
     expect(shown).toEqual([[], exchanges([event(1)])]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
+    expect(reads[0]!.signal.aborted).toBe(true);
     expect(frames.pending()).toBe(0);
   });
 
@@ -88,12 +91,18 @@ describe("readRecording", () => {
     const { reads, frames, shown, states, deliver } = started();
     deliver(event(1), end(1), event(2), event(1));
     expect(shown).toEqual([[], exchanges([event(1), end(1), event(2)])]);
-    expect(states).toEqual([
+    expect(states.map((reading) => (reading.state === "failed" ? said(reading.error) : reading))).toEqual([
       { state: "reading", name: agent },
-      { state: "failed", error: new Error(`${agent}: the event ending at byte 400, trace t1's request_body, follows its trace's end`) },
+      `${agent}: the event ending at byte 400: trace t1's request_body follows its trace's end`,
     ]);
     expect(reads[0]!.signal.aborted).toBe(true);
     expect(frames.pending()).toBe(0);
+  });
+
+  it("throws the reason of a signal aborted before it begins, as the connection's read does", () => {
+    const abort = new AbortController();
+    abort.abort(new Error("gone"));
+    expect(() => readRecording(fakeConnection().connection, agent, () => {}, handFrames().frames, abort.signal, () => {})).toThrow("gone");
   });
 
   it("leaves a frame's exchanges as they were when later events change the exchange", () => {

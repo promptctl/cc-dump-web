@@ -66,3 +66,7 @@ export type Reader = {
   end: (end: RecordingEnd) => void;
   failed: (error: Error) => void;
 };
+
+// [LAW:single-enforcer] Where a recording's event is refused, by whichever check refuses it, the parse of its line or
+// its place in its exchange: the event whose line ends at `offset`, and why.
+export const refusedAt = (offset: number, why: unknown) => new Error(`the event ending at byte ${offset}`, { cause: why });

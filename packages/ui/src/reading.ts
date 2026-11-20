@@ -1,7 +1,7 @@
 import type { TraceId } from "@cc-dump/log/trace";
 import type { RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
-import type { Connection } from "./connection/connection.ts";
+import { refusedAt, type Connection } from "./connection/connection.ts";
 import { add, type ByTrace, type Exchange } from "./exchanges.ts";
 import { recording, useExchanges } from "./store.ts";
 
@@ -37,9 +37,10 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // connection's read of it: what follows it cannot be trusted to be the recording.
 // [LAW:no-ambient-temporal-coupling] The read owns its batch: exchanges changed between frames are shown in one call at
 // the next, because catching up delivers thousands of events in quick succession and one copy and render each would be
-// quadratic. Its end and its failure show what is pending first, so no frame of the read runs after it has ended; its
-// abort cancels the frame. Each frame hands `sink` copies of the exchanges it changed: a frame's exchanges are not
-// changed by the events after it, which the read goes on placing in its own.
+// quadratic. Each frame hands `sink` copies of the exchanges it changed: a frame's exchanges are not changed by the
+// events after it, which the read goes on placing in its own. The read's end is its own signal, `reading`: it aborts on
+// `signal`, and as the read ends, refused, ended or failed, once it has shown what is pending. Its abort cancels the
+// frame, and the connection delivers nothing after it, so no frame and no event of the read comes after its end.
 export function readRecording(connection: Pick<Connection, "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink([]);
   // Reported as the read begins, so an end or a failure the read reports as it begins is the last state.
@@ -54,31 +55,26 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     touched.clear();
     sink([...shown.values()]);
   };
-  const settle = (reading: Reading) => {
-    cancelFrame();
+  const ended = new AbortController();
+  const reading = AbortSignal.any([signal, ended.signal]);
+  reading.addEventListener("abort", () => cancelFrame());
+  const settle = (outcome: Reading) => {
     flush();
-    changed(reading);
+    ended.abort();
+    changed(outcome);
   };
-  const read = new AbortController();
-  signal.addEventListener("abort", () => {
-    cancelFrame();
-    read.abort();
-  });
   connection.read(
     open,
     {
       event: (event, offset) => {
         const refused = add(byTrace, event);
-        if (refused !== undefined) {
-          read.abort();
-          return settle({ state: "failed", error: new Error(`${open}: the event ending at byte ${offset}, trace ${event.trace_id}'s ${event.type}, ${refused}`) });
-        }
+        if (refused !== undefined) return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, refused) }) });
         if (touched.add(event.trace_id).size === 1) cancelFrame = frames(flush);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
       failed: (error) => settle({ state: "failed", error }),
     },
-    read.signal,
+    reading,
   );
 }
 

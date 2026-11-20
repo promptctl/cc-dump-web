@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { describe } from "@cc-dump/log/describe";
 import { parseRecordedEvent } from "@cc-dump/proxy/format";
+import { recordedLength } from "@cc-dump/proxy/recording";
 import { exchanges } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
 import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
@@ -231,20 +233,32 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
 const expanded = Object.fromEntries(categories.map((category) => [category, "expanded"])) as Record<Category, Visibility>;
 let failed = false;
 for (const recording of process.argv.slice(2)) {
-  // The recording's whole events, through the checkpoint every reader's events cross; the bytes after its last newline,
-  // which a write cut short left, are no event.
-  const lines = readFileSync(recording, "utf8").split("\n");
-  const unterminated = lines.pop()!;
-  if (unterminated !== "") console.log(`${recording}: its last ${Buffer.byteLength(unterminated)} bytes are cut off, and not read`);
-  const events = lines.map(parseRecordedEvent);
-  const history = createHistory()(createFormatter()(exchanges(events)));
-  const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
-  const layOut = createLayout(expanded);
-  const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
-  console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);
-  for (const [key, says] of [...found.forks, ...found.nests, ...found.threads]) console.log(`  ${key}: ${says}`);
-  for (const what of broken.slice(0, 40)) console.error(`  ${what}`);
-  failed ||= broken.length > 0;
+  // A recording that cannot be read is reported by its name, and the next is checked.
+  try {
+    // The recording's whole events, measured as every reader measures them, through the checkpoint every reader's events
+    // cross; the bytes after its last newline, which a write cut short left, are no event.
+    const { terminated, unterminated } = recordedLength(recording);
+    if (unterminated > 0) console.log(`${recording}: its last ${unterminated} bytes are cut off, and not read`);
+    const lines = readFileSync(recording).subarray(0, terminated).toString("utf8").split("\n").slice(0, -1);
+    const events = lines.map((line, index) => {
+      try {
+        return parseRecordedEvent(line);
+      } catch (error) {
+        throw new Error(`event ${index + 1}`, { cause: error });
+      }
+    });
+    const history = createHistory()(createFormatter()(exchanges(events)));
+    const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
+    const layOut = createLayout(expanded);
+    const { found, broken } = check(history, (step) => layOut(history, step, undefined, open));
+    console.log(`${recording}: ${found.steps} steps, ${found.forks.size} forks, ${found.nests.size} nests, ${found.threads.size} threads: ${broken.length === 0 ? "every promise kept" : `${broken.length} broken`}`);
+    for (const [key, says] of [...found.forks, ...found.nests, ...found.threads]) console.log(`  ${key}: ${says}`);
+    for (const what of broken.slice(0, 40)) console.error(`  ${what}`);
+    failed ||= broken.length > 0;
+  } catch (error) {
+    console.error(`${recording}: ${describe(error)}`);
+    failed = true;
+  }
 }
 if (process.argv.length < 3) throw new Error("Give the recordings to check: node packages/ui/check/column.ts <recording.jsonl>...");
 process.exitCode = failed ? 1 : 0;

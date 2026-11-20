@@ -1,4 +1,4 @@
-import { parseTraceId } from "@cc-dump/log/trace";
+import { recordedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
@@ -7,7 +7,7 @@ import { createHistory, sameFields, type History } from "./history.ts";
 import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
-const at = (trace: string) => ({ timestamp, trace_id: parseTraceId(trace) });
+const at = recordedAt(timestamp);
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 const request = (trace: string, body: unknown): RecordedEvent[] => [
   { ...at(trace), type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },

@@ -279,7 +279,8 @@ export function describeError(error: unknown): string {
 }
 
 // The floor's span fields, for any unit of work a part times itself: one that begins a trace of its own, or one inside
-// another's trace (a request's recording), joining it. Two entries, so a unit of work meant to join a trace cannot mint one.
+// another's trace (a request's recording), joining it. Two entries, so a span that joins a trace names the trace it
+// joins, and no call mints one for want of an argument.
 export function startTrace() {
   return startSpan(mintTraceId());
 }

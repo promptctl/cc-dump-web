@@ -58,6 +58,9 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 }
 
 // The conversation's history: each step's segment, step k's at k - 1, and the step of an exchange, by its trace_id.
+// [LAW:parse-dont-validate] exception: `stepOf` takes any string, since a view's moment names its trace as stored, and
+// the stored view is not parsed as it is loaded yet (dump-design-ajl.6nq); until then a trace it does not hold is a
+// miss, not on screen.
 export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined };
 
 // A thread: the first message every request of it sends, what that message says, how many of its requests follow

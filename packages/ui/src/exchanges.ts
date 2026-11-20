@@ -3,15 +3,22 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 
 export type Of<T extends RecordedEvent["type"]> = Extract<RecordedEvent, { type: T }>;
 
-// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and its
-// trailers, which the proxy records when the body is complete (none if it had none). Each is recorded by its own write,
-// so each may be missing alone: not yet, for an exchange in flight; never, for one whose write failed, since the
-// recorder counts a failed write and goes on writing the exchange's later events.
-// `completedBy`: the event after which no more of it will be recorded, its trailers, or, when it began and they were
-// never recorded (it was cut short, or their write failed), its exchange's end.
-export type Side<Head, Body, Trailers> = { head: Head | undefined; body: Body[]; trailers: Trailers | undefined; completedBy: Trailers | Of<"end"> | undefined };
+// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and the
+// event that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
+// flight; never, for one whose write failed, since the recorder counts a failed write and goes on writing the
+// exchange's later events.
+// [LAW:one-source-of-truth] `completedBy`: the event after which no more of it will be recorded: its trailers, which the
+// proxy records when its body is complete, or, when it began and they were never recorded (it was cut short, or their
+// write failed), its exchange's end. Its trailers are `completedBy` when that is trailers (`trailersOf`).
+export type Side<Head, Body, Trailers> = { head: Head | undefined; body: Body[]; completedBy: Trailers | Of<"end"> | undefined };
 export type RequestSide = Side<Of<"request">, Of<"request_body">, Of<"request_trailers">>;
 export type ResponseSide = Side<Of<"response">, Of<"response_body">, Of<"response_trailers">>;
+
+export function trailersOf(side: RequestSide): Of<"request_trailers"> | undefined;
+export function trailersOf(side: ResponseSide): Of<"response_trailers"> | undefined;
+export function trailersOf(side: RequestSide | ResponseSide) {
+  return side.completedBy?.type === "end" ? undefined : side.completedBy;
+}
 
 // One exchange of a recording: its two sides, its end, which is undefined until the exchange ends, and its first and
 // latest events. A recording only grows, so two derivations of an exchange with the same latest event hold the same
@@ -28,13 +35,14 @@ export type ByTrace = Map<TraceId, Exchange>;
 
 // [LAW:single-enforcer] [LAW:parse-dont-validate] The one step that places an event in its exchange, and the one place
 // a recording is held to the shape the proxy writes: a trace holds one request head and one response head, at most one
-// trailers per side, and one end; a side takes nothing after its trailers, and a trace nothing after its end. An event
-// that breaks it is refused, as what is wrong, and placed nowhere: what `byTrace` holds stays as it was. A head never
-// recorded, or a body before its head, is the shape: the recorder writes it when a head's write fails.
+// trailers per side, and one end; a side's head comes before the rest of it and its trailers after, and a trace takes
+// nothing after its end. An event that breaks it is refused, as what is wrong with it, naming its trace and type, and
+// placed nowhere: what `byTrace` holds stays as it was. A head never recorded is the shape: the recorder writes a side's
+// body without it when the head's write fails.
 export function add(byTrace: ByTrace, event: RecordedEvent): string | undefined {
   const exchange = byTrace.get(event.trace_id) ?? begun(event);
   const place = placing(exchange, event);
-  if (typeof place === "string") return place;
+  if (typeof place === "string") return `trace ${event.trace_id}'s ${event.type} ${place}`;
   place();
   exchange.latest = event;
   byTrace.set(event.trace_id, exchange);
@@ -46,15 +54,15 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
   const byTrace: ByTrace = new Map();
   events.forEach((event, index) => {
     const refused = add(byTrace, event);
-    if (refused !== undefined) throw new Error(`event ${index + 1}, trace ${event.trace_id}'s ${event.type}: ${refused}`);
+    if (refused !== undefined) throw new Error(`event ${index + 1}: ${refused}`);
   });
   return [...byTrace.values()];
 }
 
 const begun = (event: RecordedEvent): Exchange => ({
   trace_id: event.trace_id,
-  request: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
-  response: { head: undefined, body: [], trailers: undefined, completedBy: undefined },
+  request: { head: undefined, body: [], completedBy: undefined },
+  response: { head: undefined, body: [], completedBy: undefined },
   end: undefined,
   first: event,
   latest: event,
@@ -81,25 +89,18 @@ function placing(exchange: Exchange, event: RecordedEvent): string | (() => void
         exchange.end = event;
         for (const side of [exchange.request, exchange.response]) side.completedBy ??= latest(side) === undefined ? undefined : event;
       };
-    default:
-      event satisfies never;
-      return "is of no type a recording holds";
   }
 }
 
 // [LAW:one-type-per-behavior] Both sides take their events by one rule. Each step is typed by its side, so an event of
 // one side cannot be placed on the other.
 const head = <H, B, T>(side: Side<H, B, T>, event: NoInfer<H>) =>
-  closed(side) ?? (side.head === undefined ? () => void (side.head = event) : "is a second head on its side");
+  closed(side) ?? (side.head !== undefined ? "is a second head on its side" : side.body.length > 0 ? "follows its side's body" : () => void (side.head = event));
 
 const body = <H, B, T>(side: Side<H, B, T>, event: NoInfer<B>) => closed(side) ?? (() => void side.body.push(event));
 
-const trailers = <H, B, T>(side: Side<H, B, T>, event: NoInfer<T>) =>
-  closed(side) ??
-  (() => {
-    side.trailers = event;
-    side.completedBy = event;
-  });
+const trailers = <H, B, T>(side: Side<H, B, T>, event: NoInfer<T>) => closed(side) ?? (() => void (side.completedBy = event));
 
-// Why a side takes nothing more: its trailers are recorded. Undefined while it is open.
-const closed = (side: Side<unknown, unknown, unknown>) => (side.trailers === undefined ? undefined : "follows its side's trailers");
+// Why a side takes nothing more: it is complete, which before its trace's end is by its trailers. Undefined while it is
+// open.
+const closed = (side: Side<unknown, unknown, unknown>) => (side.completedBy === undefined ? undefined : "follows its side's trailers");

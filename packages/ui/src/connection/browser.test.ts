@@ -1,4 +1,3 @@
-import { parseTraceId } from "@cc-dump/log/trace";
 import { agentBaseUrl, parseListing, type ProxyStatus, type RecordedEvent, type RecordingEnd } from "@cc-dump/proxy/format";
 import { proxyProcess } from "@cc-dump/proxy/testing";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -12,14 +11,19 @@ import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testin
 import { PassThrough } from "node:stream";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { recordedAt } from "../testing.ts";
 import { createBrowserConnection } from "./browser.ts";
 import type { Part } from "./connection.ts";
 
 const finishedName = "run-20261113T080000.000Z.jsonl";
 const finishedEvents: RecordedEvent[] = [
-  { timestamp: "2026-11-13T08:00:00.000Z", trace_id: parseTraceId("a"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
-  { timestamp: "2026-11-13T08:00:01.000Z", trace_id: parseTraceId("a"), type: "end", outcome: "aborted" },
+  { ...recordedAt("2026-11-13T08:00:00.000Z")("a"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] },
+  { ...recordedAt("2026-11-13T08:00:01.000Z")("a"), type: "end", outcome: "aborted" },
 ];
+
+// Each of `lines` as a recording holds them, read: its event, at the byte its line ends.
+const arrived = (lines: string[]) => lines.map((line, index) => ({ event: JSON.parse(line), offset: lines.slice(0, index + 1).reduce((bytes, each) => bytes + Buffer.byteLength(each) + 1, 0) }));
+const finishedLines = finishedEvents.map((event) => JSON.stringify(event));
 
 // The proxy as its own process, recording into a directory that holds a past run's recording a write left cut off,
 // with an upstream that answers every request, and the browser connection to its reader.
@@ -27,7 +31,7 @@ async function proxyAndConnection() {
   const dir = join(mkdtempSync(join(tmpdir(), "cc-dump-")), "recordings");
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, finishedName), `${finishedEvents.map((event) => JSON.stringify(event)).join("\n")}\n{"tim`);
+  writeFileSync(join(dir, finishedName), `${finishedLines.join("\n")}\n{"tim`);
   const upstream = await serving((_req, res) => res.end("answer"));
   const proxy = await proxyProcess(upstream.url, dir, "unlimited");
   // The next event of the proxy's log that `matches`.
@@ -39,14 +43,14 @@ async function proxyAndConnection() {
   return { dir, proxy, logged, newRecording, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
 }
 
-type Arrival = { event: RecordedEvent } | { end: RecordingEnd } | { failed: Error };
+type Arrival = { event: RecordedEvent; offset: number } | { end: RecordingEnd } | { failed: Error };
 
 // A read whose arrivals the test waits on: `next()` resolves with each in turn. Aborted when the test finishes.
 function reading(connection: ReturnType<typeof createBrowserConnection>, name: string) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
   const { arrive, next, queued } = arrivals<Arrival>();
-  connection.read(name, { event: (event) => arrive({ event }), end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
+  connection.read(name, { event: (event, offset) => arrive({ event, offset }), end: (end) => arrive({ end }), failed: (failed) => arrive({ failed }) }, abort.signal);
   return { abort, next, queued };
 }
 
@@ -97,10 +101,10 @@ describe("the browser connection", () => {
     });
   });
 
-  it("reads a finished recording's events, then its end", async () => {
+  it("reads a finished recording's events, each at the byte its line ends, then its end", async () => {
     const { connection } = await proxyAndConnection();
     const read = reading(connection, finishedName);
-    expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 5 } }]);
+    expect([await read.next(), await read.next(), await read.next()]).toEqual([...arrived(finishedLines), { end: { unterminated_bytes: 5 } }]);
   });
 
   it("reads an agent's recording as it is written: every event, parsed, in file order", async () => {
@@ -115,22 +119,26 @@ describe("the browser connection", () => {
       if ("event" in arrival && arrival.event.type === "end") break;
     }
     const written = readFileSync(join(dir, agentName), "utf8").split("\n").filter(Boolean);
-    expect(arrivals).toEqual(written.map((line) => ({ event: JSON.parse(line) })));
+    expect(arrivals).toEqual(arrived(written));
     expect(arrivals.map((arrival) => "event" in arrival && arrival.event.type)).toEqual(["request", "request_trailers", "response", "response_body", "response_trailers", "end"]);
   });
 
-  it("ends a read at a line that does not parse, reporting it as failed and nothing after it", async () => {
+  it("ends a read at a line that does not parse, reporting it as failed where it ends and nothing after it", async () => {
     const { dir, proxy, connection } = await proxyAndConnection();
     const name = "20261113T083000.000Z.jsonl";
-    const [request, end] = finishedEvents.map((event) => JSON.stringify(event));
-    writeFileSync(join(dir, name), `${request}\n{"type":"response_footer"}\n${end}\n`);
+    const [request, end] = finishedLines;
+    const footer = '{"type":"response_footer"}';
+    writeFileSync(join(dir, name), `${request}\n${footer}\n${end}\n`);
     const read = reading(connection, name);
     expect([await read.next(), await read.next()]).toEqual([
-      { event: finishedEvents[0] },
+      ...arrived([request!]),
       {
         failed: expect.objectContaining({
           message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${name}`,
-          cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type is not one of") }),
+          cause: expect.objectContaining({
+            message: `the event ending at byte ${Buffer.byteLength(`${request}\n${footer}\n`)}`,
+            cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type is not one of") }),
+          }),
         }),
       },
     ]);
@@ -158,7 +166,7 @@ describe("the browser connection", () => {
   });
 
   it("resumes a read whose connection dropped from its last event, reporting nothing", async () => {
-    const [first, second] = finishedEvents.map((event) => JSON.stringify(event));
+    const [first, second] = finishedLines;
     const resumedFrom: (string | string[] | undefined)[] = [];
     const reader = await serving((req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -168,9 +176,23 @@ describe("the browser connection", () => {
       else res.end(`id: 14\ndata: ${second}\n\nevent: end\ndata: {"unterminated_bytes":0}\n\n`);
     });
     const read = reading(createBrowserConnection({ readerPort: reader.port }), finishedName);
-    expect([await read.next(), await read.next(), await read.next()]).toEqual([...finishedEvents.map((event) => ({ event })), { end: { unterminated_bytes: 0 } }]);
+    expect([await read.next(), await read.next(), await read.next()]).toEqual([
+      { event: finishedEvents[0], offset: 7 },
+      { event: finishedEvents[1], offset: 14 },
+      { end: { unterminated_bytes: 0 } },
+    ]);
     expect(resumedFrom).toEqual([undefined, "7"]);
     expect(read.queued()).toBe(0);
+  });
+
+  it("ends a read at a message whose id is not a byte offset, reporting it as failed", async () => {
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(`id: 7x\ndata: ${finishedLines[0]}\n\n`);
+    });
+    expect(await reading(createBrowserConnection({ readerPort: reader.port }), finishedName).next()).toEqual({
+      failed: expect.objectContaining({ cause: expect.objectContaining({ message: 'recorded event: id "7x" is not a byte offset' }) }),
+    });
   });
 
   it("reports a read of a recording the proxy does not list as failed", async () => {

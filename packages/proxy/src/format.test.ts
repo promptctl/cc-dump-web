@@ -1,11 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe as said } from "@cc-dump/log/describe";
 import { parseTraceId } from "@cc-dump/log/trace";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   agentBaseUrl,
   agentOf,
+  offsetOf,
   parseListing,
   parseListings,
   parseProxyInfo,
@@ -22,18 +24,34 @@ import {
 import type { Seen } from "./recording.ts";
 import { createRecordings } from "./recordings.ts";
 
-// Every kind of event the recorder writes, each ending among them.
-const seen: Seen[] = [
-  { type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [["Content-Type", "application/json"], ["X-Twice", "a"], ["x-twice", "b"]] },
-  { type: "request_body", chunk: Buffer.from('{"model":"x"}') },
-  { type: "request_trailers", headers: [] },
-  { type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["content-type", "text/event-stream"]] },
-  { type: "response_body", chunk: Buffer.from([0x1f, 0x8b, 0x00, 0xff]) },
-  { type: "response_trailers", headers: [["x-checksum", "abc"]] },
-  { type: "end", outcome: "ok" },
-  { type: "end", outcome: "aborted" },
-  { type: "end", outcome: "stopped" },
-  { type: "end", outcome: "error", error: "ECONNRESET: socket hang up" },
+// What `parse` is refused for, with every cause, as the UI shows it.
+function refusal(parse: () => unknown): string {
+  try {
+    parse();
+  } catch (error) {
+    return said(error);
+  }
+  throw new Error("not refused");
+}
+
+// Every kind of event the recorder writes, by trace, each ending among them: one exchange whole, and one of each other
+// ending.
+const seen: [trace: string, Seen[]][] = [
+  [
+    "4bf92f3577b34da6a3ce929d0e0e4736",
+    [
+      { type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [["Content-Type", "application/json"], ["X-Twice", "a"], ["x-twice", "b"]] },
+      { type: "request_body", chunk: Buffer.from('{"model":"x"}') },
+      { type: "request_trailers", headers: [] },
+      { type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["content-type", "text/event-stream"]] },
+      { type: "response_body", chunk: Buffer.from([0x1f, 0x8b, 0x00, 0xff]) },
+      { type: "response_trailers", headers: [["x-checksum", "abc"]] },
+      { type: "end", outcome: "ok" },
+    ],
+  ],
+  ["aborted", [{ type: "end", outcome: "aborted" }]],
+  ["stopped", [{ type: "end", outcome: "stopped" }]],
+  ["error", [{ type: "end", outcome: "error", error: "ECONNRESET: socket hang up" }]],
 ];
 
 describe("parseRecordedEvent", () => {
@@ -41,15 +59,16 @@ describe("parseRecordedEvent", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const recordings = createRecordings(() => {}, dir, "run.jsonl");
-    const trace_id = parseTraceId("4bf92f3577b34da6a3ce929d0e0e4736");
-    seen.forEach(recordings.record("run.jsonl", trace_id));
+    for (const [trace, events] of seen) events.forEach(recordings.record("run.jsonl", parseTraceId(trace)));
     const lines = readFileSync(join(dir, "run.jsonl"), "utf8").split("\n").filter(Boolean);
     expect(lines.map(parseRecordedEvent)).toEqual(
-      seen.map((event) => ({
-        timestamp: expect.any(String),
-        trace_id,
-        ...("chunk" in event ? { type: event.type, base64: event.chunk.toString("base64") } : event),
-      })),
+      seen.flatMap(([trace, events]) =>
+        events.map((event) => ({
+          timestamp: expect.any(String),
+          trace_id: trace,
+          ...("chunk" in event ? { type: event.type, base64: event.chunk.toString("base64") } : event),
+        })),
+      ),
     );
   });
 
@@ -61,11 +80,19 @@ describe("parseRecordedEvent", () => {
     ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "recorded response event: status is not an integer"],
     ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "recorded request_body event: base64 is not a string"],
     ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "recorded request_trailers event: headers is not a list of [name, value] string pairs"],
-    ["a trace id that is not a word", { ...event, trace_id: "a/b", type: "end", outcome: "ok" }, "recorded end event: trace_id is not a word: one or more letters, digits, '-' or '_'"],
+    ["a trace id that is not a word", { ...event, trace_id: "a/b", type: "end", outcome: "ok" }, `recorded end event: trace_id: "a/b" is not a word: one or more letters, digits, '-' or '_'`],
+    ["a time the proxy does not write", { ...event, timestamp: "yesterday", type: "end", outcome: "ok" }, "recorded end event: timestamp is not an ISO 8601 UTC time"],
     ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "recorded end event: outcome is not one of ok, aborted, stopped, error"],
     ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "recorded end event: error is not a string"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
-    expect(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line))).toThrow(message);
+    expect(refusal(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line)))).toContain(message);
+  });
+});
+
+describe("a byte offset", () => {
+  it("is a decimal integer a file can have, and nothing else", () => {
+    expect(["0", "48213"].map(offsetOf)).toEqual([0, 48213]);
+    expect(["", "-1", "1.5", "1e3", " 7", "0x10", String(2 ** 53)].map(offsetOf)).toEqual(Array(7).fill(undefined));
   });
 });
 
