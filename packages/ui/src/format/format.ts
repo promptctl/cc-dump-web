@@ -34,9 +34,8 @@ export type Place =
   | { in: "system message"; before: number; index: number }
   | { in: "reply" };
 
-// One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
-// the system prompt and each message, then the reply; the facts its line prints; and how many messages of a speaker's
-// the request sends, which is the reply's index among them.
+// One exchange of the conversation: its groups, in the order docs/design/01-features.md lists them (F3); the facts its
+// line prints; and how many messages of a speaker's the request sends, which is the reply's index among them.
 export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
@@ -175,8 +174,8 @@ function messageContent(content: unknown[], role: Role, place: Place): KeyedBloc
   return placed(place, content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role))));
 }
 
-// The Messages API's exchanges; requests to other paths, and to a target that is no URL, are forwarded and not shown
-// (F2). One whose request was not recorded is shown, since its path is not known.
+// Whether an exchange is shown (docs/design/01-features.md, F2). One whose request was not recorded is, since its path
+// is not known.
 function isMessages({ request: { head } }: Exchange): boolean {
   return head === undefined || (head.method === "POST" && URL.parse(head.url, "http://proxy")?.pathname === "/v1/messages");
 }

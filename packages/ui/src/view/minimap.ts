@@ -2,9 +2,8 @@ import { categories, type Category } from "../format/blocks.ts";
 import { cssVariables, type Theme } from "../theme/theme.ts";
 import { blockOf, categoryOf, changeColors, markOf, type Change, type ForkRow, type Row } from "./rows.ts";
 
-// The minimap (docs/design/02-design.md, "Layout"): the conversation's rows drawn top to bottom at the minimap's height,
-// the vertical navigator. Its geometry, pure: what each row is drawn as and where, and the way back from a point on it to
-// a place in the conversation.
+// The minimap (docs/design/02-design.md, "Layout"), the vertical navigator. Its geometry, pure: what each row is drawn
+// as and where, and the way back from a point on it to a place in the conversation.
 
 // [LAW:types-are-the-program] What a row's sliver is painted: a block in its category's color, or the theme's error for a
 // tool's result that says its tool failed; a set's line in its blocks' category's color, which it stands for while it

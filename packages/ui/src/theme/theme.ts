@@ -6,8 +6,7 @@ import { categoryColors, type CategoryColors } from "./categories.ts";
 
 export type { ThemeName };
 
-// What the reader chose (docs/design/01-features.md, F10): a theme rich-js ships, or the system's, which is the dark or the
-// light Textual theme as the OS prefers.
+// What the reader chose: a theme rich-js ships, or the system's.
 export type ThemeChoice = ThemeName | "system";
 
 export const themeNames = listThemePalettes();

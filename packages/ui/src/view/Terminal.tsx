@@ -13,12 +13,8 @@ import type { Theme } from "../theme/theme.ts";
 import { view } from "./state.ts";
 import { hideTarget, LINK_FRAME, linkHandler, openLink, showTarget } from "./terminalLink.ts";
 
-// The agent's tmux window, live, beside the conversation (docs/design/01-features.md, F13): every pane as tmux lays it out,
-// what the agent prints as it prints it, and what the person types, once they click into a pane, sent to that pane. Its
-// box sets the window's size, as an attached terminal's would. A reload mounts it again from tmux, so it is shown as it
-// is now. Above it, chrome on the surface: which window it is, where its connection stands, the last thing that failed
-// since the connection was last live, and the control that puts it away. One is mounted per window: another window is
-// another terminal, with a connection of its own.
+// The agent's tmux window (docs/design/01-features.md, F13). Its box sets the window's size, as an attached terminal's
+// would. One is mounted per window: another window is another terminal, with a connection of its own.
 export function Terminal({ connection, window, theme }: { connection: Pick<Connection, "tmux">; window: TmuxWindow; theme: Theme }) {
   // [LAW:no-ambient-temporal-coupling] The terminal owns its connection: made once, as it mounts, connected while it is
   // mounted and closed as it unmounts. Closing ends the connection at once, so a remount connects it again. A window

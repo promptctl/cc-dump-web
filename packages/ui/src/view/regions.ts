@@ -1,5 +1,5 @@
-// The long regions of a block's text, which collapse and expand as a block does (docs/design/01-features.md, F4): fenced code
-// blocks and XML-tagged sections, such as the system reminders Claude Code puts in a user's message.
+// The long regions of a block's text (docs/design/01-features.md, F4): fenced code blocks and XML-tagged sections, such
+// as the system reminders Claude Code puts in a user's message.
 
 // A text as runs of plain text and the long regions between them. A region is its opening line, its body (segmented
 // the same way, except a code block's, which is code), and its closing line, empty when the text ends before one.

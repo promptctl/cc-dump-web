@@ -5,11 +5,8 @@ import { inputParts, jsonInput } from "./tools.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
-// [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/01-features.md, "Vocabulary"), in the order
-// the filter bar lists them: what was said and sent, then the exchange's envelope by where it is from. `parameters`:
-// what a request asks beside its prompt and its messages, its cache breakpoints and a message's other fields among
-// them. `usage`: what the API reported about its reply, why it stopped and what it counted. `http`: the wire as it was
-// received, each side's head, a body or an event not read, and how the connection ended.
+// [LAW:one-source-of-truth] The kinds of content a block belongs to (docs/design/01-features.md, "Vocabulary"), in the
+// order the filter bar lists them: what was said and sent, then the exchange's envelope by where it is from.
 export const categories = ["user", "assistant", "tools", "system", "thinking", "parameters", "usage", "http"] as const;
 export type Category = (typeof categories)[number];
 
@@ -87,10 +84,9 @@ const sentField = (value: unknown, name: string): unknown => (typeof value === "
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
-// [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one
-// in Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
-// reply, how long its signature or its data is: it is `usage`, so it is no row among what was said until the reader
-// shows the usage, and is never dropped (docs/design/01-features.md, F3).
+// [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one in
+// Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
+// reply, how long its signature or its data is: it is `usage` (docs/design/01-features.md, F3).
 const thought = (_: Role, block: unknown): Category => {
   const text = sentField(block, "thinking");
   return typeof text === "string" && text !== "" ? "thinking" : "usage";

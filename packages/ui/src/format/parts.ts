@@ -4,9 +4,8 @@ import { fieldOf } from "@cc-dump/log/json";
 export type Medium = "image" | "document";
 export type Source = { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | { type: "file"; file_id: string };
 
-// How a text reads (docs/design/02-design.md, "Two voices"): as Markdown, the way the model writes and reads what a
-// sender wrote, or verbatim, the way a tool returned it or the proxy reports it. [LAW:one-type-per-behavior] One kind of
-// text part, one rendering; the form is a value.
+// How a text reads (docs/design/02-design.md, "Two voices"). [LAW:one-type-per-behavior] One kind of text part, one
+// rendering; the form is a value.
 export type Form = "markdown" | "verbatim";
 
 // [LAW:locality-or-seam] What a block shows, in kinds the view renders without knowing the API: a new block type, or a

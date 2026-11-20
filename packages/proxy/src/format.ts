@@ -27,10 +27,10 @@ export type RecordedEvent = { timestamp: string; trace_id: string } & Recorded;
 // created.
 export type Listing = { name: string };
 
-// [LAW:one-source-of-truth] The names of recordings, the writer's formats and their reader, side by side. A recording is
-// one Claude Code process's (docs/design/01-features.md, Vocabulary), named for the moment the app launched it, in ISO 8601
-// basic format (no colons, which Finder and Windows refuse). Traffic that names no process goes to the proxy run's
-// recording, named for the moment the run started, so the two kinds are told apart by the name alone.
+// [LAW:one-source-of-truth] The names of recordings, the writer's formats and their reader, side by side. A process's
+// recording is named for the moment it was made, in ISO 8601 basic format (no colons, which Finder and Windows refuse).
+// Traffic that names no process goes to the proxy run's recording, named for the moment the run started, so the two
+// kinds are told apart by the name alone.
 const basicStart = (start: Date) => start.toISOString().replace(/[-:]/g, "");
 
 export function recordingName(start: Date): string {

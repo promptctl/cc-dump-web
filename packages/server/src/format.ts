@@ -31,7 +31,7 @@ export function launchSession({ settings, sessions }: Launcher): string {
 export type Launch = { session: string; command: string };
 
 // `POST /launch`'s answer: the window opened, its pane, and `recording`, the name of the recording the agent's process
-// records to (docs/design/01-features.md, F1), which exists once the process sends its first request.
+// records to (docs/design/01-features.md, F1).
 export type Launched = { session: string; pane_id: PaneId; recording: string } & TmuxWindow;
 
 // [LAW:types-are-the-program] A window, as tmux addresses one in a session (`session:window`), by ids, on the one tmux

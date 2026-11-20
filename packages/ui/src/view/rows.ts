@@ -39,11 +39,10 @@ export type BlockRow = { kind: "block"; key: string; change: Change; versions: r
 // listed (columnOf).
 export type Standing = { depth: number; dimmed: boolean };
 // [LAW:types-are-the-program] A set's line: the title of a group whose blocks are a set, blocks of one kind and one
-// category that read as one thing, as a request's tool definitions do. It stands for them while it is closed, when
-// none of them is listed, and over them while it is open (docs/design/01-features.md, F4). It holds the group's `items`,
-// the history's own array, and the step shown and the `steps` the column lists, which its blocks' rows are read from
-// (blocksOf), so it is the same fields while none of its items gets a version. `change`: what the step shown did to
-// the set, which brings it, leaves it, or changes it, by doing anything to a block of it.
+// category that read as one thing, as a request's tool definitions do (docs/design/01-features.md, F4). It holds the
+// group's `items`, the history's own array, and the step shown and the `steps` the column lists, which its blocks' rows
+// are read from (blocksOf), so it is the same fields while none of its items gets a version. `change`: what the step
+// shown did to the set, which brings it, leaves it, or changes it, by doing anything to a block of it.
 export type SetRow = { kind: "set"; key: string; title: Heading; change: "added" | "same" | "changed"; items: readonly Item[]; step: number; steps: ReadonlySet<number> } & Standing;
 // [LAW:types-are-the-program] The line where histories part (docs/design/02-design.md, "Two axes"): it stands after
 // what two or more steps of the recording stand after, a step's rows or the line of a nest or a thread, and lists
@@ -113,10 +112,9 @@ export const blocksOf = ({ key, items, step, steps, depth, dimmed }: SetRow): Bl
 // The category of a set's blocks, which is one.
 export const categoryOf = ({ items }: SetRow): Category => blockIn(items[0]!.versions[0]!).category;
 
-// What a set's line says of its blocks (docs/design/02-design.md, "Print what varies"): how many the conversation holds
-// at the step shown, their names, and their size together; and what steps did to them since they arrived, which the
-// closed line must not lose: the last thing a step did to one of them, with its name, and how many of them a step did
-// anything to.
+// What a set's line says of its blocks: how many the conversation holds at the step shown, their names, and their size
+// together; and what steps did to them since they arrived, which the closed line must not lose: the last thing a step
+// did to one of them, with its name, and how many of them a step did anything to.
 export type Summary = { count: number; names: string[]; size: number; last: { name: string; event: Event } | undefined; touched: number };
 export function summaryOf(set: SetRow): Summary {
   const rows = blocksOf(set);
@@ -134,11 +132,10 @@ export function summaryOf(set: SetRow): Summary {
   };
 }
 
-// The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
-// category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block revealed
-// among them wherever no closed nest holds it; `every` row, listed or not, which the search reads, since a hidden
-// category's blocks, a closed set's and a closed nest's are searched (docs/design/01-features.md, F6); and the `steps` the
-// column lists, whose rows these are (columnOf).
+// The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a
+// hidden category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block
+// revealed among them wherever no closed nest holds it; `every` row, listed or not, which the search reads
+// (docs/design/01-features.md, F6); and the `steps` the column lists, whose rows these are (columnOf).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
@@ -151,9 +148,8 @@ export type Keys = { at: (index: number) => string; indexOf: (key: string) => nu
 export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 
 // [LAW:one-source-of-truth] What the reader chose to show of each block, region or nest they opened or closed, by key:
-// open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts now
-// or not, since how a block starts moves with its category's level and the choice outlasts a change of level
-// (docs/design/01-features.md, F4).
+// open, or closed. A key with no choice shows as it starts. A choice is kept as made, the same as how the key starts
+// now or not, since how a block starts moves with its category's level (docs/design/01-features.md, F4).
 export type Opened = Record<string, boolean>;
 export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
 
@@ -605,13 +601,13 @@ export function startsExpanded(row: BlockRow, visibility: Record<Category, Visib
 
 // [LAW:one-source-of-truth] Whether the sections under the headings of a block's texts start open, before any choice of
 // the reader's (docs/design/01-features.md, F4): what the user or the assistant said or thought reads whole, as it was
-// written, each heading a place to fold it; what was written for the model, its prompt, a tool's description and what
-// the harness injected, starts as its outline, each heading a line that opens.
+// written; what was written for the model, its prompt, a tool's description and what the harness injected, starts as
+// its outline.
 export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
   injected === undefined && (category === "user" || category === "assistant" || category === "thinking");
 
 // [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's: as the level of its blocks'
-// category says, so at compact it is its one line, and at expanded its blocks are listed (docs/design/01-features.md, F4).
+// category says (docs/design/01-features.md, F4).
 export const setStartsOpen = (category: Category, visibility: Record<Category, Visibility>): boolean => levels[visibility[category]].startsExpanded;
 
 // The set a block's row is in that shows closed, by its line's key: none for a row of no set, or of a set that shows

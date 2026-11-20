@@ -3,14 +3,10 @@ import type { Segment } from "./history.ts";
 import { conversationKeys, withKeys } from "./keyboard.ts";
 import { failuresOf, mostOf, partedOf, shapeOf, titleOf } from "./strip.ts";
 
-// The steps of the conversation, above it (docs/design/02-design.md, "Two axes"): one mark per step, in the order
-// they began, as tall as what it wrote and as strong as how long it took (strip.ts), the step shown marked in the theme's
-// primary and a step that failed, or brought a tool's failed result, in its error color, each titled with the facts of
-// its exchange line; a click on a mark goes to that step. A step the column lists (`listed`, view/rows.ts) is solid and
-// any other hollow, one of another history or one still to come, and a step where a history parts from another has a
-// notch above it. Previous and next move one step, and say where the moment is among them. `shown`: the step shown,
-// from 1. `onGo`: a move to a step; `onStep`: a move of one step, back or forward. More steps than the strip has pixels
-// for scroll it sideways, the mark shown kept in view, so every mark can be reached.
+// The turn strip (docs/design/02-design.md, "Two axes"): each mark's shape is strip.ts's, and whether it is solid the
+// column's (`listed`, view/rows.ts). `shown`: the step shown, from 1. `onGo`: a move to a step; `onStep`: a move of one
+// step, back or forward. More steps than the strip has pixels for scroll it sideways, the mark shown kept in view, so
+// every mark can be reached.
 export const TurnStrip = memo(function TurnStrip({
   segments,
   shown,

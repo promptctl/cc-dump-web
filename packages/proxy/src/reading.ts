@@ -8,15 +8,15 @@ import { recordedLength } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
-// (docs/design/01-features.md): live viewing, reopening, refresh and reload are all one read from a position.
-// `GET /recordings` lists the `.jsonl` files of the recordings directory that hold something, in no order of its own: a
-// recording with no bytes has no conversation, and one a launch made is opened by its name. `GET /recordings/<name>` is
-// Server-Sent Events, one per recorded line, whose id is the byte offset just past the line: a reconnecting EventSource
-// resumes from it with `Last-Event-ID`. A recording the proxy run is writing (`Recordings.follows`) is read to its end
-// and then on, as it is written, until the reader leaves; any other is finished, and ends with an `end` event. A read
-// that fails once begun ends with a `failed` event: the stream's only way to tell a reader it failed, since an
-// EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
-// A reader never creates a recording: only a name with a file, or one the run is writing, is read, and any other is 404.
+// (docs/design/01-features.md, "One path to the screen"). `GET /recordings` lists the `.jsonl` files of the recordings
+// directory that hold something, in no order of its own: a recording with no bytes has no conversation, and one a
+// launch made is opened by its name. `GET /recordings/<name>` is Server-Sent Events, one per recorded line, whose id is
+// the byte offset just past the line: a reconnecting EventSource resumes from it with `Last-Event-ID`. A recording the
+// proxy run is writing (`Recordings.follows`) is read to its end and then on, as it is written, until the reader
+// leaves; any other is finished, and ends with an `end` event. A read that fails once begun ends with a `failed` event:
+// the stream's only way to tell a reader it failed, since an EventSource takes a cut stream for a dropped connection
+// and reconnects into the same failure. A reader never creates a recording: only a name with a file, or one the run is
+// writing, is read, and any other is 404.
 export function createReader(log: Log, recordings: Recordings): Handler {
   const { dir } = recordings;
   return (req, res, { trace_id, fail, ended }) => {

@@ -1,8 +1,7 @@
 import { heard } from "./keyboard.ts";
 
-// The keys panel (docs/design/02-design.md, "Keys"): every key the app hears, by the place it is heard in, each beside
-// what it does. It lists the table the keys are pressed from (keyboard.ts) and takes no key itself, so one can be tried
-// while its line is read.
+// The keys panel (docs/design/02-design.md, "Keys"). It lists the table the keys are pressed from (keyboard.ts) and
+// takes no key itself, so one can be tried while its line is read.
 export function KeysPanel() {
   return (
     <aside aria-label="Keys" data-keys className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l bg-surface p-3 text-xs">

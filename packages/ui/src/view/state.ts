@@ -12,10 +12,10 @@ import type { Match, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
 // launch opened and whether its terminal is shown (F13), each block, set, nest, region or fold they opened or closed
-// (rows.ts), where they are, the moment shown, and their search. Everything else on screen is derived from the events
-// and the settings. It is kept for the tab in sessionStorage, so after a hot reload or a page reload the view is the
-// same (docs/design/01-features.md, F12). A tab opens at the end, now, which follows the conversation while follow is on.
-// While it is off, the end becomes the place under the view at the first step.
+// (rows.ts), where they are, the moment shown, and their search. It is kept for the tab in sessionStorage, so after a
+// hot reload or a page reload the view is the same (docs/design/01-features.md, F12). A tab opens at the end, now,
+// which follows the conversation while follow is on. While it is off, the end becomes the place under the view at the
+// first step.
 export type View = { open: OpenRecording; terminal: Terminal | null; opened: Opened; position: Position; moment: Moment; search: Search };
 
 // [LAW:types-are-the-program] The agent's window, and whether its terminal is shown beside the conversation: two facts,

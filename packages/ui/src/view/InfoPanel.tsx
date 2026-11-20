@@ -10,10 +10,9 @@ import { useView } from "./state.ts";
 
 type Informing = Pick<Connection, "agentRecording" | "launcher">;
 
-// The info panel (docs/design/01-features.md, F8): what a person needs to point an agent at the proxy by hand, and to say
-// what they are looking at. Each value copies with one click. `status`: the UI's connection to the proxy, whose status
-// says what the proxy is, so the panel follows the proxy across its restarts. `open`: the recording open, by name.
-// `session`: the agent's session, as the latest request that names one says it.
+// The info panel (docs/design/01-features.md, F8). `status`: the UI's connection to the proxy, whose status says what
+// the proxy is, so the panel follows the proxy across its restarts. `open`: the recording open, by name. `session`: the
+// agent's session, as the latest request that names one says it.
 export function InfoPanel({ connection, status, open, session }: { connection: Informing; status: StatusReading; open: string | null; session: string | undefined }) {
   const launched = useView((state) => state.terminal?.window ?? null);
   return (

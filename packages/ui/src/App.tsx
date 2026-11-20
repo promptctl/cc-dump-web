@@ -81,7 +81,6 @@ export function App({ connection }: { connection: Connection }) {
           )}
         </div>
         {terminal?.shown ? <Terminal key={`${terminal.window.start_time} ${terminal.window.session_id} ${terminal.window.window_id}`} connection={connection} window={terminal.window} theme={theme} /> : null}
-        {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
         {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
         {logs ? <LogsPanel connection={connection} /> : null}
         {keys ? <KeysPanel /> : null}
@@ -151,7 +150,6 @@ function LastRequest({ at }: { at: number }) {
   );
 }
 
-// A change to the proxy's source takes effect only when the proxy restarts (docs/design/01-features.md, F12).
 function SourceState({ source }: { source: SourceStatus }) {
   if (source.state === "failed") {
     return <p className="text-error" title={source.message}>Proxy source not watched, a restart watches it again: {source.message}</p>;

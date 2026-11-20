@@ -3,14 +3,11 @@ import type { Theme } from "../theme/theme.ts";
 import { colorsOf, gutter, notchAt, offsetAt, scaleOf, slivers, viewBox, type Extent } from "./minimap.ts";
 import type { ForkRow, Row } from "./rows.ts";
 
-// The minimap (docs/design/02-design.md, "Layout"), beside the conversation: its rows top to bottom at the minimap's
-// height, each a sliver in its category's color with the mark of what a step did to it at its right edge, and the
-// view's box over them. In the gutter at its left, the conversation's structure: a bar along the rows under an Agent
-// call, a second along those under a call of a subagent's, and a notch at a line where histories part. A press on a
-// notch is the next history at that fork, through `onFork`; any other press, or a drag, puts the view there, through
-// `onPlace`, the view's own placing, so the view stays the scroll offset's one writer. `extents`: each row's start and
-// height, measured or estimated, as the virtualizer holds them; `scroller`: the view, whose content, the rows and what
-// follows them, is the conversation's height, and what the view's box is read from.
+// The minimap (docs/design/02-design.md, "Layout"). A press on a fork's notch goes through `onFork`; any other press,
+// or a drag, puts the view there, through `onPlace`, the view's own placing, so the view stays the scroll offset's one
+// writer. `extents`: each row's start and height, measured or estimated, as the virtualizer holds them; `scroller`: the
+// view, whose content, the rows and what follows them, is the conversation's height, and what the view's box is read
+// from.
 export function Minimap({
   rows,
   extents,

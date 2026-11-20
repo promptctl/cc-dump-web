@@ -1,5 +1,4 @@
-// Moving in time as one motion (docs/design/02-design.md, "Two axes"): the conversation the moment leaves slides away,
-// the way the move goes, while the next moment fades in, by the View Transitions API, its motion the stylesheet's
+// Moving in time (docs/design/02-design.md, "Two axes"), by the View Transitions API, its motion the stylesheet's
 // (index.css), which has none when the OS asks for reduced motion. Only a move the reader makes runs one; what arrives
 // live is not animated.
 

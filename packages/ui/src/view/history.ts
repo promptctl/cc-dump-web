@@ -4,10 +4,10 @@ import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/form
 import { followsOf, type Fact } from "./lines.ts";
 
 // The conversation through time (docs/design/02-design.md, "Two axes"). A step is an exchange, in the order exchanges
-// began, a turn, a quota probe, a title request and a subagent's request alike, and the conversation at step k is what
-// exchanges 1..k brought to it. Each request resends its thread's history, so an item of the conversation is not a
-// request's block but a block at its place in a thread: it enters with the exchange it first arrives with and stays
-// there, resending it adds nothing, and different content at its place is a new version of it.
+// began, and the conversation at step k is what exchanges 1..k brought to it. Each request resends its thread's
+// history, so an item of the conversation is not a request's block but a block at its place in a thread: it enters with
+// the exchange it first arrives with and stays there, resending it adds nothing, and different content at its place is
+// a new version of it.
 
 // A version of an item: the block at its place from `step` on, whether it arrived as a reply, which is compared with
 // the block the next request resends as that block is, and the block it `rewrote`, the one its place last held, where

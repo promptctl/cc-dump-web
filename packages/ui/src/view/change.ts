@@ -2,9 +2,8 @@ import type { Block } from "../format/blocks.ts";
 import { beyondContext, diffOf, lineDiff, marks, wordDiff, type Edit } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 
-// What a step rewrote in a block (docs/design/02-design.md, "Two axes"): the block before against the block after as
-// a unified diff, the lines a change removed above the lines it added, a line replaced by another marked word by word,
-// and runs of unchanged lines folded.
+// What a step rewrote in a block (docs/design/02-design.md, "Two axes"): the block before against the block after as a
+// unified diff.
 
 // A line of the diff: what the change did to it, and its words, each marked for what the change did to it: a line
 // replaced by another word by word, any other the line whole.

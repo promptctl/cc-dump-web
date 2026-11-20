@@ -28,9 +28,9 @@ import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 
-// The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, every row of it listed, of
-// which only those on screen are mounted. `reading`: whether the read can still bring an
-// exchange its end. `theme`: what the minimap's canvas is painted in.
+// The conversation at the moment shown (docs/design/02-design.md, "Two axes"), of which only the rows on screen are
+// mounted. `reading`: whether the read can still bring an exchange its end. `theme`: what the minimap's canvas is
+// painted in.
 export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
@@ -142,7 +142,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
-  // The search (docs/design/01-features.md, F6): its matches among every row, in the hidden categories as well.
+  // The search (docs/design/01-features.md, F6): its matches among every row, listed or not.
   const query = useView((state) => state.search.query);
   const options = useSettings(useShallow((state) => state.search));
   const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
@@ -368,11 +368,8 @@ function largest(element: HTMLElement): number {
 
 // A row: what it shows beside a band at its left edge in the color of what the step shown did to it, none where the
 // step left the row as it was. The band stands where a ground would: the theme's text is promised legible on its muted
-// grounds only in their own `text-` color, and the foreground fails on them in most themes. A subagent's row stands
-// one step in for each Agent call it is under, beside a bar for each, which runs down the nest's rows as the bar in
-// the minimap's gutter does; a row of a thread a compaction summarized is dimmed (docs/design/02-design.md, "Two
-// axes"). Memoized on what it shows, every field of the row, so a row the layout makes again as it was does not render
-// again.
+// grounds only in their own `text-` color, and the foreground fails on them in most themes. Memoized on what it shows,
+// every field of the row, so a row the layout makes again as it was does not render again.
 const RowView = memo(
   function RowView({ row, reading }: { row: Row; reading: boolean }) {
     const band = changeColors[row.change];
@@ -487,11 +484,8 @@ function NestLine({ row }: { row: NestRow }) {
   );
 }
 
-// The exchange's line (docs/design/02-design.md, "Print what varies", "Layout"): its facts in columns of fixed widths,
-// aligned down the conversation, on two rows: who answered and how it ended, then the tokens. The model's column alone
-// gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
-// chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
-// exchange its end.
+// The exchange's line (docs/design/02-design.md, "Print what varies", "Layout"). `reading`: whether the read can still
+// bring this exchange its end.
 function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
@@ -561,9 +555,8 @@ function ListedRow({ item, measure, children }: { item: VirtualItem; measure: (e
 // since its status says so, and of one still in flight; a word for the rest.
 const endings = { ok: "", pending: "", unread: "no end read", error: "error", aborted: "aborted", stopped: "stopped" } as const;
 
-// A block's row, beside the bar in its category's color, which runs its whole height (docs/design/02-design.md, "One
-// bold element"): its line; under it, once its mark is clicked, what steps rewrote in it; and, expanded, its content.
-// Clicking the line switches between expanded and not, from how the block starts.
+// A block's row (docs/design/02-design.md, "One bold element"): its line; under it, once its mark is clicked, what
+// steps rewrote in it; and, expanded, its content.
 function BlockView({ row }: { row: BlockRow }) {
   const starts = useSettings((state) => startsExpanded(row, state.visibility));
   const { open, toggle } = useToggle(row.key, starts);
