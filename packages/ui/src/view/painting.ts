@@ -12,11 +12,11 @@ export const Painted = createContext<RegExp | undefined>(undefined);
 
 // Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
 // in this text.
-export type Where = { blockKey: string; at: Address; ranges: Range[]; current: number | undefined };
+export type Where<At extends Address = Address> = { blockKey: string; at: At; ranges: Range[]; current: number | undefined };
 
 // A text's matches, found again only when the text or the pattern changes. A step renders again only the texts the
 // current match leaves and enters.
-export function useWhere(blockKey: string, at: Address, searched: Searched): Where {
+export function useWhere<At extends Address>(blockKey: string, at: At, searched: Searched): Where<At> {
   const pattern = useContext(Painted);
   if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);

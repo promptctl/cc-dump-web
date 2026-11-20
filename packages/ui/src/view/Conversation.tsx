@@ -22,7 +22,7 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, fieldTexts, ordinal, patternOf, type Address, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, fieldTexts, ordinal, patternOf, type Direction, type PartAddress } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -712,10 +712,10 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
           {fieldTexts(part.fields, index).map(({ name, value, depth }, field) => (
             <div key={field} className="contents">
               <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={name.at} text={name.searched.text} />
+                <HighlightedText blockKey={blockKey} at={name.at} text={name.text} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={value.at} text={value.searched.text} />}
+                {value !== undefined && <HighlightedText blockKey={blockKey} at={value.at} text={value.text} />}
               </dd>
             </div>
           ))}
@@ -754,7 +754,7 @@ const diffMarks: Record<Edit["change"], { ground: string; color: string; weight:
 
 // A change as a unified diff: each line placed in the diff's text at its passage, so the search's matches paint where
 // they are.
-function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: Address }) {
+function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: PartAddress }) {
   const diff = diffOf(part);
   const where = useWhere(blockKey, at, diff);
   return (
@@ -768,7 +768,7 @@ function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }
   );
 }
 
-function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: Address }) {
+function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: PartAddress }) {
   const text = jsonText(part);
   return (
     <pre className="break-all whitespace-pre-wrap">

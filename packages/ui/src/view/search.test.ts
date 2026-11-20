@@ -75,23 +75,34 @@ describe("search", () => {
     ]);
   });
 
-  it("lists a block's texts in the slot order of their addresses, for every kind of part", () => {
+  it("steps through a block's matches in the order it shows them, its count counting them in that order", () => {
     const row = added({
       category: "tools",
-      name: "n",
+      name: "needle",
       parts: [
-        { kind: "fields", fields: [["a", "1"], ["b", [["c", "2"]]], ["d", "3"]] },
-        { kind: "text", form: "verbatim", text: "t" },
+        { kind: "fields", fields: [["needle", "a needle"], ["b", [["needle", "x"]]]] },
         { kind: "media", of: "image", source: { type: "url", url: "u" } },
-        { kind: "json", value: [1] },
-        { kind: "diff", before: "x", after: "y" },
-        { kind: "fields", fields: [["e", "4"]] },
-        ...Array.from({ length: 6 }, () => ({ kind: "text", form: "markdown", text: "m" }) as const),
+        { kind: "text", form: "verbatim", text: "needle, needle" },
+        { kind: "json", value: ["needle"] },
+        { kind: "diff", before: "needle", after: "needles" },
+        ...Array.from({ length: 10 }, () => ({ kind: "text", form: "verbatim", text: "needle" }) as const),
       ],
     });
-    const addresses = shownTexts(row).map(({ at }) => at);
-    expect(addresses).toHaveLength(19);
-    addresses.slice(1).forEach((at, index) => expect(compareAddresses(addresses[index]!, at), JSON.stringify(at)).toBeLessThan(0));
+    const found = createSearch()([row], pattern);
+    const keys = { at: () => "k", indexOf: (key: string) => (key === "k" ? 0 : undefined) };
+    const steps: Match[] = [];
+    for (let index = 0; index < found.count; index++) steps.push(adjacent(found, steps.at(-1), top, "next", pattern, keys)!.match);
+    const texts = [...new Set(steps.map(({ at }) => JSON.stringify(at)))].map((at): unknown => JSON.parse(at));
+    expect(texts).toEqual([
+      address.name,
+      address.field(0, 0, "name"),
+      address.field(0, 0, "value"),
+      address.field(0, 2, "name"),
+      ...Array.from({ length: 13 }, (_, index) => address.part(index + 2)),
+    ]);
+    expect(steps.filter(({ at }) => at.kind === "part" && at.part === 2).map(({ start }) => start)).toEqual([0, 8]);
+    expect(steps.map((match) => ordinal(found, match, pattern))).toEqual(steps.map((_, index) => index + 1));
+    expect(adjacent(found, steps.at(-1), top, "next", pattern, keys)!.match).toEqual(steps[0]);
   });
 
   it("orders the slots: the name, then the parts by number, a part's text before its lines, a line's name before its value", () => {
@@ -109,10 +120,6 @@ describe("search", () => {
     expect(currentIn(current, "k", address.field(1, 2, "name"))).toBeUndefined();
     expect(currentIn(current, "j", address.field(1, 2, "value"))).toBeUndefined();
     expect(currentIn(undefined, "k", address.name)).toBeUndefined();
-  });
-
-  it("keys a part's regions by the address as text, the form the choices kept so far are kept by", () => {
-    expect([partKey("k", address.name), partKey("k", address.part(3)), partKey("k", address.field(3, 1, "value"))]).toEqual(["k/name", "k/3", "k/3/1/value"]);
   });
 
   it("reads a query as a regular expression, in any case, and the empty query as matching nowhere", () => {

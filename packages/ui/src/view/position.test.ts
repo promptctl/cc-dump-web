@@ -46,14 +46,14 @@ describe("position", () => {
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
   });
 
-  it("walks a key's prefixes down to the empty one, which a key starting with a slash has, and ends", () => {
-    const tried: string[] = [];
-    const empty = (key: string) => (tried.push(key), key === "" ? 7 : undefined);
-    expect(rowIndex("/request/http", empty)).toBe(7);
-    expect(tried).toEqual(["/request/http", "/request", ""]);
-    expect(rowIndex("/request/http", () => undefined)).toBeUndefined();
-    tried.length = 0;
-    expect(rowIndex("a/b", empty)).toBeUndefined();
-    expect(tried).toEqual(["a/b", "a"]);
+  it("gives the row of the longest of a key's prefixes that is listed, and none when none is, whatever the key's slashes", () => {
+    const listed = (...keys: string[]) => (key: string) => (keys.includes(key) ? keys.indexOf(key) : undefined);
+    expect(rowIndex("a/b/c", listed("a", "a/b"))).toBe(1);
+    expect(rowIndex("a/b/c", listed("a"))).toBe(0);
+    expect(rowIndex("a/b/c", listed("a/b/c", "a"))).toBe(0);
+    expect(rowIndex("a/b", listed("x"))).toBeUndefined();
+    expect(rowIndex("/request/http", listed("", "/request"))).toBe(1);
+    expect(rowIndex("/request/http", listed(""))).toBe(0);
+    expect(rowIndex("//", listed())).toBeUndefined();
   });
 });
