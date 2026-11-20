@@ -1,6 +1,9 @@
 // What the harness puts into the text of a message, and the text around it: the pieces a text splits into, so each is a
 // block of its own, named for what it is (docs/design/01-features.md, F3). The harness is Claude Code; its own content is a
-// system reminder, hook output, the contents of a CLAUDE.md file, or, in a system-role message, a section it titles.
+// system reminder, hook output, the contents of a CLAUDE.md file, the notification that an agent stopped, or, in a
+// system-role message, a section it titles.
+
+import { noticeIn, type Notice } from "./wire.ts";
 
 // [LAW:types-are-the-program] A piece is what said it, and what that says about it: a hook has its name, a CLAUDE.md
 // its path and a section its title, which nothing else has. `said`: the text of whoever sent the message, which is all of
@@ -12,6 +15,7 @@ export type Piece = { text: string; content: string } & (
   | { kind: "hook"; name: string }
   | { kind: "claude_md"; path: string }
   | { kind: "section"; title: string }
+  | { kind: "notification"; notice: Notice }
 );
 
 // A piece's text, and how much of its start is what marks it.
@@ -86,7 +90,11 @@ const owned: Record<OwnText, { rest: Made; topLevel: Marker[] }> = {
 // [LAW:one-source-of-truth] The one place a text is split. Every character of `text` is in exactly one piece, in order.
 // [LAW:dataflow-not-control-flow] The same scan runs on every text; what it finds, and whose text it is, decide the
 // pieces, and a text it finds nothing in is one piece of the rest.
+// A text that is wholly a notification is that one piece, whoever's the text is: the harness sends each as a text block
+// of its own (format/wire.ts).
 export function split(text: string, own: OwnText): Piece[] {
+  const notice = noticeIn(text);
+  if (notice !== undefined) return [{ kind: "notification", notice, text, content: text.slice(text.indexOf("<task-notification>")) }];
   const { rest, topLevel } = owned[own];
   const pieces: Piece[] = [];
   let end = 0;

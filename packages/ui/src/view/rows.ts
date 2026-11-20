@@ -388,7 +388,7 @@ function doingOf(arrived: readonly Segment[], levelOf: readonly string[]): Map<s
     const waits = exchange.end === undefined ? coming : facts.stopReason === "tool_use" && !answered.has(index + 1) ? onTool : undefined;
     if (waits === undefined) return;
     const last = did(segment);
-    if (last !== undefined && !last.handback) waits.set(levelOf[index + 1]!, last);
+    if (last !== undefined && last.call?.waits !== false) waits.set(levelOf[index + 1]!, last);
   });
   return new Map([...coming, ...onTool]);
 }
@@ -426,7 +426,9 @@ function itemRow({ key, versions }: Item, step: number, steps: ReadonlySet<numbe
 // on, so its first version says what it launches (view/history.ts).
 function nestRow(call: BlockRow, key: string, column: Column, step: number, standing: Standing): NestRow {
   const steps = column.levels.get(key)!;
-  const { type, prompt } = blockIn(call.versions[0]!).launch!;
+  const launch = blockIn(call.versions[0]!).call!.launches!;
+  if (launch.tool !== "Agent") throw new Error(`${call.key} launches no Agent`);
+  const { type, prompt } = launch;
   return {
     kind: "nest",
     key,

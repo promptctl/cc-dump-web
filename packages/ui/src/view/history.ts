@@ -191,8 +191,8 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
-          if (block.launch !== undefined) {
-            launches.push({ step, key, prompt: block.launch.prompt.trim() });
+          if (block.call?.launches?.tool === "Agent") {
+            launches.push({ step, key, prompt: block.call.launches.prompt.trim() });
             undo.push(() => launches.pop());
           }
           if (block.summary !== undefined) {

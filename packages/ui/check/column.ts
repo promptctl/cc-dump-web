@@ -172,8 +172,8 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         say(`${nest.key} does not stand right after its call`);
         continue;
       }
-      const { launch } = first(call);
-      if (launch === undefined) say(`${nest.key} stands after a block that launches nothing`);
+      const launch = first(call).call?.launches;
+      if (launch?.tool !== "Agent") say(`${nest.key} stands after a block that launches nothing`);
       else if (firstMessage(history, root).trim() !== launch.prompt.trim()) say(`${nest.key} holds step ${root}, whose first message is not its call's prompt`);
       else if (nest.prompt !== launch.prompt || nest.type !== launch.type) say(`${nest.key} does not say what its call launches`);
       if (nest.depth !== call.depth || nest.dimmed !== call.dimmed) say(`${nest.key} does not stand as its call does`);
@@ -194,7 +194,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
         const ended = (own: number) => segments[own - 1]!.formatted.exchange.end !== undefined;
         const newest = arrived.findLast((own) => agentOf(own) === agent && !asks(own) && (ended(own) || replied(own) !== undefined));
         const last = newest === undefined ? undefined : replied(newest);
-        const runs = newest !== undefined && last?.handback === undefined && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
+        const runs = newest !== undefined && last?.call?.waits !== false && (!ended(newest) || segments[newest - 1]!.formatted.facts.stopReason === "tool_use");
         if (nest.latest !== (runs ? last : undefined)) say(`${nest.key} says ${nest.latest?.name ?? "nothing"} where its subagent ${runs ? `last did ${last?.name ?? "nothing"} at` : "is done by"} its step ${newest ?? root}`);
       }
       const id = fieldOf(first(call), "id");

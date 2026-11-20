@@ -2,6 +2,7 @@ import { split, type Piece } from "./injected.ts";
 import { doesNotFit, fieldsParts, fieldValue, type Field, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
+import { namedIn, type Notice } from "./wire.ts";
 
 // The blocks the view shows, and the formatter of the Messages API's content blocks into them.
 
@@ -18,16 +19,22 @@ export type Category = (typeof categories)[number];
 // `preview`: the parts the block's collapsed line reads in place of its own (docs/design/02-design.md, "Print what
 // varies"), for a block whose first part with content is not what tells it from its kind's others (view/rows.ts).
 // `failed`: a tool's result that says its tool failed (its is_error), which the minimap marks in the theme's error.
-// `launch`: the subagent an Agent tool's call launches. `summary`: the summary an assistant's text ends with, as the
-// reply to a compaction does. [LAW:one-source-of-truth] A thread begun with either stands after the block that states
-// it (view/history.ts), which reads them here and never back out of a block's parts. `handback`: a subagent's call of
-// the tool that hands its report back to its caller, after which it does nothing more until it is told more.
+// [LAW:one-source-of-truth] What a block states that the history reads (view/history.ts), here and never back out of
+// its parts: `call`, a client tool's call; `result`, a client tool's result; `notice`, the harness's notification that an
+// agent stopped (format/wire.ts); `summary`, the summary an assistant's text ends with, as the reply to a compaction
+// does, which the thread that carries it on begins with.
 export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
-export type Stated = { launch?: Launch; summary?: string; handback?: true };
+export type Stated = { call?: Call; result?: Answer; notice?: Notice; summary?: string };
 
-// What an Agent tool's call launches: the `prompt` it sends, which is what the subagent's thread is first told, and the
-// agent `type` it names, where it names one.
-export type Launch = { prompt: string; type: string | undefined };
+// [LAW:types-are-the-program] A client tool's call: its `id`, which its result answers; what it `launches`, for a tool
+// that runs a subagent; and whether the reply that makes it `waits` for its result, which every call's does but a
+// subagent's SubagentHandback, which hands its report back and ends its work.
+export type Call = { id: string; launches: Launch | undefined; waits: boolean };
+// What a call launches: an Agent call a subagent of the agent `type` it names, sent `prompt` as its first message; a
+// Skill call the skill it names, which runs in a subagent when the skill forks.
+export type Launch = { tool: "Agent"; type: string | undefined; prompt: string } | { tool: "Skill"; skill: string };
+// A client tool's result: the call it `answers`, and the agent its content `names`, where it names one (format/wire.ts).
+export type Answer = { answers: string; names: string | undefined };
 
 // What a source of at most one block gives: none, or the one, ready to spread among a group's blocks.
 export type BlockOrNone = [] | [Block];
@@ -110,15 +117,29 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 });
 // What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
 // a subagent: it sends its input's `prompt` as the subagent's first message, to the agent its `subagent_type` names.
-// An input still streaming is text, and launches none yet. A subagent hands its report back with SubagentHandback, the
-// last block of a reply that stops for a tool's use, where its turn never ends.
-const called = (block: unknown): Stated => {
-  const name = sentField(block, "name");
-  const input = sentField(block, "input");
+// Its Skill tool runs the `skill` its input names. An input still streaming is text, and launches none yet. A subagent
+// hands its report back with SubagentHandback, the last block of a reply that stops for a tool's use, where its turn
+// never ends. A call with no id is shown as not fitting (`toolUse`), and states none.
+const launchOf = (name: unknown, input: unknown): Launch | undefined => {
   const prompt = sentField(input, "prompt");
   const type = sentField(input, "subagent_type");
-  if (name === "Agent" && typeof prompt === "string") return { launch: { prompt, type: typeof type === "string" ? type : undefined } };
-  return name === "SubagentHandback" ? { handback: true } : {};
+  const skill = sentField(input, "skill");
+  if (name === "Agent" && typeof prompt === "string") return { tool: "Agent", type: typeof type === "string" ? type : undefined, prompt };
+  return name === "Skill" && typeof skill === "string" ? { tool: "Skill", skill } : undefined;
+};
+const called = (block: unknown): Stated => {
+  const id = sentField(block, "id");
+  const name = sentField(block, "name");
+  return typeof id === "string" ? { call: { id, launches: launchOf(name, sentField(block, "input")), waits: name !== "SubagentHandback" } } : {};
+};
+
+// What a client tool's result states: the call it answers, and the agent its texts name. One with no id is shown as not
+// fitting (`toolResult`), and states none.
+const answered = (block: unknown): Stated => {
+  const id = sentField(block, "tool_use_id");
+  const content = sentField(block, "content");
+  const texts = typeof content === "string" ? [content] : Array.isArray(content) ? content.flatMap((one) => (typeof sentField(one, "text") === "string" ? [sentField(one, "text") as string] : [])) : [];
+  return typeof id === "string" ? { result: { answers: id, names: namedIn(texts) } } : {};
 };
 
 // The summary an assistant's text ends with: what stands between a `<summary>` that begins a line and the
@@ -137,6 +158,7 @@ const summarized = (block: unknown, role: Role): Stated => {
 // which follows the id where it was sent.
 const toolResult: Entry = {
   category: tools,
+  stated: answered,
   failed: (block) => sentField(block, "is_error") === true,
   parts: (fields, role) => {
     const content = fields.value("content");
@@ -250,7 +272,7 @@ function isText(block: unknown): block is { type: "text"; text: string } {
 
 // How a piece's text reads (docs/design/02-design.md, "Two voices"): a hook's output is what a program printed,
 // verbatim; every other piece is prose a sender or the harness wrote, Markdown.
-const pieceForm: Record<Piece["kind"], Form> = { said: "markdown", reminder: "markdown", hook: "verbatim", claude_md: "markdown", section: "markdown" };
+const pieceForm: Record<Piece["kind"], Form> = { said: "markdown", reminder: "markdown", hook: "verbatim", claude_md: "markdown", section: "markdown", notification: "markdown" };
 
 // A piece as a block: what was said is named as its text block is, and what was injected for what it is.
 function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[]): Block {
@@ -265,6 +287,8 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
       return { category, name: `CLAUDE.md ${piece.path}`, parts, injected: true };
     case "section":
       return { category, name: piece.title, parts, injected: true };
+    case "notification":
+      return { category, name: "task notification", parts, injected: true, notice: piece.notice };
   }
 }
 
