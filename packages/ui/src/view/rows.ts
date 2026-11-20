@@ -136,9 +136,9 @@ export function summaryOf(set: SetRow): Summary {
 
 // The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
 // category and of a closed set, the titles over none a level lists, and what a closed nest holds, the block revealed
-// among them wherever no closed nest holds it; `every` row, listed or not, which the search reads, since a hidden
-// category's blocks, a closed set's and a closed nest's are searched (docs/design/01-features.md, F6); and the `steps` the
-// column lists, whose rows these are (columnOf).
+// among them wherever no closed nest and no set the reader closed holds it; `every` row, listed or not, which the
+// search reads, since a hidden category's blocks, a closed set's and a closed nest's are searched
+// (docs/design/01-features.md, F6); and the `steps` the column lists, whose rows these are (columnOf).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
@@ -165,7 +165,8 @@ export const pastKey = (key: string) => `past:${key}`;
 // level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
 // closed until the reader opens it (`opened`). It leaves out the blocks of each category `visibility` hides
 // (docs/design/01-features.md, F5) and of each set that shows closed (F4) but the one at the key `revealed`, which the
-// search has stepped to (F6), and a group or a set with no block a level lists, rather than a title over nothing. A
+// search has stepped to (F6), unless the reader closed its set: a level never hides it, and the reader's close does, as
+// a nest's does. It leaves out, too, a group or a set with no block a level lists, rather than a title over nothing. A
 // step of 0 is the conversation before anything arrived.
 export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
   let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, steps: new Set() };
@@ -195,8 +196,9 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
         const row = rows[index]!;
         if (row.kind === "block") {
           const levelLists = levels[visibility[blockOf(row).category]].listed;
-          shown[index] = row.key === revealed || (levelLists && closedSetOf(row, visibility, opened) === undefined);
-          titled ||= levelLists || row.key === revealed;
+          const reveals = row.key === revealed && (row.set === undefined || opened[row.set] !== false);
+          shown[index] = reveals || (levelLists && closedSetOf(row, visibility, opened) === undefined);
+          titled ||= levelLists || reveals;
           continue;
         }
         if (row.kind !== "exchange") shown[index] = titled;

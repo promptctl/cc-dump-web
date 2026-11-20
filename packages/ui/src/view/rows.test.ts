@@ -6,8 +6,9 @@ import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
-import { createSearch } from "./search.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { adjacent, createSearch } from "./search.ts";
+import { useView, view } from "./state.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -300,6 +301,34 @@ describe("a set", () => {
     expect(listed(hidden(1, tools[1])).filter((row) => row.includes("/tools"))).toEqual(["t1/tools", `${tools[1]} added`]);
     // Open at a hidden level, a set still lists none but the block revealed.
     expect(toolsListed(hidden(1, tools[1], { "t1/tools": true }))).toEqual([tools[1]]);
+  });
+
+  // The reader's step to Bash's match at the levels `visibility`, as the view takes it; then whether its block is listed
+  // at the levels `after`, with the choices the reader holds by then.
+  const stepToBash = (visibility: Record<Category, Visibility>) => {
+    useView.setState(useView.getInitialState(), true);
+    const layout = layouts(events, visibility)(1);
+    const step = adjacent(createSearch()(layout.every.rows, /Runs/g), undefined, { at: "start" }, "next", /Runs/g, layout.every.keys)!;
+    view.goTo(step, "t1", visibility);
+    const { key } = useView.getState().search.current!;
+    expect(key).toBe(tools[2]);
+    return (after = visibility) => toolsListed(layouts(events, after)(1, key, useView.getState().opened)).includes(key);
+  };
+
+  it("hides the block the search stepped to once the reader closes its set, whether the set started open or the step opened it, and shows it on reopening", () => {
+    for (const visibility of [shown, listing]) {
+      const listedNow = stepToBash(visibility);
+      expect(listedNow()).toBe(true);
+      view.toggle("t1/tools", setStartsOpen("tools", visibility));
+      expect(listedNow()).toBe(false);
+      view.toggle("t1/tools", setStartsOpen("tools", visibility));
+      expect(listedNow()).toBe(true);
+    }
+  });
+
+  it("keeps the block the search stepped to listed through a change of level, in a set that started open", () => {
+    const listedAt = stepToBash(listing);
+    expect([shown, { ...listing, tools: "hidden" } as const].map((after) => listedAt(after))).toEqual([true, true]);
   });
 
   it("says on its line how many blocks it holds, which, and how large, and the last thing a step did to one of them", () => {
