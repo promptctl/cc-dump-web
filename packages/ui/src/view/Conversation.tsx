@@ -44,12 +44,11 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
   const layOut = useMemo(() => createLayout(visibility), [visibility]);
-  // The search's current match is listed whichever its category (F6), unless a set or nest the reader closed holds it, so
-  // a step to a hidden category's block shows it, and the step after, which makes another current, hides it again.
+  // The search's current match, whose block is listed whichever its category (createLayout).
   const current = useView((state) => state.search.current);
-  const revealed = current?.key;
+  const currentKey = current?.key;
   const opened = useView((state) => state.opened);
-  const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, revealed, opened), [layOut, conversation, shown, revealed, opened]);
+  const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, currentKey, opened), [layOut, conversation, shown, currentKey, opened]);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -165,10 +164,10 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
     if (next === undefined) return;
-    flushSync(() => view.goTo(next, now, visibility));
+    flushSync(() => view.goTo(next, now));
     const match = currentMatch();
-    // [LAW:no-silent-failure] A step goes to a match found in a block, which the step lists if its category is hidden, so
-    // it is painted once committed.
+    // [LAW:no-silent-failure] A step goes to a match found in a block, which the step makes current, so listed whichever
+    // its category, and whose folds it chooses open (view.goTo), so it is painted once committed.
     if (match === undefined) throw new Error(`The match stepped to is not on screen: ${JSON.stringify(next.match)}`);
     putAt(next.match.key, match.startContainer.parentElement!, match);
   };

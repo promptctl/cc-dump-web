@@ -134,11 +134,10 @@ export function summaryOf(set: SetRow): Summary {
   };
 }
 
-// The rows of the conversation at a moment, and their keys: those listed, which are every row but the blocks of a hidden
-// category but the search's current match, and of a closed set, the titles over no block a level lists or the current match, and what a closed nest
-// holds; `every` row, listed or not, which the search reads, since a hidden
-// category's blocks, a closed set's and a closed nest's are searched (docs/design/01-features.md, F6); and the `steps` the
-// column lists, whose rows these are (columnOf).
+// The rows of the conversation at a moment, and their keys: those listed, which leave out what a closed nest holds and,
+// of each step's own rows, those shownOf does not list; `every` row, listed or not, which the search reads, since a
+// hidden category's blocks, a closed set's and a closed nest's are searched (docs/design/01-features.md, F6); and the
+// `steps` the column lists, whose rows these are (columnOf).
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
@@ -163,15 +162,14 @@ export const pastKey = (key: string) => `past:${key}`;
 
 // Lays out the conversation at step `step` of `history`: the rows of each step the column lists then (columnOf), a
 // level's in the order its steps arrived, a subagent's under the line of the call that launched it, which holds them
-// closed until the reader opens it (`opened`). It leaves out the blocks of each category `visibility` hides
-// (docs/design/01-features.md, F5) but the one at the key `revealed`, the search's current match (F6), and the blocks
-// of each set that shows closed (F4), and a group or a set over no block a level lists or the current match, rather
-// than a title over nothing. A step of 0 is the conversation before anything arrived.
-export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, revealed: string | undefined, opened: Opened) => Layout {
+// closed until the reader opens it (`opened`), and of each step's own rows those shownOf lists, by the levels
+// `visibility`, the reader's choices and the block at the key `current`, the search's current match. A step of 0 is the
+// conversation before anything arrived.
+export function createLayout(visibility: Record<Category, Visibility>): (history: History, step: number, current: string | undefined, opened: Opened) => Layout {
   let last: Layout = { rows: [], keys: listedKeysOf([], [], new Map()), every: { rows: [], keys: keysOf([], new Map()) }, steps: new Set() };
   // Each fork's siblings as its line last listed them, by its key.
   let forks = new Map<string, readonly Sibling[]>();
-  return (history, step, revealed, opened) => {
+  return (history, step, current, opened) => {
     const { segments } = history;
     const column = columnOf(history, step);
     // [LAW:one-source-of-truth] The steps listed are the set they were while they are the same steps, and a fork's
@@ -185,10 +183,11 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
       every.push(row);
       isShown.push(shown);
     };
-    // Whether each row of a step's is listed. A block is listed where its level lists it or it is the search's current
-    // match, and its set, if any, shows open. A title, a group's or a set's, is listed over such a block, open or not,
-    // so a closed set's line stays the control that opens it: read from the end, whether one follows before the next
-    // title.
+    // [LAW:one-source-of-truth] Whether each row of a step's is listed. A block is listed where its level lists it
+    // (docs/design/01-features.md, F5) or it is the search's current match (F6), and its set, if any, shows open (F4). A
+    // title, a group's or a set's, is listed over such a block, its set open or not, so a closed set's line stays the
+    // control that opens it, and no title is listed over nothing: read from the end, whether one follows before the
+    // next title.
     const shownOf = (rows: Own[]): boolean[] => {
       const shown = rows.map(() => true);
       let titled = false;
@@ -196,8 +195,9 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
         const row = rows[index]!;
         if (row.kind === "block") {
           const levelLists = levels[visibility[blockOf(row).category]].listed;
-          const listedBy = levelLists || row.key === revealed;
-          shown[index] = listedBy && closedSetOf(row, visibility, opened) === undefined;
+          const listedBy = levelLists || row.key === current;
+          const setOpen = row.set === undefined || isOpen(opened, row.set, setStartsOpen(blockOf(row).category, visibility));
+          shown[index] = listedBy && setOpen;
           titled ||= listedBy;
           continue;
         }
@@ -599,7 +599,7 @@ export const countsOf = (facts: FormattedExchange["facts"]): [label: string, cou
 // [LAW:one-source-of-truth] Whether a block's row starts expanded, before any choice of the reader's (isOpen). A block
 // starts as its category's level says, but what the harness injected into a message starts collapsed, since it is not
 // what was said (docs/design/01-features.md, F4), and so do a block a step took away, which is no longer part of the
-// conversation, and a block of a hidden category the search revealed.
+// conversation, and a block of a hidden category that is the search's current match.
 export function startsExpanded(row: BlockRow, visibility: Record<Category, Visibility>): boolean {
   const { category, injected } = blockOf(row);
   return injected === undefined && !isGone(row) && levels[visibility[category]].startsExpanded;
@@ -615,11 +615,6 @@ export const sectionsStartOpen = ({ category, injected }: Block): boolean =>
 // [LAW:one-source-of-truth] Whether a set starts open, before any choice of the reader's: as the level of its blocks'
 // category says, so at compact it is its one line, and at expanded its blocks are listed (docs/design/01-features.md, F4).
 export const setStartsOpen = (category: Category, visibility: Record<Category, Visibility>): boolean => levels[visibility[category]].startsExpanded;
-
-// The set a block's row is in that shows closed, by its line's key: none for a row of no set, or of a set that shows
-// open, as the reader chose or else as it starts.
-export const closedSetOf = (row: BlockRow, visibility: Record<Category, Visibility>, opened: Opened): string | undefined =>
-  row.set === undefined || isOpen(opened, row.set, setStartsOpen(blockOf(row).category, visibility)) ? undefined : row.set;
 
 // The key the virtualizer keeps a row's measured height by: what decides that height, the row's key and, for a block's
 // row, whether it shows open, as its level starts it or as the reader chose. A height measured open is never read for

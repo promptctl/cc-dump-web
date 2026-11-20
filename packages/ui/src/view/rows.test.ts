@@ -8,7 +8,7 @@ import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { adjacent, createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
@@ -33,7 +33,7 @@ const dialogue = { ...shown, tools: "hidden", system: "hidden", parameters: "hid
 function layouts(events: RecordedEvent[], visibility: Record<Category, Visibility> = shown) {
   const history = createHistory()(createFormatter()(exchanges(events)));
   const layOut = createLayout(visibility);
-  return (step: number, revealed?: string, opened: Opened = {}) => layOut(history, step, revealed, opened);
+  return (step: number, current?: string, opened: Opened = {}) => layOut(history, step, current, opened);
 }
 // The block's row at `key` among a layout's.
 const blockAt = ({ rows }: { rows: Row[] }, key: string) => rows.find((row): row is BlockRow => row.kind === "block" && row.key === key)!;
@@ -165,10 +165,10 @@ describe("layout", () => {
     const everyKey = first.every.rows.map(({ key }) => key);
     expect(everyKey).toContain("thread:t1/tools/tools.Read.0");
     expect(everyKey.map((key) => first.every.keys.indexOf(key))).toEqual(everyKey.map((_, index) => index));
-    const revealed = at(3, "thread:t1/tools/tools.Read.0");
-    expect(revealed.every).toBe(first.every);
-    expect(revealed.keys).not.toBe(first.keys);
-    expect(at(3).keys).not.toBe(revealed.keys);
+    const withCurrent = at(3, "thread:t1/tools/tools.Read.0");
+    expect(withCurrent.every).toBe(first.every);
+    expect(withCurrent.keys).not.toBe(first.keys);
+    expect(at(3).keys).not.toBe(withCurrent.keys);
     expect(at(3).keys).toBe(at(3).keys);
     // Another step is other rows.
     expect(at(2).every).not.toBe(first.every);
@@ -216,7 +216,7 @@ describe("layout", () => {
     expect((["user", "assistant"] as const).map((category) => sectionsStartOpen(block(category, true)))).toEqual([false, false]);
   });
 
-  it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's revealed block collapsed", () => {
+  it("starts a block's row as its category's level says, and what the harness injected, a block a step took away or a hidden category's block that is the search's current match collapsed", () => {
     const block = (category: Category, injected: boolean): Block => ({ category, name: "n", parts: [], ...(injected ? { injected: true as const } : {}) });
     const [said, reminder, tools] = [block("user", false), block("user", true), block("tools", false)];
     const row = (side: Block, gone = false): BlockRow => {
@@ -238,7 +238,7 @@ describe("layout", () => {
   });
 
   it("lists a hidden category's blocks at neither level but the search's current match", () => {
-    const keys = (visibility: Record<Category, Visibility>, revealed?: string) => listed(layouts(turns(1), visibility)(1, revealed, { "t1/tools": true }));
+    const keys = (visibility: Record<Category, Visibility>, current?: string) => listed(layouts(turns(1), visibility)(1, current, { "t1/tools": true }));
     expect(keys({ ...shown, system: "expanded" })).toEqual(keys(shown));
     expect(keys({ ...shown, tools: "hidden" })).not.toContain("thread:t1/tools/tools.Read.0 added");
     // In the set the step to it opened.
@@ -314,7 +314,7 @@ describe("a set", () => {
       const layout = layouts(events, visibility)(1);
       const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
-      view.goTo(to, "t1", visibility);
+      view.goTo(to, "t1");
     };
     const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
     // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
@@ -341,10 +341,19 @@ describe("a set", () => {
       });
     }
 
-    it("leaves the current match listed under an open line when the level changes after a step into a set that started open", () => {
+    it("leaves the current match listed under an open line, its block open, when the level changes after a step into a set and a block that started open", () => {
       step(listing);
+      // Whether the current match's block shows open at the levels `visibility`, so the description holding it is drawn.
+      const drawn = (visibility: Record<Category, Visibility>) => {
+        const { opened, search } = useView.getState();
+        const key = search.current!.key;
+        return showsOpen(blockAt(layouts(events, visibility)(1, key, opened), key), visibility, opened);
+      };
+      expect(drawn(listing)).toBe(true);
       expect(seen(shown)).toEqual({ line: "open", tools });
+      expect(drawn(shown)).toBe(true);
       expect(seen(hidden)).toEqual({ line: "open", tools: [tools[2]] });
+      expect(drawn(hidden)).toBe(true);
     });
   });
 
