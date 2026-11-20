@@ -2,13 +2,14 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { exchanges } from "../exchanges.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
+import type { Part } from "../format/parts.ts";
 import { createFormatter } from "../format/format.ts";
 import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, compareAddresses, createSearch, currentIn, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -63,15 +64,55 @@ describe("search", () => {
       ),
     ).toEqual([
       { at: address.name, searched: whole("tool_use: X"), in: "line" },
-      { at: "0", searched: render("t", "verbatim"), in: "regions" },
-      { at: "1", searched: whole('{\n  "a": 1\n}'), in: "content" },
-      { at: "2/0/name", searched: whole("id"), in: "content" },
-      { at: "2/0/value", searched: whole("1"), in: "content" },
+      { at: address.part(0), searched: render("t", "verbatim"), in: "regions" },
+      { at: address.part(1), searched: whole('{\n  "a": 1\n}'), in: "content" },
+      { at: address.field(2, 0, "name"), searched: whole("id"), in: "content" },
+      { at: address.field(2, 0, "value"), searched: whole("1"), in: "content" },
       // A field that holds fields is its name alone, and the fields it holds are lines of their own after it.
-      { at: "2/1/name", searched: whole("thinking"), in: "content" },
-      { at: "2/2/name", searched: whole("type"), in: "content" },
-      { at: "2/2/value", searched: whole("adaptive"), in: "content" },
+      { at: address.field(2, 1, "name"), searched: whole("thinking"), in: "content" },
+      { at: address.field(2, 2, "name"), searched: whole("type"), in: "content" },
+      { at: address.field(2, 2, "value"), searched: whole("adaptive"), in: "content" },
     ]);
+  });
+
+  it("lists a block's texts in the slot order of their addresses, for every kind of part", () => {
+    const row = added({
+      category: "tools",
+      name: "n",
+      parts: [
+        { kind: "fields", fields: [["a", "1"], ["b", [["c", "2"]]], ["d", "3"]] },
+        { kind: "text", form: "verbatim", text: "t" },
+        { kind: "media", of: "image", source: { type: "url", url: "u" } },
+        { kind: "json", value: [1] },
+        { kind: "diff", before: "x", after: "y" },
+        { kind: "fields", fields: [["e", "4"]] },
+        ...Array.from({ length: 6 }, () => ({ kind: "text", form: "markdown", text: "m" }) as const),
+      ],
+    });
+    const addresses = shownTexts(row).map(({ at }) => at);
+    expect(addresses).toHaveLength(19);
+    addresses.slice(1).forEach((at, index) => expect(compareAddresses(addresses[index]!, at), JSON.stringify(at)).toBeLessThan(0));
+  });
+
+  it("orders the slots: the name, then the parts by number, a part's text before its lines, a line's name before its value", () => {
+    const ordered = [address.name, address.part(0), address.field(0, 0, "name"), address.field(0, 0, "value"), address.field(0, 1, "name"), address.part(2), address.field(2, 10, "name"), address.part(10)];
+    ordered.slice(1).forEach((at, index) => {
+      expect(compareAddresses(ordered[index]!, at)).toBeLessThan(0);
+      expect(compareAddresses(at, ordered[index]!)).toBeGreaterThan(0);
+    });
+    expect(compareAddresses(address.field(3, 1, "value"), address.field(3, 1, "value"))).toBe(0);
+  });
+
+  it("tells the current match by its address's value, not the object naming it", () => {
+    const current = { key: "k", at: address.field(1, 2, "value"), start: 4 };
+    expect(currentIn(current, "k", address.field(1, 2, "value"))).toBe(4);
+    expect(currentIn(current, "k", address.field(1, 2, "name"))).toBeUndefined();
+    expect(currentIn(current, "j", address.field(1, 2, "value"))).toBeUndefined();
+    expect(currentIn(undefined, "k", address.name)).toBeUndefined();
+  });
+
+  it("keys a part's regions by the address as text, the form the choices kept so far are kept by", () => {
+    expect([partKey("k", address.name), partKey("k", address.part(3)), partKey("k", address.field(3, 1, "value"))]).toEqual(["k/name", "k/3", "k/3/1/value"]);
   });
 
   it("reads a query as a regular expression, in any case, and the empty query as matching nowhere", () => {
@@ -122,7 +163,7 @@ describe("search", () => {
 
   it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
     const [, shown] = shownTexts(added({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] }));
-    expect(shown).toMatchObject({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
+    expect(shown).toMatchObject({ at: address.part(0), searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
     expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
   });
@@ -210,6 +251,41 @@ describe("search", () => {
       if (isHidden) inHidden.push(current.key);
     }
     expect(new Set(inHidden)).toEqual(new Set(["a/request/http", "thread:a/message.1/content.0", "thread:a/message.2/content.0", "b/request/http", "thread:b/message.1/content.0", "thread:b/message.2/content.0"]));
+  });
+
+  describe("from a current match whose text a later step took away from its block", () => {
+    // Three blocks: `a` and `z` with the needle in their names, and `k` between them with the parts given.
+    const text = (text: string): Part => ({ kind: "text", form: "verbatim", text });
+    const rowOf = (key: string, name: string, parts: Part[]): BlockRow => ({ ...added({ category: "assistant", name, parts }), key });
+    const stepFrom = (current: Match, parts: Part[], direction: "next" | "previous") => {
+      const rows = [rowOf("a", "a needle", []), rowOf("k", "k", parts), rowOf("z", "z needle", [])];
+      const indexOf = (key: string) => {
+        const index = rows.findIndex((row) => row.key === key);
+        return index === -1 ? undefined : index;
+      };
+      const { at, key } = adjacent(createSearch()(rows, pattern), current, top, direction, pattern, { at: (index) => rows[index]!.key, indexOf })!.match;
+      return { key, at };
+    };
+
+    it("goes from a field line gone, its part now a text, past the part's text going on and to it going back", () => {
+      // Before the step, part 1 was fields, and the current match was in its first line's value.
+      const current = { key: "k", at: address.field(1, 0, "value"), start: 0 };
+      const parts = [text("needle"), text("needle now"), text("needle")];
+      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.part(2) });
+      expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.part(1) });
+    });
+
+    it("goes from a part's text gone, the part now fields, to the part's lines going on and before the part going back", () => {
+      const current = { key: "k", at: address.part(1), start: 0 };
+      const parts: Part[] = [text("needle"), { kind: "fields", fields: [["needle", "needle"]] }];
+      expect(stepFrom(current, parts, "next")).toEqual({ key: "k", at: address.field(1, 0, "name") });
+      expect(stepFrom(current, parts, "previous")).toEqual({ key: "k", at: address.part(0) });
+    });
+
+    it("goes on to the next or previous block when no match of its own block is past it", () => {
+      expect(stepFrom({ key: "k", at: address.field(0, 3, "value"), start: 0 }, [text("needle")], "next")).toEqual({ key: "z", at: address.name });
+      expect(stepFrom({ key: "k", at: address.part(0), start: 5 }, [{ kind: "fields", fields: [["x", "needle"]] }], "previous")).toEqual({ key: "a", at: address.name });
+    });
   });
 
   it("steps on from a current match whose block the formatter replaced, from the row it was inside, as the view does", () => {

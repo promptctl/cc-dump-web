@@ -4,7 +4,7 @@ import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
@@ -22,7 +22,7 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, fieldTexts, ordinal, patternOf, type Address, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -709,13 +709,13 @@ function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; 
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
-          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
+          {fieldTexts(part.fields, index).map(({ name, value, depth }, field) => (
             <div key={field} className="contents">
               <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
+                <HighlightedText blockKey={blockKey} at={name.at} text={name.searched.text} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
+                {value !== undefined && <HighlightedText blockKey={blockKey} at={value.at} text={value.searched.text} />}
               </dd>
             </div>
           ))}
@@ -754,7 +754,7 @@ const diffMarks: Record<Edit["change"], { ground: string; color: string; weight:
 
 // A change as a unified diff: each line placed in the diff's text at its passage, so the search's matches paint where
 // they are.
-function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
+function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: Address }) {
   const diff = diffOf(part);
   const where = useWhere(blockKey, at, diff);
   return (
@@ -768,7 +768,7 @@ function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }
   );
 }
 
-function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: string }) {
+function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }>; blockKey: string; at: Address }) {
   const text = jsonText(part);
   return (
     <pre className="break-all whitespace-pre-wrap">

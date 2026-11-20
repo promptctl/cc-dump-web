@@ -36,13 +36,13 @@ export type Search = { query: string; current: Match | undefined };
 // A tab opens with no recording: the person launches an agent, or opens one.
 const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
-// The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
-// this one does not read, so the tab opens as a new one.
+// The stored view's version. A view stored by another version names any part of it, its recording, its moment, its
+// window or its search's current match, in a form this one does not read, so the tab opens as a new one.
 export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 6,
+    version: 7,
     migrate: () => initial,
   }),
 );

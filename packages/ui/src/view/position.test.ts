@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, type Placed } from "./position.ts";
+import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -44,5 +44,16 @@ describe("position", () => {
     expect(positionAt(170, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
     expect(positionAt(0, rowAt)).toEqual({ at: "start" });
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
+  });
+
+  it("walks a key's prefixes down to the empty one, which a key starting with a slash has, and ends", () => {
+    const tried: string[] = [];
+    const empty = (key: string) => (tried.push(key), key === "" ? 7 : undefined);
+    expect(rowIndex("/request/http", empty)).toBe(7);
+    expect(tried).toEqual(["/request/http", "/request", ""]);
+    expect(rowIndex("/request/http", () => undefined)).toBeUndefined();
+    tried.length = 0;
+    expect(rowIndex("a/b", empty)).toBeUndefined();
+    expect(tried).toEqual(["a/b", "a"]);
   });
 });

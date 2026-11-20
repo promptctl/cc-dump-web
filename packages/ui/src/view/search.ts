@@ -1,5 +1,5 @@
 import { diffOf } from "../format/diff.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { fieldLines, jsonText, type Field, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rowIndex, type Position } from "./position.ts";
@@ -14,25 +14,63 @@ import { blockOf, nestsOf, type BlockRow, type Keys, type Row } from "./rows.ts"
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text
 // that changes at its address names by that offset whichever match starts there now, or none: a tool's input so far
 // replaced by its JSON once whole, or a streaming Markdown text whose rendering a closing backtick or asterisk shortens.
-export type Match = { key: string; at: string; start: number };
+export type Match = { key: string; at: Address; start: number };
 
-// [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON, the name or value
-// of a part's field. The search and the view both name a text by them.
+// [LAW:types-are-the-program] The address of a text a block shows, its slot in the block: its name, a part's text, JSON
+// or diff, or the name or value of a line of a part's fields. The search and the view both name a text by it.
+export type Address = { kind: "name" } | { kind: "part"; part: number } | { kind: "field"; part: number; field: number; side: "name" | "value" };
+
 export const address = {
-  name: "name",
-  part: (part: number) => String(part),
-  field: (part: number, field: number, side: "name" | "value") => `${part}/${field}/${side}`,
+  name: { kind: "name" } as Address,
+  part: (part: number): Address => ({ kind: "part", part }),
+  field: (part: number, field: number, side: "name" | "value"): Address => ({ kind: "field", part, field, side }),
 };
 
-// The key of a block's part, under which its regions are kept: the block's row key and the part's address.
-export function partKey(key: string, at: string): string {
-  return `${key}/${at}`;
+// An address's slot as its part, its field line and its side, compared in that order: the name before the parts, the
+// parts in order, a part's own text before its field lines, the lines in order, a line's name before its value.
+function slot(at: Address): [part: number, field: number, side: number] {
+  switch (at.kind) {
+    case "name":
+      return [-1, -1, 0];
+    case "part":
+      return [at.part, -1, 0];
+    case "field":
+      return [at.part, at.field, at.side === "name" ? 0 : 1];
+  }
+}
+
+// [LAW:one-source-of-truth] The order of a block's slots, the order `shownTexts` lists a block's texts in. It is stated
+// apart from the list so that an address the block no longer shows, its text taken away by a later step, still has a
+// place among those it shows.
+export function compareAddresses(a: Address, b: Address): number {
+  const [left, right] = [slot(a), slot(b)];
+  return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+}
+
+export const sameAddress = (a: Address, b: Address) => compareAddresses(a, b) === 0;
+
+// Where the current match starts in the text at `at` of the block `key`, when it is in that text: the one test of which
+// match is current, which the count's ordinal and the painting both make.
+export function currentIn(current: Match | undefined, key: string, at: Address): number | undefined {
+  return current !== undefined && current.key === key && sameAddress(current.at, at) ? current.start : undefined;
+}
+
+// The key of a block's part, under which its regions are kept: the block's row key and the part's address, as text.
+export function partKey(key: string, at: Address): string {
+  switch (at.kind) {
+    case "name":
+      return `${key}/name`;
+    case "part":
+      return `${key}/${at.part}`;
+    case "field":
+      return `${key}/${at.part}/${at.field}/${at.side}`;
+  }
 }
 
 // [LAW:one-source-of-truth] The key of what opens on `line` of the text at `at` in the block's row `blockKey`, a long
 // region or a heading's section: the choices keep it by this key, a step opens it by it, and a heading on that line is
 // drawn with it as its id, so one name keeps a section and finds its heading.
-export const keyAt = ({ blockKey, at }: { blockKey: string; at: string }, line: number): string => regionKey(partKey(blockKey, at), line);
+export const keyAt = ({ blockKey, at }: { blockKey: string; at: Address }, line: number): string => regionKey(partKey(blockKey, at), line);
 
 // A text the search reads: its characters, and the passages of them a match is found within, in order; a match runs
 // from no passage into the next.
@@ -46,9 +84,10 @@ export function whole(text: string): Searched {
 // A text a block shows: its address, the text, and where it shows: on the block's line, always on screen; in its
 // content, while it is expanded; or in its content and inside the folds of it holding the match, while they are
 // expanded too: a text part's rendering, what the reader sees, not the text as sent.
-export type Shown = { at: string } & ({ in: "line" | "content"; searched: Searched } | { in: "regions"; searched: Folded });
+export type Shown = { at: Address } & ({ in: "line" | "content"; searched: Searched } | { in: "regions"; searched: Folded });
 
-// The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
+// [LAW:one-source-of-truth] The texts a block's row shows, in the order it shows them, which is their addresses' slot
+// order (compareAddresses): the block's name, then its parts; of a block a step took
 // away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
 // itself or a line describing it, what a step rewrote in a block is the view's account of it, and a text's contents
 // say its headings again (contents.ts), so none is searched.
@@ -64,15 +103,26 @@ function partTexts(part: Part, index: number): Shown[] {
     case "json":
       return [{ at: address.part(index), searched: whole(jsonText(part)), in: "content" }];
     case "fields":
-      return fieldLines(part.fields).flatMap(({ name, value }, field): Shown[] => [
-        { at: address.field(index, field, "name"), searched: whole(name), in: "content" },
-        ...(value === undefined ? [] : [{ at: address.field(index, field, "value"), searched: whole(value), in: "content" } as const]),
-      ]);
+      return fieldTexts(part.fields, index).flatMap(({ name, value }) => (value === undefined ? [name] : [name, value]));
     case "diff":
       return [{ at: address.part(index), searched: diffOf(part), in: "content" }];
     case "media":
       return [];
   }
+}
+
+// A line of a fields part as the view shows it: its depth among the fields holding it, its name's text, and its value's,
+// none for a field that holds fields.
+export type FieldText = { depth: number; name: Shown; value: Shown | undefined };
+
+// [LAW:one-source-of-truth] The lines of the fields of the part at `index` and their texts, which the view renders and
+// the search reads, so the order the reader sees and the order the steps take are one list.
+export function fieldTexts(fields: Field[], index: number): FieldText[] {
+  return fieldLines(fields).map(({ name, value, depth }, field) => ({
+    depth,
+    name: { at: address.field(index, field, "name"), searched: whole(name), in: "content" },
+    value: value === undefined ? undefined : { at: address.field(index, field, "value"), searched: whole(value), in: "content" },
+  }));
 }
 
 // A query as read under the search's options: the `pattern` its matches are found with, and `error`, why it is not one,
@@ -152,18 +202,16 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
 }
 
 // The matches of a block, in the order it shows them, each with the text it is in.
-function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown }[] {
+  return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown })));
 }
-
-const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.
 export function ordinal(found: Found, current: Match | undefined, pattern: RegExp): number | undefined {
   const block = current === undefined ? undefined : found.byKey.get(current.key);
   if (block === undefined) return undefined;
-  const index = matchesIn(block.row, pattern).findIndex(({ match }) => same(match, current!));
+  const index = matchesIn(block.row, pattern).findIndex(({ match }) => currentIn(current, match.key, match.at) === match.start);
   return index === -1 ? undefined : block.before + index + 1;
 }
 
@@ -184,12 +232,12 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
-  // In its own block, the first match past it in the direction of the step.
+  // In its own block, the first match past it in the direction of the step: by its text's slot, then where in the text
+  // it starts. One whose text a later step took away stands at its slot still, among the texts the block shows now.
   const own = current === undefined ? undefined : found.byKey.get(current.key);
   if (own !== undefined) {
     const { at, start } = current!;
-    const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
-    const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
+    const past = pick(matchesIn(own.row, pattern), ({ match }) => ahead(compareAddresses(match.at, at) || match.start - start));
     if (past !== undefined) return stepTo(found, own, past);
   }
   // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.

@@ -4,7 +4,7 @@ import { contentsKey, contentsOf, farApart, type Entry } from "./contents.ts";
 import { Highlighted } from "./Highlighted.tsx";
 import { ToHeading, useSection, useToggle, useWhere, type Where } from "./painting.ts";
 import { renderingOf, type Block, type Fold, type Heading, type Inline, type Leaf, type Run } from "./rendering.ts";
-import { keyAt, partKey } from "./search.ts";
+import { keyAt, partKey, type Address } from "./search.ts";
 
 // A text part as its rendering shows it (view/rendering.ts): the one view of every text, whoever's it is. It knows
 // nothing of who said it: the block's line names that and its gutter colors it (docs/design/02-design.md, "Two voices").
@@ -12,7 +12,7 @@ import { keyAt, partKey } from "./search.ts";
 // Its long regions collapse and expand as a block does, and each of its headings hides and shows what stands under it
 // (docs/design/01-features.md, F4), and every leaf paints the search's matches. Headings that stand far apart are listed
 // above it, as its contents.
-export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
+export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: Address }) {
   const rendering = renderingOf(part);
   const where = useWhere(blockKey, at, rendering);
   const contents = useMemo(() => contentsOf(rendering.runs), [rendering]);
