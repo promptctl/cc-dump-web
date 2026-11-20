@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { exchanges } from "../src/exchanges.ts";
 import { categories, type Category } from "../src/format/blocks.ts";
@@ -255,10 +256,9 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
 const expanded = Object.fromEntries(categories.map((category) => [category, "expanded"])) as Record<Category, Visibility>;
 let failed = false;
 for (const recording of process.argv.slice(2)) {
-  const events = readFileSync(recording, "utf8")
-    .split("\n")
-    .filter((line) => line !== "")
-    .map((line) => JSON.parse(line) as RecordedEvent);
+  // Line by line, as a recording of gigabytes is longer than a string may be.
+  const events: RecordedEvent[] = [];
+  for await (const line of createInterface({ input: createReadStream(recording), crlfDelay: Infinity })) if (line !== "") events.push(JSON.parse(line) as RecordedEvent);
   const history = createHistory()(createFormatter()(exchanges(events)));
   const open = Object.fromEntries(history.segments.flatMap(({ after }) => (after?.on === "block" && after.as === "nest" ? [[`${after.key}/nest`, true] as const] : [])));
   const layOut = createLayout(expanded);
