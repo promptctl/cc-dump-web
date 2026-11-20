@@ -9,7 +9,7 @@ import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, compareAddresses, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, compareAddresses, createSearch, currentIn, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -251,6 +251,24 @@ describe("search", () => {
   it("orders a block's addresses as the block shows its texts: the name, then each part in order, a part's text before its fields", () => {
     const order = [address.name, address.part(0), address.part(2), address.field(2, 0, "name"), address.field(2, 0, "value"), address.field(2, 1, "name"), address.part(10)];
     expect(order.toReversed().toSorted(compareAddresses)).toEqual(order);
+    // The block lists its texts in that order.
+    const parts: Part[] = [
+      { kind: "text", form: "verbatim", text: "t" },
+      { kind: "fields", fields: [["a", "1"], ["b", "2"]] },
+      { kind: "json", value: 1 },
+      ...Array.from({ length: 8 }, (): Part => ({ kind: "json", value: 0 })),
+      { kind: "fields", fields: [["c", "3"]] },
+    ];
+    const shown = shownTexts(added({ category: "tools", name: "X", parts })).map(({ at }) => at);
+    expect(shown.toSorted(compareAddresses)).toEqual(shown);
+  });
+
+  it("paints the current match in the text at its address, by the address's value, not its object", () => {
+    const current = { key: "k", at: address.field(1, 0, "value"), start: 3 };
+    expect(currentIn(current, "k", address.field(1, 0, "value"))).toBe(3);
+    expect(currentIn(current, "k", address.field(1, 0, "name"))).toBeUndefined();
+    expect(currentIn(current, "j", address.field(1, 0, "value"))).toBeUndefined();
+    expect(currentIn(undefined, "k", address.field(1, 0, "value"))).toBeUndefined();
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {

@@ -17,9 +17,9 @@ import { blockOf, nestsOf, type BlockRow, type Keys, type Row } from "./rows.ts"
 export type Match = { key: string; at: Address; start: number };
 
 // [LAW:one-source-of-truth] The address of a text a block shows: its name, a part's text or JSON, the name or value of a
-// part's field. The search and the view both name a text by it. [LAW:types-are-the-program] It is the text's place in
-// its block, so an address the block no longer shows, after a later step rewrote it, still has a place among those it
-// does.
+// part's field. The search and the view both name a text by it. [LAW:types-are-the-program] It is the text's slot in
+// its block, its part and its line among the part's fields, so an address the block no longer shows, after a later
+// step rewrote it, still has a slot among those it does.
 export type Address = { kind: "name" } | { kind: "part"; part: number } | { kind: "field"; part: number; field: number; side: Side };
 
 type Side = "name" | "value";
@@ -92,11 +92,11 @@ export type Shown = { at: Address } & ({ in: "line" | "content"; searched: Searc
 // The texts a block's row shows, in the order it shows them: the block's name, then its parts; of a block a step took
 // away as of any other, since its row shows them. Labels are the view's words, not the traffic's, media is shown as
 // itself or a line describing it, what a step rewrote in a block is the view's account of it, and a text's contents
-// say its headings again (contents.ts), so none is searched. [LAW:one-source-of-truth] The order is `compareAddresses`'s.
+// say its headings again (contents.ts), so none is searched. The order is the block's own, its parts' and their fields', as
+// the view lists them; `compareAddresses` states it for an address the block no longer shows.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  const texts: Shown[] = [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
-  return texts.toSorted((a, b) => compareAddresses(a.at, b.at));
+  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
 }
 
 function partTexts(part: Part, index: number): Shown[] {
@@ -199,6 +199,10 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && sameAddress(a.at, b.at) && a.start === b.start;
+
+// Where the current match starts in the text at `at` in the block's row `blockKey`, or undefined when it is not in it.
+export const currentIn = (current: Match | undefined, blockKey: string, at: Address): number | undefined =>
+  current !== undefined && current.key === blockKey && sameAddress(current.at, at) ? current.start : undefined;
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.
