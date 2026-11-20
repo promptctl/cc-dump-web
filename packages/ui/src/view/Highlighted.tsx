@@ -1,7 +1,8 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { paint } from "./highlights.ts";
 import { useWhere, type Where } from "./painting.ts";
-import { rangesIn, whole, type Address } from "./search.ts";
+import type { Address } from "./textAddress.ts";
+import { rangesIn, whole } from "./search.ts";
 
 // A whole text, its matches highlighted.
 export function HighlightedText({ blockKey, at, text }: { blockKey: string; at: Address; text: string }) {

@@ -1,7 +1,8 @@
 import { createContext, useContext, useMemo } from "react";
 import type { Range } from "./range.ts";
 import { isOpen } from "./rows.ts";
-import { currentIn, find, type Address, type Searched } from "./search.ts";
+import type { Address } from "./textAddress.ts";
+import { currentIn, find, type Searched } from "./search.ts";
 import { useView, view } from "./state.ts";
 
 // How a text shown in the conversation paints the search's matches (docs/design/01-features.md, F6), and what a block, a

@@ -9,7 +9,8 @@ import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, compareAddresses, createSearch, currentIn, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, compareAddresses, partKey } from "./textAddress.ts";
+import { adjacent, createSearch, currentIn, find, ordinal, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 const timestamp = "2026-11-13T08:00:00.000Z";
 const request = (trace_id: string, body: unknown): RecordedEvent[] => [
@@ -92,7 +93,8 @@ describe("search", () => {
     const keys = { at: () => "k", indexOf: (key: string) => (key === "k" ? 0 : undefined) };
     const steps: Match[] = [];
     for (let index = 0; index < found.count; index++) steps.push(adjacent(found, steps.at(-1), top, "next", pattern, keys)!.match);
-    const texts = [...new Set(steps.map(({ at }) => JSON.stringify(at)))].map((at): unknown => JSON.parse(at));
+    // The texts stepped into, each once for the run of steps in it.
+    const texts = steps.filter(({ at }, index) => index === 0 || compareAddresses(steps[index - 1]!.at, at) !== 0).map(({ at }) => at);
     expect(texts).toEqual([
       address.name,
       address.field(0, 0, "name"),

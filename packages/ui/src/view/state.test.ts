@@ -4,7 +4,7 @@ import type { KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
 import { events, useEvents } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
-import { address } from "./search.ts";
+import { address } from "./textAddress.ts";
 import { useView, view } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
