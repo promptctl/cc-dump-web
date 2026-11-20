@@ -5,6 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { expect, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
 import { serve, type Event, type Handler, type Upgrade } from "./index.ts";
+import { parseLogLine, type LoggedEvent } from "./line.ts";
 import { parseTraceId } from "./trace.ts";
 
 // What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
@@ -84,4 +85,13 @@ export async function subscribe(port: number, path: string, headers: Record<stri
     return events;
   };
   return { res, next, take };
+}
+
+// The next request event a part's `/logs` subscription sends, past the lines of every other event before it.
+export async function nextRequestEvent(next: () => Promise<ServerSentEvent>): Promise<LoggedEvent> {
+  for (;;) {
+    const { data, id } = await next();
+    const line = parseLogLine(data, id!);
+    if ("event" in line && line.event.event === "request") return line.event;
+  }
 }

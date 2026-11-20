@@ -103,6 +103,16 @@ describe("createProxy", () => {
     expect((await buffer(res)).equals(compressed)).toBe(true);
   });
 
+  it("logs a request the upstream answered with an error as failed, by the status line relayed, and records its exchange as ended", async () => {
+    const upstream = await upstreamServing((_req, res) => res.writeHead(529, "Overloaded").end('{"type":"error"}'));
+    const { port, next, events } = await proxyTo(upstream);
+
+    await buffer(await send(port, { method: "POST", path: "/v1/messages" }));
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "error", error: "529 Overloaded", status: 529 });
+    expect(events().at(-1)).toMatchObject({ type: "end", outcome: "ok" });
+  });
+
   it("delivers each streamed chunk before upstream sends the next", async () => {
     let firstArrived!: () => void;
     const agentHasFirst = new Promise<void>((resolve) => (firstArrived = resolve));
