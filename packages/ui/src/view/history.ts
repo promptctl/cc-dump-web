@@ -1,4 +1,5 @@
 import { unreadLabel, type Block, type Launch } from "../format/blocks.ts";
+import { equal } from "../format/equal.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
 import type { Sender } from "../format/wire.ts";
@@ -497,13 +498,3 @@ function asResent(reply: Block, resent: Block): Block {
 }
 
 const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.label === unreadLabel;
-
-// Whether two JSON values are the same value: an object's fields in any order, an undefined field as none.
-function equal(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false;
-  const fields = (value: object) => Object.entries(value).filter(([, field]) => field !== undefined);
-  const own = fields(a);
-  const other = new Map(fields(b));
-  return own.length === other.size && own.every(([name, field]) => other.has(name) && equal(field, other.get(name)));
-}

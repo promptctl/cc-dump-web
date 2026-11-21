@@ -3,8 +3,8 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 
 export type Of<T extends RecordedEvent["type"]> = Extract<RecordedEvent, { type: T }>;
 
-// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and the
-// event that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
+// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, until a read
+// lets them go (release), and the event that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
 // flight; never, for one whose write failed, since the recorder counts a failed write and goes on writing the
 // exchange's later events.
 // [LAW:one-source-of-truth] `completedBy`: the event after which no more of it will be recorded: its trailers, which the
@@ -24,6 +24,23 @@ export function trailersOf(side: RequestSide | ResponseSide) {
 // latest events. A recording only grows, so two derivations of an exchange with the same latest event hold the same
 // events.
 export type Exchange = { trace_id: TraceId; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
+
+// [LAW:types-are-the-program] An exchange as the conversation shows it: its trace, its heads and its end, and none of
+// its bodies, which only the formatter reads (format/format.ts).
+export type ExchangeShown = { trace_id: TraceId; request: { head: Of<"request"> | undefined }; response: { head: Of<"response"> | undefined }; end: Of<"end"> | undefined };
+
+// An exchange that has ended, and so takes no more events (add).
+export type Ended = Exchange & { end: Of<"end"> };
+export const isEnded = (exchange: Exchange): exchange is Ended => exchange.end !== undefined;
+
+// [LAW:one-source-of-truth] What a read lets go of an ended exchange once it is formatted: its bodies' chunks. A trace
+// takes nothing after its end, and the formatter reads an ended side from what it made under the side's latest event,
+// which the side keeps (latest), never from its chunks again. So a read holds a recording's bodies only while their
+// exchanges run.
+export function release({ request, response }: Ended): void {
+  request.body = [];
+  response.body = [];
+}
 
 // The last event that changed a side, so two derivations of a side with the same latest event are the same side.
 export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefined {

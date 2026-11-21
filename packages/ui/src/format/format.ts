@@ -1,7 +1,8 @@
 import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
-import { latest, trailersOf, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
+import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
+import { equal } from "./equal.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
@@ -37,8 +38,9 @@ export type Place =
 
 // One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
 // the system prompt and each message, then the reply; the facts its line prints; how many messages of a speaker's
-// the request sends, which is the reply's index among them; and who sent it, by its head (format/wire.ts).
-export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number; sender: Sender };
+// the request sends, which is the reply's index among them; and who sent it, by its head (format/wire.ts). Its exchange
+// is as it stood when formatted, and holds no body: a read lets an ended exchange's go (exchanges.ts, release).
+export type FormattedExchange = { exchange: ExchangeShown; facts: Facts; groups: Group[]; messages: number; sender: Sender };
 
 // What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
 // place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
@@ -84,6 +86,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
   const formatted = new WeakMap<object, FormattedExchange>();
   const decodings = new WeakMap<object, Decoding>();
   const reassemblies = new WeakMap<object, Reassembly>();
+  const keep = createKeeping();
   const sides: Sides = {
     decode: (side) => decodeSide(growing(decodings, side, () => createDecoding(side.head?.headers ?? [])), side),
     reassemble: (side, body) => growing(reassemblies, side, createReassembly).reassemble(body.text, side.completedBy !== undefined),
@@ -97,12 +100,12 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       const before = formatted.get(exchange.latest);
       if (before?.facts.ordinal === ordinal) return before;
       // An empty side formats the same whatever the key, so any of the exchange's events will do.
-      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestShown(sides, exchange.request));
+      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => keep(requestShown(sides, exchange.request)));
       const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseShown(sides, exchange.response));
       const { first: opened, end } = exchange;
       const ended = ending(end);
       const shown: FormattedExchange = {
-        exchange,
+        exchange: { trace_id: exchange.trace_id, request: { head: exchange.request.head }, response: { head: exchange.response.head }, end },
         facts: {
           ordinal,
           began: opened.timestamp,
@@ -124,6 +127,29 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       formatted.set(exchange.latest, shown);
       return shown;
     });
+}
+
+// [LAW:one-source-of-truth] Each block a request sends, kept once. A request resends the conversation before it, so a
+// block made again alike one made before at its place, the group's key and its own, is that one, and so is a group whose
+// title and blocks are all those of one before at its key: the formatter holds each block its requests send once, and a
+// reference where a request resends it. The latest kept at a place is looked at first, since a request resends what
+// the request before it in its thread sent.
+function createKeeping(): (shown: RequestShown) => RequestShown {
+  const blocks = new Map<string, KeyedBlock[]>();
+  const groups = new Map<string, Group[]>();
+  const kept = <T>(table: Map<string, T[]>, at: string, made: T, alike: (one: T, made: T) => boolean): T => {
+    const there = table.get(at) ?? [];
+    table.set(at, there);
+    const found = there.findLast((one) => alike(one, made));
+    if (found !== undefined) return found;
+    there.push(made);
+    return made;
+  };
+  const sameGroup = (one: Group, made: Group) => one.title === made.title && one.blocks.length === made.blocks.length && one.blocks.every((block, index) => block === made.blocks[index]);
+  return (shown) => ({
+    ...shown,
+    sent: shown.sent.map((group) => kept(groups, group.key, { ...group, blocks: group.blocks.map((block) => kept(blocks, `${group.key}/${block.key}`, block, equal)) }, sameGroup)),
+  });
 }
 
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.

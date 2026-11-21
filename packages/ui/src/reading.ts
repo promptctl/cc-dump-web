@@ -1,8 +1,8 @@
-import type { TraceId } from "@cc-dump/log/trace";
 import type { RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import { refusedAt, type Connection } from "./connection/connection.ts";
-import { add, type ByTrace, type Exchange } from "./exchanges.ts";
+import { add, isEnded, release, type ByTrace, type Exchange } from "./exchanges.ts";
+import { createFormatter, type FormattedExchange } from "./format/format.ts";
 import { recording, useExchanges } from "./store.ts";
 
 // The recording open (docs/design/01-features.md, F7), by its name, or none: a tab that has launched no agent and opened no
@@ -20,8 +20,8 @@ export type Reading =
   | { state: "ended"; name: string; end: RecordingEnd }
   | { state: "failed"; error: Error };
 
-// Where a read shows what it has read: its exchanges, in the order they began, each time they change.
-export type Sink = (exchanges: Exchange[]) => void;
+// Where a read shows what it has read: its exchanges formatted, in the order they began, each time they change.
+export type Sink = (formatted: FormattedExchange[]) => void;
 
 // A frame clock: runs `callback` at the next frame, and returns the function that cancels it.
 export type Frames = (callback: () => void) => () => void;
@@ -36,10 +36,13 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // that breaks the shape the proxy writes fails the read, naming where in the recording it ends, and ends the
 // connection's read of it: what follows it cannot be trusted to be the recording.
 // [LAW:no-ambient-temporal-coupling] The read owns its batch: exchanges changed between frames are shown in one call at
-// the next, because catching up delivers thousands of events in quick succession and one copy and render each would be
-// quadratic. Each frame hands `sink` copies of the exchanges it changed: a frame's exchanges are not changed by the
-// events after it, which the read goes on placing in its own. The read's end is its own signal, `reading`: it aborts on
-// `signal`, and as the read ends, refused, ended or failed, once it has shown what is pending. Its abort cancels the
+// the next, because catching up delivers thousands of events in quick succession and one format and render each would
+// be quadratic. Each frame formats the read's exchanges and hands them to `sink`, and the events after it leave them as
+// they are: the formatter makes anew each exchange an event changes. Then it lets go of the bodies of those that ended
+// (exchanges.ts, release), so a read holds what its exchanges made, not every body its recording sends.
+// [LAW:one-source-of-truth] The formatter is the read's own and lives as long as the read: once a body is let go, it
+// alone holds what the body made. The read's end is its own signal, `reading`: it aborts on `signal`, and as the read
+// ends, refused, ended or failed, once it has shown what is pending, by the frame's own step. Its abort cancels the
 // frame, and the connection delivers nothing after it, so no frame and no event of the read comes after its end.
 export function readRecording(connection: Pick<Connection, "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink([]);
@@ -47,12 +50,13 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
   changed(begun(open));
   if (open === null) return;
   const byTrace: ByTrace = new Map();
-  const shown = new Map<TraceId, Exchange>();
-  const touched = new Map<TraceId, Exchange>();
+  const format = createFormatter();
+  const touched = new Set<Exchange>();
   const flush = () => {
-    for (const [trace, exchange] of touched) shown.set(trace, snapshot(exchange));
+    const formatted = format([...byTrace.values()]);
+    [...touched].filter(isEnded).forEach(release);
     touched.clear();
-    sink([...shown.values()]);
+    sink(formatted);
   };
   // The one frame pending, by the function that cancels it: scheduled by the first event after a frame, none once it
   // has run.
@@ -75,7 +79,7 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
       event: (event, offset) => {
         const placed = add(byTrace, event);
         if (typeof placed === "string") return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
-        touched.set(event.trace_id, placed);
+        touched.add(placed);
         frame ??= frames(shownAtFrame);
       },
       end: (end) => settle({ state: "ended", name: open, end }),
@@ -84,13 +88,6 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     reading,
   );
 }
-
-// An exchange as it stands now, which the events after it leave as it is.
-const snapshot = (exchange: Exchange): Exchange => ({
-  ...exchange,
-  request: { ...exchange.request, body: [...exchange.request.body] },
-  response: { ...exchange.response, body: [...exchange.response.body] },
-});
 
 // The recording on screen, by its name: the one being read or read to its end. None while none is open, or the read
 // failed.

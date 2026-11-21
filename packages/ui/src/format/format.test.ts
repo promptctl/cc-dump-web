@@ -490,6 +490,22 @@ describe("format", () => {
     expect(group(later[0]!, "request")).toBe(group(first[1]!, "request"));
   });
 
+  it("holds a block a later request resends as it was once, and a block made anew where its place holds another", () => {
+    const tools = [{ name: "Read", description: "Reads a file." }];
+    const sent = (trace: string, first: string, more: unknown[]) => request(trace, { model: "m", system: "Be brief.", tools, messages: [{ role: "user", content: first }, ...more] });
+    const [a, b, c] = format([
+      ...sent("a", "Hi.", []),
+      ...sent("b", "Hi.", [{ role: "assistant", content: "Hello." }, { role: "user", content: "More." }]),
+      ...sent("c", "Bye.", []),
+    ]);
+    const sentOf = ({ groups }: FormattedExchange) => groups.filter(({ key }) => key !== "request" && key !== "response" && key !== "reply");
+    expect(sentOf(b!).slice(0, 3)).toEqual(sentOf(a!));
+    sentOf(a!).forEach((one, index) => expect(sentOf(b!)[index]).toBe(one));
+    expect(sentOf(c!).slice(0, 2).every((one, index) => one === sentOf(a!)[index])).toBe(true);
+    expect(group(c!, "message.0")).not.toBe(group(a!, "message.0"));
+    expect(group(c!, "message.0").map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Bye." }]]);
+  });
+
   it("keeps an exchange that got no new event, and a streaming exchange's request, as the objects formatted before", () => {
     const formatter = createFormatter();
     const done = [...request("done", { model: "m", messages: [] }), ...streamed("done", [messageStart]), end("done")];

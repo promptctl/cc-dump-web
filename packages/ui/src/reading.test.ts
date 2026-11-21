@@ -2,7 +2,7 @@ import { describe as said } from "@cc-dump/log/describe";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
-import type { Exchange } from "./exchanges.ts";
+import { createFormatter, type FormattedExchange } from "./format/format.ts";
 import { onScreen, readRecording, type Frames, type OpenRecording, type Reading } from "./reading.ts";
 import { exchanges, recordedAt } from "./testing.ts";
 
@@ -10,6 +10,8 @@ const agent = "20261113T080000.000Z.jsonl";
 const at = recordedAt("2026-11-13T08:00:00.000Z");
 const event = (n: number): RecordedEvent => ({ ...at(`t${n}`), type: "request_body", base64: "" });
 const end = (n: number): RecordedEvent => ({ ...at(`t${n}`), type: "end", outcome: "ok" });
+// What a read of `events` shows: them, formatted.
+const formatted = (events: RecordedEvent[]) => createFormatter()(exchanges(events));
 
 // A connection the test drives: it hands the test each read's reader, and its signal. A read begun aborted throws, as
 // the browser's does.
@@ -46,10 +48,10 @@ function handFrames() {
 function started(open: OpenRecording = agent) {
   const { connection, reads } = fakeConnection();
   const frames = handFrames();
-  const shown: Exchange[][] = [];
+  const shown: FormattedExchange[][] = [];
   const states: Reading[] = [];
   const abort = new AbortController();
-  readRecording(connection, open, (exchanges) => void shown.push(exchanges), frames.frames, abort.signal, (reading) => states.push(reading));
+  readRecording(connection, open, (formatted) => void shown.push(formatted), frames.frames, abort.signal, (reading) => states.push(reading));
   let offset = 0;
   const deliver = (...events: RecordedEvent[]) => events.forEach((event) => reads[0]!.reader.event(event, (offset += 100)));
   return { reads, frames, shown, states, abort, deliver };
@@ -64,7 +66,7 @@ describe("readRecording", () => {
     frames.run();
     deliver(event(4));
     frames.run();
-    expect(shown).toEqual([[], exchanges([1, 2, 3].map(event)), exchanges([1, 2, 3, 4].map(event))]);
+    expect(shown).toEqual([[], formatted([1, 2, 3].map(event)), formatted([1, 2, 3, 4].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }]);
   });
 
@@ -76,14 +78,14 @@ describe("readRecording", () => {
     deliver(event(1), event(1));
     expect(frames.pending()).toBe(1);
     frames.run();
-    expect(shown).toEqual([[], exchanges([1, 1, 1].map(event)), exchanges([1, 1, 1, 1, 1].map(event))]);
+    expect(shown).toEqual([[], formatted([1, 1, 1].map(event)), formatted([1, 1, 1, 1, 1].map(event))]);
   });
 
   it("shows what is pending before it reports its end, and no frame of it runs after", () => {
     const { reads, frames, shown, states, deliver } = started();
     deliver(...[1, 2].map(event));
     reads[0]!.reader.end({ unterminated_bytes: 3 });
-    expect(shown).toEqual([[], exchanges([1, 2].map(event))]);
+    expect(shown).toEqual([[], formatted([1, 2].map(event))]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "ended", name: agent, end: { unterminated_bytes: 3 } }]);
     expect(reads[0]!.signal.aborted).toBe(true);
     expect(frames.pending()).toBe(0);
@@ -94,7 +96,7 @@ describe("readRecording", () => {
     const error = new Error("refused");
     deliver(event(1));
     reads[0]!.reader.failed(error);
-    expect(shown).toEqual([[], exchanges([event(1)])]);
+    expect(shown).toEqual([[], formatted([event(1)])]);
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
     expect(reads[0]!.signal.aborted).toBe(true);
     expect(frames.pending()).toBe(0);
@@ -103,7 +105,7 @@ describe("readRecording", () => {
   it("fails on an event that breaks the shape the proxy writes, naming where it ends, after showing what came before, and ends the connection's read", () => {
     const { reads, frames, shown, states, deliver } = started();
     deliver(event(1), end(1), event(2), event(1));
-    expect(shown).toEqual([[], exchanges([event(1), end(1), event(2)])]);
+    expect(shown).toEqual([[], formatted([event(1), end(1), event(2)])]);
     expect(states.map((reading) => (reading.state === "failed" ? said(reading.error) : reading))).toEqual([
       { state: "reading", name: agent },
       `${agent}: the event ending at byte 400: trace t1's request_body follows its trace's end`,
@@ -126,7 +128,29 @@ describe("readRecording", () => {
     deliver(event(1), end(1));
     frames.run();
     expect(shown[1]).toEqual(first);
-    expect(shown[2]).toEqual(exchanges([event(1), event(1), end(1)]));
+    expect(shown[2]).toEqual(formatted([event(1), event(1), end(1)]));
+  });
+
+  // Its bodies are let go once it is formatted, and an exchange before it that turns out to be no Messages request
+  // moves it among those shown, so it is formatted again from what its bodies made.
+  it("shows an ended exchange as its body made it in every frame after the one it ended in", () => {
+    const { frames, shown, deliver } = started();
+    const body = Buffer.from(JSON.stringify({ model: "m", messages: [{ role: "user", content: "Hi." }] })).toString("base64");
+    const before: RecordedEvent[] = [
+      { ...at("t0"), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [] },
+      { ...at("t1"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
+      { ...at("t1"), type: "request_body", base64: body },
+      { ...at("t1"), type: "request_trailers", headers: [] },
+      end(1),
+    ];
+    const models: RecordedEvent = { ...at("t0"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] };
+    deliver(...before);
+    frames.run();
+    deliver(models);
+    frames.run();
+    expect(shown[1]).toEqual(formatted(before));
+    expect(shown[2]).toEqual(formatted([...before, models]));
+    expect(shown[2]![0]!.groups.at(-2)!.blocks.map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Hi." }]]);
   });
 
   it("cancels its pending frame when aborted, and reports nothing", () => {
