@@ -105,7 +105,7 @@ describe("loggedAfter", () => {
 
 describe("serve", () => {
   it("emits one event for an answered request", async () => {
-    const { url, next } = await serving((_req, res) => res.writeHead(418).end());
+    const { url, next } = await serving((_req, res) => res.writeHead(204).end());
 
     await (await fetch(`${url}/a?b=1`, { method: "POST" })).text();
 
@@ -117,10 +117,38 @@ describe("serve", () => {
       outcome: "ok",
       method: "POST",
       url: "/a?b=1",
-      status: 418,
+      status: 204,
       client_address: LOOPBACK,
       client_port: expect.any(Number),
     });
+  });
+
+  it.each([
+    { status: 404, reason: undefined, error: "404 Not Found" },
+    { status: 405, reason: undefined, error: "405 Method Not Allowed" },
+    { status: 429, reason: "Slow Down", error: "429 Slow Down" },
+    { status: 503, reason: undefined, error: "503 Service Unavailable" },
+  ])("records a request answered in full with $status as failed, by the answer's status line, with no word from the handler", async ({ status, reason, error }) => {
+    let work!: Work;
+    const { url, next } = await serving((_req, res, given) => {
+      work = given;
+      res.writeHead(status, reason).end();
+    });
+
+    await (await fetch(url)).text();
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "error", status, error });
+    expect(await work.ended).toEqual({ outcome: "ok" });
+  });
+
+  it("records a request whose error answer its client left before it finished as aborted", async () => {
+    const { url, next } = await serving((_req, res) => res.writeHead(404).flushHeaders());
+
+    const abort = new AbortController();
+    await fetch(url, { signal: abort.signal });
+    abort.abort();
+
+    expect(await next()).toMatchObject({ event: "request", outcome: "aborted", status: 404 });
   });
 
   it("records an aborted request with no status when the client leaves first", async () => {
@@ -233,9 +261,9 @@ describe("serve", () => {
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
   });
 
-  it("cuts a request still open when closed, and resolves once its event, ended as stopped, is written", async () => {
+  it.each([200, 404])("cuts a request still open when closed, and resolves once its event, ended as stopped, is written, its answer's status %i or any", async (status) => {
     const { log, next } = eventLog();
-    const { port, close } = await serve(log, (_req, res) => res.writeHead(200).flushHeaders(), 0);
+    const { port, close } = await serve(log, (_req, res) => res.writeHead(status).flushHeaders(), 0);
     await next();
     const res = await send(port, { path: "/" });
 
@@ -243,7 +271,7 @@ describe("serve", () => {
     await close();
     await cut;
 
-    expect(await next()).toMatchObject({ event: "request", outcome: "stopped", status: 200 });
+    expect(await next()).toMatchObject({ event: "request", outcome: "stopped", status });
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 1 });
   });
 
