@@ -2,7 +2,7 @@ import { memo, useLayoutEffect, useMemo, useRef, type WheelEvent } from "react";
 import type { Segment } from "./history.ts";
 import { conversationKeys, withKeys } from "./keyboard.ts";
 import { lineHeightOf } from "./lineHeight.ts";
-import { deltaUnitOf, failuresOf, kinds, mostOf, partedOf, stackOf, titleOf, type DeltaUnit, type Kind, type TokenFacts } from "./strip.ts";
+import { failuresOf, kinds, mostOf, partedOf, stackOf, titleOf, wheelPixels, type Kind, type TokenFacts } from "./strip.ts";
 
 // The steps of the conversation, above it (docs/design/02-design.md, "Two axes"): one mark per step, in the order
 // they began, as tall as its tokens against the largest step's and stacked by their kind (strip.ts), the step shown
@@ -65,14 +65,11 @@ export const TurnStrip = memo(function TurnStrip({
   );
 });
 
-// The wheel turned over the strip moves it along, the one way a strip goes, its scrollbar hidden; a sideways turn
-// scrolls it already.
+// The wheel turned over the strip moves it along, the one way a strip goes, its scrollbar hidden (strip.ts).
 function scrollAlong(event: WheelEvent<HTMLOListElement>) {
   const strip = event.currentTarget;
-  strip.scrollLeft += event.deltaY * pixelsPer[deltaUnitOf(event.deltaMode)](strip);
+  strip.scrollLeft += wheelPixels(event, { line: lineHeightOf(strip), page: strip.clientWidth });
 }
-
-const pixelsPer: Record<DeltaUnit, (strip: HTMLElement) => number> = { pixel: () => 1, line: lineHeightOf, page: (strip) => strip.clientWidth };
 
 // The step a mark is of: the step shown, a step that failed, or any other step.
 type State = "shown" | "failed" | "step";
@@ -109,13 +106,13 @@ const Mark = memo(function Mark({
   const { counts, tokens, headroom } = stackOf(facts, most);
   const paint = paints[state];
   return (
-    <li ref={mark} className="relative flex h-full max-w-3 min-w-1 flex-1 pt-1.5">
+    <li ref={mark} className="group relative flex h-full max-w-3 min-w-1 flex-1 pt-1.5">
       {parted && <span aria-hidden className="absolute top-0 left-1/2 size-1 -translate-x-1/2 rotate-45 bg-foreground-muted" />}
       <button
         type="button"
         aria-current={isShown ? "step" : undefined}
         title={title}
-        className={`group flex flex-1 flex-col justify-end border-b ${paint.line}`}
+        className={`flex flex-1 flex-col justify-end ${paint.foot} ${paint.line}`}
         onClick={() => onGo(step)}
       >
         <span style={{ flexGrow: headroom }} className="basis-0" />
@@ -133,14 +130,17 @@ const Mark = memo(function Mark({
 // the column lists the step and outlines it where not, and how strongly each kind of its tokens is drawn. What the step
 // wrote is the strongest, then what it wrote to the cache, then the input the cache did not hold, and what it read from
 // the cache, the prefix it resent and most of most steps, the faintest, so what each step added stands out. One hue to
-// a mark, so the strengths tell the kinds apart and no color is added to the theme's; the step shown and a failed step
-// are drawn stronger throughout, so neither is lost among the faint marks.
-const paints: Record<State, { fill: string; line: string; strengths: Record<Kind, number> }> = {
-  shown: { fill: "bg-(--primary)", line: "border-(--primary)", strengths: { output: 1, cacheWritten: 0.9, uncached: 0.8, cacheRead: 0.7 } },
-  failed: { fill: "bg-(--error)", line: "border-(--error)", strengths: { output: 1, cacheWritten: 0.9, uncached: 0.8, cacheRead: 0.7 } },
+// a mark, so the strengths tell the kinds apart and no color is added to the theme's. The step shown and a failed step
+// are drawn stronger throughout, and stand on a heavier foot, which is there whatever the step holds, as a failure the
+// API answered with no message holds none: so neither is lost among the faint marks.
+const strong: Record<Kind, number> = { output: 1, cacheWritten: 0.9, uncached: 0.8, cacheRead: 0.7 };
+const paints: Record<State, { fill: string; line: string; foot: string; strengths: Record<Kind, number> }> = {
+  shown: { fill: "bg-(--primary)", line: "border-(--primary)", foot: "border-b-[3px]", strengths: strong },
+  failed: { fill: "bg-(--error)", line: "border-(--error)", foot: "border-b-[3px]", strengths: strong },
   step: {
     fill: "bg-foreground-muted group-hover:bg-foreground",
     line: "border-foreground-muted group-hover:border-foreground",
+    foot: "border-b",
     strengths: { output: 1, cacheWritten: 0.75, uncached: 0.55, cacheRead: 0.35 },
   },
 };

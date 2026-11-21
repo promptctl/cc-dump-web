@@ -2,7 +2,7 @@ import type { FormattedExchange } from "../format/format.ts";
 import { forksOf, type Segment } from "./history.ts";
 import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
 
-// The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's shape and what it
+// The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's stack and what it
 // says on hover, pure.
 
 // What went wrong at a step: its exchange failed (an error, or an HTTP error status), or what it brought into the
@@ -26,20 +26,25 @@ export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => n
 
 // [LAW:types-are-the-program] The kinds of a step's tokens, named as the facts name them, in the order its stack draws
 // them, top to bottom: the output, over what it wrote to the cache, over what it read from the cache, over the input
-// the cache did not hold at the foot.
-export type Kind = "output" | "cacheWritten" | "cacheRead" | "uncached";
-export const kinds: readonly Kind[] = ["output", "cacheWritten", "cacheRead", "uncached"];
+// the cache did not hold at the foot. The list is the type, so a kind is drawn wherever it is a kind.
+export const kinds = ["output", "cacheWritten", "cacheRead", "uncached"] as const;
+export type Kind = (typeof kinds)[number];
 export type TokenFacts = Pick<FormattedExchange["facts"], Kind>;
 
 // A mark's stack: `counts`, each kind's count of its step's tokens, `tokens`, all of them, and `headroom`, what the
 // largest step's tokens hold above them, so a stack and its headroom together fill the strip's height, and the stacks
 // climb as the context grows and drop where it is compacted. Each count is its true size: an output under a pixel, as
-// it is beside a long context, is not drawn larger, which would misstate the rest. [LAW:dataflow-not-control-flow] A
-// count not reported, as one a streaming step's message has not said yet, draws nothing until it is; the mark's title
-// leaves it out.
+// it is beside a long context, is not drawn larger, which would misstate the rest. A count not reported, as one a
+// streaming step's message has not said yet, draws nothing until it is, and the mark's title, which says each count
+// reported, leaves it out.
 export type Stack = { counts: Record<Kind, number>; tokens: number; headroom: number };
 
-const countsIn = (facts: TokenFacts) => Object.fromEntries(kinds.map((kind) => [kind, facts[kind] ?? 0])) as Record<Kind, number>;
+const countsIn = ({ output, cacheWritten, cacheRead, uncached }: TokenFacts): Record<Kind, number> => ({
+  output: output ?? 0,
+  cacheWritten: cacheWritten ?? 0,
+  cacheRead: cacheRead ?? 0,
+  uncached: uncached ?? 0,
+});
 const totalOf = (facts: TokenFacts) => Object.values(countsIn(facts)).reduce((total, count) => total + count, 0);
 
 // The largest step's tokens, which every stack is drawn against.
@@ -50,12 +55,13 @@ export function stackOf(facts: TokenFacts, most: number): Stack {
   return { counts: countsIn(facts), tokens, headroom: most - tokens };
 }
 
-// What one unit of a wheel's delta is, by the DOM's delta mode: a pixel, a line or a page.
-export type DeltaUnit = "pixel" | "line" | "page";
-export function deltaUnitOf(mode: number): DeltaUnit {
-  const unit = (["pixel", "line", "page"] as const)[mode];
-  if (unit === undefined) throw new Error(`a wheel's delta mode the DOM does not define: ${mode}`);
-  return unit;
+// How far a wheel's turn moves the strip along, in pixels: its vertical turn, the strip's one way, by what one unit of
+// it is in the DOM's delta mode, a pixel, a line or a page; and nothing where the turn is mostly sideways, which the
+// browser scrolls the strip by already.
+export function wheelPixels({ deltaX, deltaY, deltaMode }: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">, { line, page }: { line: number; page: number }): number {
+  const unit = [1, line, page][deltaMode];
+  if (unit === undefined) throw new Error(`a wheel's delta mode the DOM does not define: ${deltaMode}`);
+  return Math.abs(deltaY) > Math.abs(deltaX) ? deltaY * unit : 0;
 }
 
 // What a mark says on hover: the exchange line's facts (view/Conversation.tsx's ExchangeLine), then whether the column

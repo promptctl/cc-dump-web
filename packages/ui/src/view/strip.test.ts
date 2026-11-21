@@ -3,7 +3,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
 import { createHistory } from "./history.ts";
-import { deltaUnitOf, failuresOf, mostOf, partedOf, stackOf, titleOf } from "./strip.ts";
+import { failuresOf, mostOf, partedOf, stackOf, titleOf, wheelPixels } from "./strip.ts";
 
 const timestamp = "2026-11-16T16:00:00.000Z";
 const at = recordedAt(timestamp);
@@ -61,10 +61,19 @@ describe("a mark's stack", () => {
   });
 });
 
-describe("deltaUnitOf", () => {
-  it("is a pixel, a line or a page by the DOM's delta mode, and refuses a mode the DOM does not define", () => {
-    expect([0, 1, 2].map(deltaUnitOf)).toEqual(["pixel", "line", "page"]);
-    expect(() => deltaUnitOf(3)).toThrow("a wheel's delta mode the DOM does not define: 3");
+describe("wheelPixels", () => {
+  const sizes = { line: 16, page: 1200 };
+
+  it("moves the strip by a vertical turn in pixels, lines or pages, as the DOM's delta mode says", () => {
+    expect([0, 1, 2].map((deltaMode) => wheelPixels({ deltaX: 0, deltaY: -3, deltaMode }, sizes))).toEqual([-3, -48, -3600]);
+  });
+
+  it("leaves a turn that is mostly sideways to the browser, which scrolls the strip by it already", () => {
+    expect([wheelPixels({ deltaX: 40, deltaY: 4, deltaMode: 0 }, sizes), wheelPixels({ deltaX: 4, deltaY: 40, deltaMode: 0 }, sizes)]).toEqual([0, 40]);
+  });
+
+  it("refuses a delta mode the DOM does not define", () => {
+    expect(() => wheelPixels({ deltaX: 0, deltaY: 1, deltaMode: 3 }, sizes)).toThrow("a wheel's delta mode the DOM does not define: 3");
   });
 });
 
@@ -74,6 +83,12 @@ describe("titleOf", () => {
     const title = titleOf(3, segment!.formatted, false, { exchange: false, tool: true });
     expect(title.split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5", "not in the column", "a tool failed"]);
     expect(titleOf(3, segment!.formatted, true, { exchange: false, tool: false }).split(" · ")).toEqual(["3", expect.stringMatching(/\d\d:\d\d:\d\d/), "opus-5-5"]);
+  });
+
+  it("says the step's input as its total, the uncached, the cache read and the cache written together, beside the cache's", () => {
+    const usage = { input_tokens: 4, cache_read_input_tokens: 44000, cache_creation_input_tokens: 2096, output_tokens: 390 };
+    const [segment] = segmentsOf([...request("t1", [ask]), ...replied("t1", { usage })]);
+    expect(titleOf(1, segment!.formatted, true, { exchange: false, tool: false })).toContain("in 46.1k cache 44.0k written 2.1k out 390");
   });
 });
 

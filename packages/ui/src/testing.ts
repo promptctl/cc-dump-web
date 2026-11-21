@@ -14,7 +14,7 @@ export const base64 = (value: unknown) => new TextEncoder().encode(JSON.stringif
 export const repliedAt =
   (timestamp: string) =>
   (trace: string, message: { content?: unknown[]; stop_reason?: string; usage?: object }): RecordedEvent[] => {
-    const at = { timestamp, trace_id: parseTraceId(trace) };
+    const at = recordedAt(timestamp)(trace);
     const body = { id: `msg_${trace}`, type: "message", role: "assistant", content: [], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 }, ...message };
     return [
       { ...at, type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
