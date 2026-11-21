@@ -56,14 +56,26 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
   return { abort, next, queued };
 }
 
-type StatusArrival = { status: ProxyStatus } | "dropped" | { failed: Error };
+type StatusArrival = { status: ProxyStatus } | "dropped";
 
 // The proxy's status, whose arrivals the test waits on, as `reading` does a read's.
 function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
   const { arrive, next } = arrivals<StatusArrival>();
-  connection.status({ status: (status) => arrive({ status }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) }, abort.signal);
+  connection.status(
+    {
+      status: (status) => arrive({ status }),
+      unreadable: (error) => {
+        throw error;
+      },
+      dropped: () => arrive("dropped"),
+      failed: (error) => {
+        throw error;
+      },
+    },
+    abort.signal,
+  );
   return { abort, next };
 }
 
@@ -247,23 +259,6 @@ describe("the browser connection", () => {
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
 
-  it("reports a status that does not parse as failed, and goes on to the statuses after it", async () => {
-    const reader = await serving((_req, res) => {
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"state":"watching","changed_source":[]}\n\ndata: ${JSON.stringify(watching())}\n\n`);
-    });
-    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
-    expect([await status.next(), await status.next()]).toEqual([
-      {
-        failed: expect.objectContaining({
-          message: `GET ${reader.url}/status`,
-          cause: expect.objectContaining({ message: "proxy status: source: is not an object" }),
-        }),
-      },
-      { status: watching() },
-    ]);
-  });
-
   it("follows the proxy across a restart: the connection, dropped, reconnects to the restarted proxy's status", async () => {
     const statuses: ProxyStatus[] = [watching("/proxy/src/proxy.ts"), watching()];
     let connections = 0;
@@ -296,13 +291,6 @@ describe("the browser connection", () => {
     let arrival = await status.next();
     while (arrival === "dropped") arrival = await status.next();
     expect(arrival).toEqual({ status: watching() });
-  });
-
-  it("reports a status not served as failed", async () => {
-    const reader = await serving((_req, res) => res.writeHead(404).end());
-    expect(await statusing(createBrowserConnection({ readerPort: reader.port })).next()).toEqual({
-      failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
-    });
   });
 });
 

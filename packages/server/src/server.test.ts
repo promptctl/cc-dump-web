@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentBaseUrl, recordingStart } from "@cc-dump/proxy/format";
+import { BadGateway } from "@cc-dump/log/answer";
 import { parseFailure } from "@cc-dump/log/wire";
 import { parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
@@ -94,7 +95,7 @@ describe("POST /launch", () => {
   });
 
   it("does not launch an agent the proxy cannot be found for, and keeps what was asked for the next try", async () => {
-    const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
+    const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new BadGateway("The proxy did not say where agents reach it: GET http://127.0.0.1:3347/info: fetch failed")) });
     const res = await launch({ session: "work", command: "claude" });
     expect(res.status).toBe(502);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
@@ -113,7 +114,7 @@ describe("POST /launch", () => {
   });
 
   it("does not launch an agent the proxy refused a recording, and keeps what was asked for the next try", async () => {
-    const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new Error("POST http://127.0.0.1:3347/recordings", { cause: new Error("500 Internal Server Error") })) });
+    const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new BadGateway("The proxy did not make a recording for the agent: POST http://127.0.0.1:3347/recordings: 500 Internal Server Error")) });
     const res = await launch({ session: "work", command: "claude" });
     expect(res.status).toBe(502);
     await work();

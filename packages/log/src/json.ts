@@ -2,16 +2,20 @@
 // and settings files (@cc-dump/config) alike, each failure naming `what` was read. Imports nothing that needs node, so
 // the UI's parsers use it too.
 
+// The error every parser of this module, and each part's format.ts, throws for input it cannot take, so a request's
+// reader can tell a client's unreadable input (answer.ts's `bodyOf`) from a bug of its own, which is a different error.
+export class Malformed extends Error {}
+
 export function parseJson(text: string, what: string): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${what}: is not JSON`, { cause: error });
+    throw new Malformed(`${what}: is not JSON`, { cause: error });
   }
 }
 
 export function jsonObject(json: unknown, what: string): Record<string, unknown> {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error(`${what}: is not an object`);
+  if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Malformed(`${what}: is not an object`);
   return json as Record<string, unknown>;
 }
 
@@ -27,14 +31,14 @@ export function fields(json: unknown, what: string) {
   const object = jsonObject(json, what);
   const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
     const value = object[name];
-    if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);
+    if (!fits(value)) throw new Malformed(`${what}: ${name} is not ${expected}`);
     return value;
   };
   const parsed = <T>(name: string, parse: (value: unknown) => T): T => {
     try {
       return parse(object[name]);
     } catch (error) {
-      throw new Error(`${what}: ${name}`, { cause: error });
+      throw new Malformed(`${what}: ${name}`, { cause: error });
     }
   };
   return {

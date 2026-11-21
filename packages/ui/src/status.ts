@@ -3,8 +3,14 @@ import { useEffect, useState } from "react";
 import type { Connection } from "./connection/connection.ts";
 
 // [LAW:types-are-the-program] Where the UI's connection to the proxy stands (docs/design/01-features.md, F8): being made,
-// made and holding the proxy's latest status, lost or not made and being tried again, or failed.
-export type StatusReading = { state: "connecting" } | { state: "connected"; status: ProxyStatus } | { state: "dropped" } | { state: "failed"; error: Error };
+// made and holding the proxy's latest status, made but its latest status unreadable (the next may be), lost or not made
+// and being tried again, or failed: not served, and closed.
+export type StatusReading =
+  | { state: "connecting" }
+  | { state: "connected"; status: ProxyStatus }
+  | { state: "unreadable"; error: Error }
+  | { state: "dropped" }
+  | { state: "failed"; error: Error };
 
 // The proxy's status, for as long as the component using it is mounted. It follows the proxy across its restarts.
 export function useProxyStatus(connection: Connection): StatusReading {
@@ -14,6 +20,7 @@ export function useProxyStatus(connection: Connection): StatusReading {
     connection.status(
       {
         status: (status) => setReading({ state: "connected", status }),
+        unreadable: (error) => setReading({ state: "unreadable", error }),
         dropped: () => setReading({ state: "dropped" }),
         failed: (error) => setReading({ state: "failed", error }),
       },

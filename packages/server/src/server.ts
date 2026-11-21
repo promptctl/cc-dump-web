@@ -1,6 +1,6 @@
-import { BadGateway, bodyOf, json, routes, type Route } from "@cc-dump/log/answer";
 import { loggedIn, type Handler, type Log, type TraceId } from "@cc-dump/log";
-import { describe } from "@cc-dump/log/describe";
+import { bodyOf, json, routes, type Route } from "@cc-dump/log/answer";
+import { ROUTES } from "@cc-dump/log/wire";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Launched, type Launcher } from "./format.ts";
 import { launchSettings } from "./settings.ts";
@@ -43,12 +43,8 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
   const launch: Route = async (req, { trace_id }) => {
     const { session, command } = await bodyOf(req, parseLaunch);
     launchSettings.write(settingsPath, { session, command });
-    const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info).catch((error: unknown) => {
-      throw new BadGateway(`The proxy did not say where agents reach it: ${describe(error)}`, { cause: error });
-    });
-    const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name })).catch((error: unknown) => {
-      throw new BadGateway(`The proxy did not make a recording for the agent: ${describe(error)}`, { cause: error });
-    });
+    const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info);
+    const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name }));
     const window = await loggedIn(
       log,
       trace_id,
@@ -60,5 +56,5 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
     return json({ session, ...window, recording } satisfies Launched);
   };
 
-  return routes({ "/launch": { GET: launcher, POST: launch }, "/logs": { GET: logs } });
+  return routes({ [ROUTES.launch]: { GET: launcher, POST: launch }, [ROUTES.logs]: { GET: logs } });
 }

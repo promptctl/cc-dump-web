@@ -4,6 +4,7 @@ import { buffer } from "node:stream/consumers";
 import { LOOPBACK, UI_PORT } from "./address.ts";
 import { describe } from "./describe.ts";
 import type { Handler, Work } from "./index.ts";
+import { Malformed } from "./json.ts";
 import { statusLine, type Failure, type RefusedStatus } from "./wire.ts";
 
 // [LAW:single-enforcer] The one way a part answers a request over HTTP (the wire's reading side is wire.ts): the part
@@ -127,13 +128,14 @@ function matchPath(pattern: string[], segments: string[]): Record<string, string
   return params;
 }
 
-// The body of a request, parsed. A body `parse` cannot take is the client's: refused 400, in the parser's words.
+// The body of a request, parsed. A body `parse` finds `Malformed` is the client's: refused 400, in the parser's words.
+// Any other error of the parser is its own bug, and fails the request as one.
 export async function bodyOf<T>(req: IncomingMessage, parse: (text: string) => T): Promise<T> {
   const text = (await buffer(req)).toString();
   try {
     return parse(text);
   } catch (error) {
-    throw new Refused(400, describe(error), { cause: error });
+    throw error instanceof Malformed ? new Refused(400, describe(error), { cause: error }) : error;
   }
 }
 
@@ -147,9 +149,10 @@ export function routes(table: Table): Handler {
 
 async function answered(table: Table, req: IncomingMessage, res: ServerResponse, work: Work) {
   try {
+    // An answer depends on the request's Origin, the access rule's refusal as much as a route's.
+    res.setHeader("vary", "origin");
     const admitted = admit(askedOf(req));
     // The browser reads an answer, a refusal's too, only if it is addressed to the page's own origin.
-    res.setHeader("vary", "origin");
     if (admitted.origin !== undefined) res.setHeader("access-control-allow-origin", admitted.origin);
     const { route, ...matched } = resolve(table, admitted);
     const reply = await route(req, work, matched);

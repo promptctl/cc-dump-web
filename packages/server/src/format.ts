@@ -1,5 +1,5 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
-import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import { fields, jsonObject, Malformed, parseJson } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -51,7 +51,7 @@ export function commandLine(value: unknown): string {
 }
 
 function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 

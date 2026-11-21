@@ -47,12 +47,12 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       const failed = ({ message }: ReadFailure) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) }));
       stream.on(READ_FAILED, parseReadFailure, failed, stream.fail);
     },
-    // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported,
-    // and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
+    // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported
+    // as unreadable, and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
     // proxy's status once it reconnects.
     status: (watcher, signal) => {
       const stream = eventStream(`${origin}${ROUTES.status}`, signal, watcher.failed);
-      stream.on("message", parseProxyStatus, watcher.status, watcher.failed);
+      stream.on("message", parseProxyStatus, watcher.status, watcher.unreadable);
       stream.dropped(watcher.dropped);
     },
     // A line's id is its position, which the EventSource sends back when it reconnects, so the same process resumes

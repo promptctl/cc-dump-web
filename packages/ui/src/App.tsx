@@ -131,6 +131,12 @@ function ProxyState({ status }: { status: StatusReading }) {
         </>
       );
     }
+    case "unreadable":
+      return (
+        <p data-connection="unreadable" className="text-error" title={describe(status.error)}>
+          ○ The proxy's status could not be read: {describe(status.error)}
+        </p>
+      );
     case "failed":
       return <p className="text-error" title={describe(status.error)}>{describe(status.error)}</p>;
   }
