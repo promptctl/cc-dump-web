@@ -1,7 +1,7 @@
 import { launchName, type Block, type Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
-import type { FormattedExchange, Heading, KeyedBlock } from "../format/format.ts";
+import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
 import { levelKey, placeOf, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
@@ -643,7 +643,7 @@ export function seconds(milliseconds: number): string {
 // status that is an error's, and the token counts, by label.
 export const statusFailed = (status: number | undefined): boolean => status !== undefined && status >= 400;
 export const countsOf = (facts: FormattedExchange["facts"]): [label: string, count: number | undefined][] => [
-  ["in", facts.input],
+  ["in", inputOf(facts)],
   ["cache", facts.cacheRead],
   ["written", facts.cacheWritten],
   ["out", facts.output],

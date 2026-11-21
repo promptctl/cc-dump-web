@@ -7,7 +7,8 @@ import { recordedAt } from "../src/testing.ts";
 export const timestamp = "2026-11-15T14:00:00.000Z";
 // The fields of an event of the trace labelled `trace`, recorded at `timestamp`.
 export const at = recordedAt(timestamp);
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
+// A body as the proxy records it: its JSON text, base64.
+const base64 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).toBase64();
 
 // Who sends a request: the main agent, with no agent header; a subagent, by its id and the agent that launched it; or
 // the headers as given, as a request whose headers contradict each other has them.
@@ -21,13 +22,14 @@ export const request = (trace: string, body: unknown, from: From = {}): Recorded
   { ...at(trace), type: "request_trailers", headers: [] },
 ];
 
-// A reply, which ends its turn unless it says why else it stopped. `ended`: when its exchange ended, or false for one
-// still coming.
-export const reply = (trace: string, content: unknown[], stop_reason = "end_turn", ended: string | false = timestamp): RecordedEvent[] => [
+// A reply: a whole JSON message, which ends its turn and reports a token each in and out unless `message` says otherwise.
+// `ended`: when its exchange ended, or false for one still coming.
+export const replied = (trace: string, message: { content?: unknown[]; stop_reason?: string; usage?: object }, ended: string | false = timestamp): RecordedEvent[] => [
   { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
+  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content: [], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 }, ...message }) },
   ...(ended === false ? [] : ([{ ...at(trace), type: "response_trailers", headers: [] }, { ...recordedAt(ended)(trace), type: "end", outcome: "ok" }] as RecordedEvent[])),
 ];
+export const reply = (trace: string, content: unknown[], stop_reason = "end_turn", ended: string | false = timestamp) => replied(trace, { content, stop_reason }, ended);
 
 // A reply still coming, streamed as the API streams one: its message's start and each of its content blocks whole, and
 // nothing after, so the message has not stopped and the exchange has not ended.
