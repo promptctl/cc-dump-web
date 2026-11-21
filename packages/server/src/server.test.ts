@@ -1,8 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { buffer } from "node:stream/consumers";
 import { describe, expect, it } from "vitest";
 import { agentBaseUrl, recordingStart } from "@cc-dump/proxy/format";
 import { DependencyFailed } from "@cc-dump/log/failure";
+import { send } from "@cc-dump/log/testing";
 import { parseFailure } from "@cc-dump/log/wire";
 import { parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
@@ -151,6 +153,16 @@ describe("routes", () => {
     const res = await launch({ session: "work", command: "claude" }, { origin });
     expect(res.status).toBe(200);
     expect(opened).toHaveLength(1);
+  });
+
+  it("refuses a request for a Host that is not the part's own address, and a path nothing serves, as Failures", async () => {
+    const { port, next } = await app();
+    const rebound = await send(port, { path: "/launch", headers: { host: "evil.example" } });
+    expect(rebound.statusCode).toBe(403);
+    expect(parseFailure((await buffer(rebound)).toString())).toEqual({ error: "Host evil.example is not an address this part is served at" });
+    expect(await next()).toMatchObject({ event: "request", status: 403, outcome: "error" });
+    const missing = await send(port, { path: "/elsewhere" });
+    expect([missing.statusCode, parseFailure((await buffer(missing)).toString())]).toEqual([404, { error: "Nothing is served at /elsewhere" }]);
   });
 
   it("answers the browser's preflight of a JSON POST", async () => {

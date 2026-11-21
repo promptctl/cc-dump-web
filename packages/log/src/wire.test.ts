@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LOOPBACK } from "./address.ts";
 import { json, Refused, routes } from "./answer.ts";
+import { DependencyFailed } from "./failure.ts";
 import { serving } from "./testing.ts";
 import { ask, frame, parseFailure, recordingPath, ROUTES, serverSentEvents, statusLine } from "./wire.ts";
 
@@ -79,7 +80,9 @@ describe("ask", () => {
   });
 
   it("fails in the part's own words when it answers with an error status", async () => {
-    await expect(ask(`${await part()}/refused`, {}, text)).rejects.toThrow(/^no such recording$/);
+    const failed = await ask(`${await part()}/refused`, {}, text).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(DependencyFailed);
+    expect(failed).toMatchObject({ message: "no such recording" });
   });
 
   it("fails naming the request and the status line when the body is no Failure", async () => {
@@ -87,13 +90,26 @@ describe("ask", () => {
     await expect(ask(`${url}/info`, {}, text)).rejects.toThrow(`GET ${url}/info: 404 Not Found`);
   });
 
-  it("fails naming the request, with the cause, when the answer's body is not what the parse takes", async () => {
+  it("fails as the part's, naming the request, with the cause, when the answer's body is not what the parse takes", async () => {
     const url = await part();
-    await expect(ask(`${url}/text`, {}, parseFailure)).rejects.toMatchObject({ message: `GET ${url}/text`, cause: expect.any(Error) });
+    const failed = await ask(`${url}/text`, {}, parseFailure).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(DependencyFailed);
+    expect(failed).toMatchObject({ message: `GET ${url}/text`, cause: expect.any(Error) });
+  });
+
+  it("passes the parse's own bug as it is, which is not the part's failure", async () => {
+    const bug = new TypeError("not a function");
+    await expect(
+      ask(`${await part()}/ok`, {}, () => {
+        throw bug;
+      }),
+    ).rejects.toBe(bug);
   });
 
   it("fails naming the request, with the cause, when the connection fails", async () => {
     const url = `http://${LOOPBACK}:1/ok`;
-    await expect(ask(url, { method: "POST" }, text)).rejects.toMatchObject({ message: `POST ${url}`, cause: expect.any(Error) });
+    const failed = await ask(url, { method: "POST" }, text).catch((error: unknown) => error);
+    expect(failed).toBeInstanceOf(DependencyFailed);
+    expect(failed).toMatchObject({ message: `POST ${url}`, cause: expect.any(Error) });
   });
 });

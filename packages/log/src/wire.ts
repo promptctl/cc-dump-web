@@ -1,3 +1,4 @@
+import { DependencyFailed, Malformed } from "./failure.ts";
 import { fields, parseJson } from "./json.ts";
 
 // [LAW:one-source-of-truth] What both ends of a part's HTTP wire agree on: the answer a refused or failed request gets,
@@ -25,30 +26,36 @@ export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name
 // The path of the recording `name`, as `ROUTES.recording` matches it.
 export const recordingPath = (name: string) => ROUTES.recording.replace(":name", () => encodeURIComponent(name));
 
-// [LAW:single-enforcer] The one way a client asks a part: its answer to one request, parsed. An answer with an error
-// status fails in the part's own words, which are the user's to read as they are, or, when its body is no `Failure` (a
-// proxy's, node's own refusal of a malformed request), in the request and the status line; any other failure, the
-// connection's or the parse's, names the request, with the failure its `cause`.
+// [LAW:single-enforcer] The one way a client asks a part: its answer to one request, parsed. The part failing to answer
+// is the asker's `DependencyFailed`: an answer with an error status, in the part's own words, which are the user's to
+// read as they are, or, when its body is no `Failure` (a proxy's, node's own refusal of a malformed request), in the
+// request and the status line; a connection that failed, or an answer its parse finds `Malformed`, naming the request,
+// with the failure its `cause`. Any other error of the parse is the asker's own bug, and passes as it is.
 export async function ask<T>(url: string, init: RequestInit, parse: (text: string) => T): Promise<T> {
   const request = `${init.method ?? "GET"} ${url}`;
-  let refusal: string;
+  let res: Response;
+  let text: string;
   try {
-    const res = await fetch(url, init);
-    const text = await res.text();
-    if (res.ok) return parse(text);
-    refusal = failureWords(text) ?? `${request}: ${res.status} ${res.statusText}`;
+    res = await fetch(url, init);
+    text = await res.text();
   } catch (error) {
-    throw new Error(request, { cause: error });
+    throw new DependencyFailed(request, { cause: error });
   }
-  throw new Error(refusal);
+  if (!res.ok) throw new DependencyFailed(failureWords(text) ?? `${request}: ${res.status} ${res.statusText}`);
+  try {
+    return parse(text);
+  } catch (error) {
+    throw error instanceof Malformed ? new DependencyFailed(request, { cause: error }) : error;
+  }
 }
 
 // The words of a `Failure` body, or none when the body is not one.
 function failureWords(body: string): string | undefined {
   try {
     return parseFailure(body).error;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof Malformed) return undefined;
+    throw error;
   }
 }
 

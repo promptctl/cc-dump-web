@@ -1,6 +1,6 @@
 // [LAW:single-enforcer] The one parse of JSON text into a JSON object, for every part's messages (each part's format.ts)
 // and settings files (@cc-dump/config) alike, each failure naming `what` was read. Imports nothing that needs node, so
-// the UI's parsers use it too.
+// the formats a part shares with the UI use it too.
 import { Malformed } from "./failure.ts";
 
 export function parseJson(text: string, what: string): unknown {

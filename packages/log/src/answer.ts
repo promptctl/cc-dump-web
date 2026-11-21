@@ -49,12 +49,15 @@ export type Method = "GET" | "POST";
 // byte is representable, and one after it is not. A `Stream` writes a Server-Sent Events body, which begins once the
 // route has answered.
 export type Stream = (res: ServerResponse) => void;
-export type Reply = { kind: "json"; body: unknown } | { kind: "stream"; write: Stream };
+
+// What JSON text can say, so a body `JSON.stringify` turns into no text at all (undefined, a function) is no reply.
+export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
+export type Reply = { kind: "json"; body: Json } | { kind: "stream"; write: Stream };
 
 // The answer to an OPTIONS request, which only the route table gives: the preflight of a browser's request.
 type Preflight = { kind: "preflight"; allow: Method[] };
 
-export const json = (body: unknown): Reply => ({ kind: "json", body });
+export const json = (body: Json): Reply => ({ kind: "json", body });
 export const stream = (write: Stream): Reply => ({ kind: "stream", write });
 
 // What the request's path and query gave the route: `params`, the segments a `:name` of its path matched, decoded.
@@ -131,8 +134,9 @@ function matchPath(pattern: string[], segments: string[]): Record<string, string
     if (segment === "") return undefined;
     try {
       params[part.slice(1)] = decodeURIComponent(segment);
-    } catch {
-      return undefined;
+    } catch (error) {
+      if (error instanceof URIError) return undefined;
+      throw error;
     }
   }
   return params;

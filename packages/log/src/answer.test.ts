@@ -3,7 +3,7 @@ import { buffer } from "node:stream/consumers";
 import type { IncomingMessage } from "node:http";
 import { describe, expect, it } from "vitest";
 import { LOOPBACK, UI_PORT } from "./address.ts";
-import { admit, bodyOf, json, refusalOf, Refused, resolve, routes, type Asked, type Route, type Table } from "./answer.ts";
+import { admit, bodyOf, json, refusalOf, Refused, resolve, routes, type Asked, type Json, type Route, type Table } from "./answer.ts";
 import { DependencyFailed, Malformed } from "./failure.ts";
 import { send, serving } from "./testing.ts";
 import { parseFailure } from "./wire.ts";
@@ -130,7 +130,7 @@ describe("a request's body", () => {
 });
 
 describe("a part's routes", () => {
-  const cycle: Record<string, unknown> = {};
+  const cycle: Record<string, Json> = {};
   cycle.self = cycle;
   const table: Table = {
     "/ok": { GET: () => json({ fine: true }) },

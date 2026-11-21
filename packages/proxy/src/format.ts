@@ -1,4 +1,5 @@
 import { outcomes, type Ending } from "@cc-dump/log/ending";
+import { Malformed } from "@cc-dump/log/failure";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
@@ -117,7 +118,7 @@ export type ProxyInfo = { base_url: string; upstream: string; recordings: string
 
 export function parseListings(json: string): Listing[] {
   const listings = parseJson(json, "recordings list");
-  if (!Array.isArray(listings)) throw new Error("recordings list: is not an array");
+  if (!Array.isArray(listings)) throw new Malformed("recordings list: is not an array");
   return listings.map((listing: unknown) => listingOf(listing, "recordings list entry"));
 }
 

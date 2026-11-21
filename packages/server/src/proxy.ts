@@ -5,13 +5,13 @@ import { ask, ROUTES } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { parseListing, parseProxyInfo, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 
-// [LAW:single-enforcer] The one place a failure of the proxy becomes the app server's answer: whatever `ask` fails with,
-// the proxy unreachable, its refusal, an answer that is not what it says it sends, is a dependency's failure, in the proxy's
-// words. A failure of the app server's own, which is not `ask`'s, is not one.
+// The proxy failing to answer, which `ask` says as a `DependencyFailed` (unreachable, its refusal, an answer that is not
+// what it says it sends), is the app server's answer in the proxy's words, with what the app server asked it. A failure of
+// the app server's own, which `ask` passes as it is, is not.
 const unreached =
   (what: string) =>
   (error: unknown): never => {
-    throw new DependencyFailed(`The proxy did not ${what}: ${describe(error)}`, { cause: error });
+    throw error instanceof DependencyFailed ? new DependencyFailed(`The proxy did not ${what}: ${describe(error)}`, { cause: error }) : error;
   };
 
 // [LAW:one-source-of-truth] What the running proxy says it is, asked of it each time: it may have restarted, on
