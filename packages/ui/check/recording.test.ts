@@ -42,7 +42,18 @@ describe("fileConnection", () => {
 
   it("fails a recording that is not there, naming it, and does not read it as empty", async () => {
     const [outcome] = await readOf(join(directory, "missing.jsonl"));
-    expect(outcome).toMatch(/^failed .*ENOENT.*missing\.jsonl/);
+    expect(outcome).toMatch(/^failed no recording at .*missing\.jsonl/);
+  });
+
+  it("reports a recording it cannot open as a failure of the read, as it does one that is not there", async () => {
+    expect(await readOf(directory)).toEqual([expect.stringMatching(/^failed .*EISDIR/)]);
+  });
+
+  it("fails at a line that does not parse, naming where it ends, after the events before it", async () => {
+    const body = line({ ...at("t1"), type: "request_body", base64: "" });
+    const recording = join(directory, "broken.jsonl");
+    writeFileSync(recording, `${body}not json\n`);
+    expect(await readOf(recording)).toEqual([`event request_body ${Buffer.byteLength(body)}`, expect.stringContaining(`failed the event ending at byte ${Buffer.byteLength(body) + 9}`)]);
   });
 
   it("throws the reason of a signal aborted before it begins, as every connection's read does", () => {

@@ -34,32 +34,35 @@ export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefi
   return side.completedBy ?? side.body.at(-1) ?? side.head;
 }
 
-// [LAW:types-are-the-program] A trace that has ended takes no more events (add), and its end is all a read must keep of
-// it to refuse them. A read that has made what it needs of an ended exchange holds that in its place, which is `Held`:
-// an `Ended` with whatever else the read keeps, and none of the exchange's events.
-export type Ended = { end: Of<"end"> };
-const isOpen = (held: Exchange | Ended): held is Exchange => held.end === undefined;
+// [LAW:types-are-the-program] A trace as a read holds it, by the one tag that says where it stands: `open`, taking
+// events; `ended`, its end placed, so it takes none, its exchange not yet let go. `add` takes a trace from `open` to
+// `ended`, and no other step does.
+export type Standing = { state: "open"; exchange: Exchange } | { state: "ended"; exchange: Exchange };
 
-// The read's traces, by trace, in the order they began: an exchange while it takes events, and, once it has ended and the
-// read has let it go, what the read holds in its place. A read that holds nothing in its place holds only exchanges.
-export type ByTrace<Held extends Ended = never> = Map<TraceId, Exchange | Held>;
+// A read that has made what it needs of an ended exchange lets it go and holds `shown`, what it made, in its place:
+// none of the exchange's events, and still a trace that takes none.
+export type Settled<Shown> = { state: "settled"; shown: Shown };
+
+// The read's traces, by trace, in the order they began: each `Standing`, or, for a read that settles, `Rest`, which is
+// its `Settled`.
+export type ByTrace<Rest extends Settled<unknown> = never> = Map<TraceId, Standing | Rest>;
 
 // [LAW:single-enforcer] [LAW:parse-dont-validate] The one step that places an event in its exchange, and the one place
 // a recording is held to the shape the proxy writes: a trace holds one request head and one response head, at most one
 // trailers per side, and one end; a side's head comes before the rest of it and its trailers after, and a trace takes
-// nothing after its end, whether `byTrace` still holds its exchange or the read's own `Held` in its place. It returns the
-// exchange the event is placed in. An event that breaks the shape is refused, as what is wrong with it, naming its trace
-// and type, and placed nowhere: what `byTrace` holds stays as it was. A head never recorded is the shape: the recorder
-// writes a side's body without it when the head's write fails.
-export function add<Held extends Ended>(byTrace: ByTrace<Held>, event: RecordedEvent): Exchange | string {
-  const held = byTrace.get(event.trace_id);
-  if (held !== undefined && !isOpen(held)) return refused(event, "follows its trace's end");
-  const exchange = held ?? begun(event);
+// nothing after its end, whatever the read holds of the trace by then. It returns the exchange the event is placed in. An
+// event that breaks the shape is refused, as what is wrong with it, naming its trace and type, and placed nowhere: what
+// `byTrace` holds stays as it was. A head never recorded is the shape: the recorder writes a side's body without it when
+// the head's write fails.
+export function add<Rest extends Settled<unknown>>(byTrace: ByTrace<Rest>, event: RecordedEvent): Exchange | string {
+  const held: Standing | Rest = byTrace.get(event.trace_id) ?? { state: "open", exchange: begun(event) };
+  if (held.state !== "open") return refused(event, "follows its trace's end");
+  const { exchange } = held;
   const place = placing(exchange, event);
   if (typeof place === "string") return refused(event, place);
   place();
   exchange.latest = event;
-  byTrace.set(event.trace_id, exchange);
+  byTrace.set(event.trace_id, exchange.end === undefined ? held : { state: "ended", exchange });
   return exchange;
 }
 

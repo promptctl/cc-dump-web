@@ -129,22 +129,22 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
 // before it, so a block made again alike one made before at its place is that one, and so is a group whose title and
 // blocks are all those of one before at its key: the formatter holds each block its requests send once, and a reference
 // where a request resends it. The latest interned at a place is looked at first, since a request resends what the
-// request before it in its thread sent.
+// request before it in its thread sent. A group is interned after its blocks, so a group of resent blocks holds the very
+// blocks of the one it is alike, and `equal` finds them the same at once.
 function createInterning(): (shown: RequestShown) => RequestShown {
   const blocks = new Map<string, KeyedBlock[]>();
   const groups = new Map<string, Group[]>();
-  const interned = <T>(table: Map<string, T[]>, at: string, made: T, alike: (one: T, made: T) => boolean): T => {
+  const interned = <T>(table: Map<string, T[]>, at: string, made: T): T => {
     const there = table.get(at) ?? [];
     table.set(at, there);
-    const found = there.findLast((one) => alike(one, made));
+    const found = there.findLast((one) => equal(one, made));
     if (found !== undefined) return found;
     there.push(made);
     return made;
   };
-  const sameGroup = (one: Group, made: Group) => one.title === made.title && one.blocks.length === made.blocks.length && one.blocks.every((block, index) => block === made.blocks[index]);
   return (shown) => ({
     ...shown,
-    sent: shown.sent.map((group) => interned(groups, group.key, { ...group, blocks: group.blocks.map((block) => interned(blocks, `${group.key}/${block.key}`, block, equal)) }, sameGroup)),
+    sent: shown.sent.map((group) => interned(groups, group.key, { ...group, blocks: group.blocks.map((block) => interned(blocks, `${group.key}/${block.key}`, block)) })),
   });
 }
 

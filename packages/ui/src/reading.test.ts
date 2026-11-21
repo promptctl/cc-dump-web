@@ -1,7 +1,5 @@
 import { describe as said } from "@cc-dump/log/describe";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
-import { setFlagsFromString } from "node:v8";
-import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
 import { createFormatter, type FormattedExchange } from "./format/format.ts";
@@ -158,8 +156,8 @@ describe("readRecording", () => {
   // [LAW:verifiable-goals] The ticket's goal, a recording's memory growing with what its history holds: a body event the
   // read no longer needs is collectable, and one it still needs is not, so the first cannot pass by the test missing it.
   it("holds the body events of the exchanges in flight and none of an ended exchange's", async () => {
-    setFlagsFromString("--expose-gc");
-    const collect = runInNewContext("gc") as () => void;
+    const collect = globalThis.gc;
+    if (collect === undefined) throw new Error("garbage collection is not exposed: node takes --expose-gc from vitest.config.ts");
     const { frames, deliver } = started();
     const sent = (n: number, ending: boolean) => {
       const chunk: RecordedEvent = { ...at(`t${n}`), type: "request_body", base64: Buffer.from("x".repeat(1000)).toString("base64") };
@@ -197,6 +195,25 @@ describe("readRecording", () => {
       expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
       expect(signal.aborted).toBe(true);
     }
+  });
+
+  it("keeps both when the read fails and showing what is pending fails with it: the refusal first, what showed it as its cause", () => {
+    const broke = new Error("sink broke");
+    const { connection, reads } = fakeConnection();
+    const states: Reading[] = [];
+    const sink = (shown: FormattedExchange[]) => {
+      if (shown.length > 0) throw broke;
+    };
+    readRecording(connection, agent, sink, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    const request: RecordedEvent = { ...at("t1"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] };
+    const { reader } = reads[0]!;
+    reader.event(request, 100);
+    reader.event(end(1), 200);
+    reader.event(event(1), 300);
+    const failed = states.at(-1)!;
+    expect(failed).toMatchObject({ state: "failed", error: { cause: broke } });
+    expect(failed.state === "failed" && said(failed.error)).toMatch(/the event ending at byte 300: trace t1's request_body follows its trace's end, and showing what it read failed: sink broke$/);
+    expect(reads[0]!.signal.aborted).toBe(true);
   });
 
   it("cancels its pending frame when aborted, and reports nothing", () => {

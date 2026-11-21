@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
 import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
-import { recordedLength } from "./recording.ts";
+import { recordedLength, splitLines } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
@@ -102,8 +102,10 @@ type Reading = {
 function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: string): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
-  let finished: ReturnType<typeof recordedLength> | undefined;
-  const measured = () => (finished ??= recordedLength(path));
+  // [LAW:no-silent-failure] A finished recording is listed by its file, so a file that is gone fails the read, not ends it
+  // empty; the run's own, followed, has none until its first write, and nothing of it is cut.
+  let finished: NonNullable<ReturnType<typeof recordedLength>> | undefined;
+  const measured = () => (finished ??= recordedLength(path) ?? gone(name));
   return {
     log,
     trace_id,
@@ -113,8 +115,12 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
     followed,
     recordings,
     limit: followed ? () => recordings.readable(name) : () => measured().terminated,
-    unterminated: followed ? () => recordedLength(path).unterminated : () => measured().unterminated,
+    unterminated: followed ? () => recordedLength(path)?.unterminated ?? 0 : () => measured().unterminated,
   };
+}
+
+function gone(name: string): never {
+  throw new Error(`recording ${name} is gone`);
 }
 
 async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
@@ -159,7 +165,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   const { log, trace_id, ended, name, followed, recordings } = reading;
   const span = startSpan(trace_id);
   let offset = from; // just past the last line read into the stream
-  let pending = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
+  let pending: Buffer = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
   let eventsRead = 0;
   let stopWaiting: (() => void) | undefined;
   let caughtUp = false;
@@ -185,15 +191,11 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
 
   const pushLines = (bytes: Buffer) => {
     const data = Buffer.concat([pending, bytes]);
-    const events: Buffer[] = [];
-    let start = 0;
-    for (let end = data.indexOf(0x0a); end !== -1; end = data.indexOf(0x0a, start)) {
-      events.push(Buffer.from(`id: ${offset + end + 1}\ndata: `), data.subarray(start, end), Buffer.from("\n\n"));
-      start = end + 1;
-      eventsRead++;
-    }
-    offset += start;
-    pending = data.subarray(start);
+    const { lines, rest } = splitLines(data, offset);
+    const events = lines.flatMap(({ line, end }) => [Buffer.from(`id: ${end}\ndata: `), line, Buffer.from("\n\n")]);
+    eventsRead += lines.length;
+    offset += data.length - rest.length;
+    pending = rest;
     // A line longer than what was read so far: read on.
     if (events.length === 0) return void fill();
     stream.push(Buffer.concat(events));
