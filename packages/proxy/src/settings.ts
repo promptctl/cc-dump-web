@@ -1,3 +1,4 @@
+import { Malformed } from "@cc-dump/log/failure";
 import { parseUpstream } from "./proxy.ts";
 import { settingsFile } from "@cc-dump/config/settings-file";
 
@@ -8,7 +9,7 @@ const settings = {
     default: 3344,
     parse: (value: unknown) => {
       if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 65535)
-        throw new Error(`port must be an integer from 1 to 65535, got ${JSON.stringify(value)}`);
+        throw new Malformed(`port must be an integer from 1 to 65535, got ${JSON.stringify(value)}`);
       return value as number;
     },
   },
