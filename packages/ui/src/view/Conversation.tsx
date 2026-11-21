@@ -15,7 +15,7 @@ import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Event, type ForkRow, type NestRow, type Row, type SetRow } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -292,7 +292,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
         <FilterBar />
         <SearchBar count={found.count} ordinal={currentOrdinal} error={error} onStep={stepTo} field={field} />
       </div>
-      <TurnStrip segments={conversation.segments} shown={shown} listed={listed} onGo={onGo} onStep={onStep} />
+      <TurnStrip history={conversation} shown={shown} listed={listed} onGo={onGo} onStep={onStep} />
       <div className="flex min-h-0 flex-1">
         {/* The browser's own scroll anchoring would be a second writer of the offset. The area is what a move in time
             slides (index.css). */}
@@ -466,22 +466,47 @@ function ForkLine({ row }: { row: ForkRow }) {
   );
 }
 
-// A nest's line (rows.ts, NestRow), under the Agent call that launched the subagent: its type, the prompt's first
-// words, how many steps it has taken by the moment shown and, while it runs, the last thing it did. A click, or Enter,
-// lists its rows under it, one step in, or takes them back into the line: it starts closed, and stays as the reader
-// left it. Its arrow and its words stand under those of the call's line.
+// A nest's line (rows.ts, NestRow): under the call that launched its subagent, or at its parent's end while no step
+// listed ties it, where it says "untied", and why where a step named it with a call not on its path. It says the
+// subagent's type, the prompt's first words, how many steps it has taken by the moment shown, a parent the wire named but
+// did not record, and, while it runs, the last thing it did, or else how a notification said it ended. The unread
+// level's says its requests' sender was not read. A click, or Enter, lists its rows under it, one step in, or takes
+// them back into the line: it starts closed, and stays as the reader left it, wherever it stands. Its arrow and its
+// words stand under those of the line above it.
 function NestLine({ row }: { row: NestRow }) {
   const { open, toggle } = useToggle(row.key, nestStartsOpen);
   return (
     <button type="button" aria-expanded={open} className="flex w-full items-baseline gap-3 py-0.5 pr-4 pl-[31px] text-left font-sans text-foreground-muted hover:bg-hover" onClick={toggle}>
       <span className="w-3 shrink-0">{open ? "▾" : "▸"}</span>
-      {row.type === undefined ? null : <span className="shrink-0 font-mono text-foreground">{row.type}</span>}
+      {row.level.kind === "unread" ? <span className="shrink-0">sender not read</span> : <Placement stands={row.level.stands} />}
       <span className="min-w-0 truncate" title={row.prompt}>
-        {row.prompt}
+        {row.prompt ?? "first message not read"}
       </span>
       <span className="shrink-0 tabular-nums">{row.count === 1 ? "· 1 step" : `· ${row.count} steps`}</span>
-      {row.latest === undefined ? null : <span className="min-w-0 flex-1 truncate text-success">{`● ${row.latest.name} ${preview(row.latest)}`}</span>}
+      {row.level.kind === "unread" ? null : <Lineage parent={row.level.parent} doing={row.level.doing} />}
     </button>
+  );
+}
+
+// Where a subagent's nest stands, on its line: what its call launches, or "untied", and why where a step named it with
+// a call not on its path.
+function Placement({ stands }: { stands: Stands }) {
+  if (stands.kind === "untied") return <span className="shrink-0">{stands.unfound ? "untied: its call is not on the path of the step that named it" : "untied"}</span>;
+  return stands.launches === undefined ? null : <span className="shrink-0 font-mono text-foreground">{stands.launches}</span>;
+}
+
+// The rest of a subagent's nest line: a parent the wire named but did not record, and, while it runs, the last thing it
+// did, or else how a notification said it ended.
+function Lineage({ parent, doing }: { parent: Parent; doing: Doing }) {
+  return (
+    <>
+      {parent.kind === "unrecorded" ? <span className="shrink-0">{`· parent ${parent.named} not recorded`}</span> : null}
+      {doing.runs ? (
+        <span className="min-w-0 flex-1 truncate text-success">{doing.latest === undefined ? "● running" : `● ${doing.latest.name} ${preview(doing.latest)}`}</span>
+      ) : doing.ended === undefined ? null : (
+        <span className="shrink-0">{`· ${doing.ended}`}</span>
+      )}
+    </>
   );
 }
 
@@ -490,7 +515,7 @@ function NestLine({ row }: { row: NestRow }) {
 // gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
 // exchange its end.
-function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+function ExchangeLine({ exchange: { exchange, facts, sender }, reading }: { exchange: FormattedExchange; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
@@ -499,12 +524,21 @@ function ExchangeLine({ exchange: { exchange, facts }, reading }: { exchange: Fo
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
       </time>
-      {/* A request whose head was not recorded has no model to name; the line says why. */}
+      {/* A request whose head was not recorded has no model to name; the line says why. One whose agent headers
+          contradict each other says so beside its model, why on hover (format/wire.ts). */}
       {exchange.request.head === undefined ? (
         <span className="text-foreground-muted">request not recorded</span>
       ) : (
-        <span className="font-mono" title={facts.model}>
-          {facts.model === undefined ? null : modelName(facts.model)}
+        <span>
+          <span className="font-mono" title={facts.model}>
+            {facts.model === undefined ? null : modelName(facts.model)}
+          </span>
+          {sender.kind === "unread" ? (
+            <span className="text-foreground-muted" title={sender.why}>
+              {" "}
+              sender not read
+            </span>
+          ) : null}
         </span>
       )}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>

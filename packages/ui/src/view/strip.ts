@@ -1,5 +1,5 @@
 import type { FormattedExchange } from "../format/format.ts";
-import { forksOf, type Segment } from "./history.ts";
+import type { History, Segment } from "./history.ts";
 import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
 
 // The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's stack and what it
@@ -22,7 +22,7 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
 
 // The steps of the recording that have a sibling, a step that stands after what they do (view/history.ts): each is
 // where a history parts from another, which its mark says with a notch.
-export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => new Set([...forksOf(segments).values()].flat());
+export const partedOf = (forks: History["forks"]): ReadonlySet<number> => new Set([...forks.values()].flat());
 
 // [LAW:types-are-the-program] The kinds of a step's tokens, named as the facts name them, in the order its stack draws
 // them, top to bottom: the output, over what it wrote to the cache, over what it read from the cache, over the input

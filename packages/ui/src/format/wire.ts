@@ -1,0 +1,59 @@
+import type { Header } from "@cc-dump/proxy/format";
+import { headerValues } from "./body.ts";
+
+// [LAW:one-source-of-truth] What Claude Code says on the wire about its agents, read here alone: who sent a request,
+// the agent a tool's result names, and the notification that an agent stopped (docs/design/claude-code-wire.md). The
+// formatter states these on the blocks it makes, and the history and the checker read them there.
+
+// [LAW:types-are-the-program] Who sent a request: the main agent, whose requests carry no agent header; a subagent, by
+// its `x-claude-code-agent-id`, with the agent its `x-claude-code-parent-agent-id` names when another subagent launched
+// it; or a sender the request does not say, `why`: its head was not recorded, or its headers contradict each other.
+export type Sender = { kind: "main" } | { kind: "agent"; id: string; parent: string | undefined } | { kind: "unread"; why: string };
+
+export function senderOf(head: { headers: Header[] } | undefined): Sender {
+  if (head === undefined) return { kind: "unread", why: "head not recorded" };
+  const ids = headerValues(head.headers, "x-claude-code-agent-id");
+  const parents = headerValues(head.headers, "x-claude-code-parent-agent-id");
+  if (ids.length === 0) return parents.length === 0 ? { kind: "main" } : { kind: "unread", why: "a parent agent header with no agent header" };
+  const [id] = ids;
+  if (ids.length > 1 || id === "") return { kind: "unread", why: "agent header repeated or empty" };
+  if (parents.length === 0) return { kind: "agent", id: id!, parent: undefined };
+  const [parent] = parents;
+  if (parents.length > 1 || parent === "" || parent === id) return { kind: "unread", why: "parent agent header repeated, empty or naming the agent itself" };
+  return { kind: "agent", id: id!, parent };
+}
+
+// The agent a tool's result names, by the texts of its content in order. An Agent call launched in the background is
+// answered as the agent starts, its first text opening with the launch and the agent's id on the next line. One run in
+// the foreground is answered when it returns, its last text ending with the agent's id, the ways to reach it, and the
+// usage it took: a text of its own, or the end of a report that is a single text (Claude Code 2.1.299). The trailer's is
+// the last `agentId:` line, so a report that quotes another agent's id names that agent nowhere. What another tool
+// returns can quote either, so a result names an agent only for the call that launched it (view/history.ts).
+const background = /^Async agent launched successfully\.[^\n]*\nagentId: ([\w-]+) \(internal ID/;
+const foreground = /(?:^|\n)agentId: ([\w-]+)(?: \([^\n]*\))?(?:\n(?!agentId: )[^\n]*)*\n<usage>subagent_tokens: \d+\ntool_uses: \d+\nduration_ms: \d+<\/usage>$/;
+export function namedIn(texts: readonly string[]): string | undefined {
+  return background.exec(texts[0] ?? "")?.[1] ?? foreground.exec(texts.at(-1) ?? "")?.[1];
+}
+
+// [LAW:types-are-the-program] What a notification says: that an agent stopped, `stop`, the agent by its `<task-id>`,
+// how it ended by its `<status>`, and the call that launched it by its `<tool-use-id>`, where it says one; or, for one
+// that lacks the agent or the status, or holds more than one notification's, that it is `unread`, and `why`, so it is
+// shown as a notification and stops nothing.
+export type Notice = { kind: "stop"; agent: string; status: string; call: string | undefined } | { kind: "unread"; why: string };
+
+// The notification a text is, its `notice` and `content`, the `<task-notification>` element: a text whose whole is one
+// system reminder holding that element, as the harness sends each, a text block of its own. A person's text that quotes
+// one has text of its own around it, so it is none.
+const notification = /^\s*<system-reminder>\n(?:(?!<\/system-reminder>)[\s\S])*?(<task-notification>(?:(?!<\/system-reminder>)[\s\S])*?<\/task-notification>)\s*<\/system-reminder>\s*$/;
+const tag = (element: string, name: string) => new RegExp(`<${name}>([^<]+)</${name}>`).exec(element)?.[1];
+export function notificationIn(text: string): { notice: Notice; content: string } | undefined {
+  const content = notification.exec(text)?.[1];
+  if (content === undefined) return undefined;
+  const unread = (why: string) => ({ notice: { kind: "unread", why } as const, content });
+  if (content.split("<task-notification>").length > 2) return unread("more than one <task-notification>");
+  const agent = tag(content, "task-id");
+  const status = tag(content, "status");
+  if (agent === undefined) return unread("no <task-id>");
+  if (status === undefined) return unread("no <status>");
+  return { notice: { kind: "stop", agent, status, call: tag(content, "tool-use-id") }, content };
+}

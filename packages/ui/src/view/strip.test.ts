@@ -1,21 +1,16 @@
-import { base64, exchanges, recordedAt, repliedAt } from "../testing.ts";
+import { exchanges } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
+import { assistant, replied, call as toolCall, request as fixtureRequest, text, user } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { failuresOf, mostOf, partedOf, stackOf, titleOf, wheelPixels } from "./strip.ts";
 
-const timestamp = "2026-11-16T16:00:00.000Z";
-const at = recordedAt(timestamp);
-const replied = repliedAt(timestamp);
-const request = (trace: string, messages: unknown[]): RecordedEvent[] => [
-  { ...at(trace), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { ...at(trace), type: "request_body", base64: base64({ model: "claude-opus-5-5", messages }) },
-  { ...at(trace), type: "request_trailers", headers: [] },
-];
-const ask = { role: "user", content: [{ type: "text", text: "Read it." }] };
-const call = { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: {} }] };
-const result = (fields: object) => ({ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", ...fields }] });
+const request = (trace_id: string, messages: unknown[]) => fixtureRequest(trace_id, { model: "claude-opus-5-5", messages });
+const ask = user(text("Read it."));
+const call = assistant(toolCall("toolu_1", "Read", {}));
+// A user message holding the Read call's result, with the fields given.
+const result = (fields: object) => user({ type: "tool_result", tool_use_id: "toolu_1", ...fields });
 const segmentsOf = (events: RecordedEvent[]) => createHistory()(createFormatter()(exchanges(events))).segments;
 
 describe("failuresOf", () => {
@@ -98,12 +93,9 @@ describe("partedOf", () => {
     const again = { role: "user", content: [{ type: "text", text: "Again." }] };
     const other = { role: "user", content: [{ type: "text", text: "Another way." }] };
     // The second and the third each resend the first and go on their own way; the fourth follows the third alone.
-    const segments = segmentsOf([
-      ...request("t1", [ask]),
-      ...request("t2", [ask, answer, again]),
-      ...request("t3", [ask, answer, other]),
-      ...request("t4", [ask, answer, other, answer, again]),
-    ]);
-    expect([...partedOf(segments)]).toEqual([2, 3]);
+    const { forks } = createHistory()(
+      createFormatter()(exchanges([...request("t1", [ask]), ...request("t2", [ask, answer, again]), ...request("t3", [ask, answer, other]), ...request("t4", [ask, answer, other, answer, again])])),
+    );
+    expect([...partedOf(forks)]).toEqual([2, 3]);
   });
 });

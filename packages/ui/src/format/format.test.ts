@@ -621,31 +621,84 @@ describe("format", () => {
         name: "tool_result: error",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
         failed: true,
+        result: { answers: "toolu_1", names: undefined },
       },
     ]);
   });
 
-  it("states the subagent an Agent tool's call launches, in a message and in the reply, and none while its input streams", () => {
+  it("states what an Agent or a Skill tool's call launches, in a message and in the reply, the agent type once its input says it", () => {
     const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
-    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
-    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
-      { prompt: "Find the bug.\n", type: "Explore" },
-      { prompt: "Go.", type: undefined },
+    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ call }) => call?.launches);
+    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." }), call("Skill", { skill: "review" })])).toEqual([
+      { tool: "Agent", type: "Explore" },
+      { tool: "Agent", type: undefined },
+      { tool: "Skill", skill: "review" },
     ]);
-    // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
-    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
+    // Another tool's prompt launches nothing; an Agent's call launches an agent whatever its input holds.
+    const agent = { tool: "Agent", type: undefined };
+    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, agent, agent]);
     const start = { type: "content_block_start", index: 0, content_block: call("Agent", {}) };
     const delta = (partial_json: string) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } });
-    const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
-    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
-    expect(reply(4)).toEqual([undefined]);
-    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
+    const events = [messageStart, start, delta('{"subagent_type":'), delta('"Explore"}'), { type: "content_block_stop", index: 0 }];
+    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ call }) => call?.launches);
+    expect(reply(4)).toEqual([agent]);
+    expect(reply(5)).toEqual([{ tool: "Agent", type: "Explore" }]);
   });
 
-  it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
-    const call = (name: string) => ({ type: "tool_use", id: "toolu_1", name, input: { message: "Done." } });
-    const content = [call("SubagentHandback"), call("SendMessage")];
-    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
+  it("states each call by its id, and that every call's reply waits for its result but SubagentHandback's; a call with no id states none", () => {
+    const call = (name: string, id: unknown = "toolu_1") => ({ type: "tool_use", id, name, input: { message: "Done." } });
+    const content = [call("SubagentHandback"), call("SendMessage", "toolu_2"), call("Bash", 7)];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ call }) => call)).toEqual([
+      { id: "toolu_1", launches: undefined, waits: false },
+      { id: "toolu_2", launches: undefined, waits: true },
+      undefined,
+    ]);
+  });
+
+  it("states the call a result answers, and the agent its content names in the background frame or the foreground trailer", () => {
+    const launched = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: ae5c3bca3aecbe477 (internal ID - do not mention to user.)\nThe agent is working in the background.";
+    const usage = "<usage>subagent_tokens: 10\ntool_uses: 2\nduration_ms: 300</usage>";
+    const results = [
+      { type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: launched }] },
+      { type: "tool_result", tool_use_id: "toolu_2", content: [{ type: "text", text: "The bug is here." }, { type: "text", text: `agentId: a1 (use SendMessage with to: 'a1' to continue this agent)\n${usage}` }] },
+      // A report that is a single text has the trailer appended, and worktree lines may follow the id.
+      { type: "tool_result", tool_use_id: "toolu_3", content: [{ type: "text", text: `The bug is here.\nagentId: a2\nworktreePath: /w\nworktreeBranch: b\n${usage}` }] },
+      // A result that quotes a frame anywhere else names nothing, nor does a foreground Explore's, which has no trailer.
+      { type: "tool_result", tool_use_id: "toolu_4", content: `cat log\nagentId: a3 (internal ID` },
+      { type: "tool_result", tool_use_id: "toolu_5", content: "The bug is here." },
+      // The trailer's id is the last on its own line: a report that quotes another agent's names that one nowhere.
+      { type: "tool_result", tool_use_id: "toolu_6", content: [{ type: "text", text: `Report:\nagentId: zzz\nmore\nagentId: a4 (use SendMessage with to: 'a4' to continue this agent)\n${usage}` }] },
+    ];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "user", content: results }] })), "message.0").map(({ result }) => result)).toEqual([
+      { answers: "toolu_1", names: "ae5c3bca3aecbe477" },
+      { answers: "toolu_2", names: "a1" },
+      { answers: "toolu_3", names: "a2" },
+      { answers: "toolu_4", names: undefined },
+      { answers: "toolu_5", names: undefined },
+      { answers: "toolu_6", names: "a4" },
+    ]);
+  });
+
+  it("states a notification that an agent stopped from a text that is wholly one reminder holding it, and never from a person's text that quotes one", () => {
+    const notification = (inner: string) => `<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n${inner}\n</task-notification>\n</system-reminder>`;
+    const killed = notification("<task-id>aeb0927abd04e4d83</task-id>\n<status>killed</status>\n<summary>Agent was stopped</summary>");
+    const done = notification("<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>");
+    const statusless = notification("<task-id>a2</task-id>\n<summary>Agent was stopped</summary>");
+    const two = notification("<task-id>a3</task-id>\n<status>completed</status>\n</task-notification>\n<task-notification>\n<task-id>a4</task-id>\n<status>failed</status>");
+    const texts = [killed, done, `Look at this: ${done}`, `${done}\n<system-reminder>\nToday is Friday.\n</system-reminder>`, statusless, two];
+    const blocks = group(one(request("a", { model: "m", messages: [{ role: "user", content: texts.map((text) => ({ type: "text", text })) }] })), "message.0");
+    const notices = blocks.filter(({ notice }) => notice !== undefined);
+    expect(notices.map(({ name, injected, notice }) => ({ name, injected, notice }))).toEqual([
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "aeb0927abd04e4d83", status: "killed", call: undefined } },
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "a1", status: "completed", call: "toolu_1" } },
+      // One that lacks its agent or its status, or holds two, is shown as a notification that was not read, and tells
+      // no stop.
+      { name: "task notification not read: no <status>", injected: true, notice: { kind: "unread", why: "no <status>" } },
+      { name: "task notification not read: more than one <task-notification>", injected: true, notice: { kind: "unread", why: "more than one <task-notification>" } },
+    ]);
+    // Its collapsed line reads its `<task-notification>` element, without the reminder around it.
+    const shown = (notices[1]!.preview ?? []).flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("");
+    expect([shown.startsWith("<task-notification>"), shown.trimEnd().endsWith("</task-notification>")]).toEqual([true, true]);
   });
 
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {
