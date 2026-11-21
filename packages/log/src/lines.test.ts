@@ -1,5 +1,6 @@
 import { Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
+import { routes, type Route } from "./answer.ts";
 import { parseLogLine, type LinePosition, type LoggedEvent } from "./line.ts";
 import { processLog } from "./lines.ts";
 import { serving, subscribe, workEvent as event } from "./testing.ts";
@@ -12,8 +13,8 @@ function output() {
 }
 
 // The process log's lines served on a free port, read from the start, or after the line `lastEventId` names.
-async function served(logs: Parameters<typeof serving>[0], lastEventId?: string) {
-  const { port } = await serving(logs);
+async function served(logs: Route, lastEventId?: string) {
+  const { port } = await serving(routes({ "/logs": { GET: logs } }));
   return subscribe(port, "/logs", lastEventId === undefined ? {} : { "last-event-id": lastEventId });
 }
 

@@ -8,10 +8,10 @@ import { app } from "./testing.ts";
 import { TmuxRefused } from "./tmux.ts";
 
 describe("GET /launch", () => {
-  it("starts from the default settings and lists the sessions, to any origin", async () => {
+  it("starts from the default settings and lists the sessions", async () => {
     const { url, work } = await app();
     const res = await fetch(`${url}/launch`);
-    expect([res.status, res.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
+    expect(res.status).toBe(200);
     expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
     expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
     expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
@@ -158,19 +158,10 @@ describe("routes", () => {
     expect([res.status, res.headers.get("access-control-allow-methods"), res.headers.get("access-control-allow-headers")]).toEqual([204, "GET, POST", "content-type"]);
   });
 
-  it("answers a method a route does not take with 405, and an unknown route with 404, each its request's failure", async () => {
-    const { url, next } = await app();
-    const res = await fetch(`${url}/launch`, { method: "DELETE" });
-    expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
-    expect(await next()).toMatchObject({ event: "request", method: "DELETE", url: "/launch", outcome: "error", error: "405 Method Not Allowed" });
-    expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
-    expect(await next()).toMatchObject({ event: "request", url: "/api/nothing", outcome: "error", error: "404 Not Found" });
-  });
-
   it("serves its log at /logs to the UI's page, and refuses it to a page from another site", async () => {
     const { url } = await app();
     const res = await fetch(`${url}/logs`, { headers: { origin: "http://127.0.0.1:3346" } });
-    expect([res.status, res.headers.get("access-control-allow-origin"), await res.text()]).toEqual([200, "*", "the app server's log"]);
+    expect([res.status, res.headers.get("access-control-allow-origin"), await res.text()]).toEqual([200, "http://127.0.0.1:3346", "the app server's log"]);
     expect((await fetch(`${url}/logs`, { headers: { origin: "https://example.com" } })).status).toBe(403);
   });
 });

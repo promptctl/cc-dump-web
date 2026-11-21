@@ -133,7 +133,7 @@ describe("createTerminal", () => {
     const { port, next, windowOf } = await terminal("work");
 
     expect(await refusal(fromPage("https://example.com", `ws://127.0.0.1:${port}${tmuxPath(windowOf("work"))}`))).toBe(403);
-    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining("https://example.com cannot reach tmux") });
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining("A page at https://example.com is not one this machine serves") });
   });
 
   it.each([
@@ -156,18 +156,18 @@ describe("createTerminal", () => {
   });
 
   it.each([
-    ["a target that is no URL's", "//"],
-    ["a handshake it cannot take", undefined],
-  ])("answers %s, and closes it", async (_, target) => {
+    ["a target that is no URL's", "//", "400 Bad Request", "is not a request target"],
+    ["a handshake it cannot take", undefined, "400 Bad Request", "Sec-WebSocket"],
+  ])("answers %s, and closes it", async (_, target, status, why) => {
     const { port, next, windowOf } = await terminal("work");
     const socket = connect(port, "127.0.0.1");
-    socket.end(`GET ${target ?? tmuxPath(windowOf("work"))} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`);
+    socket.end(`GET ${target ?? tmuxPath(windowOf("work"))} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`);
 
     const answer: Buffer[] = [];
     socket.on("data", (chunk: Buffer) => answer.push(chunk));
     await once(socket, "close");
-    expect(Buffer.concat(answer).toString()).toMatch(target === undefined ? /^HTTP\/1\.1 400 Bad Request/ : /^HTTP\/1\.1 404 Not Found/);
-    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining(target === undefined ? "Sec-WebSocket" : "Nothing takes") });
+    expect(Buffer.concat(answer).toString()).toMatch(new RegExp(`^HTTP/1\\.1 ${status}`));
+    expect(await next()).toMatchObject({ event: "upgrade", outcome: "error", error: expect.stringContaining(why) });
   });
 
   it("is done with a handshake whose socket closed before ws could take it, which ws destroys without a word", async () => {
@@ -177,8 +177,8 @@ describe("createTerminal", () => {
     socket.push(null);
     socket.resume();
     await once(socket, "end");
-    const headers = { origin: "http://127.0.0.1:3346", connection: "Upgrade", upgrade: "websocket", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" };
-    const req = { method: "GET", url: tmuxPath(windowOf("work")), headers } as IncomingMessage;
+    const headers = { host: "127.0.0.1:3345", origin: "http://127.0.0.1:3346", connection: "Upgrade", upgrade: "websocket", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" };
+    const req = { method: "GET", url: tmuxPath(windowOf("work")), headers, socket: { localPort: 3345 } } as IncomingMessage;
     const fail = vi.fn();
 
     await upgrade(req, socket, Buffer.alloc(0), { trace_id: parseTraceId("0".repeat(32)), fail, ended: new Promise(() => {}) });

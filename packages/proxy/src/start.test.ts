@@ -17,19 +17,6 @@ describe("the reader port", () => {
     return { dir, upstream: upstream.url, ...(await proxyProcess(upstream.url, dir, "unlimited")) };
   };
 
-  it("serves the recordings and the proxy's status, info and log, every answer to any origin", async () => {
-    const { readerPort } = await proxy();
-    const answers = await Promise.all(["/recordings", "/status", "/info", "/logs", "/elsewhere"].map((path) => send(readerPort, { path })));
-    expect(answers.map((res) => [res.statusCode, res.headers["content-type"], res.headers["access-control-allow-origin"]])).toEqual([
-      [200, "application/json", "*"],
-      [200, "text/event-stream", "*"],
-      [200, "application/json", "*"],
-      [200, "text/event-stream", "*"],
-      [404, undefined, "*"],
-    ]);
-    for (const res of answers) res.destroy();
-  });
-
   it("sends a request its upstream cannot be reached for to its log's readers, as it fails", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
@@ -46,7 +33,7 @@ describe("the reader port", () => {
     expect((await answered).status).toBe(502);
   });
 
-  it("logs each request the reader port refuses as failed, by its answer's status line", async () => {
+  it("logs each request the reader port refuses as failed, in the refusal's words", async () => {
     const { readerPort } = await proxy();
     const { res, next } = await subscribe(readerPort, "/logs");
     onTestFinished(() => void res.destroy());
@@ -54,8 +41,8 @@ describe("the reader port", () => {
     const refused = [await send(readerPort, { path: "/elsewhere" }), await send(readerPort, { method: "POST", path: "/logs" })];
 
     expect(refused.map(({ statusCode }) => statusCode)).toEqual([404, 405]);
-    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: "404 Not Found", facts: { url: "/elsewhere", status: 404 } });
-    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: "405 Method Not Allowed", facts: { method: "POST", url: "/logs", status: 405 } });
+    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: expect.stringContaining("Nothing is served at /elsewhere"), facts: { url: "/elsewhere", status: 404 } });
+    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: expect.stringContaining("POST is not taken at /logs; GET is"), facts: { method: "POST", url: "/logs", status: 405 } });
     for (const answer of refused) answer.destroy();
   });
 
@@ -65,7 +52,7 @@ describe("the reader port", () => {
     const res = await send(readerPort, { method: "POST", path: "/recordings" });
     const { name } = parseListing((await buffer(res)).toString());
 
-    expect([res.statusCode, res.headers["content-type"], res.headers["access-control-allow-origin"]]).toEqual([200, "application/json", "*"]);
+    expect([res.statusCode, res.headers["content-type"]]).toEqual([200, "application/json"]);
     expect(recordingStart(name)).toBeInstanceOf(Date);
     expect(readFileSync(join(dir, name), "utf8")).toBe("");
     const listed = await send(readerPort, { path: "/recordings" });

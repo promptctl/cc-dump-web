@@ -1,3 +1,4 @@
+import { BadGateway } from "@cc-dump/log/answer";
 import { describe } from "@cc-dump/log/describe";
 import {
   listSessions,
@@ -35,7 +36,7 @@ export type Tmux = {
 // tmux refused what it was asked, has no session by the name asked for, is older than a command needs, or ended the
 // connection before answering; the message is tmux's own text where tmux gave one (a failed attach's: "no sessions",
 // "error connecting to …" when no server runs).
-export class TmuxRefused extends Error {}
+export class TmuxRefused extends BadGateway {}
 
 // [LAW:single-enforcer] The one way the app server connects to tmux, as `args` say: `options` picks the tmux server, as
 // `tmux -L`/`-S` would, the user's default one when empty. Without TMUX, which an app server started in tmux inherits,

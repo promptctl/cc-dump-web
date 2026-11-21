@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./answer": "./src/answer.ts",
     "./address": "./src/address.ts",
     "./ending": "./src/ending.ts",
     "./describe": "./src/describe.ts",

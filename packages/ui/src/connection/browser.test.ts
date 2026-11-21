@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
+import { routes, stream, type Route } from "@cc-dump/log/answer";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { processLog } from "@cc-dump/log/lines";
 import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testing";
 import { PassThrough } from "node:stream";
+import { ROUTES } from "@cc-dump/log/wire";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { recordedAt } from "../testing.ts";
@@ -324,7 +326,7 @@ describe("a part's log", () => {
   it("reads the app server's lines kept, then each as it is written", async () => {
     const { log, logs } = processLog("server", new PassThrough());
     log(event("kept"));
-    const server = await serving(logs);
+    const server = await serving(routes({ [ROUTES.logs]: { GET: logs } }));
     const logged = logging(createBrowserConnection({ serverPort: server.port }), "server");
     expect([await logged.next(), await logged.next()]).toEqual(["opened", { line: "kept" }]);
     log(event("written"));
@@ -336,10 +338,15 @@ describe("a part's log", () => {
     log(event("before"));
     let connections = 0;
     // The first connection is cut once its lines are sent; `retry` makes the browser reconnect in 10ms, not its default 3s.
-    const reader = await serving((req, res, work) => {
-      logs(req, res, work);
-      if (++connections === 1) res.write("retry: 10\n\n", () => res.destroy());
-    });
+    const dropping: Route = async (req, work, matched) => {
+      const reply = await logs(req, work, matched);
+      if (reply.kind !== "stream" || ++connections > 1) return reply;
+      return stream((res) => {
+        reply.write(res);
+        res.write("retry: 10\n\n", () => res.destroy());
+      });
+    };
+    const reader = await serving(routes({ [ROUTES.logs]: { GET: dropping } }));
     const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
     expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "before" }, "dropped"]);
     log(event("after"));

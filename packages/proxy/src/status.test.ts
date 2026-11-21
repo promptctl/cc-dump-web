@@ -3,13 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Ending, Event } from "@cc-dump/log";
-import { arrivals, eventLog, send, serving } from "@cc-dump/log/testing";
+import { routes } from "@cc-dump/log/answer";
+import { arrivals, eventLog, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
 import { countTraffic, createStatus, watchable, watchSource } from "./status.ts";
 import { subscribe } from "@cc-dump/log/testing";
 import { parseTraceId } from "@cc-dump/log/trace";
+import { ROUTES } from "@cc-dump/log/wire";
 
 // Two source files in a directory of their own, recorded as they are now.
 function sourceFiles() {
@@ -133,7 +135,7 @@ describe("GET /status", () => {
   it("sends the proxy's info, the source's and the traffic's state now, then at each change of either, a failed watch's too, until the reader leaves", async () => {
     const source = watched<SourceStatus>({ state: "watching", changed_source: [] });
     const traffic = watched<Traffic>(quiet);
-    const { port, next } = await serving(createStatus(info, source, traffic));
+    const { port, next } = await serving(routes({ [ROUTES.status]: { GET: createStatus(info, source, traffic) } }));
     const { res, next: nextEvent } = await subscribe(port, "/status");
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("text/event-stream");
@@ -153,13 +155,5 @@ describe("GET /status", () => {
     res.destroy();
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", url: "/status", status: 200 });
     expect([source.listening(), traffic.listening()]).toEqual([0, 0]);
-  });
-
-  it("refuses a method other than GET", async () => {
-    const { port } = await serving(createStatus(info, watched<SourceStatus>({ state: "watching", changed_source: [] }), watched(quiet)));
-    const res = await send(port, { method: "POST", path: "/status", headers: { "content-length": "0" } });
-    expect(res.statusCode).toBe(405);
-    expect(res.headers.allow).toBe("GET");
-    res.resume();
   });
 });

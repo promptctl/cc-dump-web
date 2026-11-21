@@ -1,8 +1,9 @@
 import { readdir, open, stat } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
-import { describeError, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
+import { describeError, startSpan, type Ending, type Log, type TraceId } from "@cc-dump/log";
+import { json, Refused, stream, type Route } from "@cc-dump/log/answer";
+import { frame, READ_ENDED, READ_FAILED } from "@cc-dump/log/wire";
 import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
 import { recordedLength, splitLines } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
@@ -17,35 +18,22 @@ import type { Recordings } from "./recordings.ts";
 // that fails once begun ends with a `failed` event: the stream's only way to tell a reader it failed, since an
 // EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 // A reader never creates a recording: only a name with a file, or one the run is writing, is read, and any other is 404.
-export function createReader(log: Log, recordings: Recordings): Handler {
+export function createReader(log: Log, recordings: Recordings): { list: Route; read: Route } {
   const { dir } = recordings;
-  return (req, res, { trace_id, fail, ended }) => {
-    const url = new URL(req.url!, "http://reader");
-    const asked = nameIn(url.pathname);
-    const answer = async () => {
-      if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-      if (url.pathname === "/recordings") return list(await nonEmpty(dir, await files(dir)), res);
-      const name = await readableName(recordings, asked);
-      if (!name) return void res.writeHead(404).end();
-      return read(readingOf(log, recordings, trace_id, ended, name), positionOf(req, url), res, fail);
-    };
-    // Every await of the answer comes before its response's headers; a read fails after them in its stream.
-    answer().catch((error: unknown) => {
-      fail(error);
-      res.writeHead(500).end();
-    });
+  return {
+    list: async () => json((await nonEmpty(dir, await files(dir))).map((name): Listing => ({ name }))),
+    read: async (req, { trace_id, fail, ended }, { params, query }) => {
+      const name = await readableName(recordings, params.name);
+      if (!name) throw new Refused(404, `${params.name} is no recording this proxy lists or follows`);
+      const reading = readingOf(log, recordings, trace_id, ended, name);
+      const position = positionOf(req.headers["last-event-id"], query);
+      if (position === undefined || !(await atLineStart(reading, position))) throw new Refused(400, "from must be 0 or the id of an event");
+      // Every await of the answer comes before its response's headers; a read fails after them in its stream.
+      // pipeline destroys the stream when the response closes. Its callback runs after that close, when the request's
+      // event is written, so it has nothing to add.
+      return stream((res) => void pipeline(recordingEvents(reading, position, fail), res, () => {}));
+    },
   };
-}
-
-// [LAW:parse-dont-validate] The name a URL's path asks for, as the file system spells it: the path's segment is
-// percent-encoded, and one with a malformed escape names nothing.
-function nameIn(pathname: string): string | undefined {
-  const segment = /^\/recordings\/([^/]+)$/.exec(pathname)?.[1];
-  try {
-    return segment === undefined ? undefined : decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
 }
 
 // The recordings: the `.jsonl` files in the directory.
@@ -57,11 +45,6 @@ async function files(dir: string) {
 async function nonEmpty(dir: string, names: string[]) {
   const sizes = await Promise.all(names.map((name) => stat(join(dir, name)).then(({ size }) => size, (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? 0 : Promise.reject(error)))));
   return names.filter((_, index) => sizes[index]! > 0);
-}
-
-function list(names: string[], res: ServerResponse) {
-  const listed: Listing[] = names.map((name) => ({ name }));
-  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(listed));
 }
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The name that may be read, or none: a file the directory lists,
@@ -81,8 +64,8 @@ type ReadableName = string & { readonly [listedOrFollowed]: true };
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
 // the URL it first opened), else `?from=`, else the start. Anything but a decimal offset a file can have is
 // no position, a repeated header too: node joins its values into one string (only set-cookie stays a list).
-function positionOf(req: IncomingMessage, url: URL): number | undefined {
-  const given = (req.headers["last-event-id"] as string | undefined) ?? url.searchParams.get("from") ?? "0";
+function positionOf(lastEventId: string | string[] | undefined, query: URLSearchParams): number | undefined {
+  const given = (lastEventId as string | undefined) ?? query.get("from") ?? "0";
   return offsetOf(given);
 }
 
@@ -124,21 +107,6 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
 
 function gone(name: string): never {
   throw new Error(`recording ${name} is gone`);
-}
-
-async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
-  if (position === undefined || !(await atLineStart(reading, position))) {
-    return void res.writeHead(400, { "content-type": "text/plain" }).end("from must be 0 or the id of an event\n");
-  }
-  // A request cut while its recording was looked up, by its client or its server's close, has ended and its
-  // event is written: there is no one to read to. One still open has not ended, so the read's subscription
-  // to `ended` comes in time.
-  if (res.destroyed) return;
-  // Flushed now, not with the first event: a reader of an empty followed recording is connected before it has one.
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" }).flushHeaders();
-  // pipeline destroys the stream when the response closes. Its callback runs after that close, when the
-  // request's event is written, so it has nothing to add.
-  pipeline(recordingEvents(reading, position, fail), res, () => {});
 }
 
 // A position is the start, or just past a newline in the file: the id of an event a reader was sent.
@@ -184,7 +152,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   // so a stop that cuts the read has this written before its `close` resolves.
   void ended.then(catchUp);
 
-  const stream = new Readable({
+  const readable = new Readable({
     read: () => void fill(),
     destroy: (error, callback) => {
       stopWaiting?.();
@@ -195,20 +163,20 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   const pushLines = (bytes: Buffer) => {
     const data = Buffer.concat([pending, bytes]);
     const { lines, rest } = splitLines(data, offset);
-    const events = lines.flatMap(({ line, end }) => [Buffer.from(`id: ${end}\ndata: `), line, Buffer.from("\n\n")]);
+    const events = lines.map(({ line, end }) => frame({ id: String(end), data: line.toString() })).join("");
     eventsRead += lines.length;
     offset += data.length - rest.length;
     pending = rest;
     // A line longer than what was read so far: read on.
-    if (events.length === 0) return void fill();
-    stream.push(Buffer.concat(events));
+    if (events === "") return void fill();
+    readable.push(events);
   };
 
   async function fill(): Promise<void> {
     try {
       const limit = reading.limit();
       const bytes = await bytesAt(reading, offset + pending.length, 64 * 1024, limit);
-      if (stream.destroyed) return;
+      if (readable.destroyed) return;
       if (bytes.length > 0) return pushLines(bytes);
       // An event written during the read: not caught up to yet. Writes are synchronous on this
       // thread, so none can fall between this check and the subscription below.
@@ -218,8 +186,8 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         // newline, the measure that bounded the read.
         const end: RecordingEnd = { unterminated_bytes: reading.unterminated() };
         catchUp({ outcome: "ok" }, end.unterminated_bytes);
-        stream.push(`event: end\ndata: ${JSON.stringify(end)}\n\n`);
-        return void stream.push(null);
+        readable.push(frame({ event: READ_ENDED, data: JSON.stringify(end) }));
+        return void readable.push(null);
       }
       // Measured by the first arrival at the end only: a followed read arrives at it after every event written.
       if (!caughtUp) catchUp({ outcome: "ok" }, reading.unterminated());
@@ -230,15 +198,15 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         void fill();
       });
     } catch (error) {
-      if (stream.destroyed) return;
+      if (readable.destroyed) return;
       catchUp({ outcome: "error", error: describeError(error) });
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
       const failure: ReadFailure = { message: error instanceof Error ? error.message : String(error) };
-      stream.push(`event: failed\ndata: ${JSON.stringify(failure)}\n\n`);
-      stream.push(null);
+      readable.push(frame({ event: READ_FAILED, data: JSON.stringify(failure) }));
+      readable.push(null);
     }
   }
 
-  return stream;
+  return readable;
 }
