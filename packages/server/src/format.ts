@@ -1,5 +1,5 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
-import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import { fields, jsonObject, Malformed, parseJson } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -39,9 +39,6 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 // from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
-// Every refused or failed request's answer: why, in words the user is shown as they are (tmux's own, when tmux refused).
-export type Failure = { error: string };
-
 // [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
 // from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
 // session target names a session by name.
@@ -54,7 +51,7 @@ export function commandLine(value: unknown): string {
 }
 
 function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -110,7 +107,3 @@ export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
 export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
-
-export function parseFailure(json: string): Failure {
-  return { error: fields(parseJson(json, "failure"), "failure").string("error") };
-}

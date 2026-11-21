@@ -2,15 +2,17 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentBaseUrl, recordingStart } from "@cc-dump/proxy/format";
-import { parseFailure, parseLauncher, parseLaunched } from "./format.ts";
+import { BadGateway } from "@cc-dump/log/answer";
+import { parseFailure } from "@cc-dump/log/wire";
+import { parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
 import { TmuxRefused } from "./tmux.ts";
 
 describe("GET /launch", () => {
-  it("starts from the default settings and lists the sessions, to any origin", async () => {
+  it("starts from the default settings and lists the sessions", async () => {
     const { url, work } = await app();
     const res = await fetch(`${url}/launch`);
-    expect([res.status, res.headers.get("access-control-allow-origin")]).toEqual([200, "*"]);
+    expect(res.status).toBe(200);
     expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
     expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
     expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
@@ -93,7 +95,7 @@ describe("POST /launch", () => {
   });
 
   it("does not launch an agent the proxy cannot be found for, and keeps what was asked for the next try", async () => {
-    const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new Error("GET http://127.0.0.1:3347/info", { cause: new Error("fetch failed") })) });
+    const { opened, settingsPath, launch, next, work } = await app({ proxyInfo: () => Promise.reject(new BadGateway("The proxy did not say where agents reach it: GET http://127.0.0.1:3347/info: fetch failed")) });
     const res = await launch({ session: "work", command: "claude" });
     expect(res.status).toBe(502);
     expect(await work()).toMatchObject({ event: "proxy_info", outcome: "error", error: expect.stringContaining("fetch failed") });
@@ -112,7 +114,7 @@ describe("POST /launch", () => {
   });
 
   it("does not launch an agent the proxy refused a recording, and keeps what was asked for the next try", async () => {
-    const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new Error("POST http://127.0.0.1:3347/recordings", { cause: new Error("500 Internal Server Error") })) });
+    const { opened, settingsPath, launch, next, work } = await app({ proxyRecording: () => Promise.reject(new BadGateway("The proxy did not make a recording for the agent: POST http://127.0.0.1:3347/recordings: 500 Internal Server Error")) });
     const res = await launch({ session: "work", command: "claude" });
     expect(res.status).toBe(502);
     await work();
@@ -157,17 +159,10 @@ describe("routes", () => {
     expect([res.status, res.headers.get("access-control-allow-methods"), res.headers.get("access-control-allow-headers")]).toEqual([204, "GET, POST", "content-type"]);
   });
 
-  it("answers a method a route does not take with 405, and an unknown route with 404", async () => {
-    const { url } = await app();
-    const res = await fetch(`${url}/launch`, { method: "DELETE" });
-    expect([res.status, res.headers.get("allow")]).toEqual([405, "GET, POST"]);
-    expect((await fetch(`${url}/api/nothing`)).status).toBe(404);
-  });
-
   it("serves its log at /logs to the UI's page, and refuses it to a page from another site", async () => {
     const { url } = await app();
     const res = await fetch(`${url}/logs`, { headers: { origin: "http://127.0.0.1:3346" } });
-    expect([res.status, res.headers.get("access-control-allow-origin"), await res.text()]).toEqual([200, "*", "the app server's log"]);
+    expect([res.status, res.headers.get("access-control-allow-origin"), await res.text()]).toEqual([200, "http://127.0.0.1:3346", "the app server's log"]);
     expect((await fetch(`${url}/logs`, { headers: { origin: "https://example.com" } })).status).toBe(403);
   });
 });

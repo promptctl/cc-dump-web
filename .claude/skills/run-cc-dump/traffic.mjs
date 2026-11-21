@@ -7,6 +7,9 @@
 // A proxy whose upstream is not mock-anthropic (a stack forwarding to the real API, recording into the user's real
 // recordings) is refused before anything is sent: the mock, asked at its upstream for a path it has no endpoint for,
 // names itself in its error.
+// The one Server-Sent Events decoder, the app's own (node runs the .ts source as it is).
+import { serverSentEvents } from "../../../packages/log/src/wire.ts";
+
 const turns = Number(process.argv[2] ?? 3);
 if (!Number.isInteger(turns) || turns < 1) throw new Error(`turns must be a positive integer, got ${JSON.stringify(process.argv[2])}`);
 const reader = `http://127.0.0.1:${process.env.CC_DUMP_READER_PORT ?? 3347}`;
@@ -41,10 +44,8 @@ for (let turn = 1; turn <= turns; turn++) {
   });
   const text = await (await ok(res, `turn ${turn}`)).text();
   // The assistant's reply goes back into the history, as an agent's would: the text deltas joined.
-  const said = text
-    .split("\n")
-    .filter((line) => line.startsWith("data: "))
-    .map((line) => JSON.parse(line.slice("data: ".length)).delta)
+  const said = serverSentEvents(text, true)
+    .events.map(({ data }) => JSON.parse(data).delta)
     .filter((delta) => delta?.type === "text_delta")
     .map((delta) => delta.text)
     .join("");

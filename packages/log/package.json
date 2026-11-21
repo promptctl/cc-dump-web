@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./answer": "./src/answer.ts",
     "./address": "./src/address.ts",
     "./ending": "./src/ending.ts",
     "./describe": "./src/describe.ts",
@@ -11,7 +12,8 @@
     "./testing": "./src/testing.ts",
     "./line": "./src/line.ts",
     "./lines": "./src/lines.ts",
-    "./trace": "./src/trace.ts"
+    "./trace": "./src/trace.ts",
+    "./wire": "./src/wire.ts"
   },
   "scripts": {
     "typecheck": "tsc"

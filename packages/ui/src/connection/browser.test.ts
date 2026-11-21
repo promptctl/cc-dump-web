@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
+import { routes, stream, type Route } from "@cc-dump/log/answer";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { processLog } from "@cc-dump/log/lines";
 import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testing";
 import { PassThrough } from "node:stream";
+import { ROUTES } from "@cc-dump/log/wire";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { recordedAt } from "../testing.ts";
@@ -54,14 +56,26 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
   return { abort, next, queued };
 }
 
-type StatusArrival = { status: ProxyStatus } | "dropped" | { failed: Error };
+type StatusArrival = { status: ProxyStatus } | "dropped";
 
 // The proxy's status, whose arrivals the test waits on, as `reading` does a read's.
 function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   const abort = new AbortController();
   onTestFinished(() => abort.abort());
   const { arrive, next } = arrivals<StatusArrival>();
-  connection.status({ status: (status) => arrive({ status }), dropped: () => arrive("dropped"), failed: (failed) => arrive({ failed }) }, abort.signal);
+  connection.status(
+    {
+      status: (status) => arrive({ status }),
+      unreadable: (error) => {
+        throw error;
+      },
+      dropped: () => arrive("dropped"),
+      failed: (error) => {
+        throw error;
+      },
+    },
+    abort.signal,
+  );
   return { abort, next };
 }
 
@@ -245,23 +259,6 @@ describe("the browser connection", () => {
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
 
-  it("reports a status that does not parse as failed, and goes on to the statuses after it", async () => {
-    const reader = await serving((_req, res) => {
-      res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: {"state":"watching","changed_source":[]}\n\ndata: ${JSON.stringify(watching())}\n\n`);
-    });
-    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
-    expect([await status.next(), await status.next()]).toEqual([
-      {
-        failed: expect.objectContaining({
-          message: `GET ${reader.url}/status`,
-          cause: expect.objectContaining({ message: "proxy status: source: is not an object" }),
-        }),
-      },
-      { status: watching() },
-    ]);
-  });
-
   it("follows the proxy across a restart: the connection, dropped, reconnects to the restarted proxy's status", async () => {
     const statuses: ProxyStatus[] = [watching("/proxy/src/proxy.ts"), watching()];
     let connections = 0;
@@ -295,13 +292,6 @@ describe("the browser connection", () => {
     while (arrival === "dropped") arrival = await status.next();
     expect(arrival).toEqual({ status: watching() });
   });
-
-  it("reports a status not served as failed", async () => {
-    const reader = await serving((_req, res) => res.writeHead(404).end());
-    expect(await statusing(createBrowserConnection({ readerPort: reader.port })).next()).toEqual({
-      failed: expect.objectContaining({ message: expect.stringMatching(/\/status: not served; /) }),
-    });
-  });
 });
 
 type LogArrival = "opened" | { line: string } | "dropped" | { failed: Error };
@@ -324,7 +314,7 @@ describe("a part's log", () => {
   it("reads the app server's lines kept, then each as it is written", async () => {
     const { log, logs } = processLog("server", new PassThrough());
     log(event("kept"));
-    const server = await serving(logs);
+    const server = await serving(routes({ [ROUTES.logs]: { GET: logs } }));
     const logged = logging(createBrowserConnection({ serverPort: server.port }), "server");
     expect([await logged.next(), await logged.next()]).toEqual(["opened", { line: "kept" }]);
     log(event("written"));
@@ -336,10 +326,15 @@ describe("a part's log", () => {
     log(event("before"));
     let connections = 0;
     // The first connection is cut once its lines are sent; `retry` makes the browser reconnect in 10ms, not its default 3s.
-    const reader = await serving((req, res, work) => {
-      logs(req, res, work);
-      if (++connections === 1) res.write("retry: 10\n\n", () => res.destroy());
-    });
+    const dropping: Route = async (req, work, matched) => {
+      const reply = await logs(req, work, matched);
+      if (reply.kind !== "stream" || ++connections > 1) return reply;
+      return stream((res) => {
+        reply.write(res);
+        res.write("retry: 10\n\n", () => res.destroy());
+      });
+    };
+    const reader = await serving(routes({ [ROUTES.logs]: { GET: dropping } }));
     const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
     expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "before" }, "dropped"]);
     log(event("after"));
@@ -382,8 +377,8 @@ describe("launching", () => {
   it("fails a refusal in the app server's words, tmux's own when tmux refused", async () => {
     const { port } = await app({ tmux: { sessions: () => Promise.reject(new TmuxRefused("no sessions")), newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
     const connection = createBrowserConnection({ serverPort: port });
-    await expect(connection.launcher(signal())).rejects.toThrow(new Error("no sessions"));
-    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toThrow(new Error("can't find session: gone"));
+    await expect(connection.launcher(signal())).rejects.toMatchObject({ status: 502, message: "no sessions" });
+    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toMatchObject({ status: 502, message: "can't find session: gone" });
   });
 
   it("fails naming the request when the app server cannot be reached", async () => {

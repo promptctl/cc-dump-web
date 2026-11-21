@@ -1,10 +1,10 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { parseLogLine } from "@cc-dump/log/line";
+import { ask, READ_ENDED, READ_FAILED, recordingPath, ROUTES } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { ask } from "@cc-dump/proxy/ask";
 import { offsetOf, parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
-import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
+import { parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
 import { refusedAt, type Connection } from "./connection.ts";
 
@@ -15,11 +15,11 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
   const origin = `http://${LOOPBACK}:${readerPort}`;
   const server = `http://${LOOPBACK}:${serverPort}`;
   return {
-    recordings: (signal) => ask(`${origin}/recordings`, { signal }, parseListings),
+    recordings: (signal) => ask(`${origin}${ROUTES.recordings}`, { signal }, parseListings),
     // A POST with no body is a simple request, so the browser sends it without a preflight, which the reader does not answer.
-    agentRecording: () => ask(`${origin}/recordings`, { method: "POST" }, parseListing),
+    agentRecording: () => ask(`${origin}${ROUTES.recordings}`, { method: "POST" }, parseListing),
     read: (name, reader, signal) => {
-      const url = `${origin}/recordings/${encodeURIComponent(name)}`;
+      const url = `${origin}${recordingPath(name)}`;
       const stream = eventStream(url, signal, reader.failed);
       // A message that does not parse ends the read: what follows it cannot be trusted to be the recording. Its id is
       // where in the recording its line ends.
@@ -36,7 +36,7 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       // A read's last message, a finished recording's end or the reader's failure: closed on it, or the EventSource
       // reconnects and reads the recording again, or into the same failure.
       stream.on(
-        "end",
+        READ_ENDED,
         parseRecordingEnd,
         (end) => {
           stream.close();
@@ -45,47 +45,32 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
         stream.fail,
       );
       const failed = ({ message }: ReadFailure) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) }));
-      stream.on("failed", parseReadFailure, failed, stream.fail);
+      stream.on(READ_FAILED, parseReadFailure, failed, stream.fail);
     },
-    // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported,
-    // and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
+    // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported
+    // as unreadable, and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted
     // proxy's status once it reconnects.
     status: (watcher, signal) => {
-      const stream = eventStream(`${origin}/status`, signal, watcher.failed);
-      stream.on("message", parseProxyStatus, watcher.status, watcher.failed);
+      const stream = eventStream(`${origin}${ROUTES.status}`, signal, watcher.failed);
+      stream.on("message", parseProxyStatus, watcher.status, watcher.unreadable);
       stream.dropped(watcher.dropped);
     },
     // A line's id is its position, which the EventSource sends back when it reconnects, so the same process resumes
     // after the last line read (processLog). A line whose event does not parse is delivered unread (parseLogLine); a
     // message with no position is no log's, and ends it.
     logs: (part, watcher, signal) => {
-      const stream = eventStream(`${part === "proxy" ? origin : server}/logs`, signal, watcher.failed);
+      const stream = eventStream(`${part === "proxy" ? origin : server}${ROUTES.logs}`, signal, watcher.failed);
       stream.on("message", parseLogLine, watcher.line, stream.fail);
       stream.opened(watcher.opened);
       stream.dropped(watcher.dropped);
     },
-    launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
+    launcher: (signal) => ask(`${server}${ROUTES.launch}`, { signal }, parseLauncher),
     launch: (launch, signal) =>
-      answer(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
+      ask(`${server}${ROUTES.launch}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
     // Ten reconnects, about a minute at the library's backoff, outlast the app server's restart on a change to its
     // source; a window that is gone is then no longer retried.
     tmux: (window) => new WebSocketTmuxClient({ url: `ws://${LOOPBACK}:${serverPort}${tmuxPath(window)}`, autoConnect: false, reconnect: { maxAttempts: 10 } }),
   };
-}
-
-// The app server's answer to one request, parsed. A refusal it answers fails in its own words, which are the user's to
-// read as they are; anything else fails naming the request.
-async function answer<T>(url: string, init: RequestInit, parse: (json: string) => T): Promise<T> {
-  let refusal: string;
-  try {
-    const res = await fetch(url, init);
-    const text = await res.text();
-    if (res.ok) return parse(text);
-    refusal = parseFailure(text).error;
-  } catch (error) {
-    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
-  }
-  throw new Error(refusal);
 }
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported

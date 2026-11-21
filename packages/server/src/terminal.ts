@@ -1,12 +1,12 @@
-import type { Duplex } from "node:stream";
+import { admit, askedOf, refuseUpgrade, Refused } from "@cc-dump/log/answer";
 import { loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
+import { describe } from "@cc-dump/log/describe";
 import type { SpawnOptions } from "@promptctl/tmux-control-mode-js";
 import type { BridgeObservabilityEvent } from "@promptctl/tmux-control-mode-js/websocket";
 import { createWebSocketBridge } from "@promptctl/tmux-control-mode-js/websocket/server";
 import { WebSocketServer } from "ws";
 import { TMUX_PATH } from "./address.ts";
 import { sessionId, startTime, windowId, type TmuxWindow } from "./format.ts";
-import { fromThisMachine } from "./origin.ts";
 import { attach } from "./tmux.ts";
 
 // What a page's terminal reaches tmux through (docs/design/01-features.md, F13): a WebSocket at a window's address
@@ -19,12 +19,16 @@ import { attach } from "./tmux.ts";
 // has said how it ended, the closing of the page's tmux client included.
 export function createTerminal(log: Log, options: SpawnOptions = {}): Upgrade {
   return (req, socket, head, work) => {
-    const asked = askedFor(req.url!, req.headers.origin);
-    if ("refused" in asked) return Promise.resolve(refuse(socket, work, asked.refused, asked.why));
+    let window: TmuxWindow;
+    try {
+      window = windowOf(admit(askedOf(req)).url);
+    } catch (error) {
+      return Promise.resolve(refuseUpgrade(socket, work, error));
+    }
     const bridge = createWebSocketBridge({
       // The page's own tmux client: only closing a client takes back the size it declared, so a page sizes the window
       // while it is there, and two pages on one window size it as two terminals do.
-      createClient: () => attach(options, asked.window),
+      createClient: () => attach(options, window),
       disposeClient: (client) => client.close(),
       onEvent: bridgeEvent(log, work),
     });
@@ -37,7 +41,7 @@ export function createTerminal(log: Log, options: SpawnOptions = {}): Upgrade {
       socket.once("close", () => done());
       // With a listener on wsClientError ws neither answers nor closes a handshake it cannot take (a malformed one), so
       // the refusal does both.
-      sockets.on("wsClientError", (error) => done(refuse(socket, work, "400 Bad Request", error)));
+      sockets.on("wsClientError", (error) => done(refuseUpgrade(socket, work, new Refused(400, describe(error), { cause: error }))));
       sockets.handleUpgrade(req, socket, head, (ws) =>
         done(bridge.handleConnection(ws, { url: req.url!, headers: req.headers, remoteAddress: req.socket.remoteAddress! })),
       );
@@ -45,33 +49,19 @@ export function createTerminal(log: Log, options: SpawnOptions = {}): Upgrade {
   };
 }
 
-// A handshake refused: the status it is answered with, and why, which fails its unit of work.
-type Refusal = { refused: string; why: unknown };
-
-// [LAW:single-enforcer] The one way an upgrade is refused: answered with `status`, then closed once the answer is
-// written, as ws closes one it refuses itself, and its unit of work failed with `why`. A socket already closed takes
-// no answer, and the upgrade is failed all the same.
-function refuse(socket: Duplex, work: Work, status: string, why: unknown) {
-  work.fail(why);
-  socket.once("finish", () => socket.destroy());
-  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-}
-
 const windowPath = new RegExp(`^${TMUX_PATH}/([^/]+)/([^/]+)/([^/]+)$`);
 
-// [LAW:parse-dont-validate] What a WebSocket's request asks for: a window, by its address, from a page on this machine,
-// or a refusal saying why. A target that does not parse as a URL's, or a path of the shape that names no window, is
-// refused as any path naming nothing is.
-function askedFor(url: string, origin: string | undefined): { window: TmuxWindow } | Refusal {
-  if (!fromThisMachine(origin)) return { refused: "403 Forbidden", why: new Error(`A page at ${origin} cannot reach tmux`) };
-  const path = windowPath.exec(URL.parse(url, "http://server")?.pathname ?? "");
+// [LAW:parse-dont-validate] The window a WebSocket's request asks for, by its address, or a refusal: a path of the shape
+// that names no window is refused as any path naming nothing is.
+function windowOf({ pathname }: URL): TmuxWindow {
+  const path = windowPath.exec(pathname);
   try {
     if (path !== null)
-      return { window: { start_time: startTime(path[1]!), session_id: sessionId(decodeURIComponent(path[2]!)), window_id: windowId(decodeURIComponent(path[3]!)) } };
+      return { start_time: startTime(path[1]!), session_id: sessionId(decodeURIComponent(path[2]!)), window_id: windowId(decodeURIComponent(path[3]!)) };
   } catch {
     // An id that does not parse, or an escape that does not decode, names no window.
   }
-  return { refused: "404 Not Found", why: new Error(`Nothing takes a WebSocket at ${url}`) };
+  throw new Refused(404, `Nothing takes a WebSocket at ${pathname}`);
 }
 
 // [LAW:nothing-unseen] What the page's bridge reports, one event each, in the trace of the page's connection: its
