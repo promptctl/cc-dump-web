@@ -392,7 +392,7 @@ const RowView = memo(
 function Shown({ row, reading }: { row: Row; reading: boolean }) {
   switch (row.kind) {
     case "exchange":
-      return <ExchangeLine exchange={row.exchange} reading={reading} />;
+      return <ExchangeLine exchange={row.exchange} step={row.step} reading={reading} />;
     case "group":
       return <h2 className="pt-2 pl-7 font-sans text-[11px] tracking-wider text-foreground-muted uppercase">{row.title}</h2>;
     case "set":
@@ -515,12 +515,12 @@ function Lineage({ parent, doing }: { parent: Parent; doing: Doing }) {
 // gives way to a narrow window, cut with an ellipsis, as is any rare value that outgrows its column. It is a band on the
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
 // exchange its end.
-function ExchangeLine({ exchange: { exchange, facts, sender }, reading }: { exchange: FormattedExchange; reading: boolean }) {
+function ExchangeLine({ exchange: { exchange, facts, sender }, step, reading }: { exchange: FormattedExchange; step: number; reading: boolean }) {
   const { end } = exchange;
   const reason = exchange.response.head?.reason;
   return (
     <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_14ch] items-baseline gap-x-3 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
-      <span className="text-right text-foreground-muted">{facts.ordinal}</span>
+      <span className="text-right text-foreground-muted">{step}</span>
       <time dateTime={facts.began} title={facts.began}>
         {clockTime(facts.began)}
       </time>

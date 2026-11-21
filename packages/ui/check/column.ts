@@ -11,11 +11,11 @@ import { fileConnection } from "./recording.ts";
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
 // what each recording holds and each promise a step breaks, and fails if one did. A recording is read as the tab reads
-// it (historyOf), so its memory is the tab's. [LAW:verifiable-goals] It reads what the history says each step stands after, the keys and the
-// selections it imports, and the column's rules as docs/design/02-design.md states them; it decides the rest itself,
-// each rule stated anew over its own reading: the path, each step's level and depth, what a thread carries on from,
-// and what each agent says on the wire, read here from the headers (format/wire.ts) and the blocks, never from what
-// the history recorded of them (StepWire).
+// it (src/reading.ts), so its memory is the tab's. [LAW:verifiable-goals] It reads what the history says each step
+// stands after, the keys and the selections it imports, and the column's rules as docs/design/02-design.md states them;
+// it decides the rest itself, each rule stated anew over its own reading: the path, each step's level and depth, what a
+// thread carries on from, and what each agent says on the wire, read here from the headers (format/wire.ts) and the
+// blocks, never from what the history recorded of them (view/history.ts).
 
 // What a recording holds: its steps, and each fork's, nest's and thread's line the column lists at some step, by its
 // key, with what it says where it says the most.
@@ -375,16 +375,22 @@ function doingOf(
 }
 
 // A recording's history, read as the tab reads it (reading.ts), so what the check holds is what the tab holds: its
-// file's events, a frame's worth at a time, each frame's exchanges formatted and the bodies of those that ended let go.
+// file's events, a frame's worth at a time, each frame's exchanges formatted and an ended one held as what it showed.
 // What a write cut short left after its last whole event is said and not read.
 async function historyOf(recording: string): Promise<History> {
   const formatted = await new Promise<FormattedExchange[]>((resolve, reject) => {
     let shown: FormattedExchange[] = [];
     readRecording(fileConnection, recording, (formatted) => (shown = formatted), frames, new AbortController().signal, (reading) => {
-      if (reading.state === "failed") reject(reading.error);
-      if (reading.state !== "ended") return;
-      if (reading.end.unterminated_bytes > 0) console.log(`${recording}: its last ${reading.end.unterminated_bytes} bytes are cut off, and not read`);
-      resolve(shown);
+      switch (reading.state) {
+        case "failed":
+          return reject(reading.error);
+        case "ended":
+          if (reading.end.unterminated_bytes > 0) console.log(`${recording}: its last ${reading.end.unterminated_bytes} bytes are cut off, and not read`);
+          return resolve(shown);
+        case "none":
+        case "reading":
+          return;
+      }
     });
   });
   return createHistory()(formatted);

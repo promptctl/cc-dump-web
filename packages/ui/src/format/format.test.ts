@@ -334,13 +334,13 @@ describe("format", () => {
       ...streamed("c", [messageStart, messageDelta], false),
     ]);
     const [a, b, c] = formatted.map(({ facts }) => facts);
-    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, uncached: 4, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
+    expect(a).toEqual({ began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, uncached: 4, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
     // The model stays among the parameters the request sent.
     expect(group(formatted[0]!, "request")[1]!.parts).toEqual([{ kind: "fields", fields: [["model", '"claude-fable-5-2"']] }]);
     // One in flight: what is not known yet is undefined.
-    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, uncached: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
+    expect(b).toEqual({ began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, uncached: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
     // A stream's message as far as it has arrived: a count the API did not give is undefined.
-    expect(c).toMatchObject({ ordinal: 3, status: 200, uncached: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
+    expect(c).toMatchObject({ status: 200, uncached: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
   });
 
   it("reads the agent's session from the request's metadata, as Claude Code sends it, and none from metadata of another shape", () => {
@@ -479,18 +479,18 @@ describe("format", () => {
     expect(lines(group(formatted[1]!, "request"))).toEqual(["http HTTP request"]);
   });
 
-  it("numbers an exchange by its place among those shown, as one shown before its request head leaves them", () => {
+  it("formats an exchange on its own, so one shown before its request head that turns out to be no Messages request leaves another as it was", () => {
     const formatter = createFormatter();
     const headless = response("other", 200, [], Buffer.from("{}"));
     const messages = request("messages", { model: "m", messages: [] });
     const first = formatter(exchanges([...headless, ...messages]));
-    expect(first.map(({ facts }) => facts.ordinal)).toEqual([1, 2]);
+    expect(first.map(({ exchange }) => exchange.trace_id)).toEqual(["other", "messages"]);
     const later = formatter(exchanges([...headless, ...messages, ...request("other", {}, { method: "GET", url: "/v1/models" })]));
-    expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([["messages", 1]]);
-    expect(group(later[0]!, "request")).toBe(group(first[1]!, "request"));
+    expect(later).toHaveLength(1);
+    expect(later[0]).toBe(first[1]);
   });
 
-  it("holds a block a later request resends as it was once, and a block made anew where its place holds another", () => {
+  it("interns a block a later request resends as it was, and makes a block anew where its place holds another", () => {
     const tools = [{ name: "Read", description: "Reads a file." }];
     const sent = (trace: string, first: string, more: unknown[]) => request(trace, { model: "m", system: "Be brief.", tools, messages: [{ role: "user", content: first }, ...more] });
     const [a, b, c] = format([
@@ -498,11 +498,10 @@ describe("format", () => {
       ...sent("b", "Hi.", [{ role: "assistant", content: "Hello." }, { role: "user", content: "More." }]),
       ...sent("c", "Bye.", []),
     ]);
-    const sentOf = ({ groups }: FormattedExchange) => groups.filter(({ key }) => key !== "request" && key !== "response" && key !== "reply");
-    expect(sentOf(b!).slice(0, 3)).toEqual(sentOf(a!));
-    sentOf(a!).forEach((one, index) => expect(sentOf(b!)[index]).toBe(one));
-    expect(sentOf(c!).slice(0, 2).every((one, index) => one === sentOf(a!)[index])).toBe(true);
-    expect(group(c!, "message.0")).not.toBe(group(a!, "message.0"));
+    const groupOf = ({ groups }: FormattedExchange, key: string) => groups.find((one) => one.key === key)!;
+    for (const key of ["tools", "system", "message.0"]) expect(groupOf(b!, key)).toBe(groupOf(a!, key));
+    for (const key of ["tools", "system"]) expect(groupOf(c!, key)).toBe(groupOf(a!, key));
+    expect(groupOf(c!, "message.0")).not.toBe(groupOf(a!, "message.0"));
     expect(group(c!, "message.0").map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Bye." }]]);
   });
 

@@ -1,5 +1,7 @@
 import { describe as said } from "@cc-dump/log/describe";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
 import { createFormatter, type FormattedExchange } from "./format/format.ts";
@@ -131,8 +133,8 @@ describe("readRecording", () => {
     expect(shown[2]).toEqual(formatted([event(1), event(1), end(1)]));
   });
 
-  // Its bodies are let go once it is formatted, and an exchange before it that turns out to be no Messages request
-  // moves it among those shown, so it is formatted again from what its bodies made.
+  // The read holds what an ended exchange showed and none of its events, and an exchange before it that turns out to be
+  // no Messages request moves it among those shown.
   it("shows an ended exchange as its body made it in every frame after the one it ended in", () => {
     const { frames, shown, deliver } = started();
     const body = Buffer.from(JSON.stringify({ model: "m", messages: [{ role: "user", content: "Hi." }] })).toString("base64");
@@ -151,6 +153,50 @@ describe("readRecording", () => {
     expect(shown[1]).toEqual(formatted(before));
     expect(shown[2]).toEqual(formatted([...before, models]));
     expect(shown[2]![0]!.groups.at(-2)!.blocks.map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Hi." }]]);
+  });
+
+  // [LAW:verifiable-goals] The ticket's goal, a recording's memory growing with what its history holds: a body event the
+  // read no longer needs is collectable, and one it still needs is not, so the first cannot pass by the test missing it.
+  it("holds the body events of the exchanges in flight and none of an ended exchange's", async () => {
+    setFlagsFromString("--expose-gc");
+    const collect = runInNewContext("gc") as () => void;
+    const { frames, deliver } = started();
+    const sent = (n: number, ending: boolean) => {
+      const chunk: RecordedEvent = { ...at(`t${n}`), type: "request_body", base64: Buffer.from("x".repeat(1000)).toString("base64") };
+      deliver(event(n), chunk, ...(ending ? [end(n)] : []));
+      return new WeakRef(chunk);
+    };
+    const [flying, ended] = [sent(1, false), sent(2, true)];
+    frames.run();
+    // A WeakRef's target is kept alive for the job that made it.
+    await new Promise((resolve) => setTimeout(resolve));
+    collect();
+    expect([flying.deref() !== undefined, ended.deref() !== undefined]).toEqual([true, false]);
+  });
+
+  it("ends as failed, with what it threw, when showing what is pending throws, at a frame and at its end", () => {
+    const error = new Error("sink broke");
+    // The list it is shown as the read begins is empty, and is not a frame.
+    const sink = (shown: FormattedExchange[]) => {
+      if (shown.length > 0) throw error;
+    };
+    const begun = () => {
+      const { connection, reads } = fakeConnection();
+      const frames = handFrames();
+      const states: Reading[] = [];
+      readRecording(connection, agent, sink, frames.frames, new AbortController().signal, (reading) => states.push(reading));
+      const request: RecordedEvent = { ...at("t1"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] };
+      reads[0]!.reader.event(request, 100);
+      return { reader: reads[0]!.reader, signal: reads[0]!.signal, frames, states };
+    };
+    const atFrame = begun();
+    atFrame.frames.run();
+    const atEnd = begun();
+    atEnd.reader.end({ unterminated_bytes: 0 });
+    for (const { states, signal } of [atFrame, atEnd]) {
+      expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
+      expect(signal.aborted).toBe(true);
+    }
   });
 
   it("cancels its pending frame when aborted, and reports nothing", () => {

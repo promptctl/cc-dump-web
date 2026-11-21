@@ -7,7 +7,7 @@ import type { Change, ForkRow, Row, SetRow } from "./rows.ts";
 
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
 const standing = { depth: 0, dimmed: false };
-const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", ...standing };
+const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, step: 1, change: "added", ...standing };
 const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", ...standing };
 const brought = (shown: KeyedBlock) => ({ step: 1, block: shown, reply: false, rewrote: undefined, previous: undefined });
 // A set of one block, which step 1 brought and step 2 took away, at the step after.

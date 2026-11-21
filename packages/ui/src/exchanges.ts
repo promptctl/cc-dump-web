@@ -3,8 +3,8 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 
 export type Of<T extends RecordedEvent["type"]> = Extract<RecordedEvent, { type: T }>;
 
-// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, until a read
-// lets them go (release), and the event that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
+// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and the event
+// that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
 // flight; never, for one whose write failed, since the recorder counts a failed write and goes on writing the
 // exchange's later events.
 // [LAW:one-source-of-truth] `completedBy`: the event after which no more of it will be recorded: its trailers, which the
@@ -25,46 +25,45 @@ export function trailersOf(side: RequestSide | ResponseSide) {
 // events.
 export type Exchange = { trace_id: TraceId; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
 
-// [LAW:types-are-the-program] An exchange as the conversation shows it: its trace, its heads and its end, and none of
-// its bodies, which only the formatter reads (format/format.ts).
-export type ExchangeShown = { trace_id: TraceId; request: { head: Of<"request"> | undefined }; response: { head: Of<"response"> | undefined }; end: Of<"end"> | undefined };
-
-// An exchange that has ended, and so takes no more events (add).
-export type Ended = Exchange & { end: Of<"end"> };
-export const isEnded = (exchange: Exchange): exchange is Ended => exchange.end !== undefined;
-
-// [LAW:one-source-of-truth] What a read lets go of an ended exchange once it is formatted: its bodies' chunks. A trace
-// takes nothing after its end, and the formatter reads an ended side from what it made under the side's latest event,
-// which the side keeps (latest), never from its chunks again. So a read holds a recording's bodies only while their
-// exchanges run.
-export function release({ request, response }: Ended): void {
-  request.body = [];
-  response.body = [];
-}
+// [LAW:one-source-of-truth] An exchange as the conversation shows it: its trace, its heads and its end, derived from
+// `Exchange`, and none of its bodies, which only the formatter reads (format/format.ts).
+export type ExchangeShown = Pick<Exchange, "trace_id" | "end"> & { request: Pick<RequestSide, "head">; response: Pick<ResponseSide, "head"> };
 
 // The last event that changed a side, so two derivations of a side with the same latest event are the same side.
 export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefined {
   return side.completedBy ?? side.body.at(-1) ?? side.head;
 }
 
-// The read's exchanges, by trace, in the order they began.
-export type ByTrace = Map<TraceId, Exchange>;
+// [LAW:types-are-the-program] A trace that has ended takes no more events (add), and its end is all a read must keep of
+// it to refuse them. A read that has made what it needs of an ended exchange holds that in its place, which is `Held`:
+// an `Ended` with whatever else the read keeps, and none of the exchange's events.
+export type Ended = { end: Of<"end"> };
+const isOpen = (held: Exchange | Ended): held is Exchange => held.end === undefined;
+
+// The read's traces, by trace, in the order they began: an exchange while it takes events, and, once it has ended and the
+// read has let it go, what the read holds in its place. A read that holds nothing in its place holds only exchanges.
+export type ByTrace<Held extends Ended = never> = Map<TraceId, Exchange | Held>;
 
 // [LAW:single-enforcer] [LAW:parse-dont-validate] The one step that places an event in its exchange, and the one place
 // a recording is held to the shape the proxy writes: a trace holds one request head and one response head, at most one
 // trailers per side, and one end; a side's head comes before the rest of it and its trailers after, and a trace takes
-// nothing after its end. It returns the exchange the event is placed in. An event that breaks the shape is refused, as
-// what is wrong with it, naming its trace and type, and placed nowhere: what `byTrace` holds stays as it was. A head
-// never recorded is the shape: the recorder writes a side's body without it when the head's write fails.
-export function add(byTrace: ByTrace, event: RecordedEvent): Exchange | string {
-  const exchange = byTrace.get(event.trace_id) ?? begun(event);
+// nothing after its end, whether `byTrace` still holds its exchange or the read's own `Held` in its place. It returns the
+// exchange the event is placed in. An event that breaks the shape is refused, as what is wrong with it, naming its trace
+// and type, and placed nowhere: what `byTrace` holds stays as it was. A head never recorded is the shape: the recorder
+// writes a side's body without it when the head's write fails.
+export function add<Held extends Ended>(byTrace: ByTrace<Held>, event: RecordedEvent): Exchange | string {
+  const held = byTrace.get(event.trace_id);
+  if (held !== undefined && !isOpen(held)) return refused(event, "follows its trace's end");
+  const exchange = held ?? begun(event);
   const place = placing(exchange, event);
-  if (typeof place === "string") return `trace ${event.trace_id}'s ${event.type} ${place}`;
+  if (typeof place === "string") return refused(event, place);
   place();
   exchange.latest = event;
   byTrace.set(event.trace_id, exchange);
   return exchange;
 }
+
+const refused = (event: RecordedEvent, why: string) => `trace ${event.trace_id}'s ${event.type} ${why}`;
 
 const begun = (event: RecordedEvent): Exchange => ({
   trace_id: event.trace_id,
@@ -77,7 +76,6 @@ const begun = (event: RecordedEvent): Exchange => ({
 
 // What `event` does to `exchange`, not yet done, or why it has no place there.
 function placing(exchange: Exchange, event: RecordedEvent): string | (() => void) {
-  if (exchange.end !== undefined) return "follows its trace's end";
   switch (event.type) {
     case "request":
       return head(exchange.request, event);
