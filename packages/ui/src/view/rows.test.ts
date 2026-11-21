@@ -1,4 +1,4 @@
-import { exchanges, recordedAt } from "../testing.ts";
+import { base64, exchanges, recordedAt, repliedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
 import { categories, type Block, type Category } from "../format/blocks.ts";
@@ -12,7 +12,6 @@ import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, descri
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const at = recordedAt(timestamp);
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 const request = (trace: string, body: unknown): RecordedEvent[] => [
   { ...at(trace), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
   { ...at(trace), type: "request_body", base64: base64(body) },
@@ -441,12 +440,7 @@ describe("an exchange's line", () => {
 const say = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
 
 // A reply, which ends its turn unless it says why else it stopped.
-const reply = (trace: string, content: unknown[], stop_reason = "end_turn"): RecordedEvent[] => [
-  { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { ...at(trace), type: "response_trailers", headers: [] },
-  { ...at(trace), type: "end", outcome: "ok" },
-];
+const reply = (trace: string, content: unknown[], stop_reason = "end_turn") => repliedAt(timestamp)(trace, { content, stop_reason });
 const user = (...content: unknown[]) => ({ role: "user", content });
 const assistant = (...content: unknown[]) => ({ role: "assistant", content });
 const main = { model: "m", system: [text("Be brief.")], tools: [{ name: "Read" }] };

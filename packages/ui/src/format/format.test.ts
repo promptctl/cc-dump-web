@@ -3,7 +3,7 @@ import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import type { Block } from "./blocks.ts";
-import { createFormatter, type FormattedExchange } from "./format.ts";
+import { createFormatter, inputOf, type FormattedExchange } from "./format.ts";
 import { doesNotFit, fieldValue } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
@@ -334,13 +334,13 @@ describe("format", () => {
       ...streamed("c", [messageStart, messageDelta], false),
     ]);
     const [a, b, c] = formatted.map(({ facts }) => facts);
-    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, input: 46100, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
+    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, uncached: 4, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
     // The model stays among the parameters the request sent.
     expect(group(formatted[0]!, "request")[1]!.parts).toEqual([{ kind: "fields", fields: [["model", '"claude-fable-5-2"']] }]);
     // One in flight: what is not known yet is undefined.
-    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, input: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
+    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, uncached: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
     // A stream's message as far as it has arrived: a count the API did not give is undefined.
-    expect(c).toMatchObject({ ordinal: 3, status: 200, input: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
+    expect(c).toMatchObject({ ordinal: 3, status: 200, uncached: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
   });
 
   it("reads the agent's session from the request's metadata, as Claude Code sends it, and none from metadata of another shape", () => {
@@ -359,7 +359,7 @@ describe("format", () => {
     const facts = (usage: object) => {
       const message = { ...messageStart.message, stop_reason: "end_turn", usage };
       const { facts } = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
-      return [facts.input, facts.cacheRead, facts.cacheWritten];
+      return [inputOf(facts), facts.cacheRead, facts.cacheWritten];
     };
     // A cached turn, which read most of its input and wrote some; one that used no cache; one from before the cache fields.
     expect(facts({ input_tokens: 6, cache_read_input_tokens: 40000, cache_creation_input_tokens: 5000, output_tokens: 9 })).toEqual([45006, 40000, 5000]);
@@ -371,7 +371,7 @@ describe("format", () => {
     // A stream's counts come from its message_start, and stay the same once the message_delta has added its own.
     const start = { ...messageStart, message: { ...messageStart.message, usage: { input_tokens: 3, cache_read_input_tokens: 800, cache_creation_input_tokens: 200, output_tokens: 1 } } };
     const streamedFacts = one([...request("a", { model: "m", messages: [] }), ...streamed("a", [start, messageDelta], false)]).facts;
-    expect([streamedFacts.input, streamedFacts.cacheRead, streamedFacts.cacheWritten, streamedFacts.output]).toEqual([1003, 800, 200, 90]);
+    expect([inputOf(streamedFacts), streamedFacts.cacheRead, streamedFacts.cacheWritten, streamedFacts.output]).toEqual([1003, 800, 200, 90]);
   });
 
   it("shows a block of a type it does not know as raw JSON under its type name, in a request and in a stream", () => {

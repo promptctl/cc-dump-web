@@ -2,7 +2,7 @@ import type { FormattedExchange } from "../format/format.ts";
 import { forksOf, type Segment } from "./history.ts";
 import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
 
-// The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's shape and what it
+// The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's stack and what it
 // says on hover, pure.
 
 // What went wrong at a step: its exchange failed (an error, or an HTTP error status), or what it brought into the
@@ -24,22 +24,44 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
 // where a history parts from another, which its mark says with a notch.
 export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => new Set([...forksOf(segments).values()].flat());
 
-// The largest output and duration among the steps, which a mark's shape is relative to; 0 while none is known.
-export type Most = { output: number; duration: number };
+// [LAW:types-are-the-program] The kinds of a step's tokens, named as the facts name them, in the order its stack draws
+// them, top to bottom: the output, over what it wrote to the cache, over what it read from the cache, over the input
+// the cache did not hold at the foot. The list is the type, so a kind is drawn wherever it is a kind.
+export const kinds = ["output", "cacheWritten", "cacheRead", "uncached"] as const;
+export type Kind = (typeof kinds)[number];
+export type TokenFacts = Pick<FormattedExchange["facts"], Kind>;
 
-export function mostOf(segments: readonly Segment[]): Most {
-  return segments.reduce(
-    (most, { formatted: { facts } }) => ({ output: Math.max(most.output, facts.output ?? 0), duration: Math.max(most.duration, facts.duration ?? 0) }),
-    { output: 0, duration: 0 },
-  );
+// A mark's stack: `counts`, each kind's count of its step's tokens, `tokens`, all of them, and `headroom`, what the
+// largest step's tokens hold above them, so a stack and its headroom together fill the strip's height, and the stacks
+// climb as the context grows and drop where it is compacted. Each count is its true size: an output under a pixel, as
+// it is beside a long context, is not drawn larger, which would misstate the rest. A count not reported, as one a
+// streaming step's message has not said yet, draws nothing until it is, and the mark's title, which says each count
+// reported, leaves it out.
+export type Stack = { counts: Record<Kind, number>; tokens: number; headroom: number };
+
+const countsIn = ({ output, cacheWritten, cacheRead, uncached }: TokenFacts): Record<Kind, number> => ({
+  output: output ?? 0,
+  cacheWritten: cacheWritten ?? 0,
+  cacheRead: cacheRead ?? 0,
+  uncached: uncached ?? 0,
+});
+const totalOf = (facts: TokenFacts) => Object.values(countsIn(facts)).reduce((total, count) => total + count, 0);
+
+// The largest step's tokens, which every stack is drawn against.
+export const mostOf = (segments: readonly Segment[]): number => segments.reduce((most, { formatted: { facts } }) => Math.max(most, totalOf(facts)), 0);
+
+export function stackOf(facts: TokenFacts, most: number): Stack {
+  const tokens = totalOf(facts);
+  return { counts: countsIn(facts), tokens, headroom: most - tokens };
 }
 
-// A mark's shape: its height, a fraction of the strip's, by its output against the most any step wrote, never less than a
-// quarter so every step can be pressed; and its opacity by its duration against the longest, never less than 0.4 so every
-// step is seen. A step whose output or duration is not known yet, as one still streaming, is the least.
-export function shapeOf({ output, duration }: Pick<FormattedExchange["facts"], "output" | "duration">, most: Most): { height: number; opacity: number } {
-  const share = (value: number | undefined, of: number) => (of === 0 || value === undefined ? 0 : value / of);
-  return { height: 0.25 + 0.75 * share(output, most.output), opacity: 0.4 + 0.6 * share(duration, most.duration) };
+// How far a wheel's turn moves the strip along, in pixels: its vertical turn, the strip's one way, by what one unit of
+// it is in the DOM's delta mode, a pixel, a line or a page; and nothing where the turn is mostly sideways, which the
+// browser scrolls the strip by already.
+export function wheelPixels({ deltaX, deltaY, deltaMode }: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">, { line, page }: { line: number; page: number }): number {
+  const unit = [1, line, page][deltaMode];
+  if (unit === undefined) throw new Error(`a wheel's delta mode the DOM does not define: ${deltaMode}`);
+  return Math.abs(deltaY) > Math.abs(deltaX) ? deltaY * unit : 0;
 }
 
 // What a mark says on hover: the exchange line's facts (view/Conversation.tsx's ExchangeLine), then whether the column
