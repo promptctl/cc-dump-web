@@ -189,6 +189,16 @@ describe("layout", () => {
     expect([blockOf(gone!) === blockOf(was!), isGone(was!), isGone(gone!)]).toEqual([true, false, true]);
   });
 
+  it("numbers each exchange's line by its place among the exchanges shown, so one shown before its request head that turns out to be no Messages request leaves the next renumbered", () => {
+    const unrecorded: RecordedEvent = { ...at("other"), type: "response", status: 200, reason: "", http_version: "1.1", headers: [] };
+    const models: RecordedEvent = { ...at("other"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] };
+    const numbered = (events: RecordedEvent[], step: number) =>
+      layouts(events)(step).rows.flatMap((row) => (row.kind === "exchange" ? [[row.key, row.step]] : []));
+    // Viewed at the last step, the column lists each exchange's line with the number of its own step, not the step viewed.
+    expect(numbered([unrecorded, ...turns(2)], 3)).toEqual([["t1", 2], ["t2", 3]]);
+    expect(numbered([unrecorded, ...turns(2), models], 2)).toEqual([["t1", 1], ["t2", 2]]);
+  });
+
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
     const t1 = turns(1);
     const messages = [0, 1].map((index) => ({ role: "user", content: [text(`Say ${index}.`)] }));

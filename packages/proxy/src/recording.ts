@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
 import type { TraceId } from "@cc-dump/log/trace";
 import type { Recorded, RecordedEvent } from "./format.ts";
 
@@ -15,13 +15,14 @@ export type Recorder = (name: string, trace_id: TraceId) => (seen: Seen) => void
 // may be read: the bytes through its last newline, which are whole events, and the bytes after it, which a write that
 // failed left. No file is neither. The writer starts there, and a reader of a recording with no writer stops there, so
 // the bytes a writer will cut are never sent, and a recording continued after a crash never has a fragment glued onto
-// its next event.
-export function recordedLength(path: string): { terminated: number; unterminated: number } {
+// its next event. [LAW:parse-dont-validate] A recording that is not there has no measure, which is not the measure of an
+// empty one: each caller says what absence is to it.
+export function recordedLength(path: string): { terminated: number; unterminated: number } | undefined {
   let file: number;
   try {
     file = openSync(path, "r");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { terminated: 0, unterminated: 0 };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
   try {
@@ -41,6 +42,19 @@ export function recordedLength(path: string): { terminated: number; unterminated
   }
 }
 
+// [LAW:one-source-of-truth] The rule that makes events of a recording's bytes, for every reader: an event is a line,
+// ended by a newline byte and never decoded here, so each offset is exact. `bytes` begin at the recording's offset
+// `from`; each whole line comes with the offset just past it, and `rest` is the bytes after the last newline.
+export function splitLines(bytes: Buffer, from: number): { lines: { line: Buffer; end: number }[]; rest: Buffer } {
+  const lines: { line: Buffer; end: number }[] = [];
+  let start = 0;
+  for (let end = bytes.indexOf(0x0a); end !== -1; end = bytes.indexOf(0x0a, start)) {
+    lines.push({ line: bytes.subarray(start, end), end: from + end + 1 });
+    start = end + 1;
+  }
+  return { lines, rest: bytes.subarray(start) };
+}
+
 // One recording's file, and the writer's word on its growth, which only the writer knows. `written` is the length in
 // bytes of the whole events in the file, all a reader may read: past it the file may hold what the last write left
 // when it failed.
@@ -55,8 +69,9 @@ export type Writer = { written: () => number; append: (line: Buffer) => void };
 // last whole event. A file that is not there when the writer is made is created by its first write; one that is there
 // is never created, so a recording deleted before its first write, or mid-run, fails loudly.
 export function createWriter(path: string): Writer {
-  let written = recordedLength(path).terminated;
-  let flags = O_WRONLY | O_APPEND | (existsSync(path) ? 0 : O_CREAT);
+  const measure = recordedLength(path);
+  let written = measure?.terminated ?? 0;
+  let flags = O_WRONLY | O_APPEND | (measure === undefined ? O_CREAT : 0);
   return {
     written: () => written,
     append: (line) => {

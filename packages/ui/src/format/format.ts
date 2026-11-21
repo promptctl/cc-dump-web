@@ -1,7 +1,8 @@
 import { fieldOf } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
-import { latest, trailersOf, type Exchange, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
+import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
+import { equal } from "./equal.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
@@ -37,11 +38,12 @@ export type Place =
 
 // One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
 // the system prompt and each message, then the reply; the facts its line prints; how many messages of a speaker's
-// the request sends, which is the reply's index among them; and who sent it, by its head (format/wire.ts).
-export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Group[]; messages: number; sender: Sender };
+// the request sends, which is the reply's index among them; and who sent it, by its head (format/wire.ts). Its exchange
+// is as it stood when formatted, and holds no body.
+export type FormattedExchange = { exchange: ExchangeShown; facts: Facts; groups: Group[]; messages: number; sender: Sender };
 
-// What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `ordinal`: its
-// place among the recording's exchanges shown, from 1. `began`: when its first event was recorded. `duration`: the
+// What differs between exchanges, for the exchange line (docs/design/02-design.md, "Print what varies"). `began`: when its
+// first event was recorded. `duration`: the
 // milliseconds from then to its end, once it has ended. `status`: the response's, once its head is recorded. `model`:
 // the one the request asks for, once its body is whole. `session`: the agent's session the request says it is part of,
 // as Claude Code says it, the `session_id` in the JSON text of `metadata.user_id`; undefined where it does not. The message's facts, once the response's message is read:
@@ -51,7 +53,6 @@ export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Grou
 // or the message's, beside the blocks it makes, never back out of a block; the total input is derived from them
 // (inputOf).
 export type Facts = {
-  ordinal: number;
   began: string;
   duration: number | undefined;
   status: number | undefined;
@@ -74,7 +75,8 @@ export const inputOf = ({ uncached, cacheRead, cacheWritten }: MessageFacts): nu
 
 // A formatter of exchanges into the conversation: the Messages API exchanges, each as its blocks.
 // [LAW:no-shared-mutable-globals] Its caches are its own. Formatting is a pure function of an exchange's events, which
-// only ever grow, so an exchange whose latest event is unchanged is the one formatted before, the same object, and a
+// only ever grow, and of nothing around it, not even its place among the exchanges shown. So an exchange whose latest
+// event is unchanged is the one formatted before, the same object, and a
 // side whose latest event is unchanged formats as before: a response still streaming re-derives its response alone,
 // and its request, the largest body, decodes once. Each side's body is decoded, and a stream reassembled, as its
 // events arrive, so a response read while it streams costs what arrives, not its whole length each time.
@@ -84,27 +86,23 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
   const formatted = new WeakMap<object, FormattedExchange>();
   const decodings = new WeakMap<object, Decoding>();
   const reassemblies = new WeakMap<object, Reassembly>();
+  const intern = createInterning();
   const sides: Sides = {
     decode: (side) => decodeSide(growing(decodings, side, () => createDecoding(side.head?.headers ?? [])), side),
     reassemble: (side, body) => growing(reassemblies, side, createReassembly).reassemble(body.text, side.completedBy !== undefined),
   };
-  // The ordinal is the exchange's place among those shown, which can move under an unchanged exchange: one recorded
-  // before its request head is shown until the head says it is not a Messages request. So an exchange formatted before is
-  // the same object only at the same place; at another, its sides are still the ones formatted before.
   return (exchanges) =>
-    exchanges.filter(isMessages).map((exchange, index) => {
-      const ordinal = index + 1;
+    exchanges.filter(isMessages).map((exchange) => {
       const before = formatted.get(exchange.latest);
-      if (before?.facts.ordinal === ordinal) return before;
+      if (before !== undefined) return before;
       // An empty side formats the same whatever the key, so any of the exchange's events will do.
-      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => requestShown(sides, exchange.request));
+      const request = cached(requests, latest(exchange.request) ?? exchange.latest, () => intern(requestShown(sides, exchange.request)));
       const response = cached(responses, latest(exchange.response) ?? exchange.latest, () => responseShown(sides, exchange.response));
       const { first: opened, end } = exchange;
       const ended = ending(end);
       const shown: FormattedExchange = {
-        exchange,
+        exchange: { trace_id: exchange.trace_id, request: { head: exchange.request.head }, response: { head: exchange.response.head }, end },
         facts: {
-          ordinal,
           began: opened.timestamp,
           duration: end === undefined ? undefined : Date.parse(end.timestamp) - Date.parse(opened.timestamp),
           status: exchange.response.head?.status,
@@ -124,6 +122,30 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
       formatted.set(exchange.latest, shown);
       return shown;
     });
+}
+
+// [LAW:domain-language] [LAW:one-source-of-truth] Interning, by hash consing's rule, of each block a request sends: one
+// canonical object for every distinct value at a place, the group's key and its own. A request resends the conversation
+// before it, so a block made again alike one made before at its place is that one, and so is a group whose title and
+// blocks are all those of one before at its key: the formatter holds each block its requests send once, and a reference
+// where a request resends it. The latest interned at a place is looked at first, since a request resends what the
+// request before it in its thread sent. A group is interned after its blocks, so a group of resent blocks holds the very
+// blocks of the one it is alike, and `equal` finds them the same at once.
+function createInterning(): (shown: RequestShown) => RequestShown {
+  const blocks = new Map<string, KeyedBlock[]>();
+  const groups = new Map<string, Group[]>();
+  const interned = <T>(table: Map<string, T[]>, at: string, made: T): T => {
+    const there = table.get(at) ?? [];
+    table.set(at, there);
+    const found = there.findLast((one) => equal(one, made));
+    if (found !== undefined) return found;
+    there.push(made);
+    return made;
+  };
+  return (shown) => ({
+    ...shown,
+    sent: shown.sent.map((group) => interned(groups, group.key, { ...group, blocks: group.blocks.map((block) => interned(blocks, `${group.key}/${block.key}`, block)) })),
+  });
 }
 
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow.

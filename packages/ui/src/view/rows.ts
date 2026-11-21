@@ -19,7 +19,8 @@ export const changeColors: Record<Change, `--${string}` | undefined> = { added: 
 // [LAW:types-are-the-program] A row's key names what it shows: an exchange's line its trace_id, a group's title or a
 // set's line `<trace_id>/<group key>`, a block its item's key (view/history.ts), a fork's or a thread's line the key of
 // what it stands after and its kind (`<trace_id>/fork`, `<item's key>/thread`), and a nest's its level's (nestKey), so
-// it is the same row at every moment and however many rows arrive around it. `change`: what the step shown did to the
+// it is the same row at every moment and however many rows arrive around it. An exchange's line says its `step`, the
+// history's number for it (view/history.ts), which is its place among the exchanges shown. `change`: what the step shown did to the
 // row, which brings an exchange's line and a group's title or leaves them, and rewrites or takes away a block alone. A
 // block's row shows one version of its item, the last a step the column lists gave it, `versions[at]`: its block, or,
 // once a step took the item away, the block it was, which stays listed at its place (blockOf). `versions` is the item's
@@ -27,7 +28,7 @@ export const changeColors: Record<Change, `--${string}` | undefined> = { added: 
 // key of the set's line a block is listed under, for one of a set. Every row says how it stands in the column
 // (Standing).
 export type Row =
-  | ({ kind: "exchange"; key: string; exchange: FormattedExchange; change: "added" | "same" } & Standing)
+  | ({ kind: "exchange"; key: string; exchange: FormattedExchange; step: number; change: "added" | "same" } & Standing)
   | ({ kind: "group"; key: string; title: Heading; change: "added" | "same" } & Standing)
   | SetRow
   | BlockRow
@@ -473,7 +474,7 @@ function segmentRows({ formatted, groups }: Segment, own: number, step: number, 
   const change = own === step ? "added" : "same";
   const trace = formatted.exchange.trace_id;
   return [
-    { kind: "exchange", key: trace, exchange: formatted, change, ...standing },
+    { kind: "exchange", key: trace, exchange: formatted, step: own, change, ...standing },
     ...groups.flatMap(({ key: group, title, items }): Own[] => {
       const key = `${trace}/${group}`;
       if (title === undefined || items.length === 0) return items.map((item) => itemRow(item, step, steps, undefined, standing));

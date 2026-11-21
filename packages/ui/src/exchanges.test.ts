@@ -96,8 +96,9 @@ describe("add", () => {
     const byTrace: ByTrace = new Map();
     const events = [request("a", "/"), requestTrailers("a"), response("a", 200), body("a"), trailers("a"), end("a")];
     const placed = events.map((event) => add(byTrace, event));
-    expect(new Set(placed)).toEqual(new Set([byTrace.get(parseTraceId("a"))]));
-    expect(byTrace.get(parseTraceId("a"))).toMatchObject({
+    expect(new Set(placed)).toEqual(new Set([byTrace.get(parseTraceId("a"))!.exchange]));
+    expect(byTrace.get(parseTraceId("a"))!.state).toBe("ended");
+    expect(byTrace.get(parseTraceId("a"))!.exchange).toMatchObject({
       request: { head: events[0], body: [], completedBy: events[1] },
       response: { head: events[2], body: [events[3]], completedBy: events[4] },
       end: events[5],

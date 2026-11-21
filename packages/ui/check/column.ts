@@ -1,22 +1,21 @@
 import { describe } from "@cc-dump/log/describe";
-import type { ByTrace } from "../src/exchanges.ts";
 import { categories, launchName, type Category, type Launch } from "../src/format/blocks.ts";
-import { createFormatter, type KeyedBlock } from "../src/format/format.ts";
+import type { FormattedExchange, KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";
 import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, replyOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
 import { blockIn, createLayout, nestKey, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
-import { foldOf } from "./recording.ts";
+import { readRecording, type Frames } from "../src/reading.ts";
+import { fileConnection } from "./recording.ts";
 
 // The column's promises (docs/design/02-design.md, "Two axes"), checked on recordings of real traffic, at every step,
 // with every category listed and every nest open: `node packages/ui/check/column.ts <recording.jsonl>...`. It prints
-// what each recording holds and each promise a step breaks, and fails if one did. A recording is read an event at a
-// time, and an exchange's body events are let go once it is formatted, so what it holds is the formatted blocks, not
-// the bodies' bytes. [LAW:verifiable-goals] It reads what the history says each step stands after, the keys and the
-// selections it imports, and the column's rules as docs/design/02-design.md states them; it decides the rest itself,
-// each rule stated anew over its own reading: the path, each step's level and depth, what a thread carries on from,
-// and what each agent says on the wire, read here from the headers (format/wire.ts) and the blocks, never from what
-// the history recorded of them (StepWire).
+// what each recording holds and each promise a step breaks, and fails if one did. A recording is read as the tab reads
+// it (src/reading.ts), so its memory is the tab's. [LAW:verifiable-goals] It reads what the history says each step
+// stands after, the keys and the selections it imports, and the column's rules as docs/design/02-design.md states them;
+// it decides the rest itself, each rule stated anew over its own reading: the path, each step's level and depth, what a
+// thread carries on from, and what each agent says on the wire, read here from the headers (format/wire.ts) and the
+// blocks, never from what the history recorded of them (view/history.ts).
 
 // What a recording holds: its steps, and each fork's, nest's and thread's line the column lists at some step, by its
 // key, with what it says where it says the most.
@@ -375,24 +374,33 @@ function doingOf(
   );
 }
 
-// A recording's history, read an event at a time: each exchange is formatted as it ends, and its body's events let go,
-// and what a write cut short left after its last whole event is said and not read. [LAW:no-ambient-temporal-coupling]
-// That is sound because a trace takes nothing after its end (exchanges.ts, add): the formatter keeps what it made of
-// each side under the side's latest event (format/format.ts), so an ended exchange is read from that, never from its
-// emptied body again.
+// A recording's history, read as the tab reads it (reading.ts), so what the check holds is what the tab holds: its
+// file's events, a frame's worth at a time, each frame's exchanges formatted and an ended one held as what it showed.
+// What a write cut short left after its last whole event is said and not read.
 async function historyOf(recording: string): Promise<History> {
-  const byTrace: ByTrace = new Map();
-  const format = createFormatter();
-  const { unterminated, events } = foldOf(recording, byTrace);
-  if (unterminated > 0) console.log(`${recording}: its last ${unterminated} bytes are cut off, and not read`);
-  for await (const { exchange } of events) {
-    if (exchange.latest.type !== "end") continue;
-    format([...byTrace.values()]);
-    exchange.request.body.length = 0;
-    exchange.response.body.length = 0;
-  }
-  return createHistory()(format([...byTrace.values()]));
+  const formatted = await new Promise<FormattedExchange[]>((resolve, reject) => {
+    let shown: FormattedExchange[] = [];
+    readRecording(fileConnection, recording, (formatted) => (shown = formatted), frames, new AbortController().signal, (reading) => {
+      switch (reading.state) {
+        case "failed":
+          return reject(reading.error);
+        case "ended":
+          if (reading.end.unterminated_bytes > 0) console.log(`${recording}: its last ${reading.end.unterminated_bytes} bytes are cut off, and not read`);
+          return resolve(shown);
+        case "none":
+        case "reading":
+          return;
+      }
+    });
+  });
+  return createHistory()(formatted);
 }
+
+// A frame clock as the browser's runs, about sixty times a second.
+const frames: Frames = (callback) => {
+  const frame = setTimeout(callback, 16);
+  return () => clearTimeout(frame);
+};
 
 const expanded = Object.fromEntries(categories.map((category) => [category, "expanded"])) as Record<Category, Visibility>;
 if (process.argv.length < 3) throw new Error("Give the recordings to check: node packages/ui/check/column.ts <recording.jsonl>...");
