@@ -1,10 +1,10 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { parseLogLine } from "@cc-dump/log/line";
+import { ask } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { ask } from "@cc-dump/proxy/ask";
 import { offsetOf, parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
-import { parseFailure, parseLaunched, parseLauncher } from "@cc-dump/server/format";
+import { parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
 import { refusedAt, type Connection } from "./connection.ts";
 
@@ -64,28 +64,13 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
       stream.opened(watcher.opened);
       stream.dropped(watcher.dropped);
     },
-    launcher: (signal) => answer(`${server}/launch`, { signal }, parseLauncher),
+    launcher: (signal) => ask(`${server}/launch`, { signal }, parseLauncher),
     launch: (launch, signal) =>
-      answer(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
+      ask(`${server}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(launch), signal }, parseLaunched),
     // Ten reconnects, about a minute at the library's backoff, outlast the app server's restart on a change to its
     // source; a window that is gone is then no longer retried.
     tmux: (window) => new WebSocketTmuxClient({ url: `ws://${LOOPBACK}:${serverPort}${tmuxPath(window)}`, autoConnect: false, reconnect: { maxAttempts: 10 } }),
   };
-}
-
-// The app server's answer to one request, parsed. A refusal it answers fails in its own words, which are the user's to
-// read as they are; anything else fails naming the request.
-async function answer<T>(url: string, init: RequestInit, parse: (json: string) => T): Promise<T> {
-  let refusal: string;
-  try {
-    const res = await fetch(url, init);
-    const text = await res.text();
-    if (res.ok) return parse(text);
-    refusal = parseFailure(text).error;
-  } catch (error) {
-    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
-  }
-  throw new Error(refusal);
 }
 
 // One EventSource at `url`, from its opening to its end, which is `close`, or `signal` aborting, or a failure reported

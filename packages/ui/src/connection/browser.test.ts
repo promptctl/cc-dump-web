@@ -382,8 +382,8 @@ describe("launching", () => {
   it("fails a refusal in the app server's words, tmux's own when tmux refused", async () => {
     const { port } = await app({ tmux: { sessions: () => Promise.reject(new TmuxRefused("no sessions")), newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
     const connection = createBrowserConnection({ serverPort: port });
-    await expect(connection.launcher(signal())).rejects.toThrow(new Error("no sessions"));
-    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toThrow(new Error("can't find session: gone"));
+    await expect(connection.launcher(signal())).rejects.toMatchObject({ status: 502, message: "no sessions" });
+    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toMatchObject({ status: 502, message: "can't find session: gone" });
   });
 
   it("fails naming the request when the app server cannot be reached", async () => {

@@ -1,6 +1,6 @@
 import { LOOPBACK } from "@cc-dump/log/address";
+import { ask } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { ask } from "@cc-dump/proxy/ask";
 import { parseListing, parseProxyInfo, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 
 // [LAW:one-source-of-truth] What the running proxy says it is, asked of it each time: it may have restarted, on

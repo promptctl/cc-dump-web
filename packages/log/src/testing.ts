@@ -7,6 +7,7 @@ import { LOOPBACK } from "./address.ts";
 import { serve, type Event, type Handler, type Upgrade } from "./index.ts";
 import { parseLogLine, type LoggedEvent } from "./line.ts";
 import { parseTraceId } from "./trace.ts";
+import { serverSentEvents, type ServerSentEvent } from "./wire.ts";
 
 // What arrives while a test runs, in order: `next()` resolves with each in turn, waiting for one not yet arrived;
 // `queued()` counts those arrived and not yet taken.
@@ -60,8 +61,6 @@ export async function serving(handler: Handler, upgrade?: Upgrade) {
 // The event of a unit of work `name` as a test logs it: started at a fixed time, ended as it should.
 export const workEvent = (name: string) => ({ event: name, trace_id: parseTraceId("t"), started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok" as const });
 
-export type ServerSentEvent = { id?: string; event?: string; data: string };
-
 // A Server-Sent Events client of a server on `port`: `next()` resolves with each event as it arrives.
 export async function subscribe(port: number, path: string, headers: Record<string, string> = {}) {
   const res = await send(port, { path, headers });
@@ -69,15 +68,9 @@ export async function subscribe(port: number, path: string, headers: Record<stri
   let text = "";
   res.setEncoding("utf8");
   res.on("data", (chunk: string) => {
-    text += chunk;
-    for (let at = text.indexOf("\n\n"); at !== -1; at = text.indexOf("\n\n")) {
-      const fields = text
-        .slice(0, at)
-        .split("\n")
-        .map((line) => [line.slice(0, line.indexOf(": ")), line.slice(line.indexOf(": ") + 2)]);
-      text = text.slice(at + 2);
-      arrive({ data: "", ...Object.fromEntries(fields) } as ServerSentEvent);
-    }
+    const { events, rest } = serverSentEvents(text + chunk, false);
+    text = rest;
+    for (const event of events) arrive(event);
   });
   const take = async (n: number) => {
     const events: ServerSentEvent[] = [];

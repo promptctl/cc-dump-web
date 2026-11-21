@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentBaseUrl, recordingStart } from "@cc-dump/proxy/format";
-import { parseFailure, parseLauncher, parseLaunched } from "./format.ts";
+import { parseFailure } from "@cc-dump/log/wire";
+import { parseLauncher, parseLaunched } from "./format.ts";
 import { app } from "./testing.ts";
 import { TmuxRefused } from "./tmux.ts";
 

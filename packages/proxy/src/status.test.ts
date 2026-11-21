@@ -139,7 +139,7 @@ describe("GET /status", () => {
     expect(res.headers["content-type"]).toBe("text/event-stream");
     const status = async () => {
       const event = await nextEvent();
-      expect(event.event).toBeUndefined();
+      expect(event.event).toBe("message");
       return parseProxyStatus(event.data);
     };
     expect(await status()).toEqual({ info, source: { state: "watching", changed_source: [] }, traffic: quiet });

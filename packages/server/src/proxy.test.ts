@@ -24,7 +24,7 @@ it("asks the proxy to make a recording, and reads the one it made", async () => 
   expect(asked).toEqual(["POST /recordings"]);
 });
 
-it("fails, naming what it asked, when the proxy refuses to make one", async () => {
+it("fails with the status and, when the answer says none, the status line, when the proxy refuses to make one", async () => {
   const { port } = await serving((_req, res) => res.writeHead(500).end());
-  await expect(requestRecording(port)).rejects.toMatchObject({ message: `POST http://${LOOPBACK}:${port}/recordings`, cause: { message: expect.stringContaining("500") } });
+  await expect(requestRecording(port)).rejects.toMatchObject({ status: 500, message: "500 Internal Server Error" });
 });

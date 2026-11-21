@@ -1,3 +1,4 @@
+import { serverSentEvents } from "@cc-dump/log/wire";
 import { formatError, restBlock, type Block } from "./blocks.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 
@@ -106,13 +107,13 @@ export function createReassembly(): Reassembly {
       const { events, rest } = serverSentEvents(tail + text.slice(read), complete);
       read = text.length;
       tail = rest;
-      for (const { name, data } of events) {
+      for (const { event, data } of events) {
         fitting(
           () => apply(parseJson(data, "its data")),
           (reason) =>
             void blocks.push({
               category: "http",
-              name: `${name} event`,
+              name: `${event} event`,
               parts: [
                 { kind: "text", form: "verbatim", label: "not applied", text: reason },
                 { kind: "text", form: "verbatim", label: "data", text: data },
@@ -171,28 +172,4 @@ function applyDelta(target: Building, data: unknown) {
       throw new Misfit(`${type} is not a delta this view applies`);
   }
   Object.assign(target.block, delta.rest());
-}
-
-// The complete events of a server-sent event stream (each ended by a blank line), and the text after the last.
-// Per the WHATWG spec: lines end in CRLF, LF or CR; `data` lines join with LF; a line starting with a colon is a
-// comment; one space after a field's colon is dropped; an event with no `event` field is named "message". A CR that
-// ends text not yet `complete` waits in the rest, since the LF of its CRLF may be the next text to arrive.
-function serverSentEvents(text: string, complete: boolean): { events: { name: string; data: string }[]; rest: string } {
-  const waiting = !complete && text.endsWith("\r") ? "\r" : "";
-  const chunks = text.slice(0, text.length - waiting.length).replace(/\r\n?/g, "\n").split("\n\n");
-  const rest = (chunks.pop() ?? "") + waiting;
-  const events = chunks.flatMap((chunk) => {
-    let name = "message";
-    const data: string[] = [];
-    for (const line of chunk.split("\n")) {
-      const colon = line.indexOf(":");
-      const field = colon === -1 ? line : line.slice(0, colon);
-      const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
-      if (field === "event") name = value;
-      if (field === "data") data.push(value);
-    }
-    // An event with no data line is not dispatched.
-    return data.length === 0 ? [] : [{ name, data: data.join("\n") }];
-  });
-  return { events, rest };
 }

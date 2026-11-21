@@ -12,7 +12,8 @@ import { createReader } from "./reading.ts";
 import { agentBaseUrl, parseListing, parseListings, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
 import { createRecordings, type Recordings } from "./recordings.ts";
 import { proxyProcess, runName } from "./testing.ts";
-import { subscribe, type ServerSentEvent } from "@cc-dump/log/testing";
+import { subscribe } from "@cc-dump/log/testing";
+import type { ServerSentEvent } from "@cc-dump/log/wire";
 
 // A recordings directory, removed when the test finishes.
 function recordingsDir() {
@@ -48,7 +49,7 @@ const linesOf = (path: string) => readFileSync(path, "utf8").split("\n").filter(
 // What a reader should be sent for `lines`, starting at byte `from`: each line, its id the offset past it.
 function expected(lines: string[], from = 0) {
   let offset = from;
-  return lines.map((data) => ({ id: String((offset += Buffer.byteLength(data) + 1)), data }));
+  return lines.map((data) => ({ id: String((offset += Buffer.byteLength(data) + 1)), event: "message", data }));
 }
 
 describe("createReader", () => {
