@@ -1,5 +1,5 @@
-import { BadGateway } from "@cc-dump/log/answer";
 import { describe } from "@cc-dump/log/describe";
+import { DependencyFailed, Malformed } from "@cc-dump/log/failure";
 import {
   listSessions,
   newEmptyWindow,
@@ -36,7 +36,7 @@ export type Tmux = {
 // tmux refused what it was asked, has no session by the name asked for, is older than a command needs, or ended the
 // connection before answering; the message is tmux's own text where tmux gave one (a failed attach's: "no sessions",
 // "error connecting to …" when no server runs).
-export class TmuxRefused extends BadGateway {}
+export class TmuxRefused extends DependencyFailed {}
 
 // [LAW:single-enforcer] The one way the app server connects to tmux, as `args` say: `options` picks the tmux server, as
 // `tmux -L`/`-S` would, the user's default one when empty. Without TMUX, which an app server started in tmux inherits,
@@ -63,7 +63,8 @@ export async function attach(options: SpawnOptions, { session_id, start_time }: 
     // The bridge tells the page the message alone, so it carries the failure's own words: tmux's, a refusal's message
     // alone, as the app server answers one, or the app server's own, with its causes.
     const failure = refused(error);
-    throw new Error(`attaching to session ${session_id} of the tmux server started at ${start_time}: ${failure instanceof TmuxRefused ? failure.message : describe(failure)}`, { cause: error });
+    const message = `attaching to session ${session_id} of the tmux server started at ${start_time}: ${failure instanceof TmuxRefused ? failure.message : describe(failure)}`;
+    throw failure instanceof TmuxRefused ? new TmuxRefused(message, { cause: error }) : new Error(message, { cause: error });
   }
 }
 
@@ -118,8 +119,9 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
 
 // [LAW:single-enforcer] The one place the library's errors become the seam's: a command tmux answered with an error, a
 // tmux whose version a command does not run on, and a connection that ended first, whose reason is tmux's words when it
-// gave some, in the bytes spawnTmux delivers them in.
+// gave some, in the bytes spawnTmux delivers them in, and an answer of tmux's that its format cannot take.
 function refused(error: unknown): unknown {
+  if (error instanceof Malformed) return new TmuxRefused(describe(error), { cause: error });
   if (error instanceof TmuxCommandError || error instanceof UnsupportedTmuxVersionError || error instanceof UnrecognizedTmuxVersionError)
     return new TmuxRefused(error.message, { cause: error });
   if (error instanceof TransportClosedError) return new TmuxRefused(error.reason === undefined ? error.message : Buffer.from(error.reason, "latin1").toString("utf8"), { cause: error });

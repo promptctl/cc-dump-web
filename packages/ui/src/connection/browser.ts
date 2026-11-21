@@ -1,8 +1,8 @@
 import { LOOPBACK } from "@cc-dump/log/address";
 import { parseLogLine } from "@cc-dump/log/line";
-import { ask, READ_ENDED, READ_FAILED, recordingPath, ROUTES } from "@cc-dump/log/wire";
+import { ask, parseFailure, READ_ENDED, READ_FAILED, recordingPath, ROUTES, type Failure } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
-import { offsetOf, parseListing, parseListings, parseProxyStatus, parseReadFailure, parseRecordedEvent, parseRecordingEnd, type ReadFailure } from "@cc-dump/proxy/format";
+import { offsetOf, parseListing, parseListings, parseProxyStatus, parseRecordedEvent, parseRecordingEnd } from "@cc-dump/proxy/format";
 import { SERVER_PORT, tmuxPath } from "@cc-dump/server/address";
 import { parseLaunched, parseLauncher } from "@cc-dump/server/format";
 import { WebSocketTmuxClient } from "@promptctl/tmux-control-mode-js/websocket";
@@ -16,7 +16,7 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
   const server = `http://${LOOPBACK}:${serverPort}`;
   return {
     recordings: (signal) => ask(`${origin}${ROUTES.recordings}`, { signal }, parseListings),
-    // A POST with no body is a simple request, so the browser sends it without a preflight, which the reader does not answer.
+    // A POST with no body is a simple request, so the browser sends it without a preflight.
     agentRecording: () => ask(`${origin}${ROUTES.recordings}`, { method: "POST" }, parseListing),
     read: (name, reader, signal) => {
       const url = `${origin}${recordingPath(name)}`;
@@ -44,8 +44,8 @@ export function createBrowserConnection({ readerPort = READER_PORT, serverPort =
         },
         stream.fail,
       );
-      const failed = ({ message }: ReadFailure) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${message}`) }));
-      stream.on(READ_FAILED, parseReadFailure, failed, stream.fail);
+      const failed = ({ error }: Failure) => stream.fail(new Error(`GET ${url}`, { cause: new Error(`the reader failed: ${error}`) }));
+      stream.on(READ_FAILED, parseFailure, failed, stream.fail);
     },
     // Each status is the whole of the proxy's state, so one that does not parse taints none after it: it is reported
     // as unreadable, and the stream goes on. A UI reloaded into a status format its proxy has yet to restart into reads the restarted

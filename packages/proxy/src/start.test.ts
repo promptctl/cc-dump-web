@@ -42,7 +42,7 @@ describe("the reader port", () => {
 
     expect(refused.map(({ statusCode }) => statusCode)).toEqual([404, 405]);
     expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: expect.stringContaining("Nothing is served at /elsewhere"), facts: { url: "/elsewhere", status: 404 } });
-    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: expect.stringContaining("POST is not taken at /logs; GET is"), facts: { method: "POST", url: "/logs", status: 405 } });
+    expect(await nextRequestEvent(next)).toMatchObject({ outcome: "error", error: expect.stringContaining("POST is not taken at /logs; it takes GET"), facts: { method: "POST", url: "/logs", status: 405 } });
     for (const answer of refused) answer.destroy();
   });
 
@@ -67,11 +67,17 @@ describe("the reader port", () => {
     expect(new Set(names).size).toBe(5);
   });
 
-  it("refuses the other methods of the list, naming those it takes", async () => {
+  it("answers a page of the UI's origin, and refuses a foreign page and a foreign Host, as the app server does", async () => {
     const { readerPort } = await proxy();
-    const res = await send(readerPort, { method: "PUT", path: "/recordings" });
-    expect([res.statusCode, res.headers.allow]).toEqual([405, "GET, POST"]);
-    res.destroy();
+    const ui = "http://127.0.0.1:3346";
+    const answered = async (headers: Record<string, string>) => {
+      const res = await send(readerPort, { path: "/info", headers });
+      res.resume();
+      return [res.statusCode, res.headers["access-control-allow-origin"], res.headers.vary];
+    };
+    expect(await answered({ origin: ui })).toEqual([200, ui, "origin"]);
+    expect(await answered({ origin: "https://example.com" })).toEqual([403, undefined, "origin"]);
+    expect(await answered({ host: "evil.example" })).toEqual([403, undefined, "origin"]);
   });
 
   it("gives agents the address of the port the proxy bound, and says where it forwards to and where it records, at /info and in its status", async () => {

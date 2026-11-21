@@ -7,6 +7,7 @@
     "./answer": "./src/answer.ts",
     "./address": "./src/address.ts",
     "./ending": "./src/ending.ts",
+    "./failure": "./src/failure.ts",
     "./describe": "./src/describe.ts",
     "./json": "./src/json.ts",
     "./testing": "./src/testing.ts",

@@ -92,10 +92,6 @@ export function offsetOf(text: string): number | undefined {
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
 export type RecordingEnd = { unterminated_bytes: number };
 
-// The data of a read's `failed` event, sent when the reader fails after the read began: the error's message.
-// The whole error, stack and all, is the request's log event's.
-export type ReadFailure = { message: string };
-
 // Each message of `GET /status`: the proxy's state now, whole (docs/design/01-features.md, F8, F12): what it is, so a reader
 // following it across a restart knows the restarted proxy, whether it runs its source on disk, and its traffic.
 export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traffic };
@@ -133,10 +129,6 @@ const listingOf = (listing: unknown, what: string): Listing => ({ name: fields(l
 
 export function parseRecordingEnd(json: string): RecordingEnd {
   return { unterminated_bytes: fields(parseJson(json, "recording end"), "recording end").integer("unterminated_bytes") };
-}
-
-export function parseReadFailure(json: string): ReadFailure {
-  return { message: fields(parseJson(json, "read failure"), "read failure").string("message") };
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {

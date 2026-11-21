@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { describeError, startSpan, type Ending, type Log, type TraceId } from "@cc-dump/log";
 import { json, Refused, stream, type Route } from "@cc-dump/log/answer";
-import { frame, READ_ENDED, READ_FAILED } from "@cc-dump/log/wire";
-import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
+import { describe } from "@cc-dump/log/describe";
+import { frame, READ_ENDED, READ_FAILED, type Failure } from "@cc-dump/log/wire";
+import { offsetOf, type Listing, type RecordingEnd } from "./format.ts";
 import { recordedLength, splitLines } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
@@ -202,7 +203,9 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
       catchUp({ outcome: "error", error: describeError(error) });
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
-      const failure: ReadFailure = { message: error instanceof Error ? error.message : String(error) };
+      // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has
+      // with its stack.
+      const failure: Failure = { error: describe(error) };
       readable.push(frame({ event: READ_FAILED, data: JSON.stringify(failure) }));
       readable.push(null);
     }

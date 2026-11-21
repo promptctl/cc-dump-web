@@ -26,5 +26,5 @@ it("asks the proxy to make a recording, and reads the one it made", async () => 
 
 it("is a bad gateway, in the proxy's words or else its status line, when the proxy refuses to make a recording", async () => {
   const { port } = await serving((_req, res) => res.writeHead(500).end());
-  await expect(requestRecording(port)).rejects.toMatchObject({ message: "The proxy did not make a recording for the agent: 500 Internal Server Error" });
+  await expect(requestRecording(port)).rejects.toMatchObject({ message: `The proxy did not make a recording for the agent: POST http://${LOOPBACK}:${port}/recordings: 500 Internal Server Error` });
 });

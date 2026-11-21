@@ -5,6 +5,6 @@
 export const LOOPBACK = "127.0.0.1";
 
 // [LAW:one-source-of-truth] The port the browser opens: the UI's dev server binds it, and every part's access rule
-// (answer.ts) names the origins served there as the pages it answers. It is also part of the origin the reader's
-// settings are kept under (packages/proxy/src/settings.ts): a UI on another port starts from every setting's default.
+// (answer.ts) names the origins served there as the pages it answers. It is also part of the origin the UI's settings
+// are kept under (localStorage, packages/ui/src/settings.ts): a UI on another port starts from every setting's default.
 export const UI_PORT = 3346;

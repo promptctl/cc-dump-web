@@ -1,5 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
-import { fields, jsonObject, Malformed, parseJson } from "@cc-dump/log/json";
+import { Malformed } from "@cc-dump/log/failure";
+import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -67,7 +68,7 @@ export function parseLauncher(json: string): Launcher {
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
 export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Error("sessions: tmux listed none");
+  if (names.length === 0) throw new Malformed("sessions: tmux listed none");
   return names as Sessions;
 }
 
@@ -87,7 +88,7 @@ export function parseLaunched(json: string): Launched {
 // leading zero, and exact as a JSON number. `@03` is no window's.
 function tmuxNumber(value: string, what: string): number {
   const number = Number(value);
-  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
   return number;
 }
 
@@ -96,7 +97,7 @@ function tmuxNumber(value: string, what: string): number {
 const idKinds = { $: "session", "@": "window", "%": "pane" } as const;
 function tmuxId<P extends keyof typeof idKinds>(prefix: P, value: string): `${P}${number}` {
   const what = `a tmux ${idKinds[prefix]} id`;
-  if (!value.startsWith(prefix)) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  if (!value.startsWith(prefix)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
   tmuxNumber(value.slice(1), what);
   return value as `${P}${number}`;
 }

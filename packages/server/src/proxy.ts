@@ -1,17 +1,17 @@
-import { BadGateway } from "@cc-dump/log/answer";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { describe } from "@cc-dump/log/describe";
+import { DependencyFailed } from "@cc-dump/log/failure";
 import { ask, ROUTES } from "@cc-dump/log/wire";
 import { READER_PORT } from "@cc-dump/proxy/address";
 import { parseListing, parseProxyInfo, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 
 // [LAW:single-enforcer] The one place a failure of the proxy becomes the app server's answer: whatever `ask` fails with,
-// the proxy unreachable, its refusal, an answer that is not what it says it sends, is a bad gateway, in the proxy's
+// the proxy unreachable, its refusal, an answer that is not what it says it sends, is a dependency's failure, in the proxy's
 // words. A failure of the app server's own, which is not `ask`'s, is not one.
 const unreached =
   (what: string) =>
   (error: unknown): never => {
-    throw new BadGateway(`The proxy did not ${what}: ${describe(error)}`, { cause: error });
+    throw new DependencyFailed(`The proxy did not ${what}: ${describe(error)}`, { cause: error });
   };
 
 // [LAW:one-source-of-truth] What the running proxy says it is, asked of it each time: it may have restarted, on

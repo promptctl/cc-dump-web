@@ -1,6 +1,7 @@
 import { admit, askedOf, refuseUpgrade, Refused } from "@cc-dump/log/answer";
 import { loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
 import { describe } from "@cc-dump/log/describe";
+import { Malformed } from "@cc-dump/log/failure";
 import type { SpawnOptions } from "@promptctl/tmux-control-mode-js";
 import type { BridgeObservabilityEvent } from "@promptctl/tmux-control-mode-js/websocket";
 import { createWebSocketBridge } from "@promptctl/tmux-control-mode-js/websocket/server";
@@ -58,8 +59,9 @@ function windowOf({ pathname }: URL): TmuxWindow {
   try {
     if (path !== null)
       return { start_time: startTime(path[1]!), session_id: sessionId(decodeURIComponent(path[2]!)), window_id: windowId(decodeURIComponent(path[3]!)) };
-  } catch {
-    // An id that does not parse, or an escape that does not decode, names no window.
+  } catch (error) {
+    // An id that does not parse, or an escape that does not decode, names no window; any other error is a bug.
+    if (!(error instanceof Malformed || error instanceof URIError)) throw error;
   }
   throw new Refused(404, `Nothing takes a WebSocket at ${pathname}`);
 }

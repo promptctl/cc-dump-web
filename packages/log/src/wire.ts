@@ -11,44 +11,36 @@ export function parseFailure(json: string): Failure {
   return { error: fields(parseJson(json, "failure"), "failure").string("error") };
 }
 
-// [LAW:types-are-the-program] The statuses a part refuses a request with, each with its reason phrase (RFC 9110). A
-// closed set, so a refusal cannot be written with a status that is no refusal, and its status line is derived from it.
+// [LAW:types-are-the-program] The statuses a part answers a failed request with, each with its reason phrase (RFC 9110).
+// A closed set, so a failure cannot be answered with a status that is no failure, and its status line is derived from it.
 // node's `STATUS_CODES` says the same, but is node's, and the UI imports this module.
-export const REFUSED = { 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error", 502: "Bad Gateway" } as const;
-export type RefusedStatus = keyof typeof REFUSED;
-export const statusLine = (status: RefusedStatus) => `${status} ${REFUSED[status]}`;
+export const FAILED = { 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error", 502: "Bad Gateway" } as const;
+export type FailedStatus = keyof typeof FAILED;
+export const statusLine = (status: FailedStatus) => `${status} ${FAILED[status]}`;
 
 // [LAW:one-source-of-truth] The paths the parts answer, which each part's route table and every client of it name. A
 // segment with a colon is the route's parameter, one whole path segment.
 export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name", status: "/status", info: "/info", logs: "/logs", launch: "/launch" } as const;
 
 // The path of the recording `name`, as `ROUTES.recording` matches it.
-export const recordingPath = (name: string) => `${ROUTES.recordings}/${encodeURIComponent(name)}`;
-
-// A request a part answered with an error status: the status, and the words it said why in, its `Failure`'s or, when
-// its body was no `Failure` (a proxy's, node's own refusal of a malformed request), the status line.
-export class Answered extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+export const recordingPath = (name: string) => ROUTES.recording.replace(":name", () => encodeURIComponent(name));
 
 // [LAW:single-enforcer] The one way a client asks a part: its answer to one request, parsed. An answer with an error
-// status fails as `Answered`, in the part's own words, which are the user's to read as they are; any other failure, the
+// status fails in the part's own words, which are the user's to read as they are, or, when its body is no `Failure` (a
+// proxy's, node's own refusal of a malformed request), in the request and the status line; any other failure, the
 // connection's or the parse's, names the request, with the failure its `cause`.
 export async function ask<T>(url: string, init: RequestInit, parse: (text: string) => T): Promise<T> {
-  let refusal: Answered;
+  const request = `${init.method ?? "GET"} ${url}`;
+  let refusal: string;
   try {
     const res = await fetch(url, init);
     const text = await res.text();
     if (res.ok) return parse(text);
-    refusal = new Answered(res.status, failureWords(text) ?? `${res.status} ${res.statusText}`);
+    refusal = failureWords(text) ?? `${request}: ${res.status} ${res.statusText}`;
   } catch (error) {
-    throw new Error(`${init.method ?? "GET"} ${url}`, { cause: error });
+    throw new Error(request, { cause: error });
   }
-  throw refusal;
+  throw new Error(refusal);
 }
 
 // The words of a `Failure` body, or none when the body is not one.
@@ -61,8 +53,8 @@ function failureWords(body: string): string | undefined {
 }
 
 // [LAW:one-source-of-truth] The names of the events a read is ended with; a recorded line is a message, which has none.
-// A finished recording's last message, and the reader's failure once its stream had begun, the stream's only way to say
-// so: an EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
+// A finished recording's last message, and the reader's failure once its stream had begun (a `Failure`), the stream's
+// only way to say so: an EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 export const READ_ENDED = "end";
 export const READ_FAILED = "failed";
 
@@ -78,11 +70,11 @@ export type ServerSentEvent = { id?: string; event: string; data: string };
 // The complete events of a server-sent event stream (each ended by a blank line), and the text after the last.
 // Per the WHATWG spec: lines end in CRLF, LF or CR; `data` lines join with LF; a line starting with a colon is a
 // comment; one space after a field's colon is dropped; an event with no `event` field, or an empty one, is named
-// "message". A CR that ends text not yet `complete` waits in the rest, since the LF of its CRLF may be the next text to
-// arrive.
+// "message"; a byte order mark at the start of the stream is dropped. A CR that ends text not yet `complete` waits in the
+// rest, since the LF of its CRLF may be the next text to arrive.
 export function serverSentEvents(text: string, complete: boolean): { events: ServerSentEvent[]; rest: string } {
   const waiting = !complete && text.endsWith("\r") ? "\r" : "";
-  const chunks = text.slice(0, text.length - waiting.length).replace(/\r\n?/g, "\n").split("\n\n");
+  const chunks = text.slice(0, text.length - waiting.length).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n\n");
   const rest = (chunks.pop() ?? "") + waiting;
   const events = chunks.flatMap((chunk) => {
     let event = "";

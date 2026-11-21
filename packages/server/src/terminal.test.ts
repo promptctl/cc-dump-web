@@ -156,7 +156,8 @@ describe("createTerminal", () => {
   });
 
   it.each([
-    ["a target that is no URL's", "//", "400 Bad Request", "is not a request target"],
+    ["a path that names no window", "//", "404 Not Found", "Nothing takes a WebSocket at //"],
+    ["a target that is no URL's", "*", "400 Bad Request", "* is not a request target"],
     ["a handshake it cannot take", undefined, "400 Bad Request", "Sec-WebSocket"],
   ])("answers %s, and closes it", async (_, target, status, why) => {
     const { port, next, windowOf } = await terminal("work");

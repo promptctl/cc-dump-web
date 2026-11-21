@@ -56,7 +56,7 @@ function reading(connection: ReturnType<typeof createBrowserConnection>, name: s
   return { abort, next, queued };
 }
 
-type StatusArrival = { status: ProxyStatus } | "dropped";
+type StatusArrival = { status: ProxyStatus } | { unreadable: Error } | { failed: Error } | "dropped";
 
 // The proxy's status, whose arrivals the test waits on, as `reading` does a read's.
 function statusing(connection: ReturnType<typeof createBrowserConnection>) {
@@ -66,13 +66,9 @@ function statusing(connection: ReturnType<typeof createBrowserConnection>) {
   connection.status(
     {
       status: (status) => arrive({ status }),
-      unreadable: (error) => {
-        throw error;
-      },
+      unreadable: (unreadable) => arrive({ unreadable }),
       dropped: () => arrive("dropped"),
-      failed: (error) => {
-        throw error;
-      },
+      failed: (failed) => arrive({ failed }),
     },
     abort.signal,
   );
@@ -259,6 +255,26 @@ describe("the browser connection", () => {
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
 
+  it("reports a status that does not parse as unreadable, and goes on following the stream", async () => {
+    const sources = watchEventSources();
+    const reader = await serving((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: {"info":1}\n\ndata: ${JSON.stringify(watching())}\n\n`);
+    });
+    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
+    expect(await status.next()).toEqual({ unreadable: expect.objectContaining({ message: `GET http://${LOOPBACK}:${reader.port}/status`, cause: expect.objectContaining({ message: "proxy status: source: is not an object" }) }) });
+    expect(await status.next()).toEqual({ status: watching() });
+    expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
+  });
+
+  it("reports a status the reader does not serve as failed, and closes the stream", async () => {
+    const sources = watchEventSources();
+    const reader = await serving((_req, res) => void res.writeHead(404).end());
+    const status = statusing(createBrowserConnection({ readerPort: reader.port }));
+    expect(await status.next()).toEqual({ failed: expect.any(Error) });
+    expect(sources.map((source) => source.readyState)).toEqual([EventSource.CLOSED]);
+  });
+
   it("follows the proxy across a restart: the connection, dropped, reconnects to the restarted proxy's status", async () => {
     const statuses: ProxyStatus[] = [watching("/proxy/src/proxy.ts"), watching()];
     let connections = 0;
@@ -377,8 +393,8 @@ describe("launching", () => {
   it("fails a refusal in the app server's words, tmux's own when tmux refused", async () => {
     const { port } = await app({ tmux: { sessions: () => Promise.reject(new TmuxRefused("no sessions")), newWindow: () => Promise.reject(new TmuxRefused("can't find session: gone")) } });
     const connection = createBrowserConnection({ serverPort: port });
-    await expect(connection.launcher(signal())).rejects.toMatchObject({ status: 502, message: "no sessions" });
-    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toMatchObject({ status: 502, message: "can't find session: gone" });
+    await expect(connection.launcher(signal())).rejects.toMatchObject({ message: "no sessions" });
+    await expect(connection.launch({ session: "gone", command: "claude" }, signal())).rejects.toMatchObject({ message: "can't find session: gone" });
   });
 
   it("fails naming the request when the app server cannot be reached", async () => {
