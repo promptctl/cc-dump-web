@@ -24,37 +24,38 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
 // where a history parts from another, which its mark says with a notch.
 export const partedOf = (segments: readonly Segment[]): ReadonlySet<number> => new Set([...forksOf(segments).values()].flat());
 
-type TokenFacts = Pick<FormattedExchange["facts"], "input" | "cacheRead" | "cacheWritten" | "output">;
+// [LAW:types-are-the-program] The kinds of a step's tokens, named as the facts name them, in the order its stack draws
+// them, top to bottom: the output, over what it wrote to the cache, over what it read from the cache, over the input
+// the cache did not hold at the foot.
+export type Kind = "output" | "cacheWritten" | "cacheRead" | "uncached";
+export const kinds: readonly Kind[] = ["output", "cacheWritten", "cacheRead", "uncached"];
+export type TokenFacts = Pick<FormattedExchange["facts"], Kind>;
 
-// [LAW:types-are-the-program] The kinds of a step's tokens, bottom to top in its mark, named as the facts name them.
-export type Kind = "uncached" | "cacheRead" | "cacheWritten" | "output";
-export type Part = { kind: Kind; count: number };
+// A mark's stack: `counts`, each kind's count of its step's tokens, `tokens`, all of them, and `headroom`, what the
+// largest step's tokens hold above them, so a stack and its headroom together fill the strip's height, and the stacks
+// climb as the context grows and drop where it is compacted. Each count is its true size: an output under a pixel, as
+// it is beside a long context, is not drawn larger, which would misstate the rest. [LAW:dataflow-not-control-flow] A
+// count not reported, as one a streaming step's message has not said yet, draws nothing until it is; the mark's title
+// leaves it out.
+export type Stack = { counts: Record<Kind, number>; tokens: number; headroom: number };
 
-// [LAW:one-source-of-truth] A step's tokens by kind, which its stack draws and its total sums: the uncached input is what
-// the input, which holds the cache's, holds beside them. A count not known yet, as a streaming step's, is none.
-function tokensOf({ input, cacheRead = 0, cacheWritten = 0, output = 0 }: TokenFacts): Part[] {
-  return [
-    { kind: "uncached", count: input === undefined ? 0 : input - cacheRead - cacheWritten },
-    { kind: "cacheRead", count: cacheRead },
-    { kind: "cacheWritten", count: cacheWritten },
-    { kind: "output", count: output },
-  ];
+const countsIn = (facts: TokenFacts) => Object.fromEntries(kinds.map((kind) => [kind, facts[kind] ?? 0])) as Record<Kind, number>;
+const totalOf = (facts: TokenFacts) => Object.values(countsIn(facts)).reduce((total, count) => total + count, 0);
+
+// The largest step's tokens, which every stack is drawn against.
+export const mostOf = (segments: readonly Segment[]): number => segments.reduce((most, { formatted: { facts } }) => Math.max(most, totalOf(facts)), 0);
+
+export function stackOf(facts: TokenFacts, most: number): Stack {
+  const tokens = totalOf(facts);
+  return { counts: countsIn(facts), tokens, headroom: most - tokens };
 }
 
-const totalOf = (parts: readonly Part[]) => parts.reduce((total, { count }) => total + count, 0);
-
-// The largest step's tokens, which every mark's height is relative to; 0 while none is known.
-export const mostOf = (segments: readonly Segment[]): number => Math.max(0, ...segments.map(({ formatted: { facts } }) => totalOf(tokensOf(facts))));
-
-// A mark's stack: its height, a fraction of the strip's, by its step's tokens against the largest step's, so the stacks
-// climb as the context grows and drop where it is compacted; and its parts, each kind's count, which divide that height
-// among them. [LAW:dataflow-not-control-flow] Always the four parts, a part of nothing drawing nothing. Each is its true
-// size: an output under a pixel, as it is beside a long context, is not drawn larger, which would misstate the rest, and
-// the mark's title says every count. Counts are whole, so while the largest is 0 every count is too, and a divisor of 1
-// at the least keeps 0 / 0 out of the height.
-export function stackOf(facts: TokenFacts, most: number): { height: number; parts: Part[] } {
-  const parts = tokensOf(facts);
-  return { height: totalOf(parts) / Math.max(most, 1), parts };
+// What one unit of a wheel's delta is, by the DOM's delta mode: a pixel, a line or a page.
+export type DeltaUnit = "pixel" | "line" | "page";
+export function deltaUnitOf(mode: number): DeltaUnit {
+  const unit = (["pixel", "line", "page"] as const)[mode];
+  if (unit === undefined) throw new Error(`a wheel's delta mode the DOM does not define: ${mode}`);
+  return unit;
 }
 
 // What a mark says on hover: the exchange line's facts (view/Conversation.tsx's ExchangeLine), then whether the column

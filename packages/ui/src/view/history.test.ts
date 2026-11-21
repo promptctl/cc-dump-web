@@ -1,4 +1,4 @@
-import { exchanges, recordedAt } from "../testing.ts";
+import { base64, exchanges, recordedAt, repliedAt } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
@@ -7,18 +7,13 @@ import { rowIndex } from "./position.ts";
 
 const timestamp = "2026-11-15T14:00:00.000Z";
 const at = recordedAt(timestamp);
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
 const request = (trace: string, body: unknown): RecordedEvent[] => [
   { ...at(trace), type: "request", method: "POST", url: "/v1/messages?beta=true", http_version: "1.1", headers: [] },
   { ...at(trace), type: "request_body", base64: base64(body) },
   { ...at(trace), type: "request_trailers", headers: [] },
 ];
-const reply = (trace: string, content: unknown[]): RecordedEvent[] => [
-  { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { ...at(trace), type: "response_trailers", headers: [] },
-  { ...at(trace), type: "end", outcome: "ok" },
-];
+const replied = repliedAt(timestamp);
+const reply = (trace: string, content: unknown[]) => replied(trace, { content });
 const text = (text: string) => ({ type: "text", text });
 const user = (...content: unknown[]) => ({ role: "user", content });
 const assistant = (...content: unknown[]) => ({ role: "assistant", content });

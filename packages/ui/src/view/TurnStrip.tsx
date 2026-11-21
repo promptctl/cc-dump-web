@@ -1,8 +1,8 @@
 import { memo, useLayoutEffect, useMemo, useRef, type WheelEvent } from "react";
-import type { FormattedExchange } from "../format/format.ts";
 import type { Segment } from "./history.ts";
 import { conversationKeys, withKeys } from "./keyboard.ts";
-import { failuresOf, mostOf, partedOf, stackOf, titleOf, type Kind } from "./strip.ts";
+import { lineHeightOf } from "./lineHeight.ts";
+import { deltaUnitOf, failuresOf, kinds, mostOf, partedOf, stackOf, titleOf, type DeltaUnit, type Kind, type TokenFacts } from "./strip.ts";
 
 // The steps of the conversation, above it (docs/design/02-design.md, "Two axes"): one mark per step, in the order
 // they began, as tall as its tokens against the largest step's and stacked by their kind (strip.ts), the step shown
@@ -52,10 +52,10 @@ export const TurnStrip = memo(function TurnStrip({
               title={titleOf(index + 1, formatted, isListed, failure)}
               facts={formatted.facts}
               most={most}
-              failed={failure.exchange || failure.tool}
+              // The step shown is marked as shown where it failed too, which its title says.
+              state={index + 1 === shown ? "shown" : failure.exchange || failure.tool ? "failed" : "step"}
               hollow={!isListed}
               parted={parted.has(index + 1)}
-              isShown={index + 1 === shown}
               onGo={onGo}
             />
           );
@@ -66,47 +66,48 @@ export const TurnStrip = memo(function TurnStrip({
 });
 
 // The wheel turned over the strip moves it along, the one way a strip goes, its scrollbar hidden; a sideways turn
-// scrolls it already. The delta's mode, the DOM's, says what one of its units is: a pixel, a line, a page.
+// scrolls it already.
 function scrollAlong(event: WheelEvent<HTMLOListElement>) {
   const strip = event.currentTarget;
-  strip.scrollLeft += event.deltaY * [1, lineHeight, strip.clientWidth][event.deltaMode]!;
+  strip.scrollLeft += event.deltaY * pixelsPer[deltaUnitOf(event.deltaMode)](strip);
 }
 
-const lineHeight = 16;
+const pixelsPer: Record<DeltaUnit, (strip: HTMLElement) => number> = { pixel: () => 1, line: lineHeightOf, page: (strip) => strip.clientWidth };
 
-// A step's mark: its stack, the step's tokens (strip.ts) against `most`, the largest step's, `hollow` for a step the
-// column does not list, and, `parted`, the notch of a step with a sibling above it. The whole of its height is the press,
-// and a line along its foot says the step is there whatever it holds. Memoized on what it shows, each a value or the
-// facts its exchange's formatting keeps while they hold, so as an exchange streams, or the step shown moves, only the
-// marks it changes render again.
+// The step a mark is of: the step shown, a step that failed, or any other step.
+type State = "shown" | "failed" | "step";
+
+// A step's mark: its stack, the step's tokens (strip.ts) against `most`, the largest step's, under its headroom,
+// `hollow` for a step the column does not list, and, `parted`, the notch of a step with a sibling above it. The whole of
+// its height is the press, and a line along its foot says the step is there whatever it holds. Memoized on what it
+// shows, each a value or the facts its exchange's formatting keeps while they hold, so as an exchange streams, or the
+// step shown moves, only the marks it changes render again.
 const Mark = memo(function Mark({
   step,
   title,
   facts,
   most,
-  failed,
+  state,
   hollow,
   parted,
-  isShown,
   onGo,
 }: {
   step: number;
   title: string;
-  facts: FormattedExchange["facts"];
+  facts: TokenFacts;
   most: number;
-  failed: boolean;
+  state: State;
   hollow: boolean;
   parted: boolean;
-  isShown: boolean;
   onGo: (step: number) => void;
 }) {
   const mark = useRef<HTMLLIElement>(null);
+  const isShown = state === "shown";
   useLayoutEffect(() => {
     if (isShown) mark.current!.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [isShown]);
-  const { height, parts } = stackOf(facts, most);
-  const paint = paints[isShown ? "shown" : failed ? "failed" : "step"];
-  const listing = hollow ? { stack: `border ${paint.line}`, part: "" } : { stack: "", part: paint.fill };
+  const { counts, tokens, headroom } = stackOf(facts, most);
+  const paint = paints[state];
   return (
     <li ref={mark} className="relative flex h-full max-w-3 min-w-1 flex-1 pt-1.5">
       {parted && <span aria-hidden className="absolute top-0 left-1/2 size-1 -translate-x-1/2 rotate-45 bg-foreground-muted" />}
@@ -117,9 +118,10 @@ const Mark = memo(function Mark({
         className={`group flex flex-1 flex-col justify-end border-b ${paint.line}`}
         onClick={() => onGo(step)}
       >
-        <span style={{ height: `${height * 100}%` }} className={`flex flex-col-reverse rounded-t-[1px] ${listing.stack}`}>
-          {parts.map(({ kind, count }) => (
-            <span key={kind} style={{ flexGrow: count, opacity: strengths[kind] }} className={`basis-0 ${listing.part}`} />
+        <span style={{ flexGrow: headroom }} className="basis-0" />
+        <span style={{ flexGrow: tokens }} className={`flex basis-0 flex-col rounded-t-[1px] ${hollow ? `border ${paint.line}` : ""}`}>
+          {kinds.map((kind) => (
+            <span key={kind} style={{ flexGrow: counts[kind], opacity: paint.strengths[kind] }} className={`basis-0 ${hollow ? "" : paint.fill}`} />
           ))}
         </span>
       </button>
@@ -127,15 +129,18 @@ const Mark = memo(function Mark({
   );
 });
 
-// [LAW:dataflow-not-control-flow] How each mark is painted: the step shown, a failed step, or any other step, its parts
-// filled where the column lists it and its stack outlined where not.
-const paints = {
-  shown: { fill: "bg-(--primary)", line: "border-(--primary)" },
-  failed: { fill: "bg-(--error)", line: "border-(--error)" },
-  step: { fill: "bg-foreground-muted group-hover:bg-foreground", line: "border-foreground-muted group-hover:border-foreground" },
-} as const;
-
-// How strongly each kind of a step's tokens is drawn: what it wrote the strongest, then what it wrote to the cache, then
-// what it read fresh, and what it read from the cache, most of most steps, the faintest. One hue to a mark, its paint's,
-// so the strengths tell the kinds apart and no color is added to the theme's.
-const strengths: Record<Kind, number> = { output: 1, cacheWritten: 0.75, uncached: 0.55, cacheRead: 0.35 };
+// [LAW:dataflow-not-control-flow] How each mark is painted, by the step it is of: its hue, which fills its stack where
+// the column lists the step and outlines it where not, and how strongly each kind of its tokens is drawn. What the step
+// wrote is the strongest, then what it wrote to the cache, then the input the cache did not hold, and what it read from
+// the cache, the prefix it resent and most of most steps, the faintest, so what each step added stands out. One hue to
+// a mark, so the strengths tell the kinds apart and no color is added to the theme's; the step shown and a failed step
+// are drawn stronger throughout, so neither is lost among the faint marks.
+const paints: Record<State, { fill: string; line: string; strengths: Record<Kind, number> }> = {
+  shown: { fill: "bg-(--primary)", line: "border-(--primary)", strengths: { output: 1, cacheWritten: 0.9, uncached: 0.8, cacheRead: 0.7 } },
+  failed: { fill: "bg-(--error)", line: "border-(--error)", strengths: { output: 1, cacheWritten: 0.9, uncached: 0.8, cacheRead: 0.7 } },
+  step: {
+    fill: "bg-foreground-muted group-hover:bg-foreground",
+    line: "border-foreground-muted group-hover:border-foreground",
+    strengths: { output: 1, cacheWritten: 0.75, uncached: 0.55, cacheRead: 0.35 },
+  },
+};

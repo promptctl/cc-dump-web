@@ -44,11 +44,11 @@ export type FormattedExchange = { exchange: Exchange; facts: Facts; groups: Grou
 // milliseconds from then to its end, once it has ended. `status`: the response's, once its head is recorded. `model`:
 // the one the request asks for, once its body is whole. `session`: the agent's session the request says it is part of,
 // as Claude Code says it, the `session_id` in the JSON text of `metadata.user_id`; undefined where it does not. The message's facts, once the response's message is read:
-// `input` is the total of its usage's input tokens, the uncached, the cache read and the cache written together (the API
-// reports the uncached alone as input_tokens), `cacheRead` and `cacheWritten` the cache's share of them, `output` the
-// output tokens, and `stopReason` why it stopped, each undefined where the API did not say; so is the total where the
-// uncached count is not said, and a cache count not said is none of the total. [LAW:one-source-of-truth] Each is read by the parse that already holds its object, the request
-// body's or the message's, beside the blocks it makes, never back out of a block.
+// `uncached` is the input the cache did not hold (the API's input_tokens), `cacheRead` and `cacheWritten` the input read
+// from the cache and written to it, `output` the output tokens, and `stopReason` why it stopped, each undefined where the
+// API did not say. [LAW:one-source-of-truth] Each is read by the parse that already holds its object, the request body's
+// or the message's, beside the blocks it makes, never back out of a block; the total input is derived from them
+// (inputOf).
 export type Facts = {
   ordinal: number;
   began: string;
@@ -58,13 +58,18 @@ export type Facts = {
   session: string | undefined;
 } & MessageFacts;
 export type MessageFacts = {
-  input: number | undefined;
+  uncached: number | undefined;
   cacheRead: number | undefined;
   cacheWritten: number | undefined;
   output: number | undefined;
   stopReason: string | undefined;
 };
-const noMessage: MessageFacts = { input: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined };
+const noMessage: MessageFacts = { uncached: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined };
+
+// The total of a message's input tokens, the uncached, the cache read and the cache written together: none where the
+// uncached count is not said, and a cache count not said is none of it.
+export const inputOf = ({ uncached, cacheRead, cacheWritten }: MessageFacts): number | undefined =>
+  uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0);
 
 // A formatter of exchanges into the conversation: the Messages API exchanges, each as its blocks.
 // [LAW:no-shared-mutable-globals] Its caches are its own. Formatting is a pure function of an exchange's events, which
@@ -404,9 +409,6 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
       const stopReason = fields.value("stop_reason");
       const stop = { stop_reason: stopReason, stop_sequence: fields.value("stop_sequence") };
       const usage = fields.value("usage");
-      const uncached = tokens(usage, "input_tokens");
-      const cacheRead = tokens(usage, "cache_read_input_tokens");
-      const cacheWritten = tokens(usage, "cache_creation_input_tokens");
       return {
         reply,
         own: [
@@ -424,9 +426,9 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
           ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
         ],
         message: {
-          input: uncached === undefined ? undefined : uncached + (cacheRead ?? 0) + (cacheWritten ?? 0),
-          cacheRead,
-          cacheWritten,
+          uncached: tokens(usage, "input_tokens"),
+          cacheRead: tokens(usage, "cache_read_input_tokens"),
+          cacheWritten: tokens(usage, "cache_creation_input_tokens"),
           output: tokens(usage, "output_tokens"),
           stopReason: typeof stopReason === "string" ? stopReason : undefined,
         },

@@ -11,6 +11,7 @@ import { Minimap } from "./Minimap.tsx";
 import { forkAbove, siblingFrom } from "./forks.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
 import { injectedFrom } from "./injected.ts";
+import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
@@ -154,7 +155,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     // The move opened the row in this commit, which the virtualizer would see only once a resize is observed, after the
     // view had resolved the offset against the height the row had: its height is committed now.
     flushSync(() => virtualizer.resizeItem(Number(row.dataset.index), rowBox.height));
-    const lead = leadLines * parseFloat(getComputedStyle(text).lineHeight);
+    const lead = leadLines * lineHeightOf(text);
     choose({ at: "row", key, offset: Math.max(0, target.getBoundingClientRect().top - rowBox.top - lead) });
   };
   // A step to a match, as one act: it is committed with the folds holding it open and its row mounted, then the view is
@@ -276,7 +277,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     match: stepTo,
     edge: (edge) => placeAt(edge === "top" ? 0 : largest(scroller.current!)),
     // A line of the rows' text: the rows are the scroller's first child.
-    lines: (by) => scroller.current!.scrollBy({ top: by * parseFloat(getComputedStyle(scroller.current!.firstElementChild!).lineHeight) }),
+    lines: (by) => scroller.current!.scrollBy({ top: by * lineHeightOf(scroller.current!.firstElementChild!) }),
     inTime: goBy,
     sibling,
     injected: toInjected,
