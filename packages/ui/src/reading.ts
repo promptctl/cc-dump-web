@@ -97,7 +97,8 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
     changed(outcome);
   };
   // [LAW:no-silent-failure] Ends the read in `outcome` once it has shown what is pending. When showing it throws too, the
-  // read failed in what showed it, and a failed outcome is its `cause`, so neither replaces the other.
+  // read failed in what showed it: the failed outcome heads the message, its whole chain said there, and the failure of
+  // showing is the `cause`, so neither replaces the other.
   const end = (outcome: Reading) => {
     const failure = show();
     if (failure === undefined) return finish(outcome);

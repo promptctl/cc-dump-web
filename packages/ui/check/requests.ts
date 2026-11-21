@@ -8,8 +8,9 @@ import { fileConnection } from "./recording.ts";
 
 // Each request of a recording as one JSON line, `{ trace, headers, body }`, its body decoded and parsed, so a wire fact
 // is counted with jq: `node packages/ui/check/requests.ts <recording.jsonl> | jq …` (docs/design/claude-code-wire.md).
-// The recording is read as the tab reads it (src/reading.ts) and each request printed once it is whole; an exchange
-// that ended is let go, so the check holds the bodies of the exchanges in flight only. `headers` is null for a request
+// The recording is folded into exchanges as the tab folds it (`add`, src/exchanges.ts) and each request printed once it
+// is whole; an exchange that ended is let go, so the check holds the bodies of the exchanges in flight only, a printed
+// request's body included. `headers` is null for a request
 // whose head was not recorded, so no count takes it for the main agent's.
 // [LAW:no-silent-failure] A body that is not whole JSON stops the read with the trace that holds it, and the requests
 // that never became whole are counted on stderr, by their traces.

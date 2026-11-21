@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, ftruncateSync, openSync, readSync } from "node:fs";
 import type { TraceId } from "@cc-dump/log/trace";
 import type { Recorded, RecordedEvent } from "./format.ts";
 
@@ -69,8 +69,9 @@ export type Writer = { written: () => number; append: (line: Buffer) => void };
 // last whole event. A file that is not there when the writer is made is created by its first write; one that is there
 // is never created, so a recording deleted before its first write, or mid-run, fails loudly.
 export function createWriter(path: string): Writer {
-  let written = recordedLength(path)?.terminated ?? 0;
-  let flags = O_WRONLY | O_APPEND | (existsSync(path) ? 0 : O_CREAT);
+  const measure = recordedLength(path);
+  let written = measure?.terminated ?? 0;
+  let flags = O_WRONLY | O_APPEND | (measure === undefined ? O_CREAT : 0);
   return {
     written: () => written,
     append: (line) => {
