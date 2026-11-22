@@ -219,3 +219,19 @@ describe("a view stored by another version", () => {
     expect(useView.getState()).toMatchObject({ open: null, opened: {} });
   });
 });
+
+describe("a current match that will not arrive", () => {
+  const match = { key: "t1/request/http", at: "text", start: 0 };
+  beforeEach(() => useView.setState({ ...useView.getInitialState(), search: { query: "x", current: match } }, true));
+
+  it("is none, the query kept", () => {
+    view.dropMatch(() => false);
+    expect(useView.getState().search).toEqual({ query: "x", current: undefined });
+  });
+
+  it("is kept while it can arrive, and the view is left as it was", () => {
+    const before = useView.getState();
+    view.dropMatch((key) => key === match.key);
+    expect(useView.getState()).toBe(before);
+  });
+});

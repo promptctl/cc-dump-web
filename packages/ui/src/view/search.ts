@@ -2,7 +2,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
-import { rowIndex, type Position } from "./position.ts";
+import { bottom, startAt, top, type Direction, type Position, type Slot, type Start } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
@@ -172,15 +172,19 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
 // the block's content, not on its line, the block, and the regions and the headings' sections holding the match.
 export type Step = { match: Match; folds: string[] };
 
-export type Direction = "next" | "previous";
+// The place a current match is at: its row's top.
+export const matchAt = ({ key }: Match): Position => ({ at: "row", key, offset: 0 });
 
-// The match after or before `current`, in the order the conversation shows them, wrapping at either end; undefined
-// when there is no match. `order`: the places of every row, hidden or not, which `found` was made from. A current whose
-// block is not among them stands just after the row `rowIndex` gives for it, as the view does: the row it was inside
-// when the formatter replaced it. So the steps go on from where it was. With no current, the steps start from the
-// view's `position`: its top row's matches first going on, and the matches above it going back. One whose exchange is
-// not among the rows goes to the first match, or back to the last.
-export function adjacent(found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, order: Keys): Step | undefined {
+// [LAW:single-enforcer] Where a step of the search starts, among every row, hidden or not, `keys`: the current match,
+// while there is one, and otherwise the reader's `position`.
+export const searchStart = (current: Match | undefined, position: Position, keys: Keys): Start => startAt(current === undefined ? position : matchAt(current), keys);
+
+// The match after or before the one a step starts `from` (searchStart), in the order the conversation shows them,
+// wrapping at either end; undefined when there is no match. A current match whose block the formatter replaced stands
+// just after the row it was inside, so the steps go on from where it was. From the reader's place, its row's matches
+// come first going on, and the matches above it going back: a block counts by its bottom from a place, and by its top
+// from a match.
+export function adjacent(found: Found, current: Match | undefined, from: Slot, direction: Direction, pattern: RegExp): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
@@ -192,16 +196,8 @@ export function adjacent(found: Found, current: Match | undefined, position: Pos
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(found, own, past);
   }
-  // Where the step starts among the rows; `bias`: where it stands against its row when the row is among them.
-  const placeOf = (key: string, bias: number) => {
-    const own = order.indexOf(key);
-    if (own !== undefined) return own + bias;
-    const inside = rowIndex(key, order.indexOf);
-    return inside === undefined ? (forward ? -Infinity : Infinity) : inside + 0.5;
-  };
-  const place =
-    current !== undefined ? placeOf(current.key, 0) : position.at === "row" ? placeOf(position.key, -0.5) : position.at === "start" ? -Infinity : Infinity;
-  const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
+  const edge = current === undefined ? bottom : top;
+  const block = pick(found.blocks, (block) => ahead(edge(block.index) - from)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
   return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);

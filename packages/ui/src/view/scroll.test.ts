@@ -15,6 +15,7 @@ const rows: Rows = {
   },
   placed: (index) => placed[index],
   rowAt: (offset) => placed.findLast((row) => row.start <= offset),
+  coming: () => true,
 };
 const end = { at: "end" } as const;
 const inC = { at: "row", key: "c", offset: 20 } as const;
@@ -77,8 +78,16 @@ describe("step", () => {
     expect(step("scroll", 250, 250, { position: inC, written: 170 }, true, false, rows)).toEqual({ position: { at: "row", key: "c", offset: 100 }, written: 250, write: undefined, by: "reader" });
   });
 
-  it("writes nothing for a position whose row has not arrived, as after a reload", () => {
+  it("writes nothing for a position whose row the read can still bring, as after a reload, and keeps it through a scroll event at the view's own offset", () => {
     const later = { at: "row", key: "d", offset: 5 } as const;
     expect(step("change", 0, 250, { position: later, written: 0 }, true, true, rows)).toEqual({ position: later, written: 0, write: undefined, by: "view" });
+    expect(step("scroll", 0, 250, { position: later, written: 0 }, true, true, rows)).toEqual({ position: later, written: 0, write: undefined, by: "view" });
+  });
+
+  it("puts a position whose row will not arrive where the view is, as the view's own placing", () => {
+    const gone = { at: "row", key: "d", offset: 5 } as const;
+    const ended = { ...rows, coming: () => false };
+    expect(step("change", 0, 250, { position: gone, written: 0 }, false, true, ended)).toEqual({ position: { at: "start" }, written: 0, write: undefined, by: "view" });
+    expect(step("change", 170, 250, { position: gone, written: 170 }, false, true, ended)).toEqual({ position: inC, written: 170, write: undefined, by: "view" });
   });
 });

@@ -90,6 +90,10 @@ export const view = {
   // it closed, until the reader closes it.
   goTo: ({ match, folds }: Step, now: string | undefined) =>
     useView.setState((state) => ({ ...movedTo(state, match.key, folds, now), search: { ...state.search, current: match } })),
+  // [LAW:one-source-of-truth] A current match whose row will not arrive, by `arrives` (position.ts), is none: the
+  // search's steps count from the reader's place. The view is left as it is otherwise, so no store listener runs.
+  dropMatch: (arrives: (key: string) => boolean) =>
+    useView.setState((state) => (state.search.current === undefined || arrives(state.search.current.key) ? state : { search: { ...state.search, current: undefined } })),
   // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show
   // the entry's heading and what stands under it, `folds`, show open, and the view moves to the row of its block,
   // `key`, which the click then refines to the heading's line.

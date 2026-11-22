@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { categories, type Category } from "../format/blocks.ts";
-import type { Direction } from "./search.ts";
+import type { Direction } from "./position.ts";
 
 // [LAW:one-source-of-truth] The keys (docs/design/02-design.md, "Keys"): each one's chord, what it does and its act, in
 // one table. What hears a key, the keys panel and the controls' titles all read it, so none names a key another does not.

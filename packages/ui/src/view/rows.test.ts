@@ -6,10 +6,11 @@ import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
-import { createHistory } from "./history.ts";
+import { createHistory, levelKey } from "./history.ts";
+import { beforeAll } from "./position.ts";
 import { adjacent, createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { arrivalOf, blockOf, blocksOf, categoryOf, coming, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
@@ -316,7 +317,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
+      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, beforeAll, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -816,5 +817,50 @@ describe("the column", () => {
     expect(dimmed.filter((key) => !key.includes("/"))).toEqual(["t1", "compact"]);
     expect(dimmed).toContain("t1/fork");
     expect(dimmed.some((key) => key.includes("probe") || key.includes("c1"))).toBe(false);
+  });
+
+  describe("what brings a row", () => {
+    const historyOf = (events: RecordedEvent[]) => createHistory()(createFormatter()(exchanges(events)));
+    const summary = "<summary>\n1. Said hello.\n</summary>\n";
+    const compacted = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("Hello.")]),
+      ...request("t2", { ...main, messages: more }),
+      ...reply("t2", [text("More hello.")]),
+      ...request("compact", { ...main, messages: [hi, assistant(text("Hello.")), user(text("More."), text("Summarize."))] }),
+      ...reply("compact", [text(summary)]),
+      ...request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] }),
+    ];
+
+    it("is, for every row the column lists at any step, the level a nest's line is of, or an exchange read by that step", () => {
+      for (const events of [parted, nested, compacted]) {
+        const history = historyOf(events);
+        const layOut = createLayout(shown);
+        for (let step = 1; step <= history.segments.length; step++) {
+          for (const row of layOut(history, step, undefined, {}).every.rows) {
+            const arrival = arrivalOf(row.key);
+            if (row.kind === "nest") expect(arrival).toEqual({ of: "level", level: levelKey(row.level) });
+            else expect(arrival.of === "exchange" && history.stepOf(arrival.trace)! <= step).toBe(true);
+          }
+        }
+      }
+      // The shapes of key a row can have: a fork's line and a thread's among them.
+      expect(keysOf(createLayout(shown)(historyOf(compacted), 4, undefined, {}).every)).toEqual(expect.arrayContaining(["t1/fork", "thread:compact/message.3/content.0/thread"]));
+    });
+
+    it("can still arrive while the read goes on and its exchange is unread or still running, or its level has no step", () => {
+      const asked = historyOf(request("t1", { ...main, messages: [hi] }));
+      const answered = historyOf([...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")])]);
+      const reply1 = "thread:t1/message.1/content.0";
+      expect([coming(asked, undefined, true, reply1), coming(answered, undefined, true, "thread:t1/message.9/content.0"), coming(asked, undefined, false, "z")]).toEqual([true, false, false]);
+      expect(coming(answered, undefined, true, "z/request/http")).toBe(true);
+      const agents = historyOf(nested);
+      expect([coming(agents, undefined, true, "nest:agent:a1"), coming(agents, undefined, true, "nest:agent:a9")]).toEqual([false, true]);
+    });
+
+    it("can still arrive, every row, while the moment held is a step still to be read", () => {
+      const answered = historyOf([...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")])]);
+      expect([coming(answered, "later", true, "t1/gone"), coming(answered, "t1", true, "t1/gone")]).toEqual([true, false]);
+    });
   });
 });

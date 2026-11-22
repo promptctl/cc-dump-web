@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
+import { afterAll, arrives, beforeAll, bottom, fromStart, positionAt, resolve, rowIndex, startAt, top, waitingLine, type Placed, type Slot, type Start } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -68,5 +68,59 @@ describe("position", () => {
     expect(positionAt(170, rowAt)).toEqual({ at: "row", key: "c", offset: 20 });
     expect(positionAt(0, rowAt)).toEqual({ at: "start" });
     expect(resolve(positionAt(123, rowAt), indexOf, placed)).toBe(123);
+  });
+});
+
+describe("where a move starts", () => {
+  // `b/hidden` is a row a category hides, which the row listed before it, `b`, stands for (rows.ts, Keys).
+  const keys = { at: (index: number) => rows[index]!.key, indexOf: (key: string) => (key === "b/hidden" ? 1 : indexOf(key)) };
+  const slotOf = (start: Start) => (start.at === "slot" ? start.slot : undefined);
+  const row = (key: string, offset = 0) => slotOf(startAt({ at: "row", key, offset }, keys))!;
+
+  it("counts on one axis: the start, a row's top, some way into it, its bottom, just after it, the next row, the end", () => {
+    const order = [slotOf(startAt({ at: "start" }, keys))!, row("b"), row("b", 40), bottom(1), row("b/hidden"), top(2), slotOf(startAt({ at: "end" }, keys))!];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(new Set(order).size).toBe(order.length);
+    expect([order[0], order[1], order.at(-1)]).toEqual([beforeAll, top(1), afterAll]);
+  });
+
+  it("stands a replaced row just after the row it was inside, as a hidden one does after the row listed before it", () => {
+    expect(row("c/body")).toBe(row("c/gone/body"));
+    expect(row("c/body")).toBeGreaterThan(bottom(2));
+    expect(row("b/hidden")).toBeLessThan(top(2));
+  });
+
+  it("waits while not even the outermost row a key is inside is among the rows", () => {
+    expect([startAt({ at: "row", key: "d", offset: 0 }, keys), startAt({ at: "row", key: "d/body", offset: 5 }, keys)]).toEqual([{ at: "waiting" }, { at: "waiting" }]);
+  });
+
+  it("takes no move while it waits, and the move from its slot otherwise", () => {
+    const moves: Slot[] = [];
+    const move = (from: Slot) => moves.push(from);
+    expect(fromStart({ at: "waiting" }, move)).toBeUndefined();
+    expect(moves).toEqual([]);
+    fromStart({ at: "slot", slot: top(1) }, move);
+    expect(moves).toEqual([top(1)]);
+  });
+});
+
+describe("a row's arrival", () => {
+  it("is among the rows, or one the read can still bring", () => {
+    expect([arrives("c/body", indexOf, () => false), arrives("d", indexOf, () => true), arrives("d", indexOf, () => false)]).toEqual([true, true, false]);
+  });
+});
+
+describe("the line under the rows", () => {
+  const slot = { at: "slot", slot: top(0) } as const;
+  const waiting = { at: "waiting" } as const;
+
+  it("says which start the moves wait on, the reader's place first, and nothing while none waits", () => {
+    expect([waitingLine(slot, undefined), waitingLine(slot, slot), waitingLine(waiting, slot), waitingLine(slot, waiting), waitingLine(waiting, waiting)]).toEqual([
+      "",
+      "",
+      "Your place is still being read",
+      "The current match is still being read",
+      "Your place is still being read",
+    ]);
   });
 });

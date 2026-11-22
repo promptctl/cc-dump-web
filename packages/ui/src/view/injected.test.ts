@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { injectedFrom } from "./injected.ts";
-import type { Position } from "./position.ts";
+import { fromStart, startAt, type Position } from "./position.ts";
 import type { Row } from "./rows.ts";
 
 // A block's row at `key`: what was said, or, `injected`, what the harness put into the message.
@@ -24,11 +24,14 @@ const block = (key: string, injected: boolean): Row => ({
 });
 // Said, injected, said, injected, injected, said.
 const rows = [block("a", false), block("b", true), block("c", false), block("d", true), block("e", true), block("f", false)];
-const indexOf = (listed: Row[]) => (key: string) => {
-  const index = listed.findIndex((row) => row.key === key);
-  return index === -1 ? undefined : index;
-};
-const from = (position: Position, direction: "next" | "previous", listed = rows) => injectedFrom(listed, indexOf(listed), position, direction);
+const keysOf = (listed: Row[]) => ({
+  at: (index: number) => listed[index]!.key,
+  indexOf: (key: string) => {
+    const index = listed.findIndex((row) => row.key === key);
+    return index === -1 ? undefined : index;
+  },
+});
+const from = (position: Position, direction: "next" | "previous", listed = rows) => fromStart(startAt(position, keysOf(listed)), (slot) => injectedFrom(listed, slot, direction));
 const at = (key: string, offset = 0): Position => ({ at: "row", key, offset });
 
 describe("the injected blocks", () => {
@@ -70,9 +73,9 @@ describe("the injected blocks", () => {
     expect(from({ at: "end" }, "next")).toBe("b");
   });
 
-  it("counts from the row a position inside it is nearest, and from before every row while that has not arrived", () => {
+  it("counts from the row a position inside it is nearest, and goes nowhere while that is still to be read", () => {
     expect(from(at("c/body"), "next")).toBe("d");
-    expect(from(at("z"), "next")).toBe("b");
+    expect(from(at("z"), "next")).toBeUndefined();
   });
 
   it("goes nowhere when no injected block is listed", () => {

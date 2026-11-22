@@ -3,7 +3,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
-import { levelKey, placeOf, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
+import { levelKey, placeOf, sameFields, threadItem, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -330,7 +330,31 @@ type Column = {
 // The main agent's level, which stands in no nest.
 const top = levelKey({ kind: "main" });
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
-export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
+const nestLine = "nest:";
+export const nestKey = (level: Level) => `${nestLine}${levelKey(level)}`;
+
+// [LAW:types-are-the-program] What brings the row at a key: a nest's line comes with its level's first step, and any
+// other row with the exchange whose trace_id its key starts with (Row, history.ts Item). A trace_id holds no `/`
+// (log/src/trace.ts); a level key may, so a nest's is matched first.
+export type Arrival = { of: "level"; level: string } | { of: "exchange"; trace: string };
+export function arrivalOf(key: string): Arrival {
+  if (key.startsWith(nestLine)) return { of: "level", level: key.slice(nestLine.length) };
+  const rest = key.startsWith(threadItem) ? key.slice(threadItem.length) : key;
+  const cut = rest.indexOf("/");
+  return { of: "exchange", trace: cut === -1 ? rest : rest.slice(0, cut) };
+}
+
+// Whether the read can still bring the row at `key`: while it goes on (`reading`), a row whose exchange is still to be
+// read or still running, or whose level has no step read yet. While the moment held is a step still to be read,
+// `held`, the column shows another (Conversation.tsx, stepShown), so every row of it can still arrive.
+export function coming(history: History, held: string | undefined, reading: boolean, key: string): boolean {
+  if (!reading) return false;
+  if (held !== undefined && history.stepOf(held) === undefined) return true;
+  const arrival = arrivalOf(key);
+  if (arrival.of === "level") return !history.segments.some(({ wire }) => levelKey(wire.level) === arrival.level);
+  const step = history.stepOf(arrival.trace);
+  return step === undefined || history.segments[step - 1]!.formatted.exchange.end === undefined;
+}
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 

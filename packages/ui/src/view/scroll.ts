@@ -1,10 +1,12 @@
-import { positionAt, resolve, type Placed, type Position } from "./position.ts";
+import { arrives, positionAt, resolve, type Placed, type Position } from "./position.ts";
 
-// Where the rows are: a row's index by its key, a row by its index, and the row at an offset.
+// Where the rows are: a row's index by its key, a row by its index, the row at an offset, and whether the read can
+// still bring the row at a key that is not among them (rows.ts, coming).
 export type Rows = {
   indexOf: (key: string) => number | undefined;
   placed: (index: number) => Placed | undefined;
   rowAt: (offset: number) => Placed | undefined;
+  coming: (key: string) => boolean;
 };
 
 // What the view keeps between steps: the position, and `written`, the offset it last wrote or took as its own. A
@@ -45,9 +47,12 @@ export function step(
   if (!own && cause === "change") return { position, written, write: undefined, by };
   // A reader's offset becomes the position.
   const read = readAt(offset, end, follow, resumable, rows.rowAt);
-  const next = own && (position.at !== "end" || follow) ? position : read;
-  // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
-  // arrived, as after a reload, writes nothing until it does.
+  const kept = own && (position.at !== "end" || follow) ? position : read;
+  // [LAW:one-source-of-truth] A place whose row will not arrive, the read having ended without it or the column showing
+  // another history, is where the view is: it is not kept for the moves to count from.
+  const next = kept.at === "row" && !arrives(kept.key, rows.indexOf, rows.coming) ? read : kept;
+  // Resolved against where the rows now are, within reach, and written when it moved; a position whose row the read
+  // can still bring, as after a reload, writes nothing until it arrives.
   const resolved = resolve(next, rows.indexOf, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
   return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };

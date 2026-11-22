@@ -1,7 +1,7 @@
 import type { Ref } from "react";
 import { useSettings, type SearchOptions } from "../settings.ts";
 import { conversationKeys, fieldKeys, heard, press, withKeys } from "./keyboard.ts";
-import type { Direction } from "./search.ts";
+import type { Direction } from "./position.ts";
 import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 

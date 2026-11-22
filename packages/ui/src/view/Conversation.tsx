@@ -15,8 +15,8 @@ import { injectedFrom } from "./injected.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
-import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
+import { arrives, fromStart, positionAt, rowIndex, startAt, waitingLine, type Direction, type Placed, type Position } from "./position.ts";
+import { blockOf, categoryOf, changeColors, clockTime, coming, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -24,7 +24,7 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, matchAt, ordinal, patternOf, searchStart } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -49,7 +49,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const current = useView((state) => state.search.current);
   const opened = useView((state) => state.opened);
   const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, current?.key, opened), [layOut, conversation, shown, current?.key, opened]);
-  // The position's row, which is always mounted: a step to a match commits with that row on screen.
+  // The position's row, which is mounted once it is among the rows: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
   // The UI is not built with React Compiler, so nothing memoizes the virtualizer's functions.
@@ -60,7 +60,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     getItemKey: keys.measuredBy,
     estimateSize: (index) => estimateHeight(rows[index]!, opened, visibility),
     overscan: 10,
-    // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
+    // The position's row is mounted once it is among the rows, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
     rangeExtractor: (range) => {
       const anchor = anchorKey === undefined ? undefined : rowIndex(anchorKey, keys.indexOf);
@@ -96,10 +96,14 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const sync = (cause: Cause) => {
     const element = scroller.current!;
     const { position, moment } = useView.getState();
+    const held = moment.at === "now" ? undefined : moment.trace;
+    const arriving = (key: string) => coming(conversation, held, reading, key);
+    view.dropMatch((key) => arrives(key, every.keys.indexOf, arriving));
     const rowsNow = {
       indexOf: keys.indexOf,
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
       rowAt,
+      coming: arriving,
     };
     const kept = { position, written: written.current };
     const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
@@ -135,6 +139,14 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     view.place(position, "reader", now);
     latest.current("choose");
   };
+  // [LAW:no-ambient-temporal-coupling] The view as a move reads it: the scroller's offset taken first, as its scroll
+  // event would, so a scroll whose event has not run yet moves the reader's place before the move counts from it.
+  const placeNow = () => {
+    latest.current("scroll");
+    return useView.getState();
+  };
+  // What the line under the rows says the moves wait on (position.ts, waitingLine).
+  const waiting = useView((state) => waitingLine(startAt(state.position, keys), state.search.current && startAt(matchAt(state.search.current), every.keys)));
   // Following, a click stops; paused or off, it follows from the end, now, whichever moment was shown.
   const toggleFollow = () => {
     settings.setFollow(following !== "on");
@@ -162,7 +174,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // A step to a match, as one act: it is committed with the folds holding it open and its row mounted, then the view is
   // put at the match's line.
   const stepTo = (direction: Direction) => {
-    const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
+    const { position, search } = placeNow();
+    const next = fromStart(searchStart(search.current, position, every.keys), (from) => adjacent(found, search.current, from, direction, pattern));
     if (next === undefined) return;
     flushSync(() => view.goTo(next, now));
     const match = currentMatch();
@@ -231,9 +244,9 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The reader choosing another history at `fork`: the one before or after the one the view is at (forks.ts), by a move
   // to its first step.
   const switchAt = (fork: ForkRow, direction: Direction) => go(siblingFrom(fork, aimed.current, direction), fork.key);
-  // A switch at the nearest fork above the view; nothing where the column lists no fork.
+  // A switch at the nearest fork above the reader's place; nothing where the column lists no fork.
   const sibling = (direction: Direction) => {
-    const fork = forkAbove(rows, keys.indexOf, positionAt(scroller.current!.scrollTop, rowAt));
+    const fork = fromStart(startAt(placeNow().position, keys), (from) => forkAbove(rows, from));
     if (fork !== undefined) switchAt(fork, direction);
   };
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
@@ -256,7 +269,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // which marks the block where the view is at the end and cannot move, and opens it at Enter. Committed first, so the
   // block's row is mounted, as the position's is.
   const toInjected = (direction: Direction) => {
-    const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
+    const key = fromStart(startAt(placeNow().position, keys), (from) => injectedFrom(rows, from, direction));
     if (key === undefined) return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
     const line = scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`);
@@ -319,7 +332,11 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           )}
           {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
               rather than over it. */}
-          <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
+          <div className="pointer-events-none sticky bottom-0 mt-auto flex items-center justify-end gap-3 px-4 pt-1 pb-3">
+            {/* Always mounted, so a screen reader says its text as it changes. */}
+            <p role="status" data-testid="waiting" className="rounded-full bg-panel px-3 py-1 text-xs text-foreground-muted empty:hidden">
+              {waiting}
+            </p>
             <Toggle
               data-follow={following}
               pressed={control.pressed}

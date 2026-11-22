@@ -36,6 +36,58 @@ export function rowIndex(key: string, indexOf: (key: string) => number | undefin
   return cut === -1 ? undefined : rowIndex(key.slice(0, cut), indexOf);
 }
 
+export type Direction = "next" | "previous";
+
+// [LAW:one-source-of-truth] Where a move counts from, on the one axis every move compares on: before every row, a row's
+// top, some way into it, its bottom, just after it, and after every row. A row a category hides, or one the formatter
+// replaced, stands just after the row standing in for it (rowIndex), which is where the view is (resolve).
+// [LAW:parse-dont-validate] Made only here, from a place found among the rows, so a move given one never meets a row
+// that is not among them.
+export type Slot = number & { readonly slot: unique symbol };
+const slot = (at: number) => at as Slot;
+export const beforeAll = slot(-1);
+export const afterAll = slot(Infinity);
+export const top = (index: number) => slot(4 * index);
+const inside = (index: number) => slot(4 * index + 1);
+export const bottom = (index: number) => slot(4 * index + 2);
+const after = (index: number) => slot(4 * index + 3);
+
+// [LAW:types-are-the-program] Where a move from a place starts: its slot, or a wait, while its row is not among the
+// rows. A row that will not arrive is never stored (scroll.ts, state.ts), so a missing row is one the read can still
+// bring, as after a reload.
+export type Start = { at: "slot"; slot: Slot } | { at: "waiting" };
+
+// [LAW:single-enforcer] The one judge of where a move from `position` starts among the rows `keys` lists.
+export function startAt(position: Position, keys: { at: (index: number) => string; indexOf: (key: string) => number | undefined }): Start {
+  const at = (slot: Slot): Start => ({ at: "slot", slot });
+  switch (position.at) {
+    case "start":
+      return at(beforeAll);
+    case "end":
+      return at(afterAll);
+    case "row": {
+      const index = rowIndex(position.key, keys.indexOf);
+      if (index === undefined) return { at: "waiting" };
+      return at(keys.at(index) !== position.key ? after(index) : position.offset > 0 ? inside(index) : top(index));
+    }
+  }
+}
+
+// A move from `start`: none while it waits.
+export const fromStart = <T>(start: Start, move: (from: Slot) => T): T | undefined => (start.at === "waiting" ? undefined : move(start.slot));
+
+// Whether the row at `key` is among the rows, or one the read can still bring (`coming`, rows.ts): a stored place or
+// current match that does neither will not arrive.
+export const arrives = (key: string, indexOf: (key: string) => number | undefined, coming: (key: string) => boolean): boolean =>
+  rowIndex(key, indexOf) !== undefined || coming(key);
+
+// What the line under the rows says of the starts the moves wait on: the reader's place, which every move counts from,
+// and the current match, which the search's steps count from. Empty while neither waits.
+export function waitingLine(place: Start, match: Start | undefined): string {
+  if (place.at === "waiting") return "Your place is still being read";
+  return match?.at === "waiting" ? "The current match is still being read" : "";
+}
+
 // The place a scroll offset is at: the row at the top of the view and how far into it, or the start.
 export function positionAt(offset: number, rowAt: (offset: number) => Placed | undefined): Exclude<Position, { at: "end" }> {
   const row = offset <= 0 ? undefined : rowAt(offset);
