@@ -114,6 +114,21 @@ describe("history", () => {
     expect(changed.segments[0]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/message.1/content.1")!.versions).toHaveLength(2);
   });
 
+  it("compares a reply's block holding content blocks as it is resent: the fields the API reported of a block inside it and the client drops do not change it", () => {
+    const result = (said: object) => ({ type: "mcp_tool_result", tool_use_id: "mcptoolu_1", is_error: false, content: [{ type: "text", text: "a", ...said }] });
+    const versions = (resent: object) =>
+      history([
+        ...request("t1", { ...main, messages: [hi] }),
+        ...reply("t1", [result({ reported: true })]),
+        ...request("t2", { ...main, messages: [hi, assistant(result(resent)), user(text("More."))] }),
+      ])
+        .segments[0]!.groups.flatMap(({ items }) => items)
+        .find(({ key }) => key === "thread:t1/message.1/content.0")!.versions;
+    expect(versions({})).toHaveLength(1);
+    // A field of the block inside that the client sends back otherwise is compared.
+    expect(versions({ reported: false })).toHaveLength(2);
+  });
+
   it("says of a version what it rewrote: nothing for a reply's block a request took away and a later one resends as a client does, the block it was for one sent with other content", () => {
     const read = { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/a" } };
     // The second turn drops the reply's tool use and what followed it, carrying the thread on; the third sends the tool

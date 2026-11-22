@@ -612,6 +612,7 @@ function partSize(part: Part): number {
     case "json":
       return typeof part.value === "string" ? part.value.length : jsonText(part).length;
     case "fields":
+    case "rest":
       return fieldLines(part.fields).reduce((length, { name, value }) => length + name.length + (value?.length ?? 0), 0);
     case "media":
       return part.source.type === "base64" ? part.source.data.length : part.source.type === "url" ? part.source.url.length : part.source.file_id.length;
@@ -666,6 +667,7 @@ function partText(part: PartBody): string {
     case "json":
       return typeof part.value === "string" ? part.value : leafText(fieldValue(part.value));
     case "fields":
+    case "rest":
       return leafText(part.fields);
     case "media":
       return "";

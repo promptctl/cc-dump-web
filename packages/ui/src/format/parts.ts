@@ -15,6 +15,10 @@ export type PartBody = { label?: string } & (
   | { kind: "text"; form: Form; text: string }
   | { kind: "json"; value: unknown }
   | { kind: "fields"; fields: Field[] }
+  // [LAW:types-are-the-program] The fields of an object no read asked for, shown as fields are: a kind of its own, so
+  // whatever name nesting gives the part, the history knows them as fields a resent request may leave out
+  // (view/history.ts).
+  | { kind: "rest"; fields: Field[] }
   | { kind: "media"; of: Medium; source: Source }
   // A change of one text into another, shown line by line: what it removed and what it added, among the lines it kept
   // (format/diff.ts).
@@ -97,10 +101,10 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
-// An object's fields as the part `named`, its id and its label, when it has any.
-export function fieldsParts(object: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "fields" }>[] {
-  const fields = Object.entries(object).map(([name, value]): Field => [name, fieldValue(value)]);
-  return fields.length === 0 ? [] : [{ ...named, kind: "fields", fields }];
+// The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
+export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
+  const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
+  return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
 }
 
 // Why a value is not shown as what it was read as, set before the value as it was received.

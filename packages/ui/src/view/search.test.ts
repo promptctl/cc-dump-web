@@ -46,7 +46,7 @@ const adjacent = (found: Found, current: Match | undefined, position: Position, 
   return matchMove(column, found, standing, position, direction, pattern);
 };
 // Which match `current`, taken under the search's pattern, is among those found, as the counter says.
-const ordinalOf = (found: Found, current: Match) => ordinal(found, standingIn(columnOf([...found.rows]), { ...current, pattern: literal(pattern) }, pattern), pattern);
+const ordinalOf = (found: Found, current: Match) => ordinal(found, standingIn(columnOf([...found.rows]), { ...current, pattern: literal(pattern) }, pattern));
 // The texts of a tool call and its result, by their parts' ids.
 const [input, content] = [address.part({ id: "input" }), address.part({ id: "content" })];
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.

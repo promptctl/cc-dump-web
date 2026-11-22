@@ -98,7 +98,7 @@ describe("a move from the reader's place", () => {
   });
 
   it("keeps a current match its text holds, or one not read yet, standing, and finds none with none current", () => {
-    expect([match("a/said"), match("later/said"), undefined].map((current) => judge(column, current, pattern).is)).toEqual(["standing", "standing", "none"]);
+    expect([match("a/said"), match("later/said"), undefined].map((current) => judge(column, current, pattern).is)).toEqual(["found", "pending", "none"]);
   });
 });
 

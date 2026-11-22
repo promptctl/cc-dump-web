@@ -1,4 +1,4 @@
-import { unreadPart, type Block, type Launch } from "../format/blocks.ts";
+import type { Block, Launch } from "../format/blocks.ts";
 import { equal } from "../format/equal.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
@@ -490,17 +490,16 @@ function content({ category, name, parts, injected }: Block): unknown {
   return { category, name, parts, injected };
 }
 
-// A reply's block with, of its fields no read asked for, only those `resent` has.
+// A reply's block with, of each part of its fields no read asked for, only the fields the part of that id in `resent`
+// has.
 function asResent(reply: Block, resent: Block): Block {
-  const kept = new Set(resent.parts.find(isUnread)?.fields.map(([name]) => name));
+  const kept = new Map(resent.parts.flatMap((part) => (part.kind === "rest" ? [[part.id, new Set(part.fields.map(([name]) => name))] as const] : [])));
   return {
     ...reply,
     parts: reply.parts.flatMap((part): Part[] => {
-      if (!isUnread(part)) return [part];
-      const fields = part.fields.filter(([name]) => kept.has(name));
+      if (part.kind !== "rest") return [part];
+      const fields = part.fields.filter(([name]) => kept.get(part.id)?.has(name) === true);
       return fields.length === 0 ? [] : [{ ...part, fields }];
     }),
   };
 }
-
-const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.id === unreadPart.id;

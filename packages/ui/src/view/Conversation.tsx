@@ -113,7 +113,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   // finds standing: the one every reader of the current match takes.
   const judged = useMemo(() => judge(column, current, pattern), [column, current, pattern]);
   const standingMatch = currentOf(judged);
-  const currentOrdinal = useMemo(() => ordinal(found, standingMatch, pattern), [found, standingMatch, pattern]);
+  const currentOrdinal = useMemo(() => ordinal(found, standingMatch), [found, standingMatch]);
   const paint = useMemo(() => ({ pattern, current: standingMatch }), [pattern, standingMatch]);
   // What holds the moves, which the line under the rows says.
   const waiting = useView(useShallow((state) => waitingOf(column, state.position, standingMatch)));
@@ -778,6 +778,7 @@ function PartContent({ part, blockKey }: { part: Part; blockKey: string }): Reac
     case "json":
       return <JsonView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "fields":
+    case "rest":
       return (
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.

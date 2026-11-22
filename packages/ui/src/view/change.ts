@@ -28,6 +28,7 @@ function partText(part: Part): string {
     case "json":
       return jsonText(part);
     case "fields":
+    case "rest":
       return fieldLines(part.fields)
         .map((line) => `${"  ".repeat(depthOf(line))}${line.name}:${line.value === undefined ? "" : ` ${line.value}`}`)
         .join("\n");

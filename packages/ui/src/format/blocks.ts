@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { fieldsParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
+import { restParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
@@ -54,9 +54,8 @@ const pieces: Record<Role, (text: string) => Piece[]> = {
   system: (text) => split(text, "harness"),
 };
 
-// The part holding a block's fields no read asked for. [LAW:one-source-of-truth] The history reads a reply's by its id
-// (view/history.ts).
-export const unreadPart = { id: "unread", label: "fields" };
+// The part holding a block's fields no read asked for.
+const unreadPart = { id: "unread", label: "fields" };
 
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
 export function raw(category: Category, name: string, reason: string, received: Received): Block {
@@ -69,7 +68,7 @@ export function formatError(fields: Fields): Block {
 }
 
 // The fields of an object no read asked for, as a part, when there are any.
-export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), unreadPart);
+export const unreadParts = (fields: Fields) => restParts(fields.rest(), unreadPart);
 
 // The fields of an object no read asked for, as a block of their own in `category`, when there are any.
 export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
@@ -331,5 +330,5 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
         return [{ id: "source", label: "source", kind: "fields", fields: [["type", type]] }];
     }
   })();
-  return [...parts, ...fieldsParts(fields.rest(), { id: "source/unread", label: "source fields" })];
+  return [...parts, ...restParts(fields.rest(), { id: "source/unread", label: "source fields" })];
 }

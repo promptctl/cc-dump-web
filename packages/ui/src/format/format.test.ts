@@ -169,8 +169,8 @@ describe("format", () => {
     expect(group(formatted, "message.0")[1]!.parts).toEqual([{ id: "source", kind: "media", of: "image", source: png }]);
     expect(group(formatted, "message.0")[2]!.parts).toEqual([
       { id: "source", kind: "text", form: "verbatim", text: "Quarterly notes" },
-      { kind: "fields", id: "source/unread", label: "source fields", fields: [["media_type", '"text/plain"']] },
-      { kind: "fields", id: "unread", label: "fields", fields: [["title", '"notes"']] },
+      { kind: "rest", id: "source/unread", label: "source fields", fields: [["media_type", '"text/plain"']] },
+      { kind: "rest", id: "unread", label: "fields", fields: [["title", '"notes"']] },
     ]);
     expect(group(formatted, "message.2")[0]!.parts).toEqual([
       { id: "0/text", kind: "text", form: "verbatim", text: "Read 1 image" },
@@ -183,12 +183,12 @@ describe("format", () => {
     expect(thinking!.parts).toEqual([
       { id: "thinking", kind: "text", form: "markdown", text: "" },
       { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] },
-      { kind: "fields", id: "unread", label: "fields", fields: [["estimated_tokens", "50"]] },
+      { kind: "rest", id: "unread", label: "fields", fields: [["estimated_tokens", "50"]] },
     ]);
     expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Red and blue." }]);
     expect(toolUse!.parts).toContainEqual({ kind: "text", form: "verbatim", id: "command", label: "command", text: "ls" });
     expect(usage!.parts).toEqual([{ id: "usage", kind: "fields", fields: [["input_tokens", "2"], ["output_tokens", "90"]] }]);
-    expect(message!.parts).toEqual([{ kind: "fields", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"'], ["context_management", [["applied_edits", "[]"]]]]) }]);
+    expect(message!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"'], ["context_management", [["applied_edits", "[]"]]]]) }]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
     // An object's members are the fields it holds, a list's named by index; a string that is the JSON of one, as
     // metadata.user_id is, holds its fields too; any other value, an empty object or list too, reads as its JSON.
@@ -209,9 +209,9 @@ describe("format", () => {
     // A tool's description reads first, what else defines it after; a server tool is named by its type, not shown again.
     expect(group(formatted, "tools")[0]!.parts).toEqual([
       { id: "description", kind: "text", form: "markdown", text: "Reads a file" },
-      { kind: "fields", id: "unread", label: "fields", fields: [["input_schema", [["type", '"object"']]]] },
+      { kind: "rest", id: "unread", label: "fields", fields: [["input_schema", [["type", '"object"']]]] },
     ]);
-    expect(group(formatted, "tools")[1]!.parts).toEqual([{ kind: "fields", id: "unread", label: "fields", fields: [["max_uses", "2"]] }]);
+    expect(group(formatted, "tools")[1]!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: [["max_uses", "2"]] }]);
     // The cache breakpoint is the request's, out of the block it was set on.
     expect(group(formatted, "system")[0]!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "You are Claude Code." }]);
     expect(group(formatted, "request")[2]!.parts).toEqual([{ id: "breakpoints", kind: "fields", fields: [["system.0", [["type", '"ephemeral"']]]] }]);
@@ -260,8 +260,8 @@ describe("format", () => {
     });
     // No block holds one, so a block resent with the breakpoint moved off it is the block it was.
     expect(group(formatted, "tools").map(({ parts }) => parts)).toEqual([
-      [{ kind: "fields", id: "unread", label: "fields", fields: [["input_schema", "{}"]] }],
-      [{ kind: "fields", id: "unread", label: "fields", fields: [["input_schema", "{}"]] }],
+      [{ kind: "rest", id: "unread", label: "fields", fields: [["input_schema", "{}"]] }],
+      [{ kind: "rest", id: "unread", label: "fields", fields: [["input_schema", "{}"]] }],
     ]);
     expect(group(formatted, "message.0")[1]!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Go." }]);
     // What the request sends is its thread's, its parameters too; the breakpoints and its HTTP are its own.
@@ -431,7 +431,7 @@ describe("format", () => {
     ]);
     const replies = formatted.map((exchange) => group(exchange, "reply"));
     expect(replies[0]).toEqual([
-      { key: "error", category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: overloaded.error }, { kind: "fields", id: "unread", label: "fields", fields: [["request_id", '"req_1"']] }] },
+      { key: "error", category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: overloaded.error }, { kind: "rest", id: "unread", label: "fields", fields: [["request_id", '"req_1"']] }] },
     ]);
     // What the stream had said stands, the error after it; what the API reported stays with the exchange's own.
     expect(replies[1]!.map(({ key, category, name }) => [key, category, name])).toEqual([["content.0", "assistant", "text"], ["error.0", "assistant", "error"]]);
@@ -829,7 +829,7 @@ describe("format", () => {
       expect.stringMatching(/^content_block_stop event: the block's streamed input is not JSON/),
       "content_block_start event: content block 1 has already started",
     ]);
-    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "fields", id: "unread", label: "fields", fields: expect.arrayContaining([["metrics", [["latency_ms", "812"]]]]) });
+    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["metrics", [["latency_ms", "812"]]]]) });
   });
 
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {
@@ -864,7 +864,7 @@ describe("format", () => {
     const blocks = received(
       one([...request("a", { model: "m", messages: [] }), ...streamed("a", [messageStart, { ...messageStart, message: { ...messageStart.message, id: "msg_2" } }])]),
     );
-    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "fields", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) });
+    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) });
     expect(blocks.find(({ name }) => name === "message_start event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: "the message has already started" });
   });
 
@@ -904,7 +904,7 @@ describe("format", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [image] }] }));
     expect(group(formatted, "message.0")[0]!.parts).toEqual([
       { kind: "fields", id: "source", label: "source", fields: [["type", "s3"]] },
-      { kind: "fields", id: "source/unread", label: "source fields", fields: [["bucket", '"b"'], ["key", '"k"']] },
+      { kind: "rest", id: "source/unread", label: "source fields", fields: [["bucket", '"b"'], ["key", '"k"']] },
     ]);
   });
 });

@@ -1,7 +1,7 @@
 import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { add, type ByTrace, type Exchange } from "./exchanges.ts";
-import { judge, type ColumnState } from "./view/moves.ts";
+import { currentOf, judge, type ColumnState } from "./view/moves.ts";
 import type { Keys, MomentStanding, Pending, Row } from "./view/rows.ts";
 import type { Current, Standing } from "./view/search.ts";
 
@@ -34,8 +34,9 @@ export function columnOf(rows: Row[], moment: MomentStanding = readWith(() => un
 // `current` as the column's judge finds it standing under `pattern`, or an error saying how it found it instead.
 export function standingIn(column: ColumnState, current: Current, pattern: RegExp): Standing {
   const judged = judge(column, current, pattern);
-  if (judged.is !== "standing") throw new Error(`${JSON.stringify(current)} does not stand: ${JSON.stringify(judged)}`);
-  return judged.match;
+  const standing = currentOf(judged);
+  if (standing === undefined) throw new Error(`${JSON.stringify(current)} does not stand: ${JSON.stringify(judged)}`);
+  return standing;
 }
 
 // The fields every recorded event of a test's trace carries, recorded at `timestamp`: `at(trace)` for an event of the

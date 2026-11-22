@@ -16,15 +16,15 @@ export const Painted = createContext<Paint | undefined>(undefined);
 // in this text.
 export type Where = { blockKey: string; at: string; ranges: Range[]; current: number | undefined };
 
-// A text's matches, found again only when the text or the pattern changes, and the current match among them by which
-// of them it is: it stands, so a text at its address holds it. The same object while neither changes, so a text drawn
-// from it is drawn again only when a step leaves it or enters it.
+// A text's matches, found again only when the text or the pattern changes, and where the current match starts, if the
+// judge found it in this text. The same object while neither changes, so a text drawn from it is drawn again only when
+// a step leaves it or enters it.
 export function useWhere(blockKey: string, at: string, searched: Searched): Where {
   const paint = useContext(Painted);
   if (paint === undefined) throw new Error("A text is shown outside a Conversation");
   const { pattern, current } = paint;
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);
-  const start = current !== undefined && current.key === blockKey && current.at === at ? ranges[current.nth]!.start : undefined;
+  const start = current?.is === "found" && current.match.key === blockKey && current.match.at === at ? current.range.start : undefined;
   return useMemo(() => ({ blockKey, at, ranges, current: start }), [blockKey, at, ranges, start]);
 }
 

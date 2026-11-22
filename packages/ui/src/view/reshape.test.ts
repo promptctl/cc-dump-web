@@ -51,7 +51,7 @@ describe("a match and an open section as a tool call's input streams and becomes
     expect(named(whole, current)).toMatchObject({ text: "toolu_needle", match: "needle" });
     // The input's own id is a text of its own.
     expect(addressOf(whole, "needle-7")).not.toBe(current.at);
-    for (const row of [soFar, whole]) expect(ordinal(createSearch()([row], pattern), standingIn(columnOf([row]), taken(current), pattern), pattern)).toBe(2);
+    for (const row of [soFar, whole]) expect(ordinal(createSearch()([row], pattern), standingIn(columnOf([row]), taken(current), pattern))).toBe(2);
   });
 
   it("keeps what opens in a text of the block under the same key, by the text's address", () => {
@@ -117,7 +117,7 @@ describe("the current match under a change of how the query is read", () => {
   const current = taken({ key: "k", at: addressOf(row, "a needle"), nth: 0 });
 
   it("stands under the same query read the same way, however often it is read again", () => {
-    expect(judge(column, current, patternOf("needle", defaults).pattern)).toEqual({ is: "standing", match: current });
+    expect(judge(column, current, patternOf("needle", defaults).pattern)).toEqual({ is: "found", match: current, place: { at: "row", index: 0, offset: 0 }, index: 0, range: { start: 2, end: 8 } });
   });
 
   it("is none under another query, or the query read another way, whichever tab changed it, for the counter, the steps and the line alike", () => {
@@ -128,7 +128,7 @@ describe("the current match under a change of how the query is read", () => {
       // What the view gives every reader of the current match: none, so each reads as with no current match.
       const standing = currentOf(judged);
       const found = createSearch()([row], now.pattern);
-      expect(ordinal(found, standing, now.pattern)).toBeUndefined();
+      expect(ordinal(found, standing)).toBeUndefined();
       expect(matchMove(column, found, standing, place, "next", now.pattern)).toEqual(matchMove(column, found, undefined, place, "next", now.pattern));
       expect(waitingOf(column, place, standing)).toBeUndefined();
     }
