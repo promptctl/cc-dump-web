@@ -1,11 +1,11 @@
-import { exchanges, recordedAt } from "../testing.ts";
+import { exchanges, memoryStorage, recordedAt } from "../testing.ts";
 import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
-import { parseSettings, useSettings } from "../settings.ts";
+import { defaultSettings, useSettings } from "../settings.ts";
 import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
-import { useView, view } from "./state.ts";
+import { readView, useView, view, viewItem } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
 // A tool definition's row, in no set.
@@ -96,7 +96,7 @@ describe("the search", () => {
   beforeEach(() => {
     useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
-    useSettings.setState(parseSettings(undefined));
+    useSettings.setState(defaultSettings);
   });
 
   it("takes a match stepped to as current with the pattern it was found under, which the column's judge holds it to", () => {
@@ -215,18 +215,52 @@ describe("the moment", () => {
   });
 });
 
-describe("a view stored by another version", () => {
-  // Version 6 named a match by where it started and a part by its place among its block's parts.
-  it.each([
-    [3, { open: { recording: "live" }, flipped: { k: true } }],
-    [6, { open: "live", opened: { "t1/request/http/2/0": true }, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }],
-  ])("opens the tab as a new one, with none open, from version %i", async (version, state) => {
-    const stored = new Map([["cc-dump.view", JSON.stringify({ state, version })]]);
-    useView.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: (key) => stored.get(key) ?? null, setItem: () => {}, removeItem: () => {} })) });
-    useView.setState(useView.getInitialState(), true);
+describe("a stored view", () => {
+  const window = { start_time: 1700000000, session_id: "$1", window_id: "@3" };
+  // A view as the build before this one stored it: every field set.
+  const full = {
+    open: "live",
+    terminal: { window, shown: true },
+    opened: { "t1/request/http": true, "thread:t1/message.0/content.0": false },
+    position: { at: "row", key: "thread:t1/message.0/content.0", offset: 12.5 },
+    moment: { at: "left", trace: "t1" },
+    search: { query: "x", current: { key: "thread:t1/message.0/content.0", at: '["part",0]', nth: 1, pattern: "/x/giu" } },
+  };
 
+  it("is read back as the build before this one stored it, every field kept", async () => {
+    const { storage, writes } = memoryStorage({ "cc-dump.view": JSON.stringify({ state: full, version: 7 }) });
+    useView.persist.setOptions(viewItem(() => storage));
     await useView.persist.rehydrate();
+    expect(useView.getState()).toEqual(full);
+    expect(writes).toEqual([]);
+  });
 
-    expect(useView.getState()).toEqual(useView.getInitialState());
+  it("keeps all else when one field is of a shape this build does not read, and that field opens reset", () => {
+    // A current match as an older build named it, by where it started.
+    expect(readView({ ...full, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 7)).toEqual({
+      value: { ...full, search: { query: "x", current: undefined } },
+      dropped: [{ at: ["search", "current"], why: "nth: is missing" }],
+    });
+  });
+
+  it("drops a fold that is not a boolean alone", () => {
+    expect(readView({ ...full, opened: { a: true, b: "open", c: false } }, 7)).toEqual({
+      value: { ...full, opened: { a: true, c: false } },
+      dropped: [{ at: ["opened", "b"], why: "is not a boolean" }],
+    });
+  });
+
+  it.each([6, 8])("from row-key scheme %i, keeps the recording, terminal, moment and query, and resets what names a row", (version) => {
+    const why = `names a row as row-key scheme ${version} does; this build's is 7`;
+    expect(readView(full, version)).toEqual({
+      value: { ...full, opened: {}, position: { at: "end" }, search: { query: "x", current: undefined } },
+      dropped: [
+        { at: ["opened"], why },
+        { at: ["position"], why: `key: ${why}` },
+        { at: ["search", "current"], why },
+      ],
+    });
+    // A place at the start or the end names no row.
+    expect(readView({ ...full, position: { at: "start" } }, version).value.position).toEqual({ at: "start" });
   });
 });

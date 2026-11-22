@@ -1,8 +1,9 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { kept, kinds, value, type Read, type Readers } from "@cc-dump/log/json";
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
+import { stored } from "./stored.ts";
 import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
 // A category's level of detail (docs/design/01-features.md, F5): its blocks not listed, `hidden`; listed, each as its line,
@@ -35,7 +36,7 @@ export type SearchOptions = { caseSensitive: boolean; wholeWord: boolean; regex:
 
 // [LAW:one-source-of-truth] The reader's settings (docs/design/01-features.md, F11): what they chose that outlives a tab. Kept
 // in localStorage, which the browser keeps on disk under the UI's origin, so they survive a restart of the browser, the
-// app and the machine; persist reads it as the store is made, before anything renders. `follow`: whether follow mode
+// app and the machine; persist reads it as the store is made, before anything renders (stored.ts). `follow`: whether follow mode
 // is on. `visibility`: each category's level. `theme`: the theme chosen (F10). `search`: how a query is read (F6).
 // `info`: whether the info panel is open (F8). `logs`: whether the logs panel is open, and `logLevel`, the least a
 // line it lists asks (F9). `keys`: whether the keys panel is open (view/keyboard.ts).
@@ -52,42 +53,46 @@ export type Settings = {
 
 const name = "cc-dump.settings";
 
-// [LAW:parse-dont-validate] What is stored, read as the settings: each setting the stored one, or its default when none
-// is stored or the one stored is not a value this build has.
-export function parseSettings(stored: unknown): Settings {
-  const follow = fieldOf(stored, "follow");
-  const theme = fieldOf(stored, "theme");
-  const info = fieldOf(stored, "info");
-  const logs = fieldOf(stored, "logs");
-  const logLevel = fieldOf(stored, "logLevel");
-  const keys = fieldOf(stored, "keys");
-  const visibility = (category: Category) => {
-    const value = fieldOf(fieldOf(stored, "visibility"), category);
-    return isOneOf(visibilities)(value) ? value : defaultVisibility[category];
-  };
-  // A query is a regular expression, in any case, until the reader chooses otherwise.
-  const option = (name: keyof SearchOptions, fallback: boolean) => {
-    const value = fieldOf(fieldOf(stored, "search"), name);
-    return typeof value === "boolean" ? value : fallback;
-  };
-  return {
-    follow: typeof follow === "boolean" ? follow : true,
-    visibility: Object.fromEntries(categories.map((category) => [category, visibility(category)])) as Record<Category, Visibility>,
-    theme: isThemeChoice(theme) ? theme : "system",
-    search: { caseSensitive: option("caseSensitive", false), wholeWord: option("wholeWord", false), regex: option("regex", true) },
-    info: typeof info === "boolean" ? info : false,
-    logs: typeof logs === "boolean" ? logs : false,
-    logLevel: isOneOf(levels)(logLevel) ? logLevel : "info",
-    keys: typeof keys === "boolean" ? keys : false,
-  };
-}
+// Each setting until the reader chooses: follow mode on, a query a regular expression in any case, the panels closed.
+export const defaultSettings: Settings = {
+  follow: true,
+  visibility: defaultVisibility,
+  theme: "system",
+  search: { caseSensitive: false, wholeWord: false, regex: true },
+  info: false,
+  logs: false,
+  logLevel: "info",
+  keys: false,
+};
 
-// Whether a stored value is one of `values`.
-const isOneOf = <T,>(values: readonly T[]) => (value: unknown): value is T => (values as readonly unknown[]).includes(value);
+const boolean = value(kinds.boolean);
+// [LAW:types-are-the-program] One reader for each category, as `categories` lists them, which is what
+// `Record<Category, Visibility>` holds.
+const visibility = Object.fromEntries(categories.map((category) => [category, value(kinds.among(visibilities))])) as Readers<Record<Category, Visibility>>;
 
-export const useSettings = create<Settings>()(
-  persist(() => parseSettings(undefined), { name, storage: createJSONStorage(() => localStorage), merge: (stored) => parseSettings(stored) }),
+// [LAW:parse-dont-validate] Settings as stored, read as this build reads them: each setting, and each category's level
+// and each way of reading a query, the one stored, or its default where none is stored or the one stored is not a value
+// this build has, which is named.
+const settingsReader = kept<Settings>(
+  {
+    follow: boolean,
+    visibility: kept(visibility, defaultVisibility),
+    theme: value({ fits: isThemeChoice, expected: "a theme this build has" }),
+    search: kept<SearchOptions>({ caseSensitive: boolean, wholeWord: boolean, regex: boolean }, defaultSettings.search),
+    info: boolean,
+    logs: boolean,
+    logLevel: value(kinds.among(levels)),
+    keys: boolean,
+  },
+  defaultSettings,
 );
+export const readSettings = (state: unknown): Read<Settings> => settingsReader(state, []);
+
+// The settings as the browser keeps them, in localStorage, in `storage` for a test. Stored at persist's first version,
+// as every build has stored them, and read alike under any.
+export const settingsItem = (storage: () => Storage) => stored<Settings>({ name, version: 0, storage, read: readSettings });
+
+export const useSettings = create<Settings>()(persist(() => defaultSettings, settingsItem(() => localStorage)));
 
 export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
@@ -99,9 +104,10 @@ export const settings = {
   setKeys: (keys: boolean) => useSettings.setState({ keys }),
   // [LAW:single-enforcer] A category moved to its next level, by a click on its chip or a press of its key.
   stepVisibility: (category: Category) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: levelAfter(state.visibility[category]) } })),
-  // Another tab changed what is stored under `key` (a storage event's key): the settings are read again if it was them,
-  // so every tab holds the settings the reader chose last.
+  // Another tab changed what is stored under `key` (a storage event's key), or cleared the storage (no key): the
+  // settings are read again if it was them, so every tab holds the settings the reader chose last. The read writes
+  // nothing (stored.ts).
   changedElsewhere: (key: string | null) => {
-    if (key === name) void useSettings.persist.rehydrate();
+    if (key === name || key === null) void useSettings.persist.rehydrate();
   },
 };

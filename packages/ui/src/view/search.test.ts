@@ -3,7 +3,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
-import { parseSettings, type SearchOptions, type Visibility } from "../settings.ts";
+import { defaultSettings, type SearchOptions, type Visibility } from "../settings.ts";
 import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { request as fixtureRequest } from "../../test/fixtures.ts";
@@ -28,7 +28,7 @@ const body = {
 };
 // b's first message is its own, so it is a thread of its own, every row of it b's.
 const other = { ...body, messages: [{ role: "user", content: "Look for the needle!" }, ...body.messages.slice(1)] };
-const { search: defaults } = parseSettings(undefined);
+const { search: defaults } = defaultSettings;
 // Every category listed.
 const shown = Object.fromEntries(categories.map((category) => [category, "compact"])) as Record<Category, Visibility>;
 const layOut = (visibility: Record<Category, Visibility> = shown, current?: string): Layout =>

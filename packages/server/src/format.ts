@@ -1,6 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import { fields, jsonObject, kinds, object, parseJson, value, type Reader } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -108,3 +108,11 @@ export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
 export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
+
+// [LAW:single-enforcer] A window as a value keeps it (the UI's view keeps its agent's), read by the parsers a launch's
+// is read by.
+export const tmuxWindow: Reader<TmuxWindow> = object({
+  start_time: value(kinds.integer, (seconds) => startTime(String(seconds))),
+  session_id: value(kinds.string, sessionId),
+  window_id: value(kinds.string, windowId),
+});

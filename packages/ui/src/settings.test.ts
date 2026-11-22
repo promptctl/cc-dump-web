@@ -1,38 +1,68 @@
 import { describe, expect, it } from "vitest";
-import { levelAfter, parseSettings, visibilities } from "./settings.ts";
+import { defaultSettings, levelAfter, readSettings, settings, settingsItem, useSettings, visibilities } from "./settings.ts";
+import { memoryStorage } from "./testing.ts";
 
 describe("settings", () => {
-  const defaults = { follow: true, visibility: { user: "expanded", assistant: "expanded", tools: "compact", system: "compact", thinking: "compact", parameters: "hidden", usage: "hidden", http: "hidden" },
-    theme: "system",
-    search: { caseSensitive: false, wholeWord: false, regex: true },
-    info: false,
-    logs: false,
-    logLevel: "info",
-    keys: false,
-  };
+  const chosen = {
+    follow: false,
+    visibility: { ...defaultSettings.visibility, user: "compact", tools: "hidden" },
+    theme: "nord",
+    search: { caseSensitive: true, wholeWord: false, regex: false },
+    info: true,
+    logs: true,
+    logLevel: "warn",
+    keys: true,
+  } as const;
 
   it("reads nothing stored as every setting's default", () => {
-    expect(parseSettings(undefined)).toEqual(defaults);
-    expect(parseSettings(null)).toEqual(defaults);
+    expect(readSettings(undefined)).toEqual({ value: defaultSettings, dropped: [] });
   });
 
-  it("keeps each setting stored, and reads one missing or not a value this build has as its default", () => {
-    expect(
-      parseSettings({ follow: false, visibility: { user: "compact", tools: "hidden", system: "summary", http: 1, thinking: "expanded", assistant: "shown" }, theme: "nord", search: { caseSensitive: true, wholeWord: "yes", regex: false }, info: true, logs: true, logLevel: "warn", keys: true }),
-    ).toEqual({
-      follow: false,
-      // A level the last build stored, "shown", is not one this build has.
-      visibility: { ...defaults.visibility, user: "compact", tools: "hidden", thinking: "expanded" },
-      theme: "nord",
-      search: { caseSensitive: true, wholeWord: false, regex: false },
-      info: true,
-      logs: true,
-      logLevel: "warn",
-      keys: true,
+  it("keeps each setting stored, and reads one not a value this build has as its default, named", () => {
+    // A level the last build stored, "shown", is not one this build has.
+    expect(readSettings({ ...chosen, visibility: { ...chosen.visibility, assistant: "shown" }, search: { ...chosen.search, wholeWord: "yes" } })).toEqual({
+      value: chosen,
+      dropped: [
+        { at: ["visibility", "assistant"], why: "is not one of hidden, compact, expanded" },
+        { at: ["search", "wholeWord"], why: "is not a boolean" },
+      ],
     });
-    expect(
-      parseSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], info: "open", logs: 1, logLevel: "debug", keys: "?" }),
-    ).toEqual(defaults);
+    expect(readSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], logLevel: "debug", panes: 2 })).toEqual({
+      value: defaultSettings,
+      dropped: [
+        { at: ["panes"], why: "is not read by this build" },
+        { at: ["follow"], why: "is not a boolean" },
+        { at: ["visibility"], why: "is not an object" },
+        { at: ["theme"], why: "is not a theme this build has" },
+        { at: ["search"], why: "is not an object" },
+        { at: ["logLevel"], why: "is not one of error, warn, info" },
+      ],
+    });
+  });
+
+  it("reads the settings the build before this one stored, every choice kept", async () => {
+    const { storage, writes } = memoryStorage({ "cc-dump.settings": JSON.stringify({ state: chosen, version: 0 }) });
+    useSettings.persist.setOptions(settingsItem(() => storage));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState()).toEqual(chosen);
+    expect(writes).toEqual([]);
+  });
+
+  it("reads the settings again as another tab changes or clears them, and writes nothing back", async () => {
+    const { storage, held, writes } = memoryStorage();
+    useSettings.persist.setOptions(settingsItem(() => storage));
+    await useSettings.persist.rehydrate();
+    held.set("cc-dump.settings", JSON.stringify({ state: chosen, version: 0 }));
+    settings.changedElsewhere("cc-dump.settings");
+    expect(useSettings.getState()).toEqual(chosen);
+    held.clear();
+    settings.changedElsewhere(null);
+    expect(useSettings.getState()).toEqual(defaultSettings);
+    // A change of another item is not the settings'.
+    held.set("cc-dump.settings", JSON.stringify({ state: chosen, version: 0 }));
+    settings.changedElsewhere("cc-dump.view");
+    expect(useSettings.getState()).toEqual(defaultSettings);
+    expect(writes).toEqual([]);
   });
 
   it("moves a category to its next level, of more detail, and from the most back to none", () => {
