@@ -46,9 +46,9 @@ describe("the view's decisions", () => {
 
   it("say where a current match was cleared and why, where one was carried, nothing of one that stands, and a moment replaced by now", () => {
     const { events, decisions } = logged();
-    const current = { key: "t9/said", at: '["part","text"]', start: 4, end: 10, text: "the needle", pattern: "/needle/giu" };
+    const current = { key: "t9/said", at: '["part","text"]', start: 4, end: 10, pattern: "/needle/giu" };
     decisions.matchStood(current, { at: "gone", why: "step_unlisted" });
-    decisions.matchStood(current, { at: "carried", to: { ...current, start: 6, end: 12, text: "**the needle" } });
+    decisions.matchStood(current, { at: "carried", to: { ...current, start: 6, end: 12 } });
     decisions.matchStood(current, { at: "standing" });
     decisions.momentReplaced({ at: "chosen", trace: "t3" }, { at: "gone", why: "read_ended" });
     expect(events).toEqual([

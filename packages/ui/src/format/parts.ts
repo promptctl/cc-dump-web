@@ -37,7 +37,8 @@ export type Field = [name: string, value: string | Field[]];
 // A field as the line it shows: its name at its depth among the fields holding it, and its value, none for a field that
 // holds fields, whose lines follow it a depth deeper. `path`: the names of the fields holding it, then its own, each
 // with how many fields of that name come before it among its siblings, as HTTP repeats a header in the order it was
-// sent (RFC 9110, 5.3): what names the line whatever fields are added beside it.
+// sent (RFC 9110, 5.3): what names the line whatever fields of other names are added beside it, and fields of its
+// name after it.
 export type FieldLine = { name: string; value: string | undefined; depth: number; path: FieldPath };
 export type FieldPath = [name: string, repeat: number][];
 export function fieldLines(fields: Field[], holding: FieldPath = []): FieldLine[] {

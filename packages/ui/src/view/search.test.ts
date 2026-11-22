@@ -174,8 +174,8 @@ describe("search", () => {
     expect(seen[10]).toEqual(seen[0]);
     expect(adjacent(found, seen[0], top, "previous", pattern, keys)!.match).toEqual(seen[9]);
     expect(adjacent(found, undefined, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
-    // A step's match says where it ends, the text it is in, and the pattern it is a match of, which the view judges it by.
-    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10, end: 16, text: "tool_use: Needle", pattern: String(pattern) });
+    // A step's match says where it ends and the pattern it is a match of, which the view judges it by.
+    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10, end: 16, pattern: String(pattern) });
     const absent = read("absent").pattern;
     expect(adjacent(createSearch()(every.rows, absent), undefined, top, "next", absent, keys)).toBeUndefined();
   });
@@ -324,12 +324,16 @@ describe("the current match as its text changes", () => {
     const { pattern } = read(query);
     const was = said(before);
     const current = adjacent(createSearch()([was], pattern), undefined, top, "next", pattern, keysOf([was]))!.match;
-    const standing = inText(current, said(after), pattern);
+    const standing = inText(current, was, said(after), pattern);
     return standing.at === "gone" ? standing.why : standing.at === "carried" ? standing.to.start : current.start;
   };
 
   it("stays on its characters as a streaming Markdown text grows after it or closes markup before it", () => {
     expect(carriedIn("find the needle", "find the needle, and more")).toBe(9);
+    // Text growing after it leaves it standing where it was, carried nowhere, so a streamed reply writes nothing for it.
+    const growing = said("find the needle");
+    const current = adjacent(createSearch()([growing], pattern), undefined, top, "next", pattern, keysOf([growing]))!.match;
+    expect(inText(current, growing, said("find the needle, and more"), pattern)).toEqual({ at: "standing" });
     // Markup shown as written until it closes, then as what it marks up: the characters before the match go.
     expect(carriedIn("**a needle", "**a needle**")).toBe(2);
     expect(carriedIn("`a\nb c d needle", "`a\nb c d needle`")).toBe(8);
@@ -360,7 +364,7 @@ describe("the current match as its text changes", () => {
       const after = call(input);
       const current = adjacent(createSearch()([before], pattern), undefined, top, "next", pattern, keysOf([before]))!.match;
       expect(blockOf(after).parts.map(({ id }) => id)).toEqual(["input fields", "id"]);
-      expect(inText(current, after, pattern)).toEqual({ at: "standing" });
+      expect(inText(current, before, after, pattern)).toEqual({ at: "standing" });
       // A section or region opened in its text is kept under the same key, the text's address.
       expect(textAt(after, current.at)).toEqual(textAt(before, current.at));
     }
@@ -372,7 +376,7 @@ describe("the current match as its text changes", () => {
     const at = address.part({ id: "input so far" });
     const was = textAt(before, at)!;
     const { start, end } = find(pattern, was)[0]!;
-    const current: Current = { key: "k", at, start, end, text: was.text, pattern: String(pattern) };
-    expect(inText(current, call({ file_path: "/a" }), pattern)).toEqual({ at: "gone", why: "text_gone" });
+    const current: Current = { key: "k", at, start, end, pattern: String(pattern) };
+    expect(inText(current, before, call({ file_path: "/a" }), pattern)).toEqual({ at: "gone", why: "text_gone" });
   });
 });

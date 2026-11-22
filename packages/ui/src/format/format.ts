@@ -198,13 +198,13 @@ function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
 }
 // [LAW:single-enforcer] A block keyed `key`, as every block the view gets is: here no two of its parts share an id,
 // since the view names a part's texts by it (format/parts.ts). Two that do are the formatter's error, not the traffic's,
-// and the block is shown as its parts were made, saying so, as a block that does not fit is, so the rest of the
-// recording reads on.
+// and the block shows its parts as they were made, saying so, as a block that does not fit does, so the rest of the
+// recording reads on and what the block is (its call, its result, what was injected) is kept.
 function keyed(block: Block, key: string): KeyedBlock {
   const ids = block.parts.map(({ id }) => id);
   const twice = ids.filter((id, index) => ids.indexOf(id) !== index);
-  const shown = twice.length === 0 ? block : raw(block.category, block.name, `the formatter made two parts of each id: ${twice.join(", ")}`, { kind: "json", value: block.parts });
-  return { ...shown, key };
+  const parts = twice.length === 0 ? block.parts : raw(block.category, block.name, `the formatter made two parts of each id: ${twice.join(", ")}`, { kind: "json", value: block.parts }).parts;
+  return { ...block, parts, key };
 }
 // Blocks standing at `place` in their thread.
 function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {

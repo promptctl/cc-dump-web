@@ -89,14 +89,16 @@ describe("a move from the reader's place", () => {
   });
 
   it("judges a current match gone when nothing will bring it or its pattern is another, standing while it is not read yet or its text is as it was, and carried as its text changes", () => {
-    // The needle the block `a/said` shows, as it was when the text was `text`.
-    const current = (key: string, text = "the needle", at = address.part({ id: "text" })): Current => ({ key, at, start: text.indexOf("needle"), end: text.indexOf("needle") + 6, text, pattern: String(pattern) });
-    expect(matchStanding(column, current("z/said"), pattern)).toEqual({ at: "gone", why: "read_ended" });
-    expect(matchStanding(column, current("a/said"), /needle/giu)).toEqual({ at: "gone", why: "pattern_changed" });
-    expect(matchStanding(column, current("later/said"), pattern)).toEqual({ at: "standing" });
-    expect(matchStanding(column, current("a/said"), pattern)).toEqual({ at: "standing" });
-    expect(matchStanding(column, current("a/said", "needle"), pattern)).toEqual({ at: "carried", to: current("a/said") });
-    expect(matchStanding(column, current("a/said", "the needle", address.part({ id: "other" })), pattern)).toEqual({ at: "gone", why: "text_gone" });
+    // The needle in the text `text`, of the block `key`.
+    const current = (key: string, text = "the needle", at = address.part({ id: "text" })): Current => ({ key, at, start: text.indexOf("needle"), end: text.indexOf("needle") + 6, pattern: String(pattern) });
+    // The column as it was when the block `a/said` said only "needle".
+    const before: ColumnState = { ...column, every: { rows: rows.map((row) => (row.key === "a/said" ? block("a/said", "needle") : row)), keys } };
+    expect(matchStanding(column, column, current("z/said"), pattern)).toEqual({ at: "gone", why: "read_ended" });
+    expect(matchStanding(column, column, current("a/said"), /needle/giu)).toEqual({ at: "gone", why: "pattern_changed" });
+    expect(matchStanding(column, column, current("later/said"), pattern)).toEqual({ at: "standing" });
+    expect(matchStanding(column, column, current("a/said"), pattern)).toEqual({ at: "standing" });
+    expect(matchStanding(before, column, current("a/said", "needle"), pattern)).toEqual({ at: "carried", to: current("a/said") });
+    expect(matchStanding(column, column, current("a/said", "the needle", address.part({ id: "other" })), pattern)).toEqual({ at: "gone", why: "text_gone" });
   });
 });
 

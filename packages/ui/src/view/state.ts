@@ -80,9 +80,12 @@ export const view = {
   // match gone by its pattern (moves.ts `matchStanding`).
   search: (query: string) => useView.setState(({ search }) => ({ search: { ...search, query } })),
   // The current match as the view judged it stands (moves.ts `matchStanding`): carried where its text's change took it,
-  // none once it is gone, and the same while it stands.
-  matchStood: (standing: MatchStanding) =>
-    useView.setState((state) => (standing.at === "standing" ? state : { search: { ...state.search, current: standing.at === "carried" ? standing.to : undefined } })),
+  // or none once it is gone. One that stands is not written, since a write stores the view for the tab, and the view
+  // judges the match at every commit and every scroll.
+  matchStood: (standing: MatchStanding) => {
+    if (standing.at === "standing") return;
+    useView.setState(({ search }) => ({ search: { ...search, current: standing.at === "carried" ? standing.to : undefined } }));
+  },
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the folds holding it show open, and
   // the view moves to its row, which the step then refines to the match's line. The folds are chosen open, however they
   // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set

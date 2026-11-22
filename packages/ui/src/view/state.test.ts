@@ -9,7 +9,7 @@ import type { Current } from "./search.ts";
 import { useView, view } from "./state.ts";
 
 // A current match of `x` at the start of the text `at` of the row `key`.
-const matchIn = (key: string, at = "text"): Current => ({ key, at, start: 0, end: 1, text: "x", pattern: "/x/giu" });
+const matchIn = (key: string, at = "text"): Current => ({ key, at, start: 0, end: 1, pattern: "/x/giu" });
 
 const agent = "20261113T080000.000Z.jsonl";
 // A tool definition's row, in no set.
@@ -106,10 +106,13 @@ describe("the search", () => {
   it("holds the current match as the view judged it stands: the same while it stands, carried, or none once gone, keeping the query and the place", () => {
     const place = { at: "row", key: "t1", offset: 12 } as const;
     useView.setState({ position: place, search: { query: "x", current: match } });
-    const before = useView.getState();
+    // One that stands is not written, so the view is not stored again for the tab.
+    let writes = 0;
+    const unsubscribe = useView.subscribe(() => writes++);
     view.matchStood({ at: "standing" });
-    expect(useView.getState()).toBe(before);
-    const carried = { ...match, start: 2, end: 3, text: "a x" };
+    unsubscribe();
+    expect(writes).toBe(0);
+    const carried = { ...match, start: 2, end: 3 };
     view.matchStood({ at: "carried", to: carried });
     expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: carried } });
     view.matchStood({ at: "gone", why: "text_changed" });

@@ -114,6 +114,9 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
 
   // What the view keeps between steps that is the scroller's, made with it; the position is the store's (scroll.ts `Kept`).
   const scrollerKept = useRef<Omit<Kept, "position">>({ written: 0, scrolled: false });
+  // [LAW:one-source-of-truth] The column the step last judged the current match in, which holds the text it was in, so
+  // a change of that text is carried from what the reader last saw; none before the first step.
+  const judgedIn = useRef<ColumnState | undefined>(undefined);
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, against
   // the rows of the render last committed, and carries it out.
   const sync = (cause: Cause) => {
@@ -130,14 +133,15 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
-    // The current match judged in this render's column, before the commit is painted, so the counter, the highlight and
-    // the steps never show a match the column has moved or lost.
+    // The current match judged in this render's column against the column it was last judged in, before the commit is
+    // painted, so the counter, the highlight and the steps never show a match the column has moved or lost.
     const judged = live.search.current;
     if (judged !== undefined) {
-      const standing = matchStanding(column, judged, pattern);
+      const standing = matchStanding(judgedIn.current ?? column, column, judged, pattern);
       decisions.matchStood(judged, standing);
       view.matchStood(standing);
     }
+    judgedIn.current = column;
     // The moment replaced is the one the column judged gone, this render's.
     if (column.moment.at === "gone") {
       decisions.momentReplaced(moment, column.moment);

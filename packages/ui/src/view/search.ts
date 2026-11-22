@@ -15,11 +15,11 @@ import { blockOf, nestsOf, type BlockRow, type Gone, type Row } from "./rows.ts"
 // reader sees it.
 export type Match = { key: string; at: string; start: number };
 
-// The current match: a match, where it ends, the text it stands in as the view last judged it, and the pattern it is a
-// match of, written as the pattern's literal. A text that changes at its address, as a streaming Markdown text does
-// when its text grows or a closing backtick or asterisk arrives, carries the match to where its characters went
-// (`inText`), and a change of pattern finds other matches, so none is current (moves.ts).
-export type Current = Match & { end: number; text: string; pattern: string };
+// The current match: a match, where it ends, and the pattern it is a match of, written as the pattern's literal. A text
+// that changes at its address, as a streaming Markdown text does when its text grows or a closing backtick or asterisk
+// arrives, carries the match to where its characters went (`inText`), and a change of pattern finds other matches, so
+// none is current (moves.ts).
+export type Current = Match & { end: number; pattern: string };
 
 // [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON by the part's id,
 // the name or value of a field by the part's id and the field line's path. The search and the view both name a text by
@@ -169,21 +169,25 @@ const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start
 // The text at `at` among those a block's row shows; none when it shows none there.
 export const textAt = (row: BlockRow, at: string): Searched | undefined => shownTexts(row).find((shown) => shown.at === at)?.searched;
 
-// [LAW:types-are-the-program] Where the current match stands in its text as its block's row shows it now: as it was,
-// while the text is; carried to the match of `pattern` that holds a character of it the change kept (format/diff.ts),
-// so a match stays on its characters as the text grows after it or closes markup before it; or gone, why: the block
-// shows no text at its address (`text_gone`), the change kept none of its characters in a match (`text_changed`), or
-// the change was too large to follow (`text_rewritten`).
+// [LAW:types-are-the-program] Where the current match stands in its text as its block's row shows it now, `row`, the
+// row having shown it as `was`, where the view last judged it: where it was, while the text is as it was or the change
+// left it there; carried to the match of `pattern` that holds a character of it the change kept (format/diff.ts), so a
+// match stays on its characters as the text grows after it or closes markup before it; or gone, why: the block shows no
+// text at its address (`text_gone`), the change kept none of its characters in a match (`text_changed`), or the change
+// was too large to follow (`text_rewritten`). A text `was` does not show, as when the view had judged no column, is
+// taken as the one now.
 export type InText = { at: "standing" } | { at: "carried"; to: Current } | Gone<"text_gone" | "text_changed" | "text_rewritten">;
 
-export function inText(current: Current, row: BlockRow, pattern: RegExp): InText {
+export function inText(current: Current, was: BlockRow, row: BlockRow, pattern: RegExp): InText {
   const now = textAt(row, current.at);
   if (now === undefined) return { at: "gone", why: "text_gone" };
-  if (now.text === current.text) return { at: "standing" };
-  const carried = carriedTo(current.text, now.text, current);
+  const before = textAt(was, current.at)?.text ?? now.text;
+  if (before === now.text) return { at: "standing" };
+  const carried = carriedTo(before, now.text, current);
   if (carried.at === "rewritten") return { at: "gone", why: "text_rewritten" };
   const match = find(pattern, now).find(({ start, end }) => carried.places.some((place) => start <= place && place < end));
-  return match === undefined ? { at: "gone", why: "text_changed" } : { at: "carried", to: { ...current, ...match, text: now.text } };
+  if (match === undefined) return { at: "gone", why: "text_changed" };
+  return match.start === current.start && match.end === current.end ? { at: "standing" } : { at: "carried", to: { ...current, ...match } };
 }
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
@@ -233,7 +237,7 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
 }
 
 function stepTo({ rows }: Found, { row, index }: FoundBlock, { match: { key, at, start }, end, shown }: InBlock, pattern: RegExp): Step {
-  const match: Current = { key, at, start, end, text: shown.searched.text, pattern: String(pattern) };
+  const match: Current = { key, at, start, end, pattern: String(pattern) };
   const listed = [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set])];
   switch (shown.in) {
     case "line":

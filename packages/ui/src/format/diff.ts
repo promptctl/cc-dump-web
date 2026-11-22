@@ -89,7 +89,8 @@ export function carriedTo(before: string, after: string, { start, end }: { start
   if (edits === undefined && start < changedEnd && end > head) return { at: "rewritten" };
   const places: number[] = [];
   // [LAW:dataflow-not-control-flow] Each character is in the start both texts share, in the changed middle, or in the
-  // end both share, and each run of them is walked whatever the span holds: a run outside the span adds no place.
+  // end both share, and each run of them is walked whatever the span holds: a run outside the span adds no place. A
+  // middle past the limit holds none of the span, as the span in it is `rewritten`, so it has no edits to walk.
   for (let at = start; at < Math.min(end, head); at++) places.push(at);
   let [from, to] = [head, head];
   for (const { change } of edits ?? []) {
