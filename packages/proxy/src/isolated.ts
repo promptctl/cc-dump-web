@@ -21,7 +21,7 @@ function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest
     if (!/^\d{1,5}$/.test(text) || Number(text) > 65535) throw new Error(`a port must be an integer from 0 to 65535, got ${JSON.stringify(text)}`);
     return Number(text);
   };
-  return { upstream: parseUpstream(upstream), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
+  return { upstream: parseUpstream(upstream!), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
 }
 
 const { log, logs } = processLog("proxy");

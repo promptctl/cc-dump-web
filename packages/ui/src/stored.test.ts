@@ -62,9 +62,9 @@ describe("a stored item's read", () => {
     expect(events).toMatchObject([{ store: name, is: "read", read: { stored: "none" } }]);
   });
 
-  it("reads an item stored as persist stores it, naming what it dropped by its path in the item", async () => {
+  it("reads an item stored as persist stores it, naming what it dropped, and each field it does not read at any depth, by its path in the item", async () => {
     const { storeIn, events } = await reported();
-    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes" }, version: 0, by: "a later build" }) }).storage);
+    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes", later: { x: 1 } }, version: 0, by: "a later build" }) }).storage);
     expect(store.getState()).toEqual({ name: "a", on: false });
     expect(events).toMatchObject([
       {
@@ -76,6 +76,7 @@ describe("a stored item's read", () => {
           dropped: [
             { at: ["by"], why: "is not read by this build" },
             { at: ["state", "on"], why: "is not a boolean" },
+            { at: ["state", "later"], why: "is not read by this build" },
           ],
         },
       },

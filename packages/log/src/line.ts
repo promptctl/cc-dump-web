@@ -1,7 +1,6 @@
-import { describe } from "./describe.ts";
-import { ending, type Ending } from "./ending.ts";
+import { endingWith, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
+import { attempt, kinds, parsed, parseJson, readShown, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -61,17 +60,15 @@ export function parseLogLine(data: string, id: string): LogLine {
 // The line at `position` whose event is `data`. An event that does not parse taints no other line, so it is this
 // one's, unread, in its place among them.
 export function lineAt(position: LinePosition, data: string): LogLine {
-  try {
-    return { ...position, event: parseLoggedEvent(data) };
-  } catch (error) {
-    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
-    if (!(error instanceof Malformed)) throw error;
-    return { ...position, unread: data, error: describe(error) };
-  }
+  // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
+  return attempt(
+    (): LogLine => ({ ...position, event: parseLoggedEvent(data) }),
+    (error) => ({ ...position, unread: data, error }),
+  );
 }
 
-// The fields an event has a place of its own for, beside how it ended.
-const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
+// The fields an event has a place of its own for, and how it ended.
+const logged = endingWith<Omit<LoggedEvent, keyof Ending | "facts">>({
   service: value(kinds.string),
   event: value(kinds.string),
   trace_id: parsed(kinds.string, parseTraceId),
@@ -79,9 +76,8 @@ const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
   duration_ms: value(kinds.number),
 });
 
+// The fields the event has a place of its own for are those `logged` reads; the rest, none deeper, are its facts.
 function parseLoggedEvent(json: string): LoggedEvent {
-  const event = jsonObject(parseJson(json, "log line"), "log line");
-  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
-  // The fields the event has a place of its own for are those just read; the rest are its facts.
-  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
+  const { value, unread } = readShown(logged, parseJson(json, "log line"), "log line");
+  return { ...value, facts: Object.fromEntries(unread.map(({ at: [name], value }) => [name, value])) };
 }

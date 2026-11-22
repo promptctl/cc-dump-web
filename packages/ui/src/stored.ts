@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { kinds, notRead, object, parseJson, raw, value, type Dropped, type Path, type Read } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -127,7 +127,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    const dropped = [...droppedOf(envelope, []), ...droppedOf(state, ["state"])];
     return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
@@ -137,6 +137,11 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
 
 const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
 const envelopeOf = (json: unknown) => envelope(json, []);
+
+// [LAW:nothing-unseen] What a read of a stored item, at `at` in it, did not take: each part it dropped, and each field it
+// does not read, which is gone once the item is written again.
+const droppedOf = ({ dropped, unread }: Read<unknown>, at: Path): Dropped[] =>
+  [...dropped, ...unread.map(({ at }) => ({ at, why: notRead }))].map((part) => ({ ...part, at: [...at, ...part.at] }));
 
 // Whether a change another tab made to a storage (a `StorageEvent`) is to `item`: in its storage, at its name, or a
 // clear of the whole storage.

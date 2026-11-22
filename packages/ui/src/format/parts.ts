@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { fieldOf, type Unread } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -101,10 +101,11 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
-// The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
-export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
-  const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
-  return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
+// [LAW:nothing-unseen] The fields of a value no read asked for, at any depth, as one part, each named by its path, its
+// names joined by dots as a preview's are (`pickedPart`), when there are any: so a field the API adds is shown, never
+// dropped.
+export function unreadParts(unread: readonly Unread[]): Extract<Part, { kind: "rest" }>[] {
+  return unread.length === 0 ? [] : [{ id: "unread", label: "fields", kind: "rest", fields: unread.map(({ at, value }): Field => [at.join("."), fieldValue(value)]) }];
 }
 
 // Why a value is not shown as what it was read as, set before the value as it was received.

@@ -1,4 +1,4 @@
-import { kinds, object, value, type Reader } from "./json.ts";
+import { absent, kinds, tagged, value, type Reader, type Readers } from "./json.ts";
 import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 
 // [LAW:types-are-the-program] How a unit of work ended. An error is carried exactly when the outcome is
@@ -6,17 +6,14 @@ import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 // Its own module, importing nothing that needs node, so code that runs without node (the UI) can name it.
 export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
 
-// Every outcome, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
-const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) });
-const error = object({ error: value(kinds.string) });
+// Each outcome's error, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
+const errorOf: Record<Ending["outcome"], Reader<string>> = { ok: absent, aborted: absent, stopped: absent, error: value(kinds.string) };
 
-// [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`): its
-// outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.
-export const ending: Reader<Ending> = (json, at) => {
-  const ended = outcome(json, at).value;
-  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [] };
-};
+// [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`), with
+// the message's fields `readers` reads: its outcome, and its error, there exactly when the outcome is "error".
+export const endingWith = <T>(readers: Readers<T>): Reader<Ending & T> =>
+  tagged<"outcome", Ending & T>("outcome", Object.fromEntries(Object.entries(errorOf).map(([outcome, error]) => [outcome, { ...readers, error }])) as never);
+export const ending: Reader<Ending> = endingWith<Record<never, never>>({});
 
 // [LAW:single-enforcer] How a request ended, from how its response ended and the status line it was sent with, which a
 // recording holds none of for a response failed before its head, or whose head's write failed (proxy/src/format.ts),

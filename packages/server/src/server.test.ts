@@ -29,7 +29,7 @@ describe("GET /launch", () => {
         return describeError(error);
       }
     })();
-    expect(refused).toBe('launcher settings: command must be a line of text that is not blank, got ""');
+    expect(refused).toBe('launcher: settings: command: "" is blank or is not one line');
   });
 
   it("fails naming the settings file it cannot take", async () => {
@@ -38,7 +38,7 @@ describe("GET /launch", () => {
     writeFileSync(settingsPath, '{"command":""}');
     const res = await fetch(`${url}/launch`);
     expect(res.status).toBe(500);
-    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command must be a line of text that is not blank, got ""` });
+    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command: "" is blank or is not one line` });
     expect(await next()).toMatchObject({ event: "request", status: 500, outcome: "error" });
   });
 
@@ -85,10 +85,10 @@ describe("POST /launch", () => {
   });
 
   it.each([
-    [{ session: "work", command: "" }, 'command must be a line of text that is not blank, got ""'],
-    [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
-    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
-    [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
+    [{ session: "work", command: "" }, 'launch: command: "" is blank or is not one line'],
+    [{ session: "work", command: "   " }, 'launch: command: "   " is blank or is not one line'],
+    [{ session: "work", command: "claude\nrm -rf ~" }, "is blank or is not one line"],
+    [{ session: "work", command: "claude\0" }, 'launch: command: "claude\\u0000" is blank or is not one line'],
     [{ command: "claude" }, "launch: session: is missing"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {

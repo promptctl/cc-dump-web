@@ -1,6 +1,7 @@
 import { serverSentEvents } from "@cc-dump/log/wire";
-import { formatError, restBlock, type Block } from "./blocks.ts";
-import { fitting, Misfit, parseJson, readObject } from "./read.ts";
+import { Malformed } from "@cc-dump/log/failure";
+import { attempt, kinds, mapped, nullable, parseJson, raw, readShown, tagged, value, type Unread } from "@cc-dump/log/json";
+import { fact, formatError, restBlock, type Block } from "./blocks.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
 // message_start), the errors its error events returned, which stand where the reply would have, the blocks of its other
@@ -31,73 +32,63 @@ export function createReassembly(): Reassembly {
 
   // Every event but message_start, a ping and an error builds on the message message_start began.
   const begun = (type: string) => {
-    if (message === undefined) throw new Misfit(`${type} before message_start`);
+    if (message === undefined) throw new Malformed(`${type} before message_start`);
     return message;
   };
-  const started = (index: unknown) => {
-    const target = typeof index === "number" ? content.get(index) : undefined;
-    if (target === undefined) throw new Misfit(`no content block ${JSON.stringify(index)} has started`);
+  const started = (index: number) => {
+    const target = content.get(index);
+    if (target === undefined) throw new Malformed(`no content block ${index} has started`);
     return target;
   };
   // A block's deltas and its stop come between its start and its stop.
-  const open = (index: unknown) => {
+  const open = (index: number) => {
     const target = started(index);
-    if (target.stopped !== undefined) throw new Misfit(`content block ${JSON.stringify(index)} has stopped`);
+    if (target.stopped !== undefined) throw new Malformed(`content block ${index} has stopped`);
     return target;
   };
   const apply = (data: unknown) => {
-    const event = readObject(data, "event");
-    const type = event.string("type");
-    switch (type) {
-      case "message_start": {
-        if (message !== undefined) throw new Misfit("the message has already started");
-        // Its type read as a non-streaming response's is, so both leave the same fields to show.
-        const start = readObject(event.value("message"), "message");
-        if (start.value("type") !== "message") throw new Misfit("message_start's message is not a message");
-        message = { ...start.rest(), ...event.rest() };
+    const { value: event, unread } = readShown(eventReader, data, "event");
+    // The event's own fields no case reads, which land on what it builds.
+    const own = ownFields(unread);
+    switch (event.type) {
+      case "message_start":
+        if (message !== undefined) throw new Malformed("the message has already started");
+        message = { ...event.message, ...own };
         return;
-      }
-      case "content_block_start": {
-        begun(type);
-        const index = event.value("index");
-        if (typeof index !== "number") throw new Misfit("content_block_start's index is not a number");
-        if (content.has(index)) throw new Misfit(`content block ${index} has already started`);
-        content.set(index, { block: { ...readObject(event.value("content_block"), "content_block").rest(), ...event.rest() }, json: "", stopped: undefined });
+      case "content_block_start":
+        begun(event.type);
+        if (content.has(event.index)) throw new Malformed(`content block ${event.index} has already started`);
+        content.set(event.index, { block: { ...event.content_block, ...own }, json: "", stopped: undefined });
         return;
-      }
       case "content_block_delta": {
-        const target = open(event.value("index"));
-        applyDelta(target, event.value("delta"));
-        Object.assign(target.block, event.rest());
+        const target = open(event.index);
+        applyDelta(target, event.delta);
+        Object.assign(target.block, own);
         return;
       }
       case "content_block_stop": {
-        const target = open(event.value("index"));
+        const target = open(event.index);
         // A tool's input is whole at its block's stop, so input that is not JSON by then does not fit.
         target.stopped = { input: target.json === "" ? undefined : parseJson(target.json, "the block's streamed input") };
-        Object.assign(target.block, event.rest());
+        Object.assign(target.block, own);
         return;
       }
       case "message_delta": {
-        const delta = readObject(event.value("delta"), "delta").rest();
-        const usage = readObject(event.value("usage"), "usage").rest();
-        const prior = begun(type);
-        message = { ...prior, ...event.rest(), ...delta, usage: { ...(prior.usage as object), ...usage } };
+        const prior = begun(event.type);
+        message = { ...prior, ...own, ...event.delta, usage: { ...(prior.usage as object), ...event.usage } };
         return;
       }
       case "error":
-        errors.push(formatError(event));
+        errors.push(formatError(data, "event"));
         return;
       // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
-        blocks.push(...restBlock(event, "http", "ping event"));
+        blocks.push(...restBlock(unread, "http", "ping event"));
         return;
       // The stream's end, which the trailers already mark: it carries no content.
       case "message_stop":
-        message = { ...begun(type), ...event.rest() };
+        message = { ...begun(event.type), ...own };
         return;
-      default:
-        throw new Misfit(`${type} is not an event this view applies`);
     }
   };
 
@@ -108,8 +99,8 @@ export function createReassembly(): Reassembly {
       read = text.length;
       tail = rest;
       for (const { event, data } of events) {
-        fitting(
-          () => apply(parseJson(data, "its data")),
+        attempt(
+          () => apply(parseJson(data, "event")),
           (reason) =>
             void blocks.push({
               category: "http",
@@ -138,38 +129,83 @@ function assembled({ block, json, stopped }: Building): Record<string, unknown> 
   return { ...block, input: stopped === undefined ? json : stopped.input };
 }
 
-// Applies a content block delta to the block it extends, its fields no case reads among them; a delta of a type not
-// here is not applied.
-function applyDelta(target: Building, data: unknown) {
-  const delta = readObject(data, "delta");
-  const type = delta.string("type");
+// [LAW:types-are-the-program] A content block delta, by its type: the field of the block each extends.
+type Delta =
+  | { type: "text_delta"; text: string }
+  | { type: "thinking_delta"; thinking: string }
+  | { type: "signature_delta"; signature: string }
+  | { type: "input_json_delta"; partial_json: string }
+  | { type: "citations_delta"; citation: unknown }
+  | { type: "compaction_delta"; content: string | null };
+const text = value(kinds.string);
+const delta = tagged<"type", Delta>("type", {
+  text_delta: { text },
+  thinking_delta: { thinking: text },
+  signature_delta: { signature: text },
+  input_json_delta: { partial_json: text },
+  citations_delta: { citation: raw },
+  compaction_delta: { content: nullable(text) },
+});
+
+// A stream's events, by their type, each the fields a case applies: a message_start's message, its type read as a
+// non-streaming response's is, and a block's start whole, as what the events after them build on.
+type StreamEvent =
+  | { type: "message_start"; message: Record<string, unknown> }
+  | { type: "content_block_start"; index: number; content_block: Record<string, unknown> }
+  | { type: "content_block_delta"; index: number; delta: Delta }
+  | { type: "content_block_stop"; index: number }
+  | { type: "message_delta"; delta: Record<string, unknown>; usage: Record<string, unknown> }
+  | { type: "error"; error: unknown }
+  | { type: "ping" }
+  | { type: "message_stop" };
+const fields = value(kinds.object);
+const index = value(kinds.integer);
+const startedMessage = mapped(fields, (message) => {
+  if (fact(message, "type", value(kinds.among(["message"]))) === undefined) throw new Malformed("is not a message");
+  return message;
+});
+const eventReader = tagged<"type", StreamEvent>("type", {
+  message_start: { message: startedMessage },
+  content_block_start: { index, content_block: fields },
+  content_block_delta: { index, delta },
+  content_block_stop: { index },
+  message_delta: { delta: fields, usage: fields },
+  error: { error: raw },
+  ping: {},
+  message_stop: {},
+});
+
+// The fields an event holds that no case reads, its own and its delta's, as the fields they land on what it builds
+// with. One nested deeper is held in the value it is part of, which lands whole.
+function ownFields(unread: readonly Unread[]): Record<string, unknown> {
+  return Object.fromEntries(unread.flatMap(({ at, value }) => (at.length === 1 || (at.length === 2 && at[0] === "delta") ? [[at.at(-1)!, value]] : [])));
+}
+
+// Applies a content block delta to the block it extends.
+function applyDelta(target: Building, delta: Delta) {
   // A delta extends its field from nothing when the block's start did not carry it.
   const append = (field: string, text: string) => {
     const prior = target.block[field] ?? "";
-    if (typeof prior !== "string") throw new Misfit(`${type} extends a block whose ${field} is not a string`);
+    if (typeof prior !== "string") throw new Malformed(`${delta.type} extends a block whose ${field} is not a string`);
     target.block[field] = prior + text;
   };
-  switch (type) {
+  switch (delta.type) {
     case "text_delta":
-      append("text", delta.string("text"));
-      break;
+      return append("text", delta.text);
     case "thinking_delta":
-      append("thinking", delta.string("thinking"));
-      break;
+      return append("thinking", delta.thinking);
     case "signature_delta":
-      append("signature", delta.string("signature"));
-      break;
+      return append("signature", delta.signature);
+    case "compaction_delta":
+      return append("content", delta.content ?? "");
     case "input_json_delta":
-      target.json += delta.string("partial_json");
-      break;
+      target.json += delta.partial_json;
+      return;
     case "citations_delta": {
       const prior = target.block.citations ?? [];
-      if (!Array.isArray(prior)) throw new Misfit("citations_delta extends a block whose citations are not a list");
-      target.block.citations = [...prior, delta.value("citation")];
-      break;
+      if (!Array.isArray(prior)) throw new Malformed("citations_delta extends a block whose citations are not a list");
+      target.block.citations = [...prior, delta.citation];
+      return;
     }
-    default:
-      throw new Misfit(`${type} is not a delta this view applies`);
   }
-  Object.assign(target.block, delta.rest());
 }
