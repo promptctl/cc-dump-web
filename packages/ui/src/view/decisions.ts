@@ -4,7 +4,7 @@ import { unitOfWork } from "../log.ts";
 import type { Cleared, Waiting } from "./moves.ts";
 import type { Gone } from "./rows.ts";
 import type { Cause, Kept, Stepped } from "./scroll.ts";
-import type { Moment } from "./state.ts";
+import type { Moment, Restored } from "./state.ts";
 
 // A step the view took (scroll.ts `step`), as its decisions read it: what it was given and what it gave.
 export type StepTaken = { cause: Cause; offset: number; end: number; kept: Kept; next: Stepped };
@@ -24,6 +24,8 @@ export type StepTaken = { cause: Cause; offset: number; end: number; kept: Kept;
 // - `moves_held` as a place or a match not read yet begins to hold the moves, and `moves_freed`, in its trace and timed
 //   from it, with how the read it waited on stood last, as it no longer does: freed (`ok`), or left with the view
 //   (`aborted`, `close`). Told what holds them however often, each is written once for each hold.
+// - `stored_view_dropped`: the tab's stored view held parts this build does not read, each dropped for the part a new
+//   tab opens with, by name, with why (state.ts `parseView`).
 export function viewLog(log: Log) {
   // A decision is a unit of work that ends as it is taken.
   const decided = (event: string, facts: Facts, span: Span = startTrace()) => unitOfWork(log, event, facts, span).end({ outcome: "ok" });
@@ -55,5 +57,8 @@ export function viewLog(log: Log) {
       hold = waiting === undefined ? undefined : same && hold !== undefined ? { ...hold, waiting } : begun(waiting);
     },
     close: () => free({ outcome: "aborted" }),
+    restored: (dropped: Restored["dropped"]) => {
+      if (Object.keys(dropped).length > 0) decided("stored_view_dropped", { parts: dropped });
+    },
   };
 }

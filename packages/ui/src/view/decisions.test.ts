@@ -31,6 +31,14 @@ describe("the view's decisions", () => {
     expect(events).toEqual([expect.objectContaining({ event: "place_replaced", outcome: "ok", from: inD, to: inC, why: "read_ended" })]);
   });
 
+  it("say which parts of a stored view were dropped, and write nothing when none was", () => {
+    const { events, decisions } = logged();
+    decisions.restored({});
+    expect(events).toEqual([]);
+    decisions.restored({ "search.current": "search.current: nth is not a count" });
+    expect(events).toEqual([expect.objectContaining({ event: "stored_view_dropped", outcome: "ok", parts: { "search.current": "search.current: nth is not a count" } })]);
+  });
+
   it("write nothing for a step that keeps the place, or goes on with a run of the reader's scrolls", () => {
     const { events, decisions } = logged();
     decisions.stepped(stepped(inC, false, { write: 300 }, "change"));

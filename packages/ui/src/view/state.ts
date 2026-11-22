@@ -1,4 +1,6 @@
-import type { Launched, TmuxWindow } from "@cc-dump/server/format";
+import { Malformed } from "@cc-dump/log/failure";
+import { fieldOf, fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import { tmuxWindow, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
@@ -38,18 +40,91 @@ export type Search = { query: string; current: Current | undefined };
 // A tab opens with no recording: the person launches an agent, or opens one.
 const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
-// The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
-// this one does not read, so the tab opens as a new one.
-export const useView = create<View>()(
-  persist((): View => initial, {
-    name: "cc-dump.view",
-    storage: createJSONStorage(() => sessionStorage),
-    version: 7,
-    migrate: () => initial,
-  }),
-);
+const name = "cc-dump.view";
+
+// [LAW:single-enforcer] persist writes the view; `view.restore` reads it, through the parse, the one gate on what is
+// stored, so persist's version is never compared and its own read never runs.
+export const useView = create<View>()(persist((): View => initial, { name, storage: createJSONStorage(() => sessionStorage), skipHydration: true }));
+
+// A stored view as read: the view, and each part of it dropped, by name, with why.
+export type Restored = { view: View; dropped: Record<string, string> };
+
+// [LAW:parse-dont-validate] The item a tab stored, as persist wrote it (its state beside its version), `null` when it
+// stored nothing, read as the View this build has: each part the stored one, or, where what is stored is not a part this build
+// reads, the part a new tab opens with, named in `dropped`. So a current match of another shape is dropped and the
+// recording, place and choices are kept; text that is not persist's is dropped whole, as the view a new tab opens with.
+export function parseView(item: string | null): Restored {
+  const dropped: Record<string, string> = {};
+  const part = <V, T>(name: string, value: V, read: (value: V, what: string) => T, fallback: T): T => {
+    try {
+      return read(value, name);
+    } catch (error) {
+      if (!(error instanceof Malformed)) throw error;
+      dropped[name] = error.message;
+      return fallback;
+    }
+  };
+  const stored = item === null ? initial : part("view", item, (item, what): unknown => fields(parseJson(item, what), what).object("state"), initial);
+  const search = fieldOf(stored, "search");
+  const view: View = {
+    open: part("open", fieldOf(stored, "open"), (value, what) => (value === null ? null : text(value, what)), initial.open),
+    terminal: part("terminal", fieldOf(stored, "terminal"), terminal, initial.terminal),
+    opened: part("opened", fieldOf(stored, "opened"), opened, initial.opened),
+    position: part("position", fieldOf(stored, "position"), position, initial.position),
+    moment: part("moment", fieldOf(stored, "moment"), moment, initial.moment),
+    search: {
+      query: part("search.query", fieldOf(search, "query"), text, initial.search.query),
+      current: part("search.current", fieldOf(search, "current"), current, initial.search.current),
+    },
+  };
+  return { view, dropped };
+}
+
+function text(value: unknown, what: string): string {
+  if (typeof value !== "string") throw new Malformed(`${what}: is not a string`);
+  return value;
+}
+
+function terminal(value: unknown, what: string): Terminal | null {
+  if (value === null) return null;
+  const f = fields(value, what);
+  return { window: tmuxWindow(f.object("window"), `${what}: window`), shown: f.boolean("shown") };
+}
+
+function opened(value: unknown, what: string): Opened {
+  const entries = Object.values(jsonObject(value, what));
+  if (!entries.every((open) => typeof open === "boolean")) throw new Malformed(`${what}: holds a choice that is not a boolean`);
+  return value as Opened;
+}
+
+function position(value: unknown, what: string): Position {
+  const f = fields(value, what);
+  const at = f.oneOf("at", { end: true, start: true, row: true });
+  return at === "row" ? { at, key: f.string("key"), offset: f.read("offset", Number.isFinite as (value: unknown) => value is number, "a number") } : { at };
+}
+
+function moment(value: unknown, what: string): Moment {
+  const f = fields(value, what);
+  const at = f.oneOf("at", { now: true, left: true, chosen: true });
+  return at === "now" ? { at } : { at, trace: f.string("trace") };
+}
+
+// A search with no current match stores none: JSON keeps no undefined.
+function current(value: unknown, what: string): Current | undefined {
+  if (value === undefined) return undefined;
+  const f = fields(value, what);
+  const nth = f.read("nth", (value): value is number => Number.isSafeInteger(value) && (value as number) >= 0, "a count");
+  return { key: f.string("key"), at: f.string("at"), nth, pattern: f.string("pattern") };
+}
 
 export const view = {
+  // [LAW:no-ambient-temporal-coupling] The tab's stored view read, by the composition root as the page starts and before
+  // its first render, with `dropped` told each part of it this build could not read.
+  restore: (dropped: (parts: Restored["dropped"]) => void) => {
+    const restored = parseView(sessionStorage.getItem(name));
+    useView.setState(restored.view, true);
+    dropped(restored.dropped);
+  },
   // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last
   // recording's. Choices are kept: a row's key begins with its exchange's trace_id, so none is another recording's.
   // [LAW:no-ambient-temporal-coupling] The exchanges shown are emptied as it opens, so the view of the last recording's

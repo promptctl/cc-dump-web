@@ -73,15 +73,15 @@ export function sessions(names: string[]): Sessions {
 }
 
 export function parseLaunched(json: string): Launched {
-  const f = fields(parseJson(json, "launched"), "launched");
-  return {
-    session: sessionName(f.string("session")),
-    pane_id: paneId(f.string("pane_id")),
-    recording: f.string("recording"),
-    start_time: startTime(String(f.integer("start_time"))),
-    session_id: sessionId(f.string("session_id")),
-    window_id: windowId(f.string("window_id")),
-  };
+  const launched = parseJson(json, "launched");
+  const f = fields(launched, "launched");
+  return { session: sessionName(f.string("session")), pane_id: paneId(f.string("pane_id")), recording: f.string("recording"), ...tmuxWindow(launched, "launched") };
+}
+
+// [LAW:single-enforcer] A window's fields in `json`, as a launch answers them and a tab keeps them (the UI's view).
+export function tmuxWindow(json: unknown, what: string): TmuxWindow {
+  const f = fields(json, what);
+  return { start_time: startTime(String(f.integer("start_time"))), session_id: sessionId(f.string("session_id")), window_id: windowId(f.string("window_id")) };
 }
 
 // [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no

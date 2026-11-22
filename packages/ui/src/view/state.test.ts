@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
 import { recording, useExchanges } from "../store.ts";
+import { eventsWritten } from "@cc-dump/log/testing";
+import { viewLog } from "./decisions.ts";
 import type { BlockRow } from "./rows.ts";
-import { useView, view } from "./state.ts";
+import { parseView, useView, view } from "./state.ts";
 
 const agent = "20261113T080000.000Z.jsonl";
 // A tool definition's row, in no set.
@@ -215,18 +217,47 @@ describe("the moment", () => {
   });
 });
 
-describe("a view stored by another version", () => {
-  // Version 6 named a match by where it started and a part by its place among its block's parts.
-  it.each([
-    [3, { open: { recording: "live" }, flipped: { k: true } }],
-    [6, { open: "live", opened: { "t1/request/http/2/0": true }, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }],
-  ])("opens the tab as a new one, with none open, from version %i", async (version, state) => {
-    const stored = new Map([["cc-dump.view", JSON.stringify({ state, version })]]);
-    useView.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: (key) => stored.get(key) ?? null, setItem: () => {}, removeItem: () => {} })) });
-    useView.setState(useView.getInitialState(), true);
+describe("a stored view", () => {
+  const terminal = { window: { start_time: 1794801953, session_id: "$2", window_id: "@7" }, shown: false };
+  const kept = {
+    open: agent,
+    terminal,
+    opened: { "t1/request/http": true, [row.key]: false },
+    position: { at: "row", key: row.key, offset: 12 },
+    moment: { at: "chosen", trace: "t3" },
+  } as const;
+  const stored = (state: unknown, version = 7) => JSON.stringify({ state, version });
 
-    await useView.persist.rehydrate();
+  it("is read as it was stored, at any version, dropping nothing", () => {
+    const view = { ...kept, search: { query: "x", current: { key: row.key, at: '["name"]', nth: 1, pattern: "/x/giu" } } };
+    expect(parseView(stored(view, 0))).toEqual({ view, dropped: {} });
+  });
 
-    expect(useView.getState()).toEqual(useView.getInitialState());
+  // Version 6 named a match by where it started, with no pattern: the match is dropped, and the rest of the tab kept.
+  it("drops a current match of another shape and keeps the recording, place, folds and query", () => {
+    const { view, dropped } = parseView(stored({ ...kept, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 6));
+    expect(view).toEqual({ ...kept, search: { query: "x", current: undefined } });
+    expect(Object.keys(dropped)).toEqual(["search.current"]);
+  });
+
+  it("drops each part this build does not read for the part a new tab opens with, and names it", () => {
+    const { view, dropped } = parseView(stored({ open: { recording: "live" }, terminal: { ...terminal, window: { ...terminal.window, window_id: "@03" } }, opened: { k: "yes" }, position: { at: "row", key: "t1" }, moment: { at: "held" }, flipped: { k: true } }, 3));
+    expect(view).toEqual(useView.getInitialState());
+    expect(Object.keys(dropped).sort()).toEqual(["moment", "open", "opened", "position", "search.query", "terminal"]);
+  });
+
+  it("is a new tab's view, dropping nothing, when none is stored, and dropped whole when what is stored is not a view persist wrote", () => {
+    expect(parseView(null)).toEqual({ view: useView.getInitialState(), dropped: {} });
+    expect(parseView("{")).toEqual({ view: useView.getInitialState(), dropped: { view: "view: is not JSON" } });
+  });
+
+  it("is the view the tab opens with, the parts dropped told to the view's decisions", () => {
+    sessionStorage.setItem("cc-dump.view", stored({ ...kept, search: { query: "x", current: { key: "k", at: "0", start: 4 } } }, 6));
+    const { events, log } = eventsWritten();
+
+    view.restore(viewLog(log).restored);
+
+    expect(useView.getState()).toEqual({ ...kept, search: { query: "x", current: undefined } });
+    expect(events).toEqual([expect.objectContaining({ event: "stored_view_dropped", outcome: "ok", parts: { "search.current": expect.any(String) } })]);
   });
 });
