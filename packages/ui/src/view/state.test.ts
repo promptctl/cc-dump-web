@@ -1,8 +1,7 @@
 import { exchanges, recordedAt } from "../testing.ts";
-import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
-import { parseSettings, useSettings } from "../settings.ts";
+import { defaultSettings, useSettings } from "../settings.ts";
 import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
 import { useView, view } from "./state.ts";
@@ -30,7 +29,7 @@ describe("opening a recording", () => {
       open: agent,
       opened: { "t1/request/http": true },
       position: { at: "end" },
-      search: { query: "x", current: undefined },
+      search: { query: "x", current: null },
     });
   });
 
@@ -94,9 +93,8 @@ describe("a launch", () => {
 describe("the search", () => {
   const match = { key: "t1/request/http", at: "text", nth: 0, pattern: "/x/giu" };
   beforeEach(() => {
-    useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
-    useSettings.setState(parseSettings(undefined));
+    useSettings.setState(defaultSettings);
   });
 
   it("takes a match stepped to as current with the pattern it was found under, which the column's judge holds it to", () => {
@@ -114,7 +112,7 @@ describe("the search", () => {
     const place = { at: "row", key: "t1", offset: 12 } as const;
     useView.setState({ position: place, search: { query: "x", current: match } });
     view.clearMatch();
-    expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: undefined } });
+    expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: null } });
   });
 
   // What a step chose is the reader's choice, however the fold starts, so a change of level never hides the current match.
@@ -201,7 +199,7 @@ describe("the moment", () => {
     view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
-    expect(useView.getState().search.current).toBeUndefined();
+    expect(useView.getState().search.current).toBeNull();
     view.place({ ...place, offset: 9 }, "reader", "t10");
     expect(useView.getState()).toMatchObject({ position: { ...place, offset: 9 }, moment: { at: "chosen", trace: "t3" } });
     view.place({ at: "end" }, "view", "t10");
@@ -212,21 +210,5 @@ describe("the moment", () => {
     useView.setState({ moment: { at: "chosen", trace: "t3" } });
     view.open(agent);
     expect(useView.getState().moment).toEqual({ at: "now" });
-  });
-});
-
-describe("a view stored by another version", () => {
-  // Version 6 named a match by where it started and a part by its place among its block's parts.
-  it.each([
-    [3, { open: { recording: "live" }, flipped: { k: true } }],
-    [6, { open: "live", opened: { "t1/request/http/2/0": true }, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }],
-  ])("opens the tab as a new one, with none open, from version %i", async (version, state) => {
-    const stored = new Map([["cc-dump.view", JSON.stringify({ state, version })]]);
-    useView.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: (key) => stored.get(key) ?? null, setItem: () => {}, removeItem: () => {} })) });
-    useView.setState(useView.getInitialState(), true);
-
-    await useView.persist.rehydrate();
-
-    expect(useView.getState()).toEqual(useView.getInitialState());
   });
 });

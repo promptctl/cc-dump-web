@@ -338,7 +338,7 @@ describe("a set", () => {
     // listed, open or closed, so the description holding the match is drawn or not.
     const seen = (visibility: Record<Category, Visibility>) => {
       const { opened, search } = useView.getState();
-      if (search.current === undefined) throw new Error("the step made no match current");
+      if (search.current === null) throw new Error("the step made no match current");
       const { key } = search.current;
       const layout = layouts(events, visibility)(1, key, opened);
       const line = layout.rows.some(({ kind }) => kind === "set") ? (isOpen(opened, "t1/tools", setStartsOpen("tools", visibility)) ? "open" : "closed") : "none";

@@ -175,6 +175,10 @@ export type ListedKeys = Keys & { measuredBy: (index: number) => string };
 // or not, since how a block starts moves with its category's level and the choice outlasts a change of level
 // (docs/design/01-features.md, F4).
 export type Opened = Record<string, boolean>;
+// [LAW:one-source-of-truth] The scheme of the keys of rows, sections and regions (history.ts, rows.ts, search.ts
+// `partKey`, regions.ts, contents.ts), stored with a tab's view: a key is a string in every scheme, so only this tells a
+// stored key of another scheme from one of this build's. Bumped when any key's format changes.
+export const rowKeys = 1;
 export const isOpen = (opened: Opened, key: string, starts: boolean): boolean => opened[key] ?? starts;
 
 // The key a block's past is opened by, by its row's key: a choice of its own, which starts closed whatever the block's

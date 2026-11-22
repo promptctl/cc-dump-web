@@ -78,10 +78,14 @@ export function parseLaunched(json: string): Launched {
     session: sessionName(f.string("session")),
     pane_id: paneId(f.string("pane_id")),
     recording: f.string("recording"),
-    start_time: startTime(String(f.integer("start_time"))),
-    session_id: sessionId(f.string("session_id")),
-    window_id: windowId(f.string("window_id")),
+    ...tmuxWindow(f),
   };
+}
+
+// [LAW:single-enforcer] A window's fields, read from a launch's answer here and from the view a tab stored (the UI's
+// view/stored.ts).
+export function tmuxWindow(f: ReturnType<typeof fields>): TmuxWindow {
+  return { start_time: startTime(String(f.integer("start_time"))), session_id: sessionId(f.string("session_id")), window_id: windowId(f.string("window_id")) };
 }
 
 // [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no

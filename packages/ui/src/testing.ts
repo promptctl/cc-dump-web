@@ -53,3 +53,18 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
   });
   return [...byTrace.values()].map(({ exchange }) => exchange);
 }
+
+// A Web Storage held in memory, holding `items` to begin with.
+export function memoryStorage(items: Record<string, string> = {}): Storage {
+  const held = new Map(Object.entries(items));
+  return {
+    get length() {
+      return held.size;
+    },
+    key: (index) => [...held.keys()][index] ?? null,
+    getItem: (key) => held.get(key) ?? null,
+    setItem: (key, value) => void held.set(key, value),
+    removeItem: (key) => void held.delete(key),
+    clear: () => held.clear(),
+  };
+}

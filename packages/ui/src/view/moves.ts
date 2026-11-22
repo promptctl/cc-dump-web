@@ -62,8 +62,8 @@ export type Judged = { is: "none" } | Standing | { is: "cleared"; cleared: Clear
 // standing one, run once for each render of the column: the counter, the highlight, the steps and the line under the
 // rows take what it finds standing, and the view no longer holds as current what it clears. A match whose row is not
 // read yet stands until it is.
-export function judge(column: ColumnState, current: Current | undefined, pattern: RegExp): Judged {
-  if (current === undefined) return { is: "none" };
+export function judge(column: ColumnState, current: Current | null, pattern: RegExp): Judged {
+  if (current === null) return { is: "none" };
   const cleared = (why: Cleared["why"]): Judged => ({ is: "cleared", cleared: { ...current, why, searching: literal(pattern) } });
   // A match stands where its block's row does.
   const place = inEvery(column, { at: "row", key: current.key, offset: 0 });

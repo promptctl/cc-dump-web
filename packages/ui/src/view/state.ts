@@ -1,9 +1,10 @@
 import type { Launched, TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
 import { settings, type SearchOptions } from "../settings.ts";
+import { readStored } from "../stored.ts";
 import { recording } from "../store.ts";
+import { storedView } from "./stored.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
 import { isOpen, type Opened } from "./rows.ts";
@@ -32,22 +33,17 @@ export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chos
 
 // The search: its query, and the match last stepped to, the one holder of which match is current. Each render reads it
 // as the column's judge finds it (moves.ts `judge`), which clears it once it is none, as under a new query or a new
-// way of reading it, in every tab.
-export type Search = { query: string; current: Current | undefined };
+// way of reading it, in every tab. No match is current as `null`, which JSON keeps, so a stored view holds it.
+export type Search = { query: string; current: Current | null };
 
 // A tab opens with no recording: the person launches an agent, or opens one.
-const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
+const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: null } };
 
-// The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
-// this one does not read, so the tab opens as a new one.
-export const useView = create<View>()(
-  persist((): View => initial, {
-    name: "cc-dump.view",
-    storage: createJSONStorage(() => sessionStorage),
-    version: 7,
-    migrate: () => initial,
-  }),
-);
+// [LAW:no-ambient-temporal-coupling] The view is made from the one the tab stored, as read when this module loads, so
+// it is the stored one from its first read on; the composition root reports the read and keeps it (main.tsx).
+export const viewItem = storedView(initial);
+export const restoredView = readStored(() => globalThis.sessionStorage, viewItem);
+export const useView = create<View>()(() => restoredView.value);
 
 export const view = {
   // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last
@@ -58,7 +54,7 @@ export const view = {
   // that failed is opened to try again.
   open: (open: string) => {
     recording.open();
-    useView.setState(({ search }) => ({ open, position: { at: "end" }, moment: { at: "now" }, search: { ...search, current: undefined } }));
+    useView.setState(({ search }) => ({ open, position: { at: "end" }, moment: { at: "now" }, search: { ...search, current: null } }));
   },
   // A launch shows its agent: the recording its process makes, opened, and its window, beside it, which stays shown when
   // another recording is opened, since the agent goes on running there.
@@ -77,12 +73,12 @@ export const view = {
   // A move in time, to `moment`, with the view put at `position`, and no current match: the one there was is in another
   // moment's text, where the search, which walks the moment shown, no longer counts it.
   moveInTime: (moment: Exclude<Moment, { at: "left" }>, position: Position) =>
-    useView.setState(({ search }) => ({ moment, position, search: { ...search, current: undefined } })),
+    useView.setState(({ search }) => ({ moment, position, search: { ...search, current: null } })),
   search: (query: string) => useView.setState(({ search }) => ({ search: { ...search, query } })),
   // [LAW:one-source-of-truth] The option is the settings', which every tab shares.
   searchOption: (option: keyof SearchOptions, on: boolean) => settings.setSearchOption(option, on),
   // The current match is none (moves.ts `judge`).
-  clearMatch: () => useView.setState(({ search }) => ({ search: { ...search, current: undefined } })),
+  clearMatch: () => useView.setState(({ search }) => ({ search: { ...search, current: null } })),
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the folds holding it show open, and
   // the view moves to its row, which the step then refines to the match's line. The folds are chosen open, however they
   // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set or

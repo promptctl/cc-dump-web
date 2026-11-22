@@ -2,7 +2,7 @@ import { eventsWritten } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { formatBlock, type Block } from "../format/blocks.ts";
 import { keyed } from "../format/format.ts";
-import { parseSettings } from "../settings.ts";
+import { defaultSettings } from "../settings.ts";
 import { columnOf, standingIn } from "../testing.ts";
 import { viewLog } from "./decisions.ts";
 import { currentOf, judge, matchMove, waitingOf } from "./moves.ts";
@@ -18,7 +18,7 @@ const rowOf = (content: unknown): BlockRow => {
   return { kind: "block", key: "k", change: "added", versions: [{ step: 1, block: shown, reply: true, rewrote: undefined, previous: undefined }], at: 0, set: undefined, depth: 0, dimmed: false };
 };
 
-const { search: defaults } = parseSettings(undefined);
+const { search: defaults } = defaultSettings;
 const { pattern } = patternOf("needle", defaults);
 // The current match, as a step takes it: the `nth` match, counting from 0, of the text at `at` in the row.
 const taken = (match: Match, under = pattern): Current => ({ ...match, pattern: literal(under) });
