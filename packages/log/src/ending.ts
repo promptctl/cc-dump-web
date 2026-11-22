@@ -11,6 +11,8 @@ const errorOf: Record<Ending["outcome"], Reader<string>> = { ok: absent, aborted
 
 // [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`), with
 // the message's fields `readers` reads: its outcome, and its error, there exactly when the outcome is "error".
+// [LAW:types-are-the-program] exception: `tagged`'s variants are a type mapped over `Ending & T`, which the compiler
+// cannot resolve while `T` is generic, so the table built from `errorOf` is cast; `errorOf` is what is checked.
 export const endingWith = <T>(readers: Readers<T>): Reader<Ending & T> =>
   tagged<"outcome", Ending & T>("outcome", Object.fromEntries(Object.entries(errorOf).map(([outcome, error]) => [outcome, { ...readers, error }])) as never);
 export const ending: Reader<Ending> = endingWith<Record<never, never>>({});

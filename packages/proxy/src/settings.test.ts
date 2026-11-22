@@ -37,7 +37,7 @@ describe("parseProxySettings", () => {
     ['{"port":null}', "proxy settings: port: is not an integer"],
     ['{"upstream":1}', "proxy settings: upstream: is not a string"],
     ['{"upstream":"https://gw.example/?key=1"}', "proxy settings: upstream: is not an http or https origin with an optional path"],
-    ['{"prot":3400,"upstrem":""}', "proxy settings: prot: is not read by this build; upstrem: is not read by this build"],
+    ['{"prot":3400,"upstrem":""}', "proxy settings: prot: is not read by this build, which reads port, upstream; upstrem: is not read by this build, which reads port, upstream"],
     ["port = 3400", "proxy settings: is not JSON"],
     ["[3400]", "proxy settings: is not an object"],
     ["null", "proxy settings: is not an object"],

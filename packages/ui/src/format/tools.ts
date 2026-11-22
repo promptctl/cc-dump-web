@@ -1,4 +1,4 @@
-import { attempt, kinds, mapped, object, readShown, value, type Reader, type Readers, type Unread } from "@cc-dump/log/json";
+import { attempt, kinds, mapped, object, readShown, value, type Reader, type Readers, type Unread, unreadFields } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { doesNotFit, type Part } from "./parts.ts";
 
@@ -55,10 +55,9 @@ export const jsonInput = (input: unknown): Part[] => [{ id: "input", label: "inp
 // The fields of an input its entry did not read: the ones a line holds, a string, a number or a boolean, as fields, in
 // the order they were sent, and the others together as the input's JSON.
 function unreadInputParts(unread: readonly Unread[]): Part[] {
-  const rest = unread.map(({ at, value }) => [at.join("."), value] as const);
-  const fields: Header[] = rest.filter(([, value]) => isScalar(value)).map(([name, value]) => [name, String(value)]);
-  const values = rest.filter(([, value]) => !isScalar(value));
-  return [...(fields.length === 0 ? [] : [{ id: "input fields", kind: "fields" as const, fields }]), ...(values.length === 0 ? [] : jsonInput(Object.fromEntries(values)))];
+  const fields: Header[] = unread.filter(({ value }) => isScalar(value)).map(({ at, value }) => [at.join("."), String(value)]);
+  const values = unread.filter(({ value }) => !isScalar(value));
+  return [...(fields.length === 0 ? [] : [{ id: "input fields", kind: "fields" as const, fields }]), ...(values.length === 0 ? [] : jsonInput(unreadFields(values)))];
 }
 
 const isScalar = (value: unknown): value is string | number | boolean => typeof value === "string" || typeof value === "number" || typeof value === "boolean";

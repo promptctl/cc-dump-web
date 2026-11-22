@@ -1,7 +1,7 @@
-// [LAW:single-enforcer] The readers of JSON, field by field, for every JSON object the app reads: the parts' messages
-// (each part's format.ts), settings files (@cc-dump/config), the UI's stored items and the API traffic the UI formats,
-// each refusal naming `what` was read. Imports nothing that needs node, so the formats a part shares with the UI use it
-// too.
+// [LAW:single-enforcer] The readers of JSON, field by field: the parts' messages (each part's format.ts), settings files
+// (@cc-dump/config), the UI's stored items and the API traffic the UI formats, each refusal naming `what` was read. A
+// preview of a value that may hold a field or not reads it with `fieldOf`. Imports nothing that needs node, so the
+// formats a part shares with the UI use it too.
 // [LAW:one-source-of-truth] What a field this build does not read means belongs to the document it is in, not to the
 // object that holds it: a reader only reports it (`Unread`), at its path, and the one function that reads each kind of
 // document decides, at every depth at once: `parse`, a message; `parseExact`, a settings file; `readShown`, what the UI
@@ -52,8 +52,21 @@ export type Path = readonly string[];
 // A part of a stored value this build did not take, at `at`, and why.
 export type Dropped = { readonly at: Path; readonly why: string };
 
-// A field no reader read, at `at`, and what it holds.
-export type Unread = { readonly at: Path; readonly value: unknown };
+// A field no reader read, at `at`, what it holds, and the fields this build reads in the object it is in.
+export type Unread = { readonly at: Path; readonly value: unknown; readonly known: readonly string[] };
+
+// [LAW:one-source-of-truth] The fields a read left unread, as the value they are part of: each at its path, so a field
+// nested in another and one whose key holds a dot stay apart. Each is set as the value's own, so a key such as
+// `__proto__` is a field like any other.
+export function unreadFields(unread: readonly Unread[]): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  const own = (into: Record<string, unknown>, key: string, value: unknown) => Object.defineProperty(into, key, { value, enumerable: true, writable: true, configurable: true });
+  for (const { at, value } of unread) {
+    const parent = at.slice(0, -1).reduce((into, key) => (Object.hasOwn(into, key) ? into[key] : own(into, key, {})[key]) as Record<string, unknown>, root);
+    own(parent, at.at(-1)!, value);
+  }
+  return root;
+}
 
 // [LAW:parse-dont-validate] A value read as this build reads it, with each part of it a tolerant read dropped, and each
 // field no reader read.
@@ -67,8 +80,8 @@ export type Readers<T> = { [K in keyof T]-?: Reader<T[K]> };
 
 const read = <T>(value: T): Read<T> => ({ value, dropped: [], unread: [] });
 
-// [LAW:single-enforcer] The one rule of a refusal: only `Malformed` is one, and `refused` takes it, in its words. Every
-// catch of a refusal is this one, so a reader's own bug is never taken for the input's fault.
+// [LAW:single-enforcer] A refusal taken by `refused`, in its words: only `Malformed` is one, so a reader's own bug is
+// never taken for the input's fault, and passes as it is.
 export function attempt<T>(read: () => T, refused: (why: string) => T): T {
   try {
     return read();
@@ -147,9 +160,10 @@ function fieldsRead<T>(json: unknown, readers: Readers<T>, at: Path, field: Fiel
   const fields = fieldsOf(json, at).value;
   const reads = Object.entries<Reader<unknown>>(readers).map(([key, reader]) => [key, field(key, reader, Object.hasOwn(fields, key) ? fields[key] : undefined)] as const);
   const value = Object.fromEntries(reads.flatMap(([key, { value }]) => (value === undefined ? [] : [[key, value]]))) as T;
+  const known = Object.keys(readers);
   const unread = Object.entries(fields)
     .filter(([key]) => !Object.hasOwn(readers, key))
-    .map(([key, value]) => ({ at: [...at, key], value }));
+    .map(([key, value]) => ({ at: [...at, key], value, known }));
   const whole = joined(value, reads.map(([, read]) => read));
   return { ...whole, unread: [...unread, ...whole.unread] };
 }
@@ -162,8 +176,8 @@ export const object =
     fieldsRead(json, readers, at, (key, reader, value) => under(key, () => reader(value, [...at, key])));
 
 // [LAW:parse-dont-validate] A tolerant reader: an object whose fields are each an independent choice, each read on its
-// own, one missing taken as `fallback`'s, and one refused as `fallback`'s and dropped, named, with what it held, so every
-// other is kept. Itself missing, it is `fallback`; never refused: what is not an object is `fallback`, dropped.
+// own, one missing taken as `fallback`'s, and one refused as `fallback`'s and dropped, named with why, so every other is
+// kept. Itself missing, it is `fallback`; never refused: what is not an object is `fallback`, dropped.
 export const tolerant =
   <T>(readers: Readers<T>, fallback: T): Reader<T> =>
   (json, at) => {
@@ -239,11 +253,11 @@ export function parse<T>(reader: Reader<T>, json: unknown, what: string): T {
 }
 
 // [LAW:single-enforcer] The settings file `what` read whole by `reader`. A field it does not read, at any depth, is
-// refused, named by its path, since it is most often a setting misspelled, and the part would act on a setting the user
-// did not mean.
+// refused, named by its path beside the fields it could be, since it is most often a setting misspelled, and the part
+// would act on a setting the user did not mean.
 export function parseExact<T>(reader: Reader<T>, json: unknown, what: string): T {
   const { value, unread } = readShown(reader, json, what);
-  if (unread.length > 0) throw new Malformed(`${what}: ${unread.map(({ at }) => said(at, notRead)).join("; ")}`);
+  if (unread.length > 0) throw new Malformed(`${what}: ${unread.map(({ at, known }) => `${said(at, notRead)}, which reads ${known.join(", ")}`).join("; ")}`);
   return value;
 }
 

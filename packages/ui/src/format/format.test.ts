@@ -304,7 +304,8 @@ describe("format", () => {
       ["tools.Read.0", "Read"],
       ["tools.Read.1", "Read"],
       ["tools.a%2Fb.0", "a/b"],
-      ["tools.tool.0", "tool"],
+      // One that names no tool is keyed by a bare `%`, which no name's key holds.
+      ["tools.%.0", "tool definition"],
       ["tools.Grep.0", "Grep"],
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
@@ -732,7 +733,7 @@ describe("format", () => {
     expect(group(formatted, "message.0")[0]).not.toHaveProperty("failed");
   });
 
-  it("marks failed a failed tool's result its entry cannot read, and a server tool's result of its error type", () => {
+  it("marks failed a tool's result its is_error says failed, and a server tool's result of its error type; one its entry cannot read states nothing", () => {
     const formatted = one(
       request("a", {
         model: "m",
@@ -740,33 +741,39 @@ describe("format", () => {
           {
             role: "user",
             content: [
-              { type: "tool_result", tool_use_id: 1, is_error: true },
+              { type: "tool_result", tool_use_id: "toolu_1", is_error: true },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_2", content: [] },
+              // Refused by the read that shows it, so the facts it holds are not read apart from it.
+              { type: "tool_result", tool_use_id: 1, is_error: true },
+              { type: "tool_result", tool_use_id: "toolu_2", is_error: "true" },
             ],
           },
         ],
       }),
     );
-    expect(group(formatted, "message.0").map(({ name, failed }) => [name, failed])).toEqual([
-      ["tool_result: error", true],
-      ["web_search_tool_result: error", true],
-      ["web_search_tool_result", undefined],
+    expect(group(formatted, "message.0").map(({ name, failed, result }) => [name, failed, result])).toEqual([
+      ["tool_result: error", true, { answers: "toolu_1", names: undefined }],
+      ["web_search_tool_result: error", true, undefined],
+      ["web_search_tool_result", undefined, undefined],
+      ["tool_result", undefined, undefined],
+      ["tool_result", undefined, undefined],
     ]);
+    expect(group(formatted, "message.0")[4]!.parts[0]).toEqual(doesNotFit("tool_result: is_error: is not a boolean"));
   });
 
   it("marks failed a failed tool's result whose content does not read, and states the call it answers", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true, content: 7 }] }] }));
     const [result] = group(formatted, "message.0");
     expect([result!.name, result!.failed, result!.result]).toEqual(["tool_result: error", true, { answers: "toolu_1", names: undefined }]);
-    expect(result!.parts[0]).toEqual(doesNotFit("tool_result: content: is not a string or a list of blocks"));
+    expect(result!.parts[0]).toEqual(doesNotFit("content: is not a string or a list of blocks"));
   });
 
   it("keeps a system-role message whose content does not read in its place and under its title, shown raw", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "system", content: 7 }, { role: "user", content: "Hi." }] }));
     const system = formatted.groups.find(({ key }) => key === "message.0.system.0")!;
     expect([system.title, system.blocks[0]!.place]).toEqual(["system", { in: "system message", before: 0, index: 0 }]);
-    expect(system.blocks[0]!.parts[0]).toEqual(doesNotFit("message: content: is not a string or a list of blocks"));
+    expect(system.blocks[0]!.parts[0]).toEqual(doesNotFit("content: is not a string or a list of blocks"));
   });
 
   it("shows a field the API adds anywhere: on a message, in a tool definition, and on a stream's event and its delta", () => {
@@ -806,6 +813,80 @@ describe("format", () => {
     expect([sent!.name, sent!.parts]).toEqual(["compaction", expect.arrayContaining([expect.objectContaining({ text: "Summary so far." })])]);
     expect(built.parts).toEqual(expect.arrayContaining([expect.objectContaining({ text: "Summary so far." })]));
     expect(sent!.parts.some(({ id }) => id === "misfit")).toBe(false);
+  });
+
+  it("shows a compaction of no content alike, streamed and sent whole", () => {
+    const formatted = one([
+      ...request("a", { model: "m", messages: [{ role: "assistant", content: [{ type: "compaction", content: null }] }] }),
+      ...streamed("a", [
+        messageStart,
+        { type: "content_block_start", index: 0, content_block: { type: "compaction", content: null } },
+        { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: null } },
+        { type: "content_block_stop", index: 0 },
+        messageDelta,
+        { type: "message_stop" },
+      ]),
+    ]);
+    const [sent] = group(formatted, "message.0");
+    expect(received(formatted).find(({ name }) => name === "compaction")!.parts).toEqual(sent!.parts);
+    expect(sent!.parts.map(({ id }) => id)).toEqual(["encrypted_content"]);
+  });
+
+  it("lands an event's field no case reads on what it builds, refusing one that would land on another, so none is lost", () => {
+    // `__proto__` as JSON text holds it, as a field of the event's own.
+    const forged = JSON.parse('{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"},"__proto__":{"citations":"forged"}}');
+    const formatted = one([
+      ...request("a", { model: "m", messages: [] }),
+      ...streamed("a", [
+        messageStart,
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi", extra: "delta's" }, extra: "event's" },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " there" }, text: "the event's own" },
+        forged,
+        { type: "content_block_delta", index: 0, delta: { type: "citations_delta", citation: { cited_text: "x" } } },
+        { type: "content_block_stop", index: 0 },
+        { type: "content_block_start", index: 1, content_block: { type: "thinking", thinking: "" } },
+        { type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "", estimated_tokens: 1 } },
+        { type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "", estimated_tokens: 2 } },
+        { type: "content_block_stop", index: 1 },
+        messageDelta,
+        { type: "message_stop" },
+      ]),
+    ]);
+    const blocks = received(formatted);
+    expect(blocks.filter(({ name }) => name === "content_block_delta event").map(({ parts }) => parts[0])).toEqual([
+      expect.objectContaining({ text: "delta: extra: is named as another field the event holds" }),
+      expect.objectContaining({ text: "text: would land on the text it builds" }),
+    ]);
+    const unread = (block: Block) => block.parts.flatMap((part) => (part.kind === "rest" ? part.fields : []));
+    // The forged field is the block's own, so the citations delta after it extends no citations it forged.
+    const text = blocks.find(({ name }) => name === "text")!;
+    expect([text.parts[0], unread(text).map(([name]) => name)]).toEqual([expect.objectContaining({ text: "!" }), ["__proto__", "citations"]]);
+    // A delta's estimate lands again on the one before it.
+    expect(unread(blocks.find(({ name }) => name === "thinking")!)).toEqual([["estimated_tokens", "2"]]);
+  });
+
+  it("shows an image whose source names a type no source has, whatever its name, as its type", () => {
+    for (const type of ["constructor", "toString", "__proto__", "vector"]) {
+      const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "image", source: { type } }] }] }));
+      expect(group(formatted, "message.0")[0]!.parts[0]).toEqual({ id: "source", label: "source", kind: "fields", fields: [["type", type]] });
+    }
+  });
+
+  it("shows a block whose type does not read raw, with why, and one whose show is refused in its entry's category, stating nothing", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: 5 }, { text: "hi" }, { type: "thinking", thinking: 7 }] }] }));
+    const blocks = group(formatted, "message.0");
+    expect(blocks.map(({ category, name }) => `${category} ${name}`)).toEqual(["user content block", "user content block", "thinking thinking"]);
+    expect(blocks.map(({ parts }) => parts[0])).toEqual([doesNotFit("type: is not a string"), doesNotFit("type: is missing"), doesNotFit("thinking: thinking: is not a string")]);
+  });
+
+  it("reads a message's facts from what it shows: a stop reason not text refuses the message; a count not a number counts none, and shows why", () => {
+    const reply = (fields: object) => one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, ...fields })))]);
+    const stopped = reply({ stop_reason: 7 });
+    expect([stopped.facts.stopReason, group(stopped, "response").map(({ name }) => name)]).toEqual([undefined, ["HTTP response", "response body"]]);
+    const counted = reply({ stop_reason: "end_turn", usage: { input_tokens: "2", output_tokens: 1 } });
+    expect([counted.facts.uncached, counted.facts.output, counted.facts.stopReason]).toEqual([undefined, undefined, "end_turn"]);
+    expect(group(counted, "response").find(({ name }) => name === "usage")!.parts[1]).toEqual(doesNotFit("usage: input_tokens: is not a number"));
   });
 
   it("decodes a body whose trailers were not recorded once its exchange has ended", () => {

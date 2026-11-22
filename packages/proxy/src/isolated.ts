@@ -12,6 +12,7 @@ const { runRecordingName } = await import("./format.ts");
 const { createRecordings } = await import("./recordings.ts");
 const { startProxy } = await import("./start.ts");
 const { parseUpstream } = await import("./proxy.ts");
+const { kinds, parse, parsed } = await import("@cc-dump/log/json");
 
 // [LAW:parse-dont-validate] Each argument becomes what the proxy takes, or the process fails naming it.
 function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest]: string[]) {
@@ -21,7 +22,7 @@ function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest
     if (!/^\d{1,5}$/.test(text) || Number(text) > 65535) throw new Error(`a port must be an integer from 0 to 65535, got ${JSON.stringify(text)}`);
     return Number(text);
   };
-  return { upstream: parseUpstream(upstream!), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
+  return { upstream: parse(parsed(kinds.string, parseUpstream), upstream, "upstream"), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
 }
 
 const { log, logs } = processLog("proxy");

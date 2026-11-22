@@ -1,6 +1,6 @@
 import { endingWith, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { attempt, kinds, parsed, parseJson, readShown, value } from "./json.ts";
+import { attempt, kinds, parsed, parseJson, readShown, unreadFields, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -79,5 +79,5 @@ const logged = endingWith<Omit<LoggedEvent, keyof Ending | "facts">>({
 // The fields the event has a place of its own for are those `logged` reads; the rest, none deeper, are its facts.
 function parseLoggedEvent(json: string): LoggedEvent {
   const { value, unread } = readShown(logged, parseJson(json, "log line"), "log line");
-  return { ...value, facts: Object.fromEntries(unread.map(({ at: [name], value }) => [name, value])) };
+  return { ...value, facts: unreadFields(unread) };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Malformed } from "./failure.ts";
-import { absent, entries, kinds, list, nullable, object, optional, parse, parsed, parseExact, parseJson, readShown, tagged, tolerant, value } from "./json.ts";
+import { absent, entries, kinds, list, nullable, object, optional, parse, parsed, parseExact, parseJson, readShown, tagged, tolerant, unreadFields, value } from "./json.ts";
 import { parseTraceId } from "./trace.ts";
 
 // One document with a field no reader reads at its top and at two depths, one of them in a list.
@@ -12,18 +12,26 @@ describe("each kind of document decides what a field it does not read means, at 
     expect(parse(reader, document, "event")).toEqual({ name: "x", source: { type: "url", items: [{ id: "a" }] } });
   });
 
-  it("a settings file refuses each, named by its path", () => {
+  it("a settings file refuses each, named by its path beside the fields this build reads there", () => {
     expect(() => parseExact(reader, document, "settings in s.json")).toThrow(
-      new Malformed("settings in s.json: extra: is not read by this build; source: more: is not read by this build; source: items: 0: deeper: is not read by this build"),
+      new Malformed(
+        "settings in s.json: extra: is not read by this build, which reads name, source; source: more: is not read by this build, which reads type, items; source: items: 0: deeper: is not read by this build, which reads id",
+      ),
     );
   });
 
-  it("what is shown returns each, at its path, with what it holds", () => {
+  it("what is shown returns each, at its path, with what it holds and the fields read beside it", () => {
     expect(readShown(reader, document, "block").unread).toEqual([
-      { at: ["extra"], value: 1 },
-      { at: ["source", "more"], value: true },
-      { at: ["source", "items", "0", "deeper"], value: [2] },
+      { at: ["extra"], value: 1, known: ["name", "source"] },
+      { at: ["source", "more"], value: true, known: ["type", "items"] },
+      { at: ["source", "items", "0", "deeper"], value: [2], known: ["id"] },
     ]);
+  });
+
+  it("turns back into the value they are part of, each at its path, a dotted key and `__proto__` fields like any other", () => {
+    const fields = unreadFields(readShown(object({ source: object({}) }), JSON.parse('{"a.b":1,"source":{"b":2,"__proto__":{"x":3}}}'), "block").unread);
+    expect(fields).toEqual({ "a.b": 1, source: { b: 2, ["__proto__"]: { x: 3 } } });
+    expect(Object.getPrototypeOf(fields.source)).toBe(Object.prototype);
   });
 
   it("a message a tolerant read dropped a part of is refused, naming each", () => {
@@ -96,7 +104,7 @@ describe("a tolerant read", () => {
   });
 
   it("reports each field it does not read, at every depth", () => {
-    expect(read({ flipped: 1, current: { key: "k", nth: 0, extra: true } }, ["state"]).unread).toEqual([
+    expect(read({ flipped: 1, current: { key: "k", nth: 0, extra: true } }, ["state"]).unread.map(({ at, value }) => ({ at, value }))).toEqual([
       { at: ["state", "flipped"], value: 1 },
       { at: ["state", "current", "extra"], value: true },
     ]);
@@ -127,7 +135,7 @@ describe("a tagged read", () => {
 
   it("reads the variant its tag names, reporting a field it does not read", () => {
     expect(parse(place, { at: "row", key: "t1" }, "place")).toEqual({ at: "row", key: "t1" });
-    expect(readShown(place, { at: "row", key: "t1", offset: 2 }, "place").unread).toEqual([{ at: ["offset"], value: 2 }]);
+    expect(readShown(place, { at: "row", key: "t1", offset: 2 }, "place").unread).toEqual([{ at: ["offset"], value: 2, known: ["key"] }]);
   });
 
   it("refuses a tag this build has no variant for, a variant missing a field, or holding one it must leave out", () => {

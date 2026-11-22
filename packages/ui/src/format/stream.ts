@@ -1,7 +1,7 @@
 import { serverSentEvents } from "@cc-dump/log/wire";
 import { Malformed } from "@cc-dump/log/failure";
-import { attempt, kinds, mapped, nullable, parseJson, raw, readShown, tagged, value, type Unread } from "@cc-dump/log/json";
-import { fact, formatError, restBlock, type Block } from "./blocks.ts";
+import { attempt, kinds, nullable, parseJson, raw, readShown, tagged, value, type Unread } from "@cc-dump/log/json";
+import { formatError, restBlock, type Block } from "./blocks.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
 // message_start), the errors its error events returned, which stand where the reply would have, the blocks of its other
@@ -20,12 +20,13 @@ export type Reassembly = { reassemble: (text: string, complete: boolean) => Stre
 // Reassembles the server-sent events of a Messages stream into the message they build, as a non-streaming response
 // would have returned it, so one formatting serves both. [LAW:no-silent-failure] An event that cannot be applied is
 // shown raw under its event name, with why; the fields of an event that no case reads land on what it builds, the
-// message or the content block, so a field the API adds to an event is shown with theirs.
+// message or the content block (`landing`), so a field the API adds to an event is shown with theirs.
 export function createReassembly(): Reassembly {
   let read = 0;
   // The text after the last complete event.
   let tail = "";
   let message: Record<string, unknown> | undefined;
+  const landedOnMessage = new Set<string>();
   const content = new Map<number, Building>();
   const errors: Block[] = [];
   const blocks: Block[] = [];
@@ -48,38 +49,46 @@ export function createReassembly(): Reassembly {
   };
   const apply = (data: unknown) => {
     const { value: event, unread } = readShown(eventReader, data, "event");
-    // The event's own fields no case reads, which land on what it builds.
-    const own = ownFields(unread);
     switch (event.type) {
-      case "message_start":
+      case "message_start": {
         if (message !== undefined) throw new Malformed("the message has already started");
-        message = { ...event.message, ...own };
+        const started = { ...event.message };
+        landing(started, landedOnMessage, unread)();
+        message = started;
         return;
-      case "content_block_start":
+      }
+      case "content_block_start": {
         begun(event.type);
         if (content.has(event.index)) throw new Malformed(`content block ${event.index} has already started`);
-        content.set(event.index, { block: { ...event.content_block, ...own }, json: "", stopped: undefined });
+        const building: Building = { block: { ...event.content_block }, landed: new Set(), json: "", stopped: undefined };
+        landing(building.block, building.landed, unread)();
+        content.set(event.index, building);
         return;
+      }
       case "content_block_delta": {
         const target = open(event.index);
+        const land = landing(target.block, target.landed, unread);
         applyDelta(target, event.delta);
-        Object.assign(target.block, own);
+        land();
         return;
       }
       case "content_block_stop": {
         const target = open(event.index);
+        const land = landing(target.block, target.landed, unread);
         // A tool's input is whole at its block's stop, so input that is not JSON by then does not fit.
         target.stopped = { input: target.json === "" ? undefined : parseJson(target.json, "the block's streamed input") };
-        Object.assign(target.block, own);
+        land();
         return;
       }
       case "message_delta": {
         const prior = begun(event.type);
-        message = { ...prior, ...own, ...event.delta, usage: { ...(prior.usage as object), ...event.usage } };
+        const delta = { ...prior, ...event.delta, usage: { ...(prior.usage as object), ...event.usage } };
+        landing(delta, landedOnMessage, unread)();
+        message = delta;
         return;
       }
       case "error":
-        errors.push(formatError(data, "event"));
+        errors.push(formatError(event.error, unread));
         return;
       // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
@@ -87,8 +96,10 @@ export function createReassembly(): Reassembly {
         return;
       // The stream's end, which the trailers already mark: it carries no content.
       case "message_stop":
-        message = { ...begun(event.type), ...own };
+        landing(begun(event.type), landedOnMessage, unread)();
         return;
+      default:
+        return event satisfies never;
     }
   };
 
@@ -118,9 +129,28 @@ export function createReassembly(): Reassembly {
   };
 }
 
-// A content block being built from its events: the block, its tool input's JSON as far as it has streamed, and, once
-// the block has stopped, that input parsed.
-type Building = { block: Record<string, unknown>; json: string; stopped: { input: unknown } | undefined };
+// A content block being built from its events: the block, the fields its events landed on it, its tool input's JSON as
+// far as it has streamed, and, once the block has stopped, that input parsed.
+type Building = { block: Record<string, unknown>; landed: Set<string>; json: string; stopped: { input: unknown } | undefined };
+
+// [LAW:no-silent-failure] The landing of an event's fields that no case reads, its own and its delta's, on `target`,
+// what the event builds, done once the event has applied: each by its name, as its own field, so a key such as
+// `__proto__` is a field like any other. One lands again where one of its name landed before, as a delta's estimate
+// does with each delta; one that would land on a field the target holds otherwise, or on another of the event's, is
+// refused before anything is applied, so neither is lost.
+function landing(target: Record<string, unknown>, landed: Set<string>, unread: readonly Unread[]): () => void {
+  const names = unread.map(({ at }) => at.at(-1)!);
+  unread.forEach(({ at }, index) => {
+    const name = names[index]!;
+    if (names.indexOf(name) !== index) throw new Malformed(`${at.join(": ")}: is named as another field the event holds`);
+    if (Object.hasOwn(target, name) && !landed.has(name)) throw new Malformed(`${at.join(": ")}: would land on the ${name} it builds`);
+  });
+  return () =>
+    unread.forEach(({ value }, index) => {
+      Object.defineProperty(target, names[index]!, { value, enumerable: true, writable: true, configurable: true });
+      landed.add(names[index]!);
+    });
+}
 
 // A content block, a copy of its own, with its tool input as far as it has streamed: the JSON once its block has
 // stopped, its text before that, which is not yet JSON.
@@ -147,8 +177,8 @@ const delta = tagged<"type", Delta>("type", {
   compaction_delta: { content: nullable(text) },
 });
 
-// A stream's events, by their type, each the fields a case applies: a message_start's message, its type read as a
-// non-streaming response's is, and a block's start whole, as what the events after them build on.
+// A stream's events, by their type, each the fields a case applies: a message_start's message, read as a non-streaming
+// response's is once it is built (format.ts), and a block's start whole, as what the events after them build on.
 type StreamEvent =
   | { type: "message_start"; message: Record<string, unknown> }
   | { type: "content_block_start"; index: number; content_block: Record<string, unknown> }
@@ -160,12 +190,8 @@ type StreamEvent =
   | { type: "message_stop" };
 const fields = value(kinds.object);
 const index = value(kinds.integer);
-const startedMessage = mapped(fields, (message) => {
-  if (fact(message, "type", value(kinds.among(["message"]))) === undefined) throw new Malformed("is not a message");
-  return message;
-});
 const eventReader = tagged<"type", StreamEvent>("type", {
-  message_start: { message: startedMessage },
+  message_start: { message: fields },
   content_block_start: { index, content_block: fields },
   content_block_delta: { index, delta },
   content_block_stop: { index },
@@ -174,12 +200,6 @@ const eventReader = tagged<"type", StreamEvent>("type", {
   ping: {},
   message_stop: {},
 });
-
-// The fields an event holds that no case reads, its own and its delta's, as the fields they land on what it builds
-// with. One nested deeper is held in the value it is part of, which lands whole.
-function ownFields(unread: readonly Unread[]): Record<string, unknown> {
-  return Object.fromEntries(unread.flatMap(({ at, value }) => (at.length === 1 || (at.length === 2 && at[0] === "delta") ? [[at.at(-1)!, value]] : [])));
-}
 
 // Applies a content block delta to the block it extends.
 function applyDelta(target: Building, delta: Delta) {
@@ -196,8 +216,9 @@ function applyDelta(target: Building, delta: Delta) {
       return append("thinking", delta.thinking);
     case "signature_delta":
       return append("signature", delta.signature);
+    // A compaction delta of no content adds none, so a compaction streamed with none holds none, as one sent whole does.
     case "compaction_delta":
-      return append("content", delta.content ?? "");
+      return delta.content === null ? undefined : append("content", delta.content);
     case "input_json_delta":
       target.json += delta.partial_json;
       return;
@@ -207,5 +228,7 @@ function applyDelta(target: Building, delta: Delta) {
       target.block.citations = [...prior, delta.citation];
       return;
     }
+    default:
+      return delta satisfies never;
   }
 }

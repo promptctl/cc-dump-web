@@ -34,7 +34,7 @@ describe("settings", () => {
         { at: ["search"], why: "is not an object" },
         { at: ["logLevel"], why: "is not one of error, warn, info" },
       ],
-      unread: [{ at: ["panes"], value: 2 }],
+      unread: [{ at: ["panes"], value: 2, known: Object.keys(defaultSettings) }],
     });
   });
 
