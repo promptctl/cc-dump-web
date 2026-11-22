@@ -19,15 +19,16 @@ describe("settings", () => {
     // A level the last build stored, "shown", is not one this build has.
     expect(readSettings({ ...chosen, visibility: { ...chosen.visibility, assistant: "shown" }, search: { ...chosen.search, wholeWord: "yes" } })).toEqual({
       value: chosen,
-      dropped: [
+      unknown: [],
+      replaced: [
         { at: ["visibility", "assistant"], why: "is not one of hidden, compact, expanded" },
         { at: ["search", "wholeWord"], why: "is not a boolean" },
       ],
     });
     expect(readSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], logLevel: "debug", panes: 2 })).toEqual({
       value: defaultSettings,
-      dropped: [
-        { at: ["panes"], why: "is not read by this build" },
+      unknown: [{ at: ["panes"], value: 2 }],
+      replaced: [
         { at: ["follow"], why: "is not a boolean" },
         { at: ["visibility"], why: "is not an object" },
         { at: ["theme"], why: "is not a theme this build has" },

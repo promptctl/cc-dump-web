@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { kinds, object, parseJson, raw, value, type Path, type Read, type Refusal } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -9,12 +9,13 @@ import { decided, failed } from "./log.ts";
 export type StoreName = "cc-dump.view" | "cc-dump.settings";
 
 // [LAW:nothing-unseen] How an item was read: nothing was stored; it was read, under the version it was stored by, with
-// each part of it this build did not take; what is stored is not an item (not JSON, or not `{state, version}`), so it
+// each value of it this build refused, which the store holds its first state's for, and each field of it no reader of
+// this build names, by path; what is stored is not an item (not JSON, or not `{state, version}`), so it
 // is replaced at the next write; the storage failed as it was reached, so what it holds is not known; or this build's
 // own read threw, its bug, so what it holds is not known either.
 export type StoredRead =
   | { stored: "none" }
-  | { stored: "read"; version: number; dropped: readonly Dropped[] }
+  | { stored: "read"; version: number; refused: readonly Refusal[]; unknown: readonly Path[] }
   | { stored: "unreadable"; error: Malformed }
   | { stored: "failed"; error: unknown }
   | { stored: "threw"; error: unknown };
@@ -127,8 +128,9 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
-    return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
+    const refused = state.replaced.map(({ at, why }) => ({ at: ["state", ...at], why }));
+    const unknown = [...envelope.unknown.map(({ at }) => at), ...state.unknown.map(({ at }) => ["state", ...at])];
+    return { read: { stored: "read", version: envelope.value.version, refused, unknown }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
     return error instanceof Malformed ? { read: { stored: "unreadable", error }, state: { state: initial, version } } : { read: { stored: "threw", error }, state: null };
@@ -144,7 +146,7 @@ export const changes = ({ name, storage }: Item<unknown>, { storageArea, key }: 
   storageArea === storage() && (key === null || key === name);
 
 // [LAW:nothing-unseen] The storage's events written to `log`: `stored_read`, at each read of an item, which says how it
-// was read (`stored`) and names each part dropped, or the failure, and whether writes are made after it (`writes`); `stored_write_refused`, as a run of writes the storage refuses (a full quota) begins; and
+// was read (`stored`) and names each value refused and each field unknown, or the failure, and whether writes are made after it (`writes`); `stored_write_refused`, as a run of writes the storage refuses (a full quota) begins; and
 // `stored_writes_resumed`, as it ends, on its span, so its duration is the run's.
 export const storedLog =
   (log: Log): Report =>
@@ -173,9 +175,9 @@ function readFacts(read: StoredRead): [string, Facts, Ending] {
 function readOutcome(read: StoredRead): [Facts, Ending] {
   switch (read.stored) {
     case "none":
-      return [{ dropped: [] }, { outcome: "ok" }];
+      return [{ refused: [], unknown: [] }, { outcome: "ok" }];
     case "read":
-      return [{ version: read.version, dropped: read.dropped }, { outcome: "ok" }];
+      return [{ version: read.version, refused: read.refused, unknown: read.unknown }, { outcome: "ok" }];
     case "unreadable":
     case "failed":
     case "threw":

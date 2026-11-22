@@ -12,6 +12,10 @@ describe("parseLogLine", () => {
     });
   });
 
+  it("keeps a field no declaration names as a fact, whatever it is named, an error beside an outcome that is not one included", () => {
+    expect(parseLogLine(event({ outcome: "ok", error: "late", constructor: { at: 1 } }), "ab12:9")).toMatchObject({ event: { outcome: "ok", facts: { error: "late", constructor: { at: 1 } } } });
+  });
+
   it("keeps a line whose event does not parse in its place, unread, saying why", () => {
     expect(parseLogLine(event({ outcome: "fine" }), "ab12:4")).toEqual({ run: "ab12", seq: 4, unread: event({ outcome: "fine" }), error: "log line: outcome: is not one of ok, aborted, stopped, error" });
     expect(parseLogLine(event({ outcome: "error" }), "ab12:5")).toMatchObject({ seq: 5, error: "log line: error: is missing" });

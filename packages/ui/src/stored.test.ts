@@ -62,22 +62,15 @@ describe("a stored item's read", () => {
     expect(events).toMatchObject([{ store: name, is: "read", read: { stored: "none" } }]);
   });
 
-  it("reads an item stored as persist stores it, naming what it dropped by its path in the item", async () => {
+  it("reads an item stored as persist stores it, naming what it refused and each field it has no reader for by its path in the item", async () => {
     const { storeIn, events } = await reported();
-    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes" }, version: 0, by: "a later build" }) }).storage);
+    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes", size: 2 }, version: 0, by: "a later build" }) }).storage);
     expect(store.getState()).toEqual({ name: "a", on: false });
     expect(events).toMatchObject([
       {
         store: name,
         is: "read",
-        read: {
-          stored: "read",
-          version: 0,
-          dropped: [
-            { at: ["by"], why: "is not read by this build" },
-            { at: ["state", "on"], why: "is not a boolean" },
-          ],
-        },
+        read: { stored: "read", version: 0, refused: [{ at: ["state", "on"], why: "is not a boolean" }], unknown: [["by"], ["state", "size"]] },
       },
     ]);
   });
@@ -217,15 +210,15 @@ describe("the storage's events", () => {
     const log = storedLog((event) => lines.push(event));
     const span = startTrace();
     log({ store: name, span, is: "read", read: { stored: "none" } });
-    log({ store: "cc-dump.view", span, is: "read", read: { stored: "read", version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }] } });
+    log({ store: "cc-dump.view", span, is: "read", read: { stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]] } });
     log({ store: name, span, is: "read", read: { stored: "unreadable", error: new Malformed("is not JSON") } });
     log({ store: name, span, is: "read", read: { stored: "failed", error: new DOMException("blocked", "SecurityError") } });
     log({ store: name, span, is: "read", read: { stored: "threw", error: new TypeError("not a function") } });
     log({ store: name, span, is: "write_refused", error: new DOMException("full", "QuotaExceededError") });
     log({ store: name, span, is: "writes_resumed" });
     expect(lines).toMatchObject([
-      { event: "stored_read", store: name, stored: "none", dropped: [], writes: "made", outcome: "ok" },
-      { event: "stored_read", store: "cc-dump.view", stored: "read", version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }], writes: "made", outcome: "ok" },
+      { event: "stored_read", store: name, stored: "none", refused: [], unknown: [], writes: "made", outcome: "ok" },
+      { event: "stored_read", store: "cc-dump.view", stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]], writes: "made", outcome: "ok" },
       { event: "stored_read", store: name, stored: "unreadable", writes: "made", outcome: "error" },
       { event: "stored_read", store: name, stored: "failed", writes: "skipped", outcome: "error" },
       { event: "stored_read", store: name, stored: "threw", writes: "skipped", outcome: "error" },

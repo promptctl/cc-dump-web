@@ -1,7 +1,7 @@
 import { describe } from "./describe.ts";
-import { ending, type Ending } from "./ending.ts";
+import { endings, type Ended, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
+import { kinds, parsed, parseJson, readDocument, tagged, value, type Readers } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -71,17 +71,25 @@ export function lineAt(position: LinePosition, data: string): LogLine {
 }
 
 // The fields an event has a place of its own for, beside how it ended.
-const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
+type Placed = Omit<LoggedEvent, keyof Ending | "facts">;
+const placed: Readers<Placed> = {
   service: value(kinds.string),
   event: value(kinds.string),
   trace_id: parsed(kinds.string, parseTraceId),
   started_at: value(kinds.string),
   duration_ms: value(kinds.number),
-});
+};
 
+// An event read once, whole: each outcome's fields and the fields every event has a place for, so a field neither
+// names is one of the read's unknown fields.
+const loggedEvent = tagged<"outcome", Ended & Placed>(
+  "outcome",
+  Object.fromEntries(Object.entries(endings).map(([outcome, fields]) => [outcome, { ...fields, ...placed }])) as Parameters<typeof tagged<"outcome", Ended & Placed>>[1],
+);
+
+// [LAW:nothing-unseen] A log line keeps each field no declaration names as one of its facts, by its path, which the
+// logs panel shows.
 function parseLoggedEvent(json: string): LoggedEvent {
-  const event = jsonObject(parseJson(json, "log line"), "log line");
-  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
-  // The fields the event has a place of its own for are those just read; the rest are its facts.
-  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
+  const { value, unknown } = readDocument(loggedEvent, parseJson(json, "log line"), "log line");
+  return { ...value, facts: Object.fromEntries(unknown.map(({ at, value }) => [at.join("."), value])) };
 }

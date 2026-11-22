@@ -127,16 +127,17 @@ describe("the reader's messages", () => {
     const status = { info, source: { state: "watching", changed_source: [] }, traffic: { in_flight: 0, last_request: null } };
     const refused = (changed: object) => () => parseProxyStatus(JSON.stringify({ ...status, ...changed }));
     expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is missing");
-    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is not one of watching, failed");
-    expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source: changed_source: is not a list of strings");
-    expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source: message: is missing");
+    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source.state: is missing");
+    expect(refused({ source: { state: "asleep" } })).toThrow("proxy status: source.state: is not one of watching, failed");
+    expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source.changed_source: is not a list of strings");
+    expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source.message: is missing");
     expect(refused({ traffic: undefined })).toThrow("proxy status: traffic: is missing");
-    expect(refused({ traffic: { in_flight: 0.5, last_request: null } })).toThrow("proxy status: traffic: in_flight: is not an integer");
+    expect(refused({ traffic: { in_flight: 0.5, last_request: null } })).toThrow("proxy status: traffic.in_flight: is not an integer");
     for (const last_request of ["yesterday", "2026", "Nov 16 2026", "2026-11-16T10:00:00Z", "2026-11-16T10:00:00.000+01:00"]) {
-      expect(refused({ traffic: { in_flight: 0, last_request } })).toThrow("proxy status: traffic: last_request: is not an ISO 8601 UTC time");
+      expect(refused({ traffic: { in_flight: 0, last_request } })).toThrow("proxy status: traffic.last_request: is not an ISO 8601 UTC time");
     }
     expect(refused({ info: undefined })).toThrow("proxy status: info: is missing");
-    expect(refused({ info: { ...info, recordings: undefined } })).toThrow("proxy status: info: recordings: is missing");
+    expect(refused({ info: { ...info, recordings: undefined } })).toThrow("proxy status: info.recordings: is missing");
   });
 
   it("reads back the proxy's info, and refuses info without the recordings' directory", () => {

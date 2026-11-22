@@ -51,9 +51,9 @@ const current = object<Current>({ key: value(kinds.string), at: value(kinds.stri
 
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
 // and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
-// field is a choice of its own, so one dropped leaves the rest.
+// field is a choice of its own, so one refused leaves the rest.
 // A row key of another scheme names another row or none, so under another version each value that names a row (each
-// fold, a place at a row, the current match) is refused as it is read, and dropped and named alone; a place at the start
+// fold, a place at a row, the current match) is refused as it is read, and replaced and named alone; a place at the start
 // or the end, and all else, is kept.
 export function readView(state: unknown, version: number): Read<View> {
   const rows = <T,>(reader: Reader<T>): Reader<T> =>
