@@ -280,7 +280,7 @@ describe("createProxy", () => {
   it.each(["ftp://example.com", "https://gw.example/anthropic?key=1", "https://user:pw@gw.example", "https://gw.example/#a", "gw.example", "", 1])(
     "refuses the upstream %j, which it could not forward to as given, without repeating it",
     (value) => {
-      expect(() => parseUpstream(value)).toThrow(/^upstream must be an http or https origin with an optional path$/);
+      expect(() => parseUpstream(value)).toThrow(/^is not an http or https origin with an optional path$/);
     },
   );
 

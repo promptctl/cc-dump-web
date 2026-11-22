@@ -16,7 +16,8 @@ export async function run(source: Source) {
   const { log, logs } = processLog("proxy");
 
   // Its settings, from cc-dump/proxy.json under the XDG config home. Its event says which config home, which settings
-  // the file set, and what the proxy took; a file it cannot take fails it, and the proxy does not start.
+  // the file set, each key in it no setting is named, and what the proxy took; a file it cannot take fails it, and the
+  // proxy does not start.
   const configHome = baseDirectory("XDG_CONFIG_HOME", process.env, homedir());
   const settingsPath = join(configHome.dir, "cc-dump/proxy.json");
   const { settings } = logged(
@@ -24,7 +25,7 @@ export async function run(source: Source) {
     "settings",
     { path: settingsPath, config_home_from: configHome.from, xdg_config_home: process.env.XDG_CONFIG_HOME },
     () => readProxySettings(settingsPath),
-    ({ settings, file_keys }) => ({ file_keys, ...settings }),
+    ({ settings, file_keys, unknown_keys }) => ({ file_keys, unknown_keys, ...settings }),
   );
 
   // The recordings, one per Claude Code process, under the XDG data home; the traffic of no process goes to the run's own,
