@@ -310,8 +310,8 @@ describe("format", () => {
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
     ]);
-    expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition is not an object"), { id: "received", kind: "json", value: "Bash" }]);
-    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition's description is not a string, if present"));
+    expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition: is not an object"), { id: "received", kind: "json", value: "Bash" }]);
+    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition: description: is not a string"));
   });
 
   it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
@@ -393,7 +393,7 @@ describe("format", () => {
     // The events it cannot apply are shown too, with the exchange's own, each raw under its event name with why.
     const blocks = group(formatted, "response");
     expect(lines(blocks)).toEqual(expect.arrayContaining(["http content_block_delta event", "http sparkle event"]));
-    expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: "sparkle is not an event this view applies" });
+    expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: "event: type: is not one of message_start, content_block_start, content_block_delta, content_block_stop, message_delta, error, ping, message_stop" });
   });
 
   it("shows a block of a known type whose fields do not fit as raw JSON, with what does not fit", () => {
@@ -405,7 +405,7 @@ describe("format", () => {
         category: "user",
         name: "text",
         parts: [
-          { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "text's text is not a string" },
+          { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "text: text: is not a string" },
           { id: "received", kind: "json", value: { type: "text", text: 5 } },
         ],
       },
@@ -826,7 +826,7 @@ describe("format", () => {
     expect(blocks.find(({ name }) => name === "thinking")!.parts).toEqual([{ id: "thinking", kind: "text", form: "markdown", text: "" }, { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] }]);
     const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
     expect(notApplied).toEqual([
-      expect.stringMatching(/^content_block_stop event: the block's streamed input is not JSON/),
+      expect.stringMatching(/^content_block_stop event: the block's streamed input: is not JSON/),
       "content_block_start event: content block 1 has already started",
     ]);
     expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["metrics", [["latency_ms", "812"]]]]) });

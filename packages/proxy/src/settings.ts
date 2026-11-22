@@ -1,4 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
+import { kinds, parsed } from "@cc-dump/log/json";
 import { parseUpstream } from "./proxy.ts";
 import { settingsFile } from "@cc-dump/config/settings-file";
 
@@ -7,13 +8,12 @@ import { settingsFile } from "@cc-dump/config/settings-file";
 const settings = {
   port: {
     default: 3344,
-    parse: (value: unknown) => {
-      if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 65535)
-        throw new Malformed(`port must be an integer from 1 to 65535, got ${JSON.stringify(value)}`);
-      return value as number;
-    },
+    read: parsed(kinds.integer, (port) => {
+      if (port < 1 || port > 65535) throw new Malformed(`is not from 1 to 65535: ${port}`);
+      return port;
+    }),
   },
-  upstream: { default: "https://api.anthropic.com", parse: parseUpstream },
+  upstream: { default: "https://api.anthropic.com", read: parsed(kinds.string, parseUpstream) },
 };
 
 // Read once, at the proxy's start: a change to the file takes effect when the proxy restarts.

@@ -135,7 +135,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   }
 }
 
-const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
+const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) }, "drop");
 const envelopeOf = (json: unknown) => envelope(json, []);
 
 // Whether a change another tab made to a storage (a `StorageEvent`) is to `item`: in its storage, at its name, or a

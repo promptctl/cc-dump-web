@@ -10,7 +10,7 @@ import { memoryStorage } from "./testing.ts";
 
 type Chosen = { name: string; on: boolean };
 const first: Chosen = { name: "none", on: false };
-const readChosen = (state: unknown): Read<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
+const readChosen = (state: unknown): Read<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first, "drop")(state, []);
 const name = "cc-dump.settings";
 const item = (state: unknown, version = 0) => JSON.stringify({ state, version });
 

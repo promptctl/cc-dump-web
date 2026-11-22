@@ -8,8 +8,8 @@ export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | 
 
 // Every outcome, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) });
-const error = object({ error: value(kinds.string) });
+const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) }, "pass");
+const error = object({ error: value(kinds.string) }, "pass");
 
 // [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`): its
 // outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.

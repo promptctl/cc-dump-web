@@ -1,7 +1,7 @@
 import { describe } from "./describe.ts";
 import { ending, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
+import { kinds, object, parse, parsed, parseJson, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -77,11 +77,11 @@ const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
   trace_id: parsed(kinds.string, parseTraceId),
   started_at: value(kinds.string),
   duration_ms: value(kinds.number),
-});
+}, "keep");
 
 function parseLoggedEvent(json: string): LoggedEvent {
-  const event = jsonObject(parseJson(json, "log line"), "log line");
-  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
+  const { fields, rest } = parse(logged, parseJson(json, "log line"), "log line");
+  const ended = parse(ending, rest, "log line");
   // The fields the event has a place of its own for are those just read; the rest are its facts.
-  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
+  return { ...fields, ...ended, facts: Object.fromEntries(Object.entries(rest).filter(([name]) => !Object.hasOwn(ended, name))) };
 }

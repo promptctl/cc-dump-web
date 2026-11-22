@@ -1,6 +1,6 @@
 import { Malformed } from "@cc-dump/log/failure";
 import { entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
-import { tmuxWindow, type Launched, type TmuxWindow } from "@cc-dump/server/format";
+import { windowReaders, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
@@ -46,8 +46,8 @@ const initial: View = { open: null, terminal: null, opened: {}, position: { at: 
 // so a key made another way fails there, where the version it is stored under is changed with it.
 export const viewVersion = 7;
 
-const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } });
-const current = object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) });
+const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } }, "drop");
+const current = object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) }, "drop");
 
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
 // and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
@@ -65,13 +65,14 @@ export function readView(state: unknown, version: number): Read<View> {
   return tolerant<View>(
     {
       open: nullable(value(kinds.string)),
-      terminal: nullable(object<Terminal>({ window: tmuxWindow, shown: value(kinds.boolean) })),
+      terminal: nullable(object<Terminal>({ window: object(windowReaders, "drop"), shown: value(kinds.boolean) }, "drop")),
       opened: entries(rows(value(kinds.boolean))),
-      position: tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } }),
+      position: tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } }, "drop"),
       moment,
-      search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search),
+      search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search, "drop"),
     },
     initial,
+    "drop",
   )(state, []);
 }
 

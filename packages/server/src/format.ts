@@ -1,18 +1,27 @@
-import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
+import { settings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parsed, parseJson, value, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
 // F1). Imports nothing that needs node, so the UI takes these types, and their parsers, from here.
+
+// [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch, a session's name and the agent's command, is
+// read here, from the request's body and from the settings file alike: tmux runs a window's command as one line, with no
+// NUL, which ends a C string, and a session target names a session by name.
+function line(value: string): string {
+  if (value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`is not a line of text, or is blank: ${JSON.stringify(value)}`);
+  return value;
+}
+const oneLine = parsed(kinds.string, line);
 
 // [LAW:one-source-of-truth] The launch settings (docs/design/01-features.md, F1, F11), in launch.json and in `GET /launch`'s
 // answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
 // launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
 // command, a whole command line, `claude` until the user launches another.
 export const launchSettingsTable = {
-  session: { default: null, parse: (value: unknown) => (value === null ? null : sessionName(value)) },
-  command: { default: "claude", parse: commandLine },
+  session: { default: null, read: nullable(oneLine) },
+  command: { default: "claude", read: oneLine },
 };
 export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 
@@ -40,34 +49,16 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 // from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
-// [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
-// from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
-// session target names a session by name.
-export function sessionName(value: unknown): string {
-  return oneLine(value, "session");
-}
-
-export function commandLine(value: unknown): string {
-  return oneLine(value, "command");
-}
-
-function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
-  return value;
-}
-
-const launch = object<Launch>({ session: parsed(kinds.string, sessionName), command: parsed(kinds.string, commandLine) });
+const launch = object<Launch>({ session: oneLine, command: oneLine }, "pass");
 
 export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
-const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
+const launcher = object<Launcher>({ settings: settings(launchSettingsTable), sessions: parsed(kinds.strings, (names) => sessions(names.map(line))) }, "pass");
 
 export function parseLauncher(json: string): Launcher {
-  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
+  return parse(launcher, parseJson(json, "launcher"), "launcher");
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
@@ -107,12 +98,10 @@ export const startTime = (value: string): number => tmuxNumber(value, "a tmux se
 
 // [LAW:single-enforcer] A window as a value holds it, read alike in a launch's answer and in the UI's view, which
 // keeps its agent's.
-const windowReaders: Readers<TmuxWindow> = {
+export const windowReaders: Readers<TmuxWindow> = {
   // Read by tmux's one rule, as the text tmux wrote it.
   start_time: parsed(kinds.integer, (seconds) => startTime(String(seconds))),
   session_id: parsed(kinds.string, sessionId),
   window_id: parsed(kinds.string, windowId),
 };
-export const tmuxWindow: Reader<TmuxWindow> = object(windowReaders);
-
-const launched = object<Launched>({ session: parsed(kinds.string, sessionName), pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });
+const launched = object<Launched>({ session: oneLine, pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders }, "pass");
