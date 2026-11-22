@@ -170,12 +170,12 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
   };
 }
 
-// A match of a block, with the text it is in, that text's place among those the block shows, and its characters there.
-type Located = { match: Match; shown: Shown; order: number; range: Range };
+// A match of a block, with the text it is in and its characters there.
+type Located = { match: Match; shown: Shown; range: Range };
 
 // The matches of a block, in the order it shows them.
 function matchesIn(row: BlockRow, pattern: RegExp): Located[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map((range, nth) => ({ match: { key: row.key, at: shown.at, nth }, shown, order, range })));
+  return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map((range, nth) => ({ match: { key: row.key, at: shown.at, nth }, shown, range })));
 }
 
 // Why a match names no characters in its block's row as it shows now: the row shows no text at its address
