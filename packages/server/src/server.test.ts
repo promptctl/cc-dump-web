@@ -1,3 +1,4 @@
+import { describe as describeError } from "@cc-dump/log/describe";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -18,6 +19,17 @@ describe("GET /launch", () => {
     expect(await work()).toMatchObject({ event: "launch_settings", outcome: "ok", file_keys: null });
     expect(await work()).toMatchObject({ event: "tmux_sessions", outcome: "ok", sessions: 2 });
     expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
+  });
+
+  it("refuses a launcher whose settings it cannot take, naming them once", () => {
+    const refused = (() => {
+      try {
+        return parseLauncher(JSON.stringify({ settings: { session: null, command: "" }, sessions: ["work"] }));
+      } catch (error) {
+        return describeError(error);
+      }
+    })();
+    expect(refused).toBe('launcher settings: command must be a line of text that is not blank, got ""');
   });
 
   it("fails naming the settings file it cannot take", async () => {
