@@ -38,14 +38,21 @@ export type BlockOrNone = [] | [Block];
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export const roles = ["user", "assistant", "system"] as const;
 export type Role = (typeof roles)[number];
-export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
-// The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
-// where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
-// (docs/design/01-features.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
-const pieces: Record<Role, (text: string) => Piece[]> = {
+// [LAW:types-are-the-program] Whom a message's content is from: the role it speaks in, or `unread`, for a message
+// whose role does not read, which the view names no one as having sent. Its content is a value that did not read, so
+// it stands with the wire as received, as a message that is no object does.
+export type Speaker = Role | "unread";
+export const speakerCategory: Record<Speaker, Category> = { user: "user", assistant: "assistant", system: "system", unread: "http" };
+// The pieces a message's text is, by whom it is from: what its sender said, or the harness's, as the system role's is,
+// split where the harness injected its own; an assistant's text whole, since the harness injects into the turns it
+// sends (docs/design/01-features.md, F3), so a reply that quotes a reminder is one block as sent and as resent; and an
+// unread role's whole, since it is no one's the view can say the harness injected into.
+const unsplit = (text: string): Piece[] => [{ kind: "said", text, content: text }];
+const pieces: Record<Speaker, (text: string) => Piece[]> = {
   user: (text) => split(text, "said"),
-  assistant: (text) => [{ kind: "said", text, content: text }],
+  assistant: unsplit,
   system: (text) => split(text, "harness"),
+  unread: unsplit,
 };
 
 // A value its reader refused, shown as it was received, its JSON or its text, with why.
@@ -87,15 +94,15 @@ function whole<T>(fields: Fields<T>, names: readonly (keyof T & string)[], sent:
 // where the block is: Markdown in a message, verbatim in what a tool or a document returned.
 type Entry<T> = {
   fields: Readers<T>;
-  category: (role: Role, fields: Fields<T>) => Category;
+  category: (role: Speaker, fields: Fields<T>) => Category;
   name?: (fields: T, type: string) => string;
-  parts: (fields: T, at: Path, role: Role, form: Form) => Part[];
+  parts: (fields: T, at: Path, role: Speaker, form: Form) => Part[];
   failed?: (fields: Fields<T>) => boolean;
-  stated?: (fields: Fields<T>, role: Role) => Stated;
+  stated?: (fields: Fields<T>, role: Speaker) => Stated;
 };
 
 // A content block of the type `type`, at `at`, as the block the view shows.
-type Format = (block: Record<string, unknown>, type: string, at: Path, role: Role, form: Form) => Block;
+type Format = (block: Record<string, unknown>, type: string, at: Path, role: Speaker, form: Form) => Block;
 
 // [LAW:single-enforcer] The one read of a content block's fields, whatever its entry declares: each field it declares
 // held, and its type, which picked the entry, read already.
@@ -122,14 +129,14 @@ const sent = value(kinds.sent);
 // a search result's. Its text, or its content blocks.
 export const content = value<string | unknown[]>({ fits: (json): json is string | unknown[] => typeof json === "string" || Array.isArray(json), expected: "a string or a list of blocks" });
 
-const byRole = (role: Role) => roleCategory[role];
+const byRole = (role: Speaker) => speakerCategory[role];
 const tools = () => "tools" as const;
 // [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one
 // in Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
 // reply, how long its signature or its data is: it is `usage`, so it is no row among what was said until the reader
 // shows the usage, and is never dropped (docs/design/01-features.md, F3). One whose thinking does not read is thinking
 // still, shown as received among the rest.
-const thought = (_: Role, { thinking }: Fields<{ thinking: string }>): Category => (thinking.is === "refused" || thinking.value !== "" ? "thinking" : "usage");
+const thought = (_: Speaker, { thinking }: Fields<{ thinking: string }>): Category => (thinking.is === "refused" || thinking.value !== "" ? "thinking" : "usage");
 
 // [LAW:types-are-the-program] A tool's input as a stream has sent it so far (format/stream.ts): its JSON text, not yet
 // JSON, so a value no JSON holds, which no input the API sent whole is ever taken for. A block holding it shown as
@@ -173,7 +180,7 @@ const called = ({ id, name, input }: Fields<Use>): Stated => {
 const summaryEnding = /(?<![^\n])<summary>([\s\S]*)<\/summary>\s*$/;
 // The API sends a text's citations as `null` when it has none.
 type Text = { text: string; citations: unknown[] | null | undefined };
-const summarized = ({ text }: Fields<Text>, role: Role): Stated => {
+const summarized = ({ text }: Fields<Text>, role: Speaker): Stated => {
   const said = readOf(text);
   const summary = role === "assistant" && said !== undefined ? summaryEnding.exec(said)?.[1]!.trim() : undefined;
   return summary === undefined || summary === "" ? {} : { summary };
@@ -272,7 +279,7 @@ const formats = new Map<string, Format>([
 // A content block of a message in `role`, at `at` in its document, as the block the view shows, a text block's text
 // read in `form`. [LAW:no-silent-failure] A block that is no object, or of a type with no entry, is shown as its raw
 // JSON under its type name; a field its entry cannot read is shown as the block received, with why.
-export function formatBlock(block: unknown, role: Role, form: Form, at: Path): Block {
+export function formatBlock(block: unknown, role: Speaker, form: Form, at: Path): Block {
   const type = fieldOf(block, "type");
   const format = kinds.string.fits(type) ? formats.get(type) : undefined;
   if (format === undefined || !kinds.object.fits(block)) return { category: byRole(role), name: kinds.string.fits(type) ? type : "block", parts: [{ id: "block", kind: "json", value: block }] };
@@ -283,7 +290,7 @@ export function formatBlock(block: unknown, role: Role, form: Form, at: Path): B
 // for a text block whose text reads, which is a block for each piece of its text, each named for what it is, so what
 // the harness injected is never shown as what was said (docs/design/01-features.md, F3), whatever its other fields
 // hold. A text block's other parts follow its last piece, which states what the text ends with.
-export function formatContent(block: unknown, role: Role, at: Path): Block[] {
+export function formatContent(block: unknown, role: Speaker, at: Path): Block[] {
   const formatted = formatBlock(block, role, "markdown", at);
   const said = fieldOf(block, "text");
   if (fieldOf(block, "type") !== "text" || !kinds.string.fits(said)) return [formatted];
@@ -325,7 +332,7 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
 // The content of a tool result, a document or a search result, at `at`: a string, or content blocks, whose parts it
 // shows, each named under its block's index in the list, which only grows at its end. Its text is what the tool or the
 // source returned, read verbatim.
-function contentParts(content: string | unknown[], at: Path, role: Role): Part[] {
+function contentParts(content: string | unknown[], at: Path, role: Speaker): Part[] {
   if (typeof content === "string") return [{ id: "content", kind: "text", form: "verbatim", text: content }];
   return content.flatMap((block, index) => formatBlock(block, role, "verbatim", [...at, String(index)]).parts.map((part) => ({ ...part, id: `${index}/${part.id}` })));
 }
@@ -346,7 +353,7 @@ const otherSource = object({ type: text });
 // A source at `at` as the parts its block shows, then its fields no declaration names. [LAW:no-silent-failure] A
 // source that does not read is shown as it was received, with why, in its block's place; the block's other fields
 // still read.
-function sourceParts(sent: unknown, of: Medium, role: Role, at: Path): Part[] {
+function sourceParts(sent: unknown, of: Medium, role: Speaker, at: Path): Part[] {
   const type = fieldOf(sent, "type");
   const unread = (unknown: readonly Unknown[]) => unknownParts(unknown, at, { id: "source/unread", label: "source fields" });
   if (kinds.string.fits(type) && !Object.hasOwn(sources, type)) {

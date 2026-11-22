@@ -1074,15 +1074,17 @@ describe("a value that does not read", () => {
     expect(block!.parts.map(({ id }) => id)).not.toContain("partial_json");
   });
 
-  it("keeps a message whose role does not read: its content formatted, its calls stated, and its role shown as received, with why", () => {
+  it("keeps a message whose role does not read: its content formatted as no one's, its calls stated, and its role shown as received, with why", () => {
     const content = [
       { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
-      { type: "text", text: "Done." },
+      { type: "text", text: "<system-reminder>r</system-reminder>Done." },
     ];
     const formatted = one(request("a", { model: "m", messages: [{ role: "developer", content }] }));
     expect(formatted.groups.find(({ key }) => key === "message.0.system.0")!.title).toBe("message");
     const blocks = group(formatted, "message.0.system.0");
-    expect(lines(blocks)).toEqual(["system role", "tools tool_use: Bash", "system system reminder"]);
+    // Neither the user's nor the harness's: its text is whole, as received, and none of it is taken as injected.
+    expect(lines(blocks)).toEqual(["http role", "tools tool_use: Bash", "http text"]);
+    expect(blocks.map(({ injected }) => injected)).toEqual([undefined, undefined, undefined]);
     expect(blocks[0]!.parts[0]).toEqual(doesNotFit([{ at: ["messages", "0", "role"], why: "is not one of user, assistant, system" }]));
     expect(blocks[1]!.call).toMatchObject({ id: "t1" });
   });

@@ -4,7 +4,7 @@ import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "../equal.ts";
-import { content, errorBlock, formatBlock, formatContent, refusedBlock, roleCategory, roles, unreadBlock, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { content, errorBlock, formatBlock, formatContent, refusedBlock, roles, speakerCategory, unreadBlock, unreadParts, type Block, type BlockOrNone, type Role, type Speaker } from "./blocks.ts";
 import { fieldValue, notSent, occurrences, pickedPart, valuePart, type Field, type Part, type PartBody } from "./parts.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Built, type Reassembly, type Stream } from "./stream.ts";
@@ -38,7 +38,8 @@ export type Place =
 
 // One exchange of the conversation (docs/design/01-features.md, F3): its envelope, then what its request sends, the tools,
 // the system prompt and each message, then the reply; the facts its line prints; how many messages of a speaker's
-// the request sends, which is the reply's index among them; and who sent it, by its head (format/wire.ts). Its exchange
+// the request sends, which is the reply's index among them, none when no speaker's message reads, so the request has no
+// first message and is in no thread (view/history.ts); and who sent it, by its head (format/wire.ts). Its exchange
 // is as it stood when formatted, and holds no body.
 export type FormattedExchange = { exchange: ExchangeShown; facts: Facts; groups: Group[]; messages: number; sender: Sender };
 
@@ -218,7 +219,7 @@ function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
   return blocks.map((block) => ({ ...block, place }));
 }
 // The blocks of a request message's content, in `role`, at `at`.
-function messageContent(content: unknown[], role: Role, at: Path): KeyedBlock[] {
+function messageContent(content: unknown[], role: Speaker, at: Path): KeyedBlock[] {
   return content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role, [...at, String(index)])));
 }
 // The blocks of a reply's content block, at its `index` in its message's content, as a request resends it but for one
@@ -324,11 +325,11 @@ function messageGroups(sent: unknown, breakpoints: Field[]): { own: KeyedBlock[]
   const groups = messages.value.map((sentMessage, index) => {
     const at = ["messages", String(index)];
     const read = held(message)(sentMessage, at);
-    // [LAW:one-source-of-truth] The role a message speaks in, decided once: one that does not read, and one that is no
-    // object, speak as a system message does, the harness's.
+    // [LAW:one-source-of-truth] Whom a message is from, decided once: a role that does not read, and a message that is
+    // no object, are no one's; only the user's and the assistant's are a speaker's.
     const role = read.value.is === "read" ? read.value.value.role : undefined;
-    const speaking: Role = role?.is === "read" ? role.value : "system";
-    const speaker = speaking !== "system";
+    const speaking: Speaker = role?.is === "read" ? role.value : "unread";
+    const speaker = speaking === "user" || speaking === "assistant";
     const key = speaker ? `message.${speakers}` : `message.${speakers}.system.${standing}`;
     const place: Place = speaker ? { in: "message", index: speakers } : { in: "between", before: speakers, index: standing };
     standing = speaker ? 0 : standing + 1;
@@ -346,13 +347,13 @@ const message = object<Message>({ role: held(value(kinds.among(roles))), content
 // A message read at `at`, `sent` as it was, speaking in `speaking`: its blocks of its content, its content's breakpoints
 // lifted, and its other fields. One that is no object is shown as received, with why. One whose role does not read has
 // its role shown as received, with why, before its content.
-function messageGroup(read: Read<Held<Message>>, speaking: Role, sent: unknown, key: string, place: Place, at: Path, breakpoints: Field[]): Group {
+function messageGroup(read: Read<Held<Message>>, speaking: Speaker, sent: unknown, key: string, place: Place, at: Path, breakpoints: Field[]): Group {
   if (read.value.is === "refused") return { key, title: "message", blocks: placed(place, one("message", [refusedBlock("http", "message", read.value.refusals, { kind: "json", value: sent })])) };
   const { role, content } = read.value.value;
-  const roleBlock: BlockOrNone = role.is === "read" ? [] : [refusedBlock("system", "role", role.refusals, { kind: "json", value: role.sent })];
+  const roleBlock: BlockOrNone = role.is === "read" ? [] : [refusedBlock(speakerCategory[speaking], "role", role.refusals, { kind: "json", value: role.sent })];
   const blocks =
     content.is === "refused"
-      ? one("content", [refusedBlock(roleCategory[speaking], "content", content.refusals, { kind: "json", value: content.sent })])
+      ? one("content", [refusedBlock(speakerCategory[speaking], "content", content.refusals, { kind: "json", value: content.sent })])
       : messageContent(typeof content.value === "string" ? [{ type: "text", text: content.value }] : lift(content.value, (index) => `${key}/content.${index}`, breakpoints), speaking, [...at, "content"]);
   return { key, title: role.is === "read" ? role.value : "message", blocks: placed(place, [...one("role", roleBlock), ...blocks, ...one("fields", unreadBlock(read.unknown, at, "parameters", "message"))]) };
 }

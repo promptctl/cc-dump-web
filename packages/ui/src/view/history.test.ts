@@ -35,6 +35,13 @@ const process: RecordedEvent[] = [
 ];
 
 describe("history", () => {
+  it("keeps a request none of whose messages read out of every thread, so its reply rewrites no message of one", () => {
+    const { segments } = history([...request("t1", { ...main, messages: [hi] }), ...reply("t1", hello), ...request("bad", { ...main, messages: 5 }), ...reply("bad", [text("Odd.")])]);
+    const first = segments[0]!.groups.flatMap(({ items }) => items).find(({ key }) => key.startsWith("thread:t1/message.0/"))!;
+    expect(first.versions).toHaveLength(1);
+    expect(segments[1]!.groups.flatMap(({ items }) => items).map(({ key }) => key)).not.toContainEqual(expect.stringMatching(/^thread:/));
+  });
+
   it("adds each exchange to one conversation, each thread found by its first message, and resending adds nothing", () => {
     expect(arrived(history(process))).toEqual([
       {
