@@ -32,7 +32,7 @@ export type Level = { kind: "main" } | { kind: "agent"; id: string } | { kind: "
 const main: Level = { kind: "main" };
 const unread: Level = { kind: "unread" };
 export const levelOf = (sender: Sender): Level => (sender.kind === "agent" ? { kind: "agent", id: sender.id } : sender.kind === "main" ? main : unread);
-// A level as a key, a Map's or a row's (view/rows.ts, nestKey), the same string for the same level.
+// A level as a key, a Map's or a row's (nestKey), the same string for the same level.
 export const levelKey = (level: Level): string => (level.kind === "agent" ? `agent:${level.id}` : level.kind);
 
 // [LAW:one-source-of-truth] What a step says on the wire about its level's agents (format/wire.ts), recorded once, as
@@ -68,12 +68,17 @@ export type Tie = { agent: string; call: string } & ({ found: true; key: string;
 // and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was,
 // `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
-// [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace.
+// [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace, and what a nest's line's
+// key starts with, before its level's.
 const threadPrefix = "thread:";
-// [LAW:parse-dont-validate] The trace of the exchange an item's or a row's key starts with, as the keys are made here:
-// after a thread's prefix, up to its first `/`. A key no trace begins, as a nest's line's, gives none.
+const nestPrefix = "nest:";
+// [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
+export const nestKey = (level: Level) => `${nestPrefix}${levelKey(level)}`;
+// [LAW:parse-dont-validate] The trace an item's or a row's key names its step by, as the keys are made here: a nest's
+// line's names a level and no trace; any other's starts with its exchange's trace, after a thread's prefix, up to its
+// first `/`. A key no build makes, whose head is not a trace, names none.
 export function traceOf(key: string): TraceId | undefined {
-  const head = (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0];
+  const head = key.startsWith(nestPrefix) ? undefined : (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0];
   return isTraceId(head) ? head : undefined;
 }
 

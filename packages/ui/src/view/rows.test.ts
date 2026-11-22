@@ -7,7 +7,7 @@ import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
-import { createHistory, traceOf, type History } from "./history.ts";
+import { createHistory, type History } from "./history.ts";
 import { matchMove } from "./moves.ts";
 import { createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
@@ -832,14 +832,17 @@ describe("the column", () => {
   });
 
   it("brings, as the read goes on, of the rows the layout makes, only those of a step still running: each stands with a step read, a nest's line with the step that opens its level", () => {
-    // A fork's line and nests open to the innermost among them, among every row; the nested agents' last step, t2, runs.
-    for (const events of [parted, nested]) {
+    // A fork's line and nests open to the innermost among them, among every row; every step of the parted histories
+    // ended, and of the nested agents' only the last, t2, runs, whose rows are its line, a group and a thread's item.
+    const brought = [
+      [parted, []],
+      [nested, ["t2", "t2/request/http", "t2/message.2", "thread:t2/message.2/content.0"]],
+    ] as const;
+    for (const [events, rows] of brought) {
       const history = createHistory()(createFormatter()(exchanges(events)));
       const { every, steps } = layouts(events)(history.segments.length, undefined, { [outer]: true, [inner]: true });
       const pending = pendingIn(history, "reading", now, steps);
-      const running = new Set(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
-      const keys = every.rows.map(({ key }) => key);
-      expect(keys.filter((key) => pending(key) === "reading")).toEqual(keys.filter((key) => { const trace = traceOf(key); return trace !== undefined && running.has(trace); }));
+      expect(every.rows.map(({ key }) => key).filter((key) => pending(key) === "reading")).toEqual(rows);
     }
     // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));

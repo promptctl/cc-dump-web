@@ -4,7 +4,7 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
 import { agentCall, assistant, launched, notification, reply, request, result, text, user } from "../../test/fixtures.ts";
-import { createHistory, sameFields, traceOf, type History } from "./history.ts";
+import { createHistory, nestKey, sameFields, traceOf, type History } from "./history.ts";
 import { presence } from "./position.ts";
 
 const main = { model: "m", system: [text("You are Claude Code.")], tools: [{ name: "Read", input_schema: {} }] };
@@ -178,8 +178,9 @@ describe("history", () => {
     }
   });
 
-  it("reads the trace a key starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow, and none from a key no trace begins", () => {
-    expect(["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1", "nest:agent:a1", "nest:main"].map(traceOf)).toEqual(["t2", "t2", "t3", "aside", "t1", undefined, undefined]);
+  it("reads the trace a key starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow, none from a nest's line's, which names a level, and none from a key no build makes", () => {
+    const keys = ["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1", nestKey({ kind: "agent", id: "a1" }), nestKey({ kind: "main" }), "no trace/x"];
+    expect(keys.map(traceOf)).toEqual(["t2", "t2", "t3", "aside", "t1", undefined, undefined, undefined]);
   });
 
   it("keeps the exchanges of a request not yet read as its own, and finds its thread once it is", () => {

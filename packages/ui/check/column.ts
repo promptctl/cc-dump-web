@@ -5,8 +5,8 @@ import { launchName, type Launch } from "../src/format/tools.ts";
 import type { FormattedExchange, KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";
-import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, replyOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
-import { blockIn, createLayout, nestKey, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
+import { createHistory, firstMessageOf, levelKey, levelOf, nestKey, placeOf, replyOf, saidIn, traceOf, type After, type History, type Level } from "../src/view/history.ts";
+import { blockIn, createLayout, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
 import { readRecording, type Frames } from "../src/reading.ts";
 import { fileConnection } from "./recording.ts";
 
@@ -90,7 +90,7 @@ type Tied = { own: number; by: string; call: string; found: Launch | undefined }
 function check(history: History, layoutAt: (step: number) => Layout): { found: Found; broken: string[] } {
   const { segments, stepOf } = history;
   const afterOf = (step: number): After | undefined => segments[step - 1]!.after;
-  const traceOf = (step: number) => segments[step - 1]!.formatted.exchange.trace_id;
+  const traceAt = (step: number) => segments[step - 1]!.formatted.exchange.trace_id;
   const said = segments.map(saidOf);
   const sayOf = (step: number) => said[step - 1]!;
   const levelAt = (step: number) => levelKey(sayOf(step).level);
@@ -220,10 +220,16 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       if (taken.has(place)) say(`two listed steps stand after ${place}`);
       taken.add(place);
     }
+    // An exchange's line names its step by its key, the way a stored place and a row's standing find it (traceOf).
     const lines = rows.filter(kindOf("exchange"));
-    if (!sameList(lines.map(({ exchange }) => stepOf(exchange.exchange.trace_id)).sort((a, b) => a! - b!), listed)) say("the exchanges' lines are not the listed steps', one each");
     for (const line of lines) {
-      const own = stepOf(line.exchange.exchange.trace_id)!;
+      const trace = traceOf(line.key);
+      const named = trace === undefined ? undefined : stepOf(trace);
+      if (named !== line.step) say(`${line.key}'s line says step ${line.step} where its key names ${named ?? "none"}`);
+    }
+    if (!sameList(lines.map(({ step }) => step).sort((a, b) => a - b), listed)) say("the exchanges' lines are not the listed steps', one each");
+    for (const line of lines) {
+      const own = line.step;
       if ((line.change === "added") !== (own === step)) say(`${line.key}'s line is ${line.change}`);
       if (line.depth !== depthOf(levelAt(own))) say(`${line.key}'s line is ${line.depth} in where its level is ${depthOf(levelAt(own))} in`);
       if (line.dimmed !== isDimmed(own)) say(`${line.key}'s line is ${line.dimmed ? "" : "not "}dimmed`);
@@ -256,10 +262,10 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const shown = own.find((one) => path.has(one));
       if (!sameList(fork.siblings.map((sibling) => sibling.step), own)) say(`${fork.key} lists ${fork.siblings.map((sibling) => sibling.step).join(" ")} where the siblings are ${own.join(" ")}`);
       if (fork.shown !== shown) say(`${fork.key} says step ${fork.shown} is listed where step ${shown} is`);
-      if (shown !== undefined && !(indexOf.get(traceOf(shown))! > at)) say(`${fork.key} does not stand above its sibling ${shown}`);
+      if (shown !== undefined && !(indexOf.get(traceAt(shown))! > at)) say(`${fork.key} does not stand above its sibling ${shown}`);
       if (after.on === "step") {
         // After the step's rows and what hangs on them, before any other step of its level.
-        const from = indexOf.get(traceOf(after.step));
+        const from = indexOf.get(traceAt(after.step));
         const line = from === undefined ? undefined : rows[from]!;
         if (line === undefined || from! > at || fork.depth !== line.depth || fork.dimmed !== line.dimmed) say(`${fork.key} does not stand under its step as the step stands`);
         else if (rows.slice(from! + 1, at).some((row) => row.kind === "exchange" && row.depth <= fork.depth)) say(`${fork.key} stands after another step's rows`);
@@ -288,7 +294,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       if (nest.change !== (own === step ? "added" : chain.includes(key) ? "changed" : "same")) say(`${nest.key} is ${nest.change}`);
       const next = rows.findIndex((row, index) => index > at && row.depth <= nest.depth);
       const end = next === -1 ? rows.length : next;
-      const inside = rows.slice(at + 1, end).filter(kindOf("exchange")).filter((row) => row.depth === nest.depth + 1).map(({ exchange }) => stepOf(exchange.exchange.trace_id));
+      const inside = rows.slice(at + 1, end).filter(kindOf("exchange")).filter((row) => row.depth === nest.depth + 1).map(({ step }) => step);
       const holds = [...path].filter((one) => levelAt(one) === key);
       if (!sameList(inside, holds)) say(`${nest.key} holds steps ${inside.join(" ")} where its level's listed are ${holds.join(" ")}`);
       if (nest.count !== holds.length) say(`${nest.key} counts ${nest.count} steps of ${holds.length}`);
@@ -345,7 +351,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       const { summary } = blockIn(block.versions[0]!);
       if (summary === undefined || firstMessage(history, own)?.includes(summary) !== true) say(`${thread.key} stands after a block whose summary step ${own} does not begin with`);
       if (thread.depth !== block.depth || !block.dimmed) say(`${thread.key} is not level with its block, or its block is not dimmed`);
-      if (!(indexOf.get(traceOf(own))! > at) || thread.change === "added" !== (own === step)) say(`${thread.key} does not stand above its thread's first step ${own}, or is ${thread.change}`);
+      if (!(indexOf.get(traceAt(own))! > at) || thread.change === "added" !== (own === step)) say(`${thread.key} does not stand above its thread's first step ${own}, or is ${thread.change}`);
     }
   }
   return { found, broken };

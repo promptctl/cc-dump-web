@@ -6,9 +6,9 @@ import { createFormatter } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
 import { exchanges } from "../testing.ts";
 import { contentsKey } from "./contents.ts";
-import { createHistory } from "./history.ts";
+import { createHistory, nestKey } from "./history.ts";
 import { regionKey } from "./regions.ts";
-import { createLayout, nestKey, pastKey } from "./rows.ts";
+import { createLayout, pastKey } from "./rows.ts";
 import { address, partKey } from "./search.ts";
 import { viewVersion } from "./state.ts";
 
