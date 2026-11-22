@@ -1,10 +1,12 @@
 import { readdir, open, stat } from "node:fs/promises";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
-import { endEvent, failedWith, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
-import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
-import { recordedLength } from "./recording.ts";
+import { endEvent, failedWith, startSpan, type Ending, type Log, type TraceId } from "@cc-dump/log";
+import { json, Refused, stream, type Route } from "@cc-dump/log/answer";
+import { describe } from "@cc-dump/log/describe";
+import { frame, READ_ENDED, READ_FAILED, type Failure } from "@cc-dump/log/wire";
+import { offsetOf, type Listing, type RecordingEnd } from "./format.ts";
+import { recordedLength, splitLines } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
@@ -17,35 +19,22 @@ import type { Recordings } from "./recordings.ts";
 // that fails once begun ends with a `failed` event: the stream's only way to tell a reader it failed, since an
 // EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 // A reader never creates a recording: only a name with a file, or one the run is writing, is read, and any other is 404.
-export function createReader(log: Log, recordings: Recordings): Handler {
+export function createReader(log: Log, recordings: Recordings): { list: Route; read: Route } {
   const { dir } = recordings;
-  return (req, res, { trace_id, fail, ended }) => {
-    const url = new URL(req.url!, "http://reader");
-    const asked = nameIn(url.pathname);
-    const answer = async () => {
-      if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-      if (url.pathname === "/recordings") return list(await nonEmpty(dir, await files(dir)), res);
-      const name = await readableName(recordings, asked);
-      if (!name) return void res.writeHead(404).end();
-      return read(readingOf(log, recordings, trace_id, ended, name), positionOf(req, url), res, fail);
-    };
-    // Every await of the answer comes before its response's headers; a read fails after them in its stream.
-    answer().catch((error: unknown) => {
-      fail(error);
-      res.writeHead(500).end();
-    });
+  return {
+    list: async () => json((await nonEmpty(dir, await files(dir))).map((name): Listing => ({ name }))),
+    read: async (req, { trace_id, fail, ended }, { params, query }) => {
+      const name = await readableName(recordings, params.name);
+      if (!name) throw new Refused(404, `${params.name} is no recording this proxy lists or follows`);
+      const reading = readingOf(log, recordings, trace_id, ended, name);
+      const position = positionOf(req.headers["last-event-id"], query);
+      if (position === undefined || !(await atLineStart(reading, position))) throw new Refused(400, "from must be 0 or the id of an event");
+      // Every await of the answer comes before its response's headers; a read fails after them in its stream.
+      // pipeline destroys the stream when the response closes. Its callback runs after that close, when the request's
+      // event is written, so it has nothing to add.
+      return stream((res) => void pipeline(recordingEvents(reading, position, fail), res, () => {}));
+    },
   };
-}
-
-// [LAW:parse-dont-validate] The name a URL's path asks for, as the file system spells it: the path's segment is
-// percent-encoded, and one with a malformed escape names nothing.
-function nameIn(pathname: string): string | undefined {
-  const segment = /^\/recordings\/([^/]+)$/.exec(pathname)?.[1];
-  try {
-    return segment === undefined ? undefined : decodeURIComponent(segment);
-  } catch {
-    return undefined;
-  }
 }
 
 // The recordings: the `.jsonl` files in the directory.
@@ -59,11 +48,6 @@ async function nonEmpty(dir: string, names: string[]) {
   return names.filter((_, index) => sizes[index]! > 0);
 }
 
-function list(names: string[], res: ServerResponse) {
-  const listed: Listing[] = names.map((name) => ({ name }));
-  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(listed));
-}
-
 declare const listedOrFollowed: unique symbol;
 // [LAW:types-are-the-program] A name `readableName` let through, the only name a read joins to the recordings directory.
 type ReadableName = string & { readonly [listedOrFollowed]: true };
@@ -72,8 +56,7 @@ type ReadableName = string & { readonly [listedOrFollowed]: true };
 // spelled as it lists it, or a recording the run holds a writer for, by the name it was given. Nothing else in the URL
 // reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
 // serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
-// A name that is neither, a typo or one nothing made, is not waited on.
-// The brand is stamped here and nowhere else.
+// A name that is neither, a typo or one nothing made, is not waited on. The brand is stamped here and nowhere else.
 async function readableName(recordings: Recordings, asked: string | undefined): Promise<ReadableName | undefined> {
   if (asked === undefined) return undefined;
   return recordings.follows(asked) || (await files(recordings.dir)).includes(asked) ? (asked as ReadableName) : undefined;
@@ -82,8 +65,8 @@ async function readableName(recordings: Recordings, asked: string | undefined): 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
 // the URL it first opened), else `?from=`, else the start. Anything but a decimal offset a file can have is
 // no position, a repeated header too: node joins its values into one string (only set-cookie stays a list).
-function positionOf(req: IncomingMessage, url: URL): number | undefined {
-  const given = (req.headers["last-event-id"] as string | undefined) ?? url.searchParams.get("from") ?? "0";
+function positionOf(lastEventId: string | string[] | undefined, query: URLSearchParams): number | undefined {
+  const given = (lastEventId as string | undefined) ?? query.get("from") ?? "0";
   return offsetOf(given);
 }
 
@@ -106,8 +89,10 @@ type Reading = {
 function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
-  let finished: ReturnType<typeof recordedLength> | undefined;
-  const measured = () => (finished ??= recordedLength(path));
+  // [LAW:no-silent-failure] A finished recording is listed by its file, so a file that is gone fails the read, not ends it
+  // empty; the run's own, followed, has none until its first write, and nothing of it is cut.
+  let finished: NonNullable<ReturnType<typeof recordedLength>> | undefined;
+  const measured = () => (finished ??= recordedLength(path) ?? gone(name));
   return {
     log,
     trace_id,
@@ -117,25 +102,12 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
     followed,
     recordings,
     limit: followed ? () => recordings.readable(name) : () => measured().terminated,
-    unterminated: followed ? () => recordedLength(path).unterminated : () => measured().unterminated,
+    unterminated: followed ? () => recordedLength(path)?.unterminated ?? 0 : () => measured().unterminated,
   };
 }
 
-async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
-  if (position === undefined || !(await atLineStart(reading, position))) {
-    const refused = new Error("from must be 0 or the id of an event");
-    fail(refused);
-    return void res.writeHead(400, { "content-type": "text/plain" }).end(`${refused.message}\n`);
-  }
-  // A request cut while its recording was looked up, by its client or its server's close, has ended and its
-  // event is written: there is no one to read to. One still open has not ended, so the read's subscription
-  // to `ended` comes in time.
-  if (res.destroyed) return;
-  // Flushed now, not with the first event: a reader of an empty followed recording is connected before it has one.
-  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" }).flushHeaders();
-  // pipeline destroys the stream when the response closes. Its callback runs after that close, when the
-  // request's event is written, so it has nothing to add.
-  pipeline(recordingEvents(reading, position, fail), res, () => {});
+function gone(name: string): never {
+  throw new Error(`recording ${name} is gone`);
 }
 
 // A position is the start, or just past a newline in the file: the id of an event a reader was sent.
@@ -165,7 +137,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   const { log, trace_id, ended, name, followed, recordings } = reading;
   const caughtUpTo = endEvent(log, "catch_up", { recording: name, followed, from }, startSpan(trace_id));
   let offset = from; // just past the last line read into the stream
-  let pending = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
+  let pending: Buffer = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
   let eventsRead = 0;
   let stopWaiting: (() => void) | undefined;
   let caughtUp = false;
@@ -181,7 +153,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   // so a stop that cuts the read has this written before its `close` resolves.
   void ended.then(catchUp);
 
-  const stream = new Readable({
+  const readable = new Readable({
     read: () => void fill(),
     destroy: (error, callback) => {
       stopWaiting?.();
@@ -191,25 +163,21 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
 
   const pushLines = (bytes: Buffer) => {
     const data = Buffer.concat([pending, bytes]);
-    const events: Buffer[] = [];
-    let start = 0;
-    for (let end = data.indexOf(0x0a); end !== -1; end = data.indexOf(0x0a, start)) {
-      events.push(Buffer.from(`id: ${offset + end + 1}\ndata: `), data.subarray(start, end), Buffer.from("\n\n"));
-      start = end + 1;
-      eventsRead++;
-    }
-    offset += start;
-    pending = data.subarray(start);
+    const { lines, rest } = splitLines(data, offset);
+    const events = lines.map(({ line, end }) => frame({ id: String(end), data: line.toString() })).join("");
+    eventsRead += lines.length;
+    offset += data.length - rest.length;
+    pending = rest;
     // A line longer than what was read so far: read on.
-    if (events.length === 0) return void fill();
-    stream.push(Buffer.concat(events));
+    if (events === "") return void fill();
+    readable.push(events);
   };
 
   async function fill(): Promise<void> {
     try {
       const limit = reading.limit();
       const bytes = await bytesAt(reading, offset + pending.length, 64 * 1024, limit);
-      if (stream.destroyed) return;
+      if (readable.destroyed) return;
       if (bytes.length > 0) return pushLines(bytes);
       // An event written during the read: not caught up to yet. Writes are synchronous on this
       // thread, so none can fall between this check and the subscription below.
@@ -219,8 +187,8 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         // newline, the measure that bounded the read.
         const end: RecordingEnd = { unterminated_bytes: reading.unterminated() };
         catchUp({ outcome: "ok" }, end.unterminated_bytes);
-        stream.push(`event: end\ndata: ${JSON.stringify(end)}\n\n`);
-        return void stream.push(null);
+        readable.push(frame({ event: READ_ENDED, data: JSON.stringify(end) }));
+        return void readable.push(null);
       }
       // Measured by the first arrival at the end only: a followed read arrives at it after every event written.
       if (!caughtUp) catchUp({ outcome: "ok" }, reading.unterminated());
@@ -231,15 +199,17 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         void fill();
       });
     } catch (error) {
-      if (stream.destroyed) return;
+      if (readable.destroyed) return;
       catchUp(failedWith(error));
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
-      const failure: ReadFailure = { message: error instanceof Error ? error.message : String(error) };
-      stream.push(`event: failed\ndata: ${JSON.stringify(failure)}\n\n`);
-      stream.push(null);
+      // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has
+      // with its stack.
+      const failure: Failure = { error: describe(error) };
+      readable.push(frame({ event: READ_FAILED, data: JSON.stringify(failure) }));
+      readable.push(null);
     }
   }
 
-  return stream;
+  return readable;
 }

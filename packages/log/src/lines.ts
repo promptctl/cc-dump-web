@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type { Writable } from "node:stream";
-import { createLog, endEvent, failedWith, startTrace, type Handler, type Log } from "./index.ts";
+import { stream, type Route } from "./answer.ts";
+import { createLog, endEvent, failedWith, startTrace, type Log } from "./index.ts";
 import { positionOf } from "./line.ts";
+import { frame } from "./wire.ts";
 
 // [LAW:single-enforcer] A part's log, the one its process writes: each event a JSON line on `out`, stdout, which
 // `pnpm dev` shows in its terminal, and kept, the last `keep` of them, for the logs panel (docs/design/01-features.md, F9),
@@ -10,7 +12,7 @@ import { positionOf } from "./line.ts";
 // [LAW:no-silent-failure] `out` failing, as stdout does once the process reading it is gone (EPIPE), is no crash: the
 // lines stop going to it, and its `stdout` event says why, in the lines kept, which the panel shows. The event spans
 // stdout's life, from the process's start to its failure, as a connection's `client_error` spans the connection.
-export function processLog(service: string, out: Writable = process.stdout, keep = 1000): { log: Log; logs: Handler } {
+export function processLog(service: string, out: Writable = process.stdout, keep = 1000): { log: Log; logs: Route } {
   const run = randomBytes(8).toString("hex");
   // A ring buffer: line `seq` is at `seq % keep` until `keep` more are written over it.
   const kept: string[] = [];
@@ -34,23 +36,21 @@ export function processLog(service: string, out: Writable = process.stdout, keep
   // `GET /logs`: Server-Sent Events, each line kept and then each one written, until the reader leaves or the server
   // closes. A reader is sent lines while its connection takes them and the rest once it drains, so one that stops
   // reading holds none of them; a line let go before it is sent is not sent, and the reader sees the gap in the numbers.
-  const logs: Handler = (req, res) => {
-    if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-    // Sent now, so the reader's connection is open before the log's next line, not with it.
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" }).flushHeaders();
-    let next = resumedAfter(req.headers["last-event-id"], run) + 1;
-    let full = false;
-    const send = () => {
-      for (next = Math.max(next, first()); !full && next < written; next++) full = !res.write(`id: ${run}:${next}\ndata: ${kept[next % keep]!.trimEnd()}\n\n`);
-    };
-    send();
-    readers.add(send);
-    res.on("drain", () => {
-      full = false;
+  const logs: Route = (req) =>
+    stream((res) => {
+      let next = resumedAfter(req.headers["last-event-id"], run) + 1;
+      let full = false;
+      const send = () => {
+        for (next = Math.max(next, first()); !full && next < written; next++) full = !res.write(frame({ id: `${run}:${next}`, data: kept[next % keep]!.trimEnd() }));
+      };
       send();
+      readers.add(send);
+      res.on("drain", () => {
+        full = false;
+        send();
+      });
+      res.on("close", () => readers.delete(send));
     });
-    res.on("close", () => readers.delete(send));
-  };
 
   return { log, logs };
 }

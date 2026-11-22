@@ -7,13 +7,13 @@ import type { Change, ForkRow, Row, SetRow } from "./rows.ts";
 
 const block = (fields: Partial<Block> = {}): KeyedBlock => ({ key: "content.0", category: "tools", name: "tool_result", parts: [], ...fields });
 const standing = { depth: 0, dimmed: false };
-const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, change: "added", ...standing };
+const exchange: Row = { kind: "exchange", key: "t1", exchange: {} as FormattedExchange, step: 1, change: "added", ...standing };
 const group: Row = { kind: "group", key: "t1/tools", title: "tools", change: "same", ...standing };
 const brought = (shown: KeyedBlock) => ({ step: 1, block: shown, reply: false, rewrote: undefined, previous: undefined });
 // A set of one block, which step 1 brought and step 2 took away, at the step after.
 const set: SetRow = { kind: "set", key: "t1/tools", title: "tools", change: "same", items: [{ key: "t1/c", versions: [brought(block()), { step: 2, block: undefined, was: block(), previous: 0 }] }], step: 3, steps: new Set([1, 2, 3]), ...standing };
 const fork = (key: string, depth = 0): ForkRow => ({ kind: "fork", key, change: "same", siblings: [], shown: undefined, depth, dimmed: false });
-const nest = (depth: number): Row => ({ kind: "nest", key: "t1/b/nest", change: "same", type: undefined, prompt: "", count: 1, latest: undefined, depth, dimmed: false });
+const nest = (depth: number): Row => ({ kind: "nest", key: "t1/b/nest", change: "same", level: { kind: "unread" }, prompt: "", count: 1, depth, dimmed: false });
 const thread: Row = { kind: "thread", key: "t1/b/thread", change: "same", ...standing };
 const added = (shown: KeyedBlock, depth = 0): Row => ({ kind: "block", key: "t1/b", change: "added", versions: [brought(shown)], at: 0, set: undefined, depth, dimmed: false });
 // A block step 1 brought and step 2 took away, at step 2 or, left as it was, a step after.

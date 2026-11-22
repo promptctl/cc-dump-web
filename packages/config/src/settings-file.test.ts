@@ -2,6 +2,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
+import { Malformed } from "@cc-dump/log/failure";
 import { settingsFile } from "./settings-file.ts";
 import { parseSettings } from "./settings.ts";
 
@@ -25,4 +26,27 @@ it("writes the settings where none were, so they read back as written, leaving n
 it("refuses a message's settings missing one, where a file's is its default", () => {
   expect(file.parse('{"name":"only"}').settings).toEqual({ name: "only", count: 1 });
   expect(() => parseSettings("test message", table, { name: "only" })).toThrow("test message: count missing");
+});
+
+it("refuses what it cannot take as Malformed, and passes a setting's parse's own bug as it is", () => {
+  expect(() => parseSettings("test message", table, { name: "only", count: 1, other: 2 })).toThrow(Malformed);
+  const odd = {
+    name: {
+      default: "none",
+      parse: () => {
+        throw new Malformed("name is odd");
+      },
+    },
+  };
+  expect(() => parseSettings("test message", odd, { name: "x" })).toThrow(Malformed);
+  const bug = new TypeError("not a function");
+  const buggy = {
+    name: {
+      default: "none",
+      parse: () => {
+        throw bug;
+      },
+    },
+  };
+  expect(() => parseSettings("test message", buggy, { name: "x" })).toThrow(bug);
 });

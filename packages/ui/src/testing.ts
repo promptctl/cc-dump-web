@@ -14,5 +14,5 @@ export function exchanges(events: RecordedEvent[]): Exchange[] {
     const placed = add(byTrace, event);
     if (typeof placed === "string") throw new Error(`event ${index + 1}: ${placed}`);
   });
-  return [...byTrace.values()];
+  return [...byTrace.values()].map(({ exchange }) => exchange);
 }

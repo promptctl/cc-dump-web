@@ -1,6 +1,7 @@
 import { request as httpRequest, type ClientRequest, type IncomingMessage, type OutgoingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { Handler } from "@cc-dump/log";
+import { Malformed } from "@cc-dump/log/failure";
 import { agentOf, type Header } from "./format.ts";
 import type { Recordings } from "./recordings.ts";
 
@@ -17,7 +18,7 @@ export type Upstream = string & { readonly [parsed]: true };
 export function parseUpstream(value: unknown): Upstream {
   const url = typeof value === "string" ? URL.parse(value) : null;
   if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname)
-    throw new Error("upstream must be an http or https origin with an optional path");
+    throw new Malformed("upstream must be an http or https origin with an optional path");
   return url.href as Upstream;
 }
 

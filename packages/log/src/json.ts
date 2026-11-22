@@ -1,17 +1,18 @@
 // [LAW:single-enforcer] The one parse of JSON text into a JSON object, for every part's messages (each part's format.ts)
 // and settings files (@cc-dump/config) alike, each failure naming `what` was read. Imports nothing that needs node, so
-// the UI's parsers use it too.
+// the formats a part shares with the UI use it too.
+import { Malformed } from "./failure.ts";
 
 export function parseJson(text: string, what: string): unknown {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${what}: is not JSON`, { cause: error });
+    throw new Malformed(`${what}: is not JSON`, { cause: error });
   }
 }
 
 export function jsonObject(json: unknown, what: string): Record<string, unknown> {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Error(`${what}: is not an object`);
+  if (typeof json !== "object" || json === null || Array.isArray(json)) throw new Malformed(`${what}: is not an object`);
   return json as Record<string, unknown>;
 }
 
@@ -22,19 +23,20 @@ export function fieldOf(json: unknown, name: string): unknown {
 }
 
 // The fields of `what`, a JSON object, each read as the JSON type it must have, or an error naming it. `read` takes
-// any type a part's format has a test for, and `parsed` any it has a parser for, failing in the parser's words.
+// any type a part's format has a test for, and `parsed` any it has a parser for, failing in the parser's words. A parser
+// throws `Malformed` for a value it cannot take; any other error is the parser's own bug, and passes as it is.
 export function fields(json: unknown, what: string) {
   const object = jsonObject(json, what);
   const read = <T>(name: string, fits: (value: unknown) => value is T, expected: string): T => {
     const value = object[name];
-    if (!fits(value)) throw new Error(`${what}: ${name} is not ${expected}`);
+    if (!fits(value)) throw new Malformed(`${what}: ${name} is not ${expected}`);
     return value;
   };
   const parsed = <T>(name: string, parse: (value: unknown) => T): T => {
     try {
       return parse(object[name]);
     } catch (error) {
-      throw new Error(`${what}: ${name}`, { cause: error });
+      throw error instanceof Malformed ? new Malformed(`${what}: ${name}`, { cause: error }) : error;
     }
   };
   return {

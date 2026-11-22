@@ -1,5 +1,7 @@
-import { serve, type Handler, type Log } from "@cc-dump/log";
+import { serve, type Log } from "@cc-dump/log";
+import { json, routes, type Route } from "@cc-dump/log/answer";
 import { LOOPBACK } from "@cc-dump/log/address";
+import { ROUTES } from "@cc-dump/log/wire";
 import type { Listing, ProxyInfo } from "./format.ts";
 import { createProxy, type Upstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
@@ -8,7 +10,7 @@ import type { Source } from "./source.ts";
 import { countTraffic, createStatus, watchSource } from "./status.ts";
 
 // `logs`: the proxy's log lines (processLog), served on the reader port.
-export type Proxying = { upstream: Upstream; recordings: Recordings; source: Source; logs: Handler; proxyPort: number; readerPort: number };
+export type Proxying = { upstream: Upstream; recordings: Recordings; source: Source; logs: Route; proxyPort: number; readerPort: number };
 
 // [LAW:single-enforcer] The one way the proxy is put together, for main.ts and for isolated.ts, which the tests and the
 // run-cc-dump skill run as its own process: the proxy on its port, and on the reader port the proxy's status, info and log beside the recording's read side
@@ -21,48 +23,18 @@ export async function startProxy(log: Log, { upstream, recordings, source, logs,
   // keep `in_flight` above 0 while the proxy is idle.
   const proxy = await serve(log, traffic.counted(createProxy(upstream, recordings)), proxyPort);
   const info: ProxyInfo = { base_url: `http://${LOOPBACK}:${proxy.port}`, upstream, recordings: recordings.dir };
-  const routes: Record<string, Handler> = {
-    "/status": createStatus(info, watch, traffic),
-    "/info": createInfo(info),
-    "/logs": logs,
-    "/recordings": byMethod({ GET: reader, POST: createRecording(recordings) }),
-  };
-  const readers: Handler = (req, res, work) => {
-    // [LAW:single-enforcer] Every answer on the reader port, any route's: the browser's origin is the UI's, not the
-    // proxy's.
-    res.setHeader("access-control-allow-origin", "*");
-    (routes[new URL(req.url!, "http://reader").pathname] ?? reader)(req, res, work);
-  };
+  const readers = routes({
+    [ROUTES.status]: { GET: createStatus(info, watch, traffic) },
+    [ROUTES.info]: { GET: () => json(info) },
+    [ROUTES.logs]: { GET: logs },
+    [ROUTES.recordings]: { GET: reader.list, POST: createRecording(recordings) },
+    [ROUTES.recording]: { GET: reader.read },
+  });
   return [proxy, await serve(log, readers, readerPort)];
-}
-
-// `GET /info` on the reader port: `info`, as JSON.
-function createInfo(info: ProxyInfo): Handler {
-  return (req, res) => {
-    if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(info));
-  };
 }
 
 // `POST /recordings` on the reader port: makes a new agent's recording, and answers it as the list does. One it cannot
 // make is the request's failure, which the app server's launch is refused by.
-function createRecording(recordings: Recordings): Handler {
-  return (_req, res, { fail }) => {
-    try {
-      const created: Listing = { name: recordings.create() };
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(created));
-    } catch (error) {
-      fail(error);
-      res.writeHead(500).end();
-    }
-  };
-}
-
-// A route that gives each method of `handlers` its handler, and any other 405, naming them.
-function byMethod(handlers: Record<string, Handler>): Handler {
-  const allow = Object.keys(handlers).join(", ");
-  return (req, res, work) => {
-    const handler = handlers[req.method!];
-    return handler === undefined ? void res.writeHead(405, { allow }).end() : handler(req, res, work);
-  };
+function createRecording(recordings: Recordings): Route {
+  return () => json({ name: recordings.create() } satisfies Listing);
 }

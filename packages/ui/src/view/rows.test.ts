@@ -1,6 +1,7 @@
-import { exchanges, recordedAt } from "../testing.ts";
+import { exchanges } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
+import { agentCall, assistant, at, call, launched, notification, reply, request, result, returned, streaming, text, user } from "../../test/fixtures.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
@@ -8,17 +9,8 @@ import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { adjacent, createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
-const timestamp = "2026-11-15T14:00:00.000Z";
-const at = recordedAt(timestamp);
-const base64 = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64");
-const request = (trace: string, body: unknown): RecordedEvent[] => [
-  { ...at(trace), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] },
-  { ...at(trace), type: "request_body", base64: base64(body) },
-  { ...at(trace), type: "request_trailers", headers: [] },
-];
-const text = (text: string) => ({ type: "text", text });
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
   Array.from({ length: count }, (_, turn) =>
@@ -195,6 +187,16 @@ describe("layout", () => {
     // At the step that took it away, the row shows the same block, as one taken away, and every row is made again.
     const [was, gone] = [first, after(events.length, 2)].map((layout) => blockAt(layout, "thread:t1/tools/tools.Edit.0"));
     expect([blockOf(gone!) === blockOf(was!), isGone(was!), isGone(gone!)]).toEqual([true, false, true]);
+  });
+
+  it("numbers each exchange's line by its place among the exchanges shown, so one shown before its request head that turns out to be no Messages request leaves the next renumbered", () => {
+    const unrecorded: RecordedEvent = { ...at("other"), type: "response", status: 200, reason: "", http_version: "1.1", headers: [] };
+    const models: RecordedEvent = { ...at("other"), type: "request", method: "GET", url: "/v1/models", http_version: "1.1", headers: [] };
+    const numbered = (events: RecordedEvent[], step: number) =>
+      layouts(events)(step).rows.flatMap((row) => (row.kind === "exchange" ? [[row.key, row.step]] : []));
+    // Viewed at the last step, the column lists each exchange's line with the number of its own step, not the step viewed.
+    expect(numbered([unrecorded, ...turns(2)], 3)).toEqual([["t1", 2], ["t2", 3]]);
+    expect(numbered([unrecorded, ...turns(2), models], 2)).toEqual([["t1", 1], ["t2", 2]]);
   });
 
   it("gives other keys when a hidden block arrives, though the rows listed are the same, since where a hidden row stands moved", () => {
@@ -440,15 +442,6 @@ describe("an exchange's line", () => {
 
 const say = (count: number) => Array.from({ length: count }, (_, index) => ({ role: "user", content: [text(`Say ${index}.`)] }));
 
-// A reply, which ends its turn unless it says why else it stopped.
-const reply = (trace: string, content: unknown[], stop_reason = "end_turn"): RecordedEvent[] => [
-  { ...at(trace), type: "response", status: 200, reason: "OK", http_version: "1.1", headers: [["Content-Type", "application/json"]] },
-  { ...at(trace), type: "response_body", base64: base64({ id: `msg_${trace}`, type: "message", role: "assistant", content, stop_reason, usage: { input_tokens: 1, output_tokens: 1 } }) },
-  { ...at(trace), type: "response_trailers", headers: [] },
-  { ...at(trace), type: "end", outcome: "ok" },
-];
-const user = (...content: unknown[]) => ({ role: "user", content });
-const assistant = (...content: unknown[]) => ({ role: "assistant", content });
 const main = { model: "m", system: [text("Be brief.")], tools: [{ name: "Read" }] };
 const hi = user(text("Hi."));
 const rowAt = <Kind extends Row["kind"]>({ rows }: { rows: Row[] }, kind: Kind, key: string) => rows.find((row): row is Extract<Row, { kind: Kind }> => row.kind === kind && row.key === key)!;
@@ -517,27 +510,30 @@ describe("the column", () => {
     expect(at(4).rows.filter((row) => row.change !== "same").every(({ key }) => key.startsWith("t3") || key.startsWith("thread:t3"))).toBe(true);
   });
 
-  // A turn whose reply calls the Agent tool; the subagent, whose own reply calls it again; the subagent that launched;
-  // the first subagent's next request; and the thread's next turn, with the call's result.
-  const call = (id: string, prompt: string) => ({ type: "tool_use", id, name: "Agent", input: { description: "Look", prompt, subagent_type: "Explore" } });
-  const result = (id: string, content: string) => ({ type: "tool_result", tool_use_id: id, content });
+  // A turn whose reply calls the Agent tool; the subagent a1, whose own reply calls it again; the subagent a2 that call
+  // launched; a1's next request, whose result of its call returns a2; and the thread's next turn, whose result of its
+  // call returns a1. Each runs in the foreground, so each is tied as it returns.
   const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read" }] };
   const task = user(text("Find the longest word."));
   const nested = [
     ...request("t1", { ...main, messages: [hi] }),
-    ...reply("t1", [text("On it."), call("toolu_1", "Find the longest word.")], "tool_use"),
-    ...request("s1", { ...agent, messages: [task] }),
-    ...reply("s1", [text("Looking."), call("toolu_2", "Count the words.")], "tool_use"),
-    ...request("inner", { ...agent, messages: [user(text("Count the words."))] }),
+    ...reply("t1", [text("On it."), agentCall("toolu_1", "Find the longest word.", "Explore")], "tool_use"),
+    ...request("s1", { ...agent, messages: [task] }, { agent: "a1" }),
+    ...reply("s1", [text("Looking."), agentCall("toolu_2", "Count the words.")], "tool_use"),
+    ...request("inner", { ...agent, messages: [user(text("Count the words."))] }, { agent: "a2", parent: "a1" }),
     ...reply("inner", [text("Three.")]),
-    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), call("toolu_2", "Count the words.")), user(result("toolu_2", "Three."))] }),
+    ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), agentCall("toolu_2", "Count the words.")), user(result("toolu_2", returned("a2", "Three.")))] }, { agent: "a1" }),
     ...reply("s2", [text("Done.")]),
-    ...request("t2", { ...main, messages: [hi, assistant(text("On it."), call("toolu_1", "Find the longest word.")), user(result("toolu_1", "Done."))] }),
+    ...request("t2", { ...main, messages: [hi, assistant(text("On it."), agentCall("toolu_1", "Find the longest word.", "Explore")), user(result("toolu_1", returned("a1", "Done.")))] }),
   ];
-  const [outer, inner] = ["thread:t1/message.1/content.1/nest", "thread:s1/message.1/content.1/nest"];
+  const [outer, inner] = ["nest:agent:a1", "nest:agent:a2"];
   const nest = (layout: { rows: Row[] }, key = outer): NestRow => rowAt(layout, "nest", key);
+  // What a subagent's nest line says, as toMatchObject reads it: where it stands, and what it is doing.
+  const tiedTo = (call: string, launches?: string) => ({ level: { stands: { kind: "tied", call, launches } } });
+  const untied = (unfound = false) => ({ level: { stands: { kind: "untied", unfound } } });
+  const doing = (does: Doing | { runs: true; latest: { name: string } }) => ({ level: { doing: does } });
 
-  it("nests a subagent's rows under its Agent call, on one line that holds them closed until the reader opens it", () => {
+  it("nests a subagent's rows under the call a listed step ties it to, on one line that holds them closed until the reader opens it", () => {
     const at = layouts(nested, { ...dialogue, tools: "compact" });
     const above = ["t1", "t1/tools", "t1/message.0", "thread:t1/message.0/content.0", "t1/reply", "thread:t1/message.1/content.0", "thread:t1/message.1/content.1", outer];
     const below = ["t2", "t2/message.2", "thread:t2/message.2/content.0"];
@@ -560,70 +556,241 @@ describe("the column", () => {
     const rows = every.rows;
     const nestsAt = (key: string) => nestsOf(rows, rows.findIndex((row) => row.key === key));
     expect(["thread:inner/message.1/content.0", inner, "s2", outer, "t2"].map(nestsAt)).toEqual([[inner, outer], [outer], [outer], [], []]);
+    // With the tools hidden, the call's row is not listed and its nest still is, where the call stands.
+    const hidden = keysOf(layouts(nested, dialogue)(5));
+    expect(hidden.slice(hidden.indexOf("thread:t1/message.1/content.0"), hidden.indexOf(outer) + 1)).toEqual(["thread:t1/message.1/content.0", outer]);
   });
 
-  it("says on a nest's line what it launched, how many steps it holds, and what it last did while its turn is not ended", () => {
-    const at = layouts(nested);
-    expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([
-      { change: "added", type: "Explore", prompt: "Find the longest word.", count: 1, latest: { name: "tool_use: Agent" }, depth: 0 },
-      { change: "changed", count: 1, latest: { name: "tool_use: Agent" } },
-      { change: "changed", count: 2, latest: undefined },
-      { change: "same", count: 2, latest: undefined },
+  it("stands a nest at its parent's end, untied, until the step that ties it, and under its call from then on, its one key open as the reader left it", () => {
+    const at = layouts(nested, { ...dialogue, tools: "compact" });
+    const opened = { [outer]: true, [inner]: true };
+    // Before t2 ties a1, its nest is the last of the main agent's rows; a2's, before s2 ties it, the last of a1's.
+    const before = keysOf(at(3, undefined, opened));
+    expect(before.slice(before.indexOf("thread:t1/message.1/content.1"))).toEqual([
+      "thread:t1/message.1/content.1",
+      outer,
+      "s1", "s1/tools", "s1/message.0", "thread:s1/message.0/content.0", "s1/reply", "thread:s1/message.1/content.0", "thread:s1/message.1/content.1",
+      inner,
+      "inner", "inner/tools", "inner/message.0", "thread:inner/message.0/content.0", "inner/reply", "thread:inner/message.1/content.0",
     ]);
+    expect([nest(at(3)), nest(at(3).every, inner)]).toMatchObject([untied(), { ...untied(), depth: 1 }]);
+    expect(nest(at(4).every, inner)).toMatchObject(tiedTo("thread:s1/message.1/content.1"));
+    expect(nest(at(5))).toMatchObject(tiedTo("thread:t1/message.1/content.1", "Explore"));
+  });
+
+  it("says on a nest's line its prompt, how many steps it holds, and what it last did while it runs", () => {
+    const at = layouts(nested);
+    const running = { level: { doing: { runs: true, latest: { name: "tool_use: Agent" } } } };
+    expect([2, 3, 4, 5].map((step) => nest(at(step)))).toMatchObject([
+      { change: "added", ...untied(), prompt: "Find the longest word.", count: 1, depth: 0 },
+      { change: "changed", count: 1 },
+      { change: "changed", count: 2, ...doing({ runs: false, ended: undefined }) },
+      { change: "same", count: 2, ...doing({ runs: false, ended: undefined }) },
+    ]);
+    expect([2, 3].map((step) => nest(at(step)))).toMatchObject([running, running]);
     expect(keysOf(at(1))).not.toContain(outer);
-    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, latest: undefined, depth: 1 });
+    expect(nest(at(3).every, inner)).toMatchObject({ change: "added", prompt: "Count the words.", count: 1, depth: 1, ...doing({ runs: false, ended: undefined }) });
     expect([2, 3, 4, 5].map((step) => markOf(nest(at(step))))).toEqual(["added", "changed", "changed", "same"]);
   });
 
-  it("says what a subagent last did while a reply of its waits on a tool or is still coming, wherever its newest step stands", () => {
-    // A subagent that reads, then searches, then hands its report back. While each tool runs the harness asks it what
-    // it is doing, in a request that stands beside the step waiting on the tool: the first is answered and ends its
-    // turn, the second the harness leaves when the subagent is done.
-    const use = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
-    const read = [task, assistant(use("toolu_2", "Read")), user(result("toolu_2", "A."))];
-    const searched = [...read, assistant(use("toolu_3", "Grep")), user(result("toolu_3", "B."))];
-    const asked = (messages: { role: string; content: unknown[] }[]) => [...messages.slice(0, -1), user(...messages.at(-1)!.content, text("What are you doing?"))];
-    const working = [
-      ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [use("toolu_2", "Read")], "tool_use"),
-      ...request("s2", { ...agent, messages: read }),
-      ...reply("s2", [use("toolu_3", "Grep")], "tool_use"),
-      ...request("asked", { ...agent, messages: asked(read) }),
-      ...reply("asked", [text("Searching.")]),
-      ...request("s3", { ...agent, messages: searched }),
-      ...reply("s3", [use("toolu_4", "SubagentHandback")], "tool_use"),
-      ...request("left", { ...agent, messages: asked(searched) }),
-      { ...at("left"), type: "end" as const, outcome: "aborted" as const },
-    ];
-    const latest = (events: RecordedEvent[], step: number) => nest(layouts(events)(step), "thread:t1/message.1/content.0/nest").latest?.name;
-    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
-    // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
-    // the line says what the subagent did last, the tool its request answers.
-    const from = working.findIndex(({ trace_id }) => trace_id === "s2");
-    const coming = (events: number) => latest(working.slice(0, from + events), 3);
-    expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
-    // The harness may ask while a reply is still coming: its asking, with no block of a reply yet, says nothing.
-    expect(latest([...working.slice(0, from + 6), ...request("asked", { ...agent, messages: asked(read) })], 4)).toBe("tool_use: Grep");
-  });
-
-  it("puts the line where subagents of one call part first inside the call's nest", () => {
-    // A second request with the subagent's first message hangs on the same call: a sibling of the first.
+  it("lists, of a subagent tied in two histories, the one its latest listed tie is in, and the history of its latest tie when its own step is chosen", () => {
+    // 1 asks and launches a1 in the background; 2 is a1's; 3 ties it; 4 parts from 1, says something else, and is
+    // answered with a call of the same id; 5 ties a1 there; 6 goes on from 3; 7 is a1's again.
+    const launch = assistant(agentCall("toolu_1", "Look."));
+    const tied = (trace: string, to: string[]) => request(trace, { ...main, messages: [hi, launch, user(result("toolu_1", [text(launched("a1"))])), ...to.map((said) => user(text(said)))] });
     const twice = [
-      ...request("t1", { ...main, messages: [hi] }),
-      ...reply("t1", [call("toolu_1", "Find the longest word.")], "tool_use"),
-      ...request("s1", { ...agent, messages: [task] }),
-      ...reply("s1", [text("A.")]),
-      ...request("s2", { ...agent, messages: [task] }),
+      ...request("m1", { ...main, messages: [hi] }),
+      ...reply("m1", launch.content, "tool_use"),
+      ...request("a", { ...agent, messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...reply("a", [text("Seen.")]),
+      ...tied("m2", []),
+      ...reply("m2", [text("Waiting.")]),
+      ...request("m3", { ...main, messages: [hi, launch, user(text("Instead."))] }),
+      ...reply("m3", [agentCall("toolu_1", "Look.")], "tool_use"),
+      ...request("m4", { ...main, messages: [hi, launch, user(text("Instead.")), assistant(agentCall("toolu_1", "Look.")), user(result("toolu_1", [text(launched("a1"))]))] }),
+      ...reply("m4", [text("Waiting again.")]),
+      ...request("m5", { ...main, messages: [hi, launch, user(result("toolu_1", [text(launched("a1"))])), assistant(text("Waiting.")), user(text("Go on."))] }),
+      ...request("b", { ...agent, messages: [user(text("Look.")), assistant(text("Seen.")), user(text("More."))] }, { agent: "a1" }),
     ];
     const at = layouts(twice, dialogue);
-    const [line, parts] = ["thread:t1/message.1/content.0/nest", "thread:t1/message.1/content.0/fork"];
-    expect(keysOf(at(3))).not.toContain(parts);
-    const open = at(3, undefined, { [line]: true });
-    expect(keysOf(open).slice(keysOf(open).indexOf(line))).toEqual([line, parts, "s2", "s2/message.0", "thread:s2/message.0/content.0"]);
-    expect(rowAt(open, "fork", parts)).toMatchObject({ siblings: [{ step: 2, preview: "Find the longest word." }, { step: 3 }], shown: 3, depth: 1 });
-    expect(rowAt(at(2, undefined, { [line]: true }), "fork", parts)).toMatchObject({ shown: 2 });
+    const steps = (step: number) => [...at(step).steps].sort((a, b) => a - b);
+    expect(steps(6)).toEqual([1, 2, 3, 6]);
+    expect(nest(at(6))).toMatchObject(tiedTo("thread:m1/message.1/content.0"));
+    expect(steps(5)).toEqual([1, 2, 4, 5]);
+    expect(nest(at(5))).toMatchObject(tiedTo("thread:m3/message.3/content.0"));
+    // a1's own step lists the history of its latest tie by then, 5's, though 6 is later.
+    expect(steps(7)).toEqual([1, 2, 4, 5, 7]);
+    expect(nest(at(7))).toMatchObject({ ...tiedTo("thread:m3/message.3/content.0"), change: "changed" });
+    // Before any tie, a1 stands untied at the main agent's end.
+    expect(nest(at(2))).toMatchObject(untied());
+    expect(keysOf(at(2)).at(-1)).toBe(outer);
+  });
+
+  it("lists the history holding a middle subagent's call when an untied grandchild's step is chosen", () => {
+    // 1 launches b1; 2 is b1's, launching g1; 3 ties b1; 4 parts from 1; 5 is g1's, untied.
+    const launch = assistant(agentCall("toolu_1", "Middle."));
+    const forked = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...reply("m1", launch.content, "tool_use"),
+      ...request("b", { ...agent, messages: [user(text("Middle."))] }, { agent: "b1" }),
+      ...reply("b", [agentCall("toolu_2", "Inner.")], "tool_use"),
+      ...request("m2", { ...main, messages: [hi, launch, user(result("toolu_1", [text(launched("b1"))]))] }),
+      ...request("m3", { ...main, messages: [user(text("Something else."))] }),
+      ...request("g", { ...agent, messages: [user(text("Inner."))] }, { agent: "g1", parent: "b1" }),
+    ];
+    const at = layouts(forked, dialogue);
+    expect(nest(at(5), "nest:agent:b1")).toMatchObject(tiedTo("thread:m1/message.1/content.0"));
+    expect(nest(at(5).every, "nest:agent:g1")).toMatchObject({ ...untied(), depth: 1 });
+    expect(at(5).steps.has(3)).toBe(true);
+  });
+
+  it("ties a forked skill's subagent by its notification, across a compaction of its caller", () => {
+    const skill = assistant(call("toolu_s", "Skill", { skill: "review" }));
+    const forked = { role: "user", content: [result("toolu_s", 'Skill "review" launched (forked execution, results arrive later)')] };
+    const compacted = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...reply("m1", skill.content, "tool_use"),
+      ...request("k", { ...agent, messages: [user(text("Review."))] }, { agent: "k1" }),
+      ...request("compact", { ...main, messages: [hi, skill, forked, user(text("Summarize."))] }),
+      ...reply("compact", [text("<summary>\nReviewing.\n</summary>")]),
+      ...request("m2", { ...main, messages: [user(text("This session is being continued.\nReviewing.\nGo on.")), user(notification("k1", "completed", "toolu_s"))] }),
+    ];
+    const at = layouts(compacted, dialogue);
+    expect(nest(at(3), "nest:agent:k1")).toMatchObject(untied());
+    // A skill reads as the command that runs it.
+    expect(nest(at(4), "nest:agent:k1")).toMatchObject({ level: { stands: { kind: "tied", call: "thread:m1/message.1/content.0", launches: "/review" }, doing: { runs: false, ended: "completed" } } });
+  });
+
+  it("says a subagent runs while it waits on a call or a reply of its is coming, until a notification stops it, and again once it is woken", () => {
+    const read = call("toolu_r", "Read", { file_path: "/a" });
+    const told = (trace: string, notices: unknown[]) => request(trace, { ...main, messages: [hi, ...notices.map((notice) => user(notice))] });
+    const woken = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("a", { ...agent, messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...reply("a", [read], "tool_use"),
+      // No tool-use-id: a stop all the same.
+      ...told("m2", [notification("a1", "killed")]),
+      // Resent as history: no second stop.
+      ...told("m3", [notification("a1", "killed"), text("Go on.")]),
+      ...request("b", { ...agent, messages: [user(text("Look.")), assistant(read), user(result("toolu_r", "words"))] }, { agent: "a1" }),
+      ...reply("b", [text("Woken.")], "end_turn", false),
+      ...told("m4", [notification("a1", "killed"), text("Go on."), notification("a1", "completed", undefined, "Woken.")]),
+      // Woken again, and stopped again by a notification with the first one's very text, in a message of its own.
+      ...request("c", { ...agent, messages: [user(text("Look.")), assistant(read), user(result("toolu_r", "words")), assistant(text("Woken.")), user(text("More."))] }, { agent: "a1" }),
+      ...reply("c", [text("Again.")], "end_turn", false),
+      ...told("m5", [notification("a1", "killed"), text("Go on."), notification("a1", "completed", undefined, "Woken."), text("Once more."), notification("a1", "killed")]),
+    ];
+    const at = layouts(woken, dialogue);
+    expect([2, 3, 4, 5, 6, 7, 8].map((step) => nest(at(step), outer))).toMatchObject([
+      doing({ runs: true, latest: { name: "tool_use: Read" } }),
+      doing({ runs: false, ended: "killed" }),
+      doing({ runs: false, ended: "killed" }),
+      // Woken, its reply still coming and not yet read, it runs with nothing said yet since the stop.
+      doing({ runs: true, latest: undefined }),
+      doing({ runs: false, ended: "completed" }),
+      doing({ runs: true, latest: undefined }),
+      doing({ runs: false, ended: "killed" }),
+    ]);
+  });
+
+  it("says what a subagent last did while a reply of its waits on a tool or is still coming, and never what it told the harness's question or a handback", () => {
+    // A subagent that reads, then searches, then hands its report back. While a tool runs the harness asks it what it
+    // is doing: it leaves out the reply that waits, so the question is appended to the last result, and stands beside
+    // the step waiting on the tool.
+    const tool = (id: string, name: string) => ({ type: "tool_use", id, name, input: {} });
+    const read = [task, assistant(tool("toolu_2", "Read")), user(result("toolu_2", "A."))];
+    const searched = [...read, assistant(tool("toolu_3", "Grep")), user(result("toolu_3", "B."))];
+    const asked = [...read.slice(0, -1), user(result("toolu_2", "A."), text("What are you doing?"))];
+    const a1 = { agent: "a1" };
+    const working = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [agentCall("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }, a1),
+      ...reply("s1", [tool("toolu_2", "Read")], "tool_use"),
+      ...request("s2", { ...agent, messages: read }, a1),
+      ...reply("s2", [tool("toolu_3", "Grep")], "tool_use"),
+      ...request("asked", { ...agent, messages: asked }, a1),
+      ...reply("asked", [text("Searching.")]),
+      ...request("s3", { ...agent, messages: searched }, a1),
+      ...reply("s3", [tool("toolu_4", "SubagentHandback")], "tool_use"),
+      ...request("left", { ...agent, messages: searched }, a1),
+      { ...at("left"), type: "end", outcome: "aborted" } as const,
+    ];
+    const latest = (events: RecordedEvent[], step: number) => {
+      const { level } = nest(layouts(events)(step));
+      return level.kind === "agent" && level.doing.runs ? level.doing.latest?.name : undefined;
+    };
+    expect([2, 3, 4, 5, 6].map((step) => latest(working, step))).toEqual(["tool_use: Read", "tool_use: Grep", "tool_use: Grep", undefined, undefined]);
+    // A reply still coming says what it has by now, the events of its exchange recorded so far. Before its first block
+    // the line says what the subagent did last.
+    const events = working;
+    const from = events.findIndex(({ trace_id }) => trace_id === "s2");
+    const coming = (count: number) => latest(events.slice(0, from + count), 3);
+    expect([3, 6].map(coming)).toEqual(["tool_use: Read", "tool_use: Grep"]);
+    // The harness may ask while a reply is still coming: its asking says nothing. Its answer, while it streams, is the
+    // agent's own account of what it is doing, and once ended, the step waiting on the tool's says it again.
+    expect(latest([...events.slice(0, from + 6), ...request("asked", { ...agent, messages: asked }, a1)], 4)).toBe("tool_use: Grep");
+    const answering = events.findIndex(({ trace_id, type }) => trace_id === "asked" && type === "response");
+    expect([latest([...events.slice(0, answering), ...streaming("asked", [text("Searching.")])], 4), latest(working, 4)]).toEqual(["text", "tool_use: Grep"]);
+    // A last reply still coming that hands the report back says nothing of the handback.
+    const handing = events.findIndex(({ trace_id, type }) => trace_id === "s3" && type === "response");
+    const handback = (...content: Parameters<typeof streaming>[1]) => latest([...events.slice(0, handing), ...streaming("s3", content)], 5);
+    expect([handback(text("Done.")), handback(text("Done."), { type: "tool_use", id: "toolu_4", name: "SubagentHandback", input: {} })]).toEqual(["text", undefined]);
+  });
+
+  it("says a nest is untied where the latest listed tie names a call not on its step's reach", () => {
+    const missing = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("a", { ...agent, messages: [user(text("Look."))] }, { agent: "a1" }),
+      ...reply("a", [text("Seen.")]),
+      ...request("m2", { ...main, messages: [hi, user(notification("a1", "completed", "toolu_gone"))] }),
+    ];
+    const at = layouts(missing, dialogue);
+    expect([nest(at(2)), nest(at(3))]).toMatchObject([untied(false), { ...untied(true), ...doing({ runs: false, ended: "completed" }) }]);
+  });
+
+  it("stands a subagent under the parent its header names once that parent has a step, and as not recorded until then", () => {
+    // g1's first request comes before any of b1's, as where the recording began while b1 worked.
+    const late = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("g", { ...agent, messages: [user(text("Inner."))] }, { agent: "g1", parent: "b1" }),
+      ...request("b", { ...agent, messages: [user(text("Middle."))] }, { agent: "b1" }),
+    ];
+    const at = layouts(late, dialogue);
+    const g1 = "nest:agent:g1";
+    expect(nest(at(2), g1)).toMatchObject({ level: { parent: { kind: "unrecorded", named: "b1" } }, depth: 0 });
+    expect(nest(at(3).every, g1)).toMatchObject({ level: { parent: { kind: "agent", id: "b1" } }, depth: 1 });
+    // Headers that name each other place neither under the other.
+    const crossed = [
+      ...request("m1", { ...main, messages: [hi] }),
+      ...request("x", { ...agent, messages: [user(text("X."))] }, { agent: "x1", parent: "y1" }),
+      ...request("y", { ...agent, messages: [user(text("Y."))] }, { agent: "y1", parent: "x1" }),
+    ];
+    const both = layouts(crossed, dialogue)(3);
+    expect(["nest:agent:x1", "nest:agent:y1"].map((key) => nest(both, key))).toMatchObject([
+      { level: { parent: { kind: "unrecorded", named: "y1" } }, depth: 0 },
+      { level: { parent: { kind: "unrecorded", named: "x1" } }, depth: 0 },
+    ]);
+  });
+
+  it("lists every root of a subagent's level, a side request of its beside its thread, with no line between them", () => {
+    const twice = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [agentCall("toolu_1", "Find the longest word.")], "tool_use"),
+      ...request("s1", { ...agent, messages: [task] }, { agent: "a1" }),
+      ...reply("s1", [text("A.")]),
+      ...request("s2", { ...agent, messages: [task] }, { agent: "a1" }),
+    ];
+    const open = layouts(twice, dialogue)(3, undefined, { [outer]: true });
+    expect(keysOf(open).slice(keysOf(open).indexOf(outer))).toEqual([outer, "s1", "s1/message.0", "thread:s1/message.0/content.0", "s1/reply", "thread:s1/message.1/content.0", "s2", "s2/message.0", "thread:s2/message.0/content.0"]);
+  });
+
+  it("stands the requests whose sender was not read in a nest of their own at the main agent's end, never among its steps", () => {
+    const repeated = { headers: [["x-claude-code-agent-id", "a1"], ["x-claude-code-agent-id", "a2"]] as [string, string][] };
+    const at = layouts([...request("t1", { ...main, messages: [hi] }), ...request("x", { ...main, messages: [hi] }, repeated)], dialogue);
+    expect(keysOf(at(2))).toEqual(["t1", "t1/message.0", "thread:t1/message.0/content.0", "nest:unread"]);
+    expect(nest(at(2), "nest:unread")).toEqual(expect.objectContaining({ level: { kind: "unread" }, count: 1, change: "added" }));
+    expect(keysOf(at(2, undefined, { "nest:unread": true })).slice(4)).toEqual(["x", "x/message.0", "thread:x/message.0/content.0"]);
   });
 
   it("lists the thread that begins with a compaction's summary after one line under the summary, and dims the steps it carries on from", () => {

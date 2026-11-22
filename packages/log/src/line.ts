@@ -1,5 +1,6 @@
 import { describe } from "./describe.ts";
 import { outcomes, type Ending } from "./ending.ts";
+import { Malformed } from "./failure.ts";
 import { fields, jsonObject, parseJson } from "./json.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -52,7 +53,7 @@ const named = new Set(["service", "event", "started_at", "duration_ms", "outcome
 // and throws; an event that does not parse taints no other line, so it is this one's, unread, in its place among them.
 export function parseLogLine(data: string, id: string): LogLine {
   const position = positionOf(id);
-  if (position === undefined) throw new Error(`log line: id ${JSON.stringify(id)} is not run:seq`);
+  if (position === undefined) throw new Malformed(`log line: id ${JSON.stringify(id)} is not run:seq`);
   try {
     return { ...position, event: parseLoggedEvent(data) };
   } catch (error) {

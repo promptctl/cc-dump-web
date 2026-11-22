@@ -1,4 +1,5 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
+import { Malformed } from "@cc-dump/log/failure";
 import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
@@ -39,9 +40,6 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 // from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
-// Every refused or failed request's answer: why, in words the user is shown as they are (tmux's own, when tmux refused).
-export type Failure = { error: string };
-
 // [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
 // from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
 // session target names a session by name.
@@ -54,7 +52,7 @@ export function commandLine(value: unknown): string {
 }
 
 function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Error(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -70,7 +68,7 @@ export function parseLauncher(json: string): Launcher {
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
 export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Error("sessions: tmux listed none");
+  if (names.length === 0) throw new Malformed("sessions: tmux listed none");
   return names as Sessions;
 }
 
@@ -90,7 +88,7 @@ export function parseLaunched(json: string): Launched {
 // leading zero, and exact as a JSON number. `@03` is no window's.
 function tmuxNumber(value: string, what: string): number {
   const number = Number(value);
-  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
   return number;
 }
 
@@ -99,7 +97,7 @@ function tmuxNumber(value: string, what: string): number {
 const idKinds = { $: "session", "@": "window", "%": "pane" } as const;
 function tmuxId<P extends keyof typeof idKinds>(prefix: P, value: string): `${P}${number}` {
   const what = `a tmux ${idKinds[prefix]} id`;
-  if (!value.startsWith(prefix)) throw new RangeError(`not ${what}: ${JSON.stringify(value)}`);
+  if (!value.startsWith(prefix)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
   tmuxNumber(value.slice(1), what);
   return value as `${P}${number}`;
 }
@@ -110,7 +108,3 @@ export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
 export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
-
-export function parseFailure(json: string): Failure {
-  return { error: fields(parseJson(json, "failure"), "failure").string("error") };
-}

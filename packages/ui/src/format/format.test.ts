@@ -3,7 +3,7 @@ import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import type { Block } from "./blocks.ts";
-import { createFormatter, type FormattedExchange } from "./format.ts";
+import { createFormatter, inputOf, type FormattedExchange } from "./format.ts";
 import { doesNotFit, fieldValue } from "./parts.ts";
 
 // Recorded events as the proxy writes them, with bodies in the shapes Claude Code and the Messages API put on the wire.
@@ -334,13 +334,13 @@ describe("format", () => {
       ...streamed("c", [messageStart, messageDelta], false),
     ]);
     const [a, b, c] = formatted.map(({ facts }) => facts);
-    expect(a).toEqual({ ordinal: 1, began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, input: 46100, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
+    expect(a).toEqual({ began: timestamp, duration: 2100, status: 200, model: "claude-fable-5-2", session: undefined, uncached: 4, cacheRead: 44000, cacheWritten: 2096, output: 390, stopReason: "end_turn" });
     // The model stays among the parameters the request sent.
     expect(group(formatted[0]!, "request")[1]!.parts).toEqual([{ kind: "fields", fields: [["model", '"claude-fable-5-2"']] }]);
     // One in flight: what is not known yet is undefined.
-    expect(b).toEqual({ ordinal: 2, began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, input: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
+    expect(b).toEqual({ began: timestamp, duration: undefined, status: undefined, model: "m", session: undefined, uncached: undefined, cacheRead: undefined, cacheWritten: undefined, output: undefined, stopReason: undefined });
     // A stream's message as far as it has arrived: a count the API did not give is undefined.
-    expect(c).toMatchObject({ ordinal: 3, status: 200, input: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
+    expect(c).toMatchObject({ status: 200, uncached: 2, cacheRead: undefined, cacheWritten: undefined, output: 90, stopReason: "tool_use" });
   });
 
   it("reads the agent's session from the request's metadata, as Claude Code sends it, and none from metadata of another shape", () => {
@@ -359,7 +359,7 @@ describe("format", () => {
     const facts = (usage: object) => {
       const message = { ...messageStart.message, stop_reason: "end_turn", usage };
       const { facts } = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
-      return [facts.input, facts.cacheRead, facts.cacheWritten];
+      return [inputOf(facts), facts.cacheRead, facts.cacheWritten];
     };
     // A cached turn, which read most of its input and wrote some; one that used no cache; one from before the cache fields.
     expect(facts({ input_tokens: 6, cache_read_input_tokens: 40000, cache_creation_input_tokens: 5000, output_tokens: 9 })).toEqual([45006, 40000, 5000]);
@@ -371,7 +371,7 @@ describe("format", () => {
     // A stream's counts come from its message_start, and stay the same once the message_delta has added its own.
     const start = { ...messageStart, message: { ...messageStart.message, usage: { input_tokens: 3, cache_read_input_tokens: 800, cache_creation_input_tokens: 200, output_tokens: 1 } } };
     const streamedFacts = one([...request("a", { model: "m", messages: [] }), ...streamed("a", [start, messageDelta], false)]).facts;
-    expect([streamedFacts.input, streamedFacts.cacheRead, streamedFacts.cacheWritten, streamedFacts.output]).toEqual([1003, 800, 200, 90]);
+    expect([inputOf(streamedFacts), streamedFacts.cacheRead, streamedFacts.cacheWritten, streamedFacts.output]).toEqual([1003, 800, 200, 90]);
   });
 
   it("shows a block of a type it does not know as raw JSON under its type name, in a request and in a stream", () => {
@@ -479,15 +479,30 @@ describe("format", () => {
     expect(lines(group(formatted[1]!, "request"))).toEqual(["http HTTP request"]);
   });
 
-  it("numbers an exchange by its place among those shown, as one shown before its request head leaves them", () => {
+  it("formats an exchange on its own, so one shown before its request head that turns out to be no Messages request leaves another as it was", () => {
     const formatter = createFormatter();
     const headless = response("other", 200, [], Buffer.from("{}"));
     const messages = request("messages", { model: "m", messages: [] });
     const first = formatter(exchanges([...headless, ...messages]));
-    expect(first.map(({ facts }) => facts.ordinal)).toEqual([1, 2]);
+    expect(first.map(({ exchange }) => exchange.trace_id)).toEqual(["other", "messages"]);
     const later = formatter(exchanges([...headless, ...messages, ...request("other", {}, { method: "GET", url: "/v1/models" })]));
-    expect(later.map(({ exchange, facts }) => [exchange.trace_id, facts.ordinal])).toEqual([["messages", 1]]);
-    expect(group(later[0]!, "request")).toBe(group(first[1]!, "request"));
+    expect(later).toHaveLength(1);
+    expect(later[0]).toBe(first[1]);
+  });
+
+  it("interns a block a later request resends as it was, and makes a block anew where its place holds another", () => {
+    const tools = [{ name: "Read", description: "Reads a file." }];
+    const sent = (trace: string, first: string, more: unknown[]) => request(trace, { model: "m", system: "Be brief.", tools, messages: [{ role: "user", content: first }, ...more] });
+    const [a, b, c] = format([
+      ...sent("a", "Hi.", []),
+      ...sent("b", "Hi.", [{ role: "assistant", content: "Hello." }, { role: "user", content: "More." }]),
+      ...sent("c", "Bye.", []),
+    ]);
+    const groupOf = ({ groups }: FormattedExchange, key: string) => groups.find((one) => one.key === key)!;
+    for (const key of ["tools", "system", "message.0"]) expect(groupOf(b!, key)).toBe(groupOf(a!, key));
+    for (const key of ["tools", "system"]) expect(groupOf(c!, key)).toBe(groupOf(a!, key));
+    expect(groupOf(c!, "message.0")).not.toBe(groupOf(a!, "message.0"));
+    expect(group(c!, "message.0").map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Bye." }]]);
   });
 
   it("keeps an exchange that got no new event, and a streaming exchange's request, as the objects formatted before", () => {
@@ -621,31 +636,84 @@ describe("format", () => {
         name: "tool_result: error",
         parts: [{ kind: "fields", fields: [["tool_use_id", "toolu_1"], ["is_error", "true"]] }],
         failed: true,
+        result: { answers: "toolu_1", names: undefined },
       },
     ]);
   });
 
-  it("states the subagent an Agent tool's call launches, in a message and in the reply, and none while its input streams", () => {
+  it("states what an Agent or a Skill tool's call launches, in a message and in the reply, the agent type once its input says it", () => {
     const call = (name: string, input: unknown) => ({ type: "tool_use", id: "toolu_1", name, input });
-    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ launch }) => launch);
-    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." })])).toEqual([
-      { prompt: "Find the bug.\n", type: "Explore" },
-      { prompt: "Go.", type: undefined },
+    const sent = (content: unknown[]) => group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ call }) => call?.launches);
+    expect(sent([call("Agent", { description: "Look", prompt: "Find the bug.\n", subagent_type: "Explore" }), call("Agent", { prompt: "Go." }), call("Skill", { skill: "review" })])).toEqual([
+      { tool: "Agent", type: "Explore" },
+      { tool: "Agent", type: undefined },
+      { tool: "Skill", skill: "review" },
     ]);
-    // Another tool's prompt launches nothing, nor does an Agent's call that sends none.
-    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, undefined, undefined]);
+    // Another tool's prompt launches nothing; an Agent's call launches an agent whatever its input holds.
+    const agent = { tool: "Agent", type: undefined };
+    expect(sent([call("WebFetch", { url: "https://example.com", prompt: "Find the bug." }), call("Agent", { prompt: 5 }), call("Agent", "{}")])).toEqual([undefined, agent, agent]);
     const start = { type: "content_block_start", index: 0, content_block: call("Agent", {}) };
     const delta = (partial_json: string) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } });
-    const events = [messageStart, start, delta('{"prompt":'), delta('"Go."}'), { type: "content_block_stop", index: 0 }];
-    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ launch }) => launch);
-    expect(reply(4)).toEqual([undefined]);
-    expect(reply(5)).toEqual([{ prompt: "Go.", type: undefined }]);
+    const events = [messageStart, start, delta('{"subagent_type":'), delta('"Explore"}'), { type: "content_block_stop", index: 0 }];
+    const reply = (count: number) => group(one([...request("a", { model: "m", messages: [] }), ...streamed("a", events.slice(0, count), false)]), "reply").map(({ call }) => call?.launches);
+    expect(reply(4)).toEqual([agent]);
+    expect(reply(5)).toEqual([{ tool: "Agent", type: "Explore" }]);
   });
 
-  it("states that a call of SubagentHandback hands a subagent's report back, and that no other tool's call does", () => {
-    const call = (name: string) => ({ type: "tool_use", id: "toolu_1", name, input: { message: "Done." } });
-    const content = [call("SubagentHandback"), call("SendMessage")];
-    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ handback }) => handback)).toEqual([true, undefined]);
+  it("states each call by its id, and that every call's reply waits for its result but SubagentHandback's; a call with no id states none", () => {
+    const call = (name: string, id: unknown = "toolu_1") => ({ type: "tool_use", id, name, input: { message: "Done." } });
+    const content = [call("SubagentHandback"), call("SendMessage", "toolu_2"), call("Bash", 7)];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ call }) => call)).toEqual([
+      { id: "toolu_1", launches: undefined, waits: false },
+      { id: "toolu_2", launches: undefined, waits: true },
+      undefined,
+    ]);
+  });
+
+  it("states the call a result answers, and the agent its content names in the background frame or the foreground trailer", () => {
+    const launched = "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: ae5c3bca3aecbe477 (internal ID - do not mention to user.)\nThe agent is working in the background.";
+    const usage = "<usage>subagent_tokens: 10\ntool_uses: 2\nduration_ms: 300</usage>";
+    const results = [
+      { type: "tool_result", tool_use_id: "toolu_1", content: [{ type: "text", text: launched }] },
+      { type: "tool_result", tool_use_id: "toolu_2", content: [{ type: "text", text: "The bug is here." }, { type: "text", text: `agentId: a1 (use SendMessage with to: 'a1' to continue this agent)\n${usage}` }] },
+      // A report that is a single text has the trailer appended, and worktree lines may follow the id.
+      { type: "tool_result", tool_use_id: "toolu_3", content: [{ type: "text", text: `The bug is here.\nagentId: a2\nworktreePath: /w\nworktreeBranch: b\n${usage}` }] },
+      // A result that quotes a frame anywhere else names nothing, nor does a foreground Explore's, which has no trailer.
+      { type: "tool_result", tool_use_id: "toolu_4", content: `cat log\nagentId: a3 (internal ID` },
+      { type: "tool_result", tool_use_id: "toolu_5", content: "The bug is here." },
+      // The trailer's id is the last on its own line: a report that quotes another agent's names that one nowhere.
+      { type: "tool_result", tool_use_id: "toolu_6", content: [{ type: "text", text: `Report:\nagentId: zzz\nmore\nagentId: a4 (use SendMessage with to: 'a4' to continue this agent)\n${usage}` }] },
+    ];
+    expect(group(one(request("a", { model: "m", messages: [{ role: "user", content: results }] })), "message.0").map(({ result }) => result)).toEqual([
+      { answers: "toolu_1", names: "ae5c3bca3aecbe477" },
+      { answers: "toolu_2", names: "a1" },
+      { answers: "toolu_3", names: "a2" },
+      { answers: "toolu_4", names: undefined },
+      { answers: "toolu_5", names: undefined },
+      { answers: "toolu_6", names: "a4" },
+    ]);
+  });
+
+  it("states a notification that an agent stopped from a text that is wholly one reminder holding it, and never from a person's text that quotes one", () => {
+    const notification = (inner: string) => `<system-reminder>\n[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n${inner}\n</task-notification>\n</system-reminder>`;
+    const killed = notification("<task-id>aeb0927abd04e4d83</task-id>\n<status>killed</status>\n<summary>Agent was stopped</summary>");
+    const done = notification("<task-id>a1</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>");
+    const statusless = notification("<task-id>a2</task-id>\n<summary>Agent was stopped</summary>");
+    const two = notification("<task-id>a3</task-id>\n<status>completed</status>\n</task-notification>\n<task-notification>\n<task-id>a4</task-id>\n<status>failed</status>");
+    const texts = [killed, done, `Look at this: ${done}`, `${done}\n<system-reminder>\nToday is Friday.\n</system-reminder>`, statusless, two];
+    const blocks = group(one(request("a", { model: "m", messages: [{ role: "user", content: texts.map((text) => ({ type: "text", text })) }] })), "message.0");
+    const notices = blocks.filter(({ notice }) => notice !== undefined);
+    expect(notices.map(({ name, injected, notice }) => ({ name, injected, notice }))).toEqual([
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "aeb0927abd04e4d83", status: "killed", call: undefined } },
+      { name: "task notification", injected: true, notice: { kind: "stop", agent: "a1", status: "completed", call: "toolu_1" } },
+      // One that lacks its agent or its status, or holds two, is shown as a notification that was not read, and tells
+      // no stop.
+      { name: "task notification not read: no <status>", injected: true, notice: { kind: "unread", why: "no <status>" } },
+      { name: "task notification not read: more than one <task-notification>", injected: true, notice: { kind: "unread", why: "more than one <task-notification>" } },
+    ]);
+    // Its collapsed line reads its `<task-notification>` element, without the reminder around it.
+    const shown = (notices[1]!.preview ?? []).flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("");
+    expect([shown.startsWith("<task-notification>"), shown.trimEnd().endsWith("</task-notification>")]).toEqual([true, true]);
   });
 
   it("states the summary an assistant's text ends with, and none of a text that only holds one", () => {

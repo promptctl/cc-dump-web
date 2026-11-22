@@ -1,6 +1,8 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { endEvent, failedWith, startTrace, type Handler, type Log } from "@cc-dump/log";
+import { stream, type Route } from "@cc-dump/log/answer";
+import { frame } from "@cc-dump/log/wire";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
@@ -103,13 +105,12 @@ function onDisk(path: string) {
 // closes. A failed watch is one more state, not the stream's end: the stream stays open, so a reader's EventSource sees
 // the proxy's restart as a dropped connection and reconnects to the restarted proxy. That open stream is the browser's
 // connection to the proxy (F8).
-export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Handler {
-  return (req, res) => {
-    if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    const send = () => void res.write(`data: ${JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus)}\n\n`);
-    const unwatched = [source.onChanged(send), traffic.onChanged(send)];
-    res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
-    send();
-  };
+export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Route {
+  return () =>
+    stream((res) => {
+      const send = () => void res.write(frame({ data: JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus) }));
+      const unwatched = [source.onChanged(send), traffic.onChanged(send)];
+      res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
+      send();
+    });
 }

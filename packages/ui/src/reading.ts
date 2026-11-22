@@ -1,8 +1,9 @@
-import type { TraceId } from "@cc-dump/log/trace";
+import { asError, describe } from "@cc-dump/log/describe";
 import type { RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import { refusedAt, type Connection } from "./connection/connection.ts";
-import { add, type ByTrace, type Exchange } from "./exchanges.ts";
+import { add, type ByTrace, type Settled } from "./exchanges.ts";
+import { createFormatter, type FormattedExchange } from "./format/format.ts";
 import { recording, useExchanges } from "./store.ts";
 
 // The recording open (docs/design/01-features.md, F7), by its name, or none: a tab that has launched no agent and opened no
@@ -20,11 +21,17 @@ export type Reading =
   | { state: "ended"; name: string; end: RecordingEnd }
   | { state: "failed"; error: Error };
 
-// Where a read shows what it has read: its exchanges, in the order they began, each time they change.
-export type Sink = (exchanges: Exchange[]) => void;
+// Where a read shows what it has read: its exchanges formatted, in the order they began, each time they change.
+export type Sink = (formatted: FormattedExchange[]) => void;
 
 // A frame clock: runs `callback` at the next frame, and returns the function that cancels it.
 export type Frames = (callback: () => void) => () => void;
+
+// [LAW:types-are-the-program] An exchange that has ended and been formatted, as the read holds it from then on
+// (exchanges.ts, `Settled`): what the formatter made of it, nothing for one it does not show. It holds none of the
+// exchange's events, so a read holds a recording's bodies only while the exchanges that sent them run, and the
+// formatter is never handed an exchange whose bodies are gone.
+type Shown = Settled<FormattedExchange[]>;
 
 // Where a read of `open` stands as it begins: reading it, or none.
 const begun = (open: OpenRecording): Reading => (open === null ? { state: "none" } : { state: "reading", name: open });
@@ -36,61 +43,86 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // that breaks the shape the proxy writes fails the read, naming where in the recording it ends, and ends the
 // connection's read of it: what follows it cannot be trusted to be the recording.
 // [LAW:no-ambient-temporal-coupling] The read owns its batch: exchanges changed between frames are shown in one call at
-// the next, because catching up delivers thousands of events in quick succession and one copy and render each would be
-// quadratic. Each frame hands `sink` copies of the exchanges it changed: a frame's exchanges are not changed by the
-// events after it, which the read goes on placing in its own. The read's end is its own signal, `reading`: it aborts on
-// `signal`, and as the read ends, refused, ended or failed, once it has shown what is pending. Its abort cancels the
-// frame, and the connection delivers nothing after it, so no frame and no event of the read comes after its end.
+// the next, because catching up delivers thousands of events in quick succession and one format and render each would
+// be quadratic. Each frame formats the read's exchanges and hands them to `sink`, and the events after it leave them as
+// they are: the formatter makes anew each exchange an event changes. An exchange that has ended is formatted once more,
+// and the read holds what it showed in its place (exchanges.ts, `Settled`), so it holds what its exchanges made, not
+// every body its recording sends.
+// [LAW:one-source-of-truth] The formatter is the read's own and lives as long as the read. The read's end is its own
+// signal, `reading`: it aborts on `signal`, and as the read ends, refused, ended or failed, once it has shown what is
+// pending (`end`). Its abort cancels the frame, and the connection delivers nothing after it, so no frame and no event
+// of the read comes after its end.
+// [LAW:no-silent-failure] A formatter that throws on what it was given ends the read as failed, with what it threw,
+// since the throw comes from a frame or from the step that ends the read, which no caller catches.
 export function readRecording(connection: Pick<Connection, "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
   sink([]);
   // Reported as the read begins, so an end or a failure the read reports as it begins is the last state.
   changed(begun(open));
   if (open === null) return;
-  const byTrace: ByTrace = new Map();
-  const shown = new Map<TraceId, Exchange>();
-  const touched = new Map<TraceId, Exchange>();
+  const byTrace: ByTrace<Shown> = new Map();
+  const format = createFormatter();
   const flush = () => {
-    for (const [trace, exchange] of touched) shown.set(trace, snapshot(exchange));
-    touched.clear();
-    sink([...shown.values()]);
+    const frame: FormattedExchange[] = [];
+    byTrace.forEach((held, trace) => {
+      switch (held.state) {
+        case "settled":
+          return void frame.push(...held.shown);
+        case "open":
+          return void frame.push(...format([held.exchange]));
+        case "ended": {
+          const shown = format([held.exchange]);
+          frame.push(...shown);
+          byTrace.set(trace, { state: "settled", shown });
+        }
+      }
+    });
+    sink(frame);
   };
   // The one frame pending, by the function that cancels it: scheduled by the first event after a frame, none once it
   // has run.
   let frame: (() => void) | undefined;
-  const shownAtFrame = () => {
-    frame = undefined;
-    flush();
-  };
   const ended = new AbortController();
   const reading = AbortSignal.any([signal, ended.signal]);
   reading.addEventListener("abort", () => frame?.());
-  const settle = (outcome: Reading) => {
-    flush();
+  // Shows what is pending, and says what showing it threw, if it threw.
+  const show = (): Error | undefined => {
+    try {
+      flush();
+    } catch (error) {
+      return asError(error);
+    }
+  };
+  const finish = (outcome: Reading) => {
     ended.abort();
     changed(outcome);
+  };
+  // [LAW:no-silent-failure] Ends the read in `outcome` once it has shown what is pending. When showing it throws too, the
+  // read failed in what showed it: the failed outcome heads the message, its whole chain said there, and the failure of
+  // showing is the `cause`, so neither replaces the other.
+  const end = (outcome: Reading) => {
+    const failure = show();
+    if (failure === undefined) return finish(outcome);
+    finish({ state: "failed", error: outcome.state === "failed" ? new Error(`${describe(outcome.error)}, and showing what it read failed`, { cause: failure }) : failure });
+  };
+  const shownAtFrame = () => {
+    frame = undefined;
+    const failure = show();
+    if (failure !== undefined) finish({ state: "failed", error: failure });
   };
   connection.read(
     open,
     {
       event: (event, offset) => {
         const placed = add(byTrace, event);
-        if (typeof placed === "string") return settle({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
-        touched.set(event.trace_id, placed);
+        if (typeof placed === "string") return end({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
         frame ??= frames(shownAtFrame);
       },
-      end: (end) => settle({ state: "ended", name: open, end }),
-      failed: (error) => settle({ state: "failed", error }),
+      end: (outcome) => end({ state: "ended", name: open, end: outcome }),
+      failed: (error) => end({ state: "failed", error }),
     },
     reading,
   );
 }
-
-// An exchange as it stands now, which the events after it leave as it is.
-const snapshot = (exchange: Exchange): Exchange => ({
-  ...exchange,
-  request: { ...exchange.request, body: [...exchange.request.body] },
-  response: { ...exchange.response, body: [...exchange.response.body] },
-});
 
 // The recording on screen, by its name: the one being read or read to its end. None while none is open, or the read
 // failed.

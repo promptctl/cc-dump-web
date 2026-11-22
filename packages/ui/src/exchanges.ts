@@ -3,8 +3,8 @@ import type { RecordedEvent } from "@cc-dump/proxy/format";
 
 export type Of<T extends RecordedEvent["type"]> = Extract<RecordedEvent, { type: T }>;
 
-// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and the
-// event that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
+// One side of an exchange, the request or the response, as recorded: its head, its body's chunks in order, and the event
+// that completed it. Each is recorded by its own write, so each may be missing alone: not yet, for an exchange in
 // flight; never, for one whose write failed, since the recorder counts a failed write and goes on writing the
 // exchange's later events.
 // [LAW:one-source-of-truth] `completedBy`: the event after which no more of it will be recorded: its trailers, which the
@@ -25,29 +25,48 @@ export function trailersOf(side: RequestSide | ResponseSide) {
 // events.
 export type Exchange = { trace_id: TraceId; request: RequestSide; response: ResponseSide; end: Of<"end"> | undefined; first: RecordedEvent; latest: RecordedEvent };
 
+// [LAW:one-source-of-truth] An exchange as the conversation shows it: its trace, its heads and its end, derived from
+// `Exchange`, and none of its bodies, which only the formatter reads (format/format.ts).
+export type ExchangeShown = Pick<Exchange, "trace_id" | "end"> & { request: Pick<RequestSide, "head">; response: Pick<ResponseSide, "head"> };
+
 // The last event that changed a side, so two derivations of a side with the same latest event are the same side.
 export function latest(side: RequestSide | ResponseSide): RecordedEvent | undefined {
   return side.completedBy ?? side.body.at(-1) ?? side.head;
 }
 
-// The read's exchanges, by trace, in the order they began.
-export type ByTrace = Map<TraceId, Exchange>;
+// [LAW:types-are-the-program] A trace as a read holds it, by the one tag that says where it stands: `open`, taking
+// events; `ended`, its end placed, so it takes none, its exchange not yet let go. `add` takes a trace from `open` to
+// `ended`, and no other step does.
+export type Standing = { state: "open"; exchange: Exchange } | { state: "ended"; exchange: Exchange };
+
+// A read that has made what it needs of an ended exchange lets it go and holds `shown`, what it made, in its place:
+// none of the exchange's events, and still a trace that takes none.
+export type Settled<Shown> = { state: "settled"; shown: Shown };
+
+// The read's traces, by trace, in the order they began: each `Standing`, or, for a read that settles, `Rest`, which is
+// its `Settled`.
+export type ByTrace<Rest extends Settled<unknown> = never> = Map<TraceId, Standing | Rest>;
 
 // [LAW:single-enforcer] [LAW:parse-dont-validate] The one step that places an event in its exchange, and the one place
 // a recording is held to the shape the proxy writes: a trace holds one request head and one response head, at most one
 // trailers per side, and one end; a side's head comes before the rest of it and its trailers after, and a trace takes
-// nothing after its end. It returns the exchange the event is placed in. An event that breaks the shape is refused, as
-// what is wrong with it, naming its trace and type, and placed nowhere: what `byTrace` holds stays as it was. A head
-// never recorded is the shape: the recorder writes a side's body without it when the head's write fails.
-export function add(byTrace: ByTrace, event: RecordedEvent): Exchange | string {
-  const exchange = byTrace.get(event.trace_id) ?? begun(event);
+// nothing after its end, whatever the read holds of the trace by then. It returns the exchange the event is placed in. An
+// event that breaks the shape is refused, as what is wrong with it, naming its trace and type, and placed nowhere: what
+// `byTrace` holds stays as it was. A head never recorded is the shape: the recorder writes a side's body without it when
+// the head's write fails.
+export function add<Rest extends Settled<unknown>>(byTrace: ByTrace<Rest>, event: RecordedEvent): Exchange | string {
+  const held: Standing | Rest = byTrace.get(event.trace_id) ?? { state: "open", exchange: begun(event) };
+  if (held.state !== "open") return refused(event, "follows its trace's end");
+  const { exchange } = held;
   const place = placing(exchange, event);
-  if (typeof place === "string") return `trace ${event.trace_id}'s ${event.type} ${place}`;
+  if (typeof place === "string") return refused(event, place);
   place();
   exchange.latest = event;
-  byTrace.set(event.trace_id, exchange);
+  byTrace.set(event.trace_id, exchange.end === undefined ? held : { state: "ended", exchange });
   return exchange;
 }
+
+const refused = (event: RecordedEvent, why: string) => `trace ${event.trace_id}'s ${event.type} ${why}`;
 
 const begun = (event: RecordedEvent): Exchange => ({
   trace_id: event.trace_id,
@@ -60,7 +79,6 @@ const begun = (event: RecordedEvent): Exchange => ({
 
 // What `event` does to `exchange`, not yet done, or why it has no place there.
 function placing(exchange: Exchange, event: RecordedEvent): string | (() => void) {
-  if (exchange.end !== undefined) return "follows its trace's end";
   switch (event.type) {
     case "request":
       return head(exchange.request, event);

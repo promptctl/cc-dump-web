@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordingName, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
-import type { Handler } from "@cc-dump/log";
+import { stream, type Route } from "@cc-dump/log/answer";
 import { eventLog, serving } from "@cc-dump/log/testing";
+import { ROUTES } from "@cc-dump/log/wire";
 import { tmuxSocketDir } from "@promptctl/tmux-control-mode-js";
 import { onTestFinished } from "vitest";
 import { sessionId, startTime, windowId, type TmuxWindow } from "./format.ts";
@@ -36,10 +37,10 @@ export async function app({
   };
   const events = eventLog();
   // The app server's log lines, as a stand-in: what is served at `/logs` is processLog's to test.
-  const logs: Handler = (_req, res) => void res.writeHead(200).end("the app server's log");
+  const logs: Route = () => stream((res) => void res.end("the app server's log"));
   const { url, port, next } = await serving(createApp({ log: events.log, logs, settingsPath, tmux: fake, proxyInfo, proxyRecording: makeRecording, directory: "/work/project" }));
   const launch = (body: unknown, headers: Record<string, string> = {}) =>
-    fetch(`${url}/launch`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    fetch(`${url}${ROUTES.launch}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   return { url, port, next, work: events.next, settingsPath, opened, launch };
 }
 

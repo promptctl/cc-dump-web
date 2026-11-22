@@ -12,7 +12,6 @@ import {
   parseListings,
   parseProxyInfo,
   parseProxyStatus,
-  parseReadFailure,
   parseRecordedEvent,
   parseRecordingEnd,
   parseRecordingName,
@@ -99,23 +98,19 @@ describe("a byte offset", () => {
 });
 
 describe("the reader's messages", () => {
-  it("reads back a recordings list, a recording's end, and a read's failure", () => {
+  it("reads back a recordings list and a recording's end", () => {
     const listings = [{ name: "20261113T080000.000Z.jsonl" }, { name: "run-20261113T090000.000Z.jsonl" }];
     expect(parseListings(JSON.stringify(listings))).toEqual(listings);
     expect(parseListing(JSON.stringify(listings[0]))).toEqual(listings[0]);
     expect(parseRecordingEnd(JSON.stringify({ unterminated_bytes: 12 }))).toEqual({ unterminated_bytes: 12 });
-    expect(parseReadFailure(JSON.stringify({ message: "EISDIR: illegal operation on a directory, read" }))).toEqual({
-      message: "EISDIR: illegal operation on a directory, read",
-    });
   });
 
-  it("refuses a list, an end, or a failure of another shape", () => {
+  it("refuses a list or an end of another shape", () => {
     expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
     expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name is not a string");
     expect(() => parseListing("[]")).toThrow("recording: is not an object");
     expect(() => parseListing('{"name":7}')).toThrow("recording: name is not a string");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
-    expect(() => parseReadFailure('{"error":"EISDIR"}')).toThrow("read failure: message is not a string");
   });
 
   const info = { base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/home/me/.local/share/cc-dump/recordings" };
