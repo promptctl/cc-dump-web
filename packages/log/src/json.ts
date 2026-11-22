@@ -52,7 +52,7 @@ export type Refusal = { readonly at: Path; readonly why: string };
 export const refusalText = (refusals: readonly Refusal[]): string => refusals.map(({ at, why }) => (at.length === 0 ? why : `${pathText(at)}: ${why}`)).join("; ");
 
 // A refusal of a value holding several, each at its own path: what `object` throws when fields of it are refused.
-export class Refused extends Malformed {
+export class Refusals extends Malformed {
   readonly refusals: readonly Refusal[];
   constructor(refusals: readonly Refusal[]) {
     super(refusalText(refusals));
@@ -116,7 +116,7 @@ export const held =
       return { ...read, value: { is: "read", value: read.value } };
     } catch (error) {
       if (!(error instanceof Malformed)) throw error;
-      return just({ is: "refused", refusals: error instanceof Refused ? error.refusals : [{ at, why: describe(error) }], sent: json });
+      return just({ is: "refused", refusals: error instanceof Refusals ? error.refusals : [{ at, why: describe(error) }], sent: json });
     }
   };
 
@@ -130,7 +130,7 @@ export function joined<T>(values: readonly Held<T>[]): { is: "read"; value: T[] 
 // Several values read together, each held, joined: refused as one when any is.
 function together<T>(reads: readonly (readonly [string, Read<Held<T>>])[]): Read<[string, T][]> {
   const all = joined(reads.map(([, { value }]) => value));
-  if (all.is === "refused") throw new Refused(all.refusals);
+  if (all.is === "refused") throw new Refusals(all.refusals);
   return {
     value: reads.map(([key], index) => [key, all.value[index]!]),
     unknown: reads.flatMap(([, { unknown }]) => unknown),
@@ -206,7 +206,7 @@ export const tagged =
       const readers = variants[is as T[K]] as Readers<Record<string, unknown>>;
       return object({ ...readers, [tag]: raw })(json, at) as Read<T>;
     }
-    throw new Refused([{ at: [...at, tag], why: is === undefined ? "is missing" : `is not one of ${Object.keys(variants).join(", ")}` }]);
+    throw new Refusals([{ at: [...at, tag], why: is === undefined ? "is missing" : `is not one of ${Object.keys(variants).join(", ")}` }]);
   };
 
 // The document `what` read by `reader` from its root, or refused with `Malformed` naming `what`.

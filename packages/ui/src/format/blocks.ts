@@ -131,6 +131,19 @@ const tools = () => "tools" as const;
 // still, shown as received among the rest.
 const thought = (_: Role, { thinking }: Fields<{ thinking: string }>): Category => (thinking.is === "refused" || thinking.value !== "" ? "thinking" : "usage");
 
+// [LAW:types-are-the-program] A tool's input as a stream has sent it so far (format/stream.ts): its JSON text, not yet
+// JSON, so a value no JSON holds, which no input the API sent whole is ever taken for. A block holding it shown as
+// received shows the text.
+export class InputSoFar {
+  readonly text: string;
+  constructor(text: string) {
+    this.text = text;
+  }
+  toJSON(): string {
+    return this.text;
+  }
+}
+
 // A tool use, its input read by `read`: a client tool's by the tool's own shape (format/tools.ts), a server tool's or
 // an MCP server's, whose names are their own and may be any, as its JSON.
 type Use = { id: string; name: string; input: unknown };
@@ -139,9 +152,9 @@ const toolUse = (read: (name: string, input: unknown, at: Path) => Part[]): Entr
   category: tools,
   name: ({ name }, type) => `${type}: ${name}`,
   parts: ({ id, name, input }, at) => {
-    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is:
-    // the input's deltas' `partial_json`, joined, another text than the input it becomes.
-    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(name, input, [...at, "input"]);
+    // The input so far is shown as the text it is: the input's deltas' `partial_json`, joined, another text than the
+    // input it becomes.
+    const parts: Part[] = input instanceof InputSoFar ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input.text }] : read(name, input, [...at, "input"]);
     return [...parts, { id: "id", kind: "fields", fields: [["id", id]] }];
   },
 });

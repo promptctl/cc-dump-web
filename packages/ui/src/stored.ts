@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { encoded, entries, held, kinds, object, orElse, parseJson, raw, value, type Path, type Read, type Reader, type Refusal } from "@cc-dump/log/json";
+import { encoded, entries, held, kinds, object, parseJson, raw, value, type Path, type Read, type Reader, type Refusal } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { equal } from "./equal.ts";
 import { decided, failed } from "./log.ts";
@@ -9,11 +9,12 @@ import { decided, failed } from "./log.ts";
 // The items the UI keeps in a Web Storage: the tab's view (view/state.ts) and the reader's settings (settings.ts).
 export type StoreName = "cc-dump.view" | "cc-dump.settings";
 
-// [LAW:nothing-unseen] How an item was read: nothing was stored; it was read, under the version it was stored by, with
-// each value of it this build refused, which the store holds its first state's for, each field of it no reader of
-// this build names, by path, and the versions whose states are kept beside it, unread; what is stored is not an item (not JSON, or not `{state, version}`), so it
-// is replaced at the next write; the storage failed as it was reached, so what it holds is not known; or this build's
-// own read threw, its bug, so what it holds is not known either.
+// [LAW:nothing-unseen] How an item was read: nothing was stored; it was read, under the version the state it read was
+// stored by, with each value of it this build refused, which the store holds its first state's for, each field of it
+// no reader of this build names, by path, and the versions whose states are kept beside it; what is stored is not an
+// item (not JSON, or not the envelope every build shares), so it is replaced at the next write; the storage failed as
+// it was reached, so what it holds is not known; or this build's own read threw, its bug, so what it holds is not
+// known either.
 export type StoredRead =
   | { stored: "none" }
   | { stored: "read"; version: number; refused: readonly Refusal[]; unknown: readonly Path[]; kept: readonly string[] }
@@ -137,11 +138,12 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   if (text.ok === null) return { read: { stored: "none" }, state: { state: initial, version } };
   try {
     const envelope = storedItem(parseJson(text.ok, name), []);
-    const state = read(envelope.value.state, envelope.value.version);
-    const refused = [...envelope.replaced, ...state.replaced.map(({ at, why }) => ({ at: ["state", ...at], why }))];
-    const unknown = [...envelope.unknown.map(({ at }) => at), ...state.unknown.map(({ at }) => ["state", ...at])];
+    const own = ownState(envelope.value, version);
+    const state = read(own.state, own.version);
+    const refused = state.replaced.map(({ at, why }) => ({ at: [...own.at, ...at], why }));
+    const unknown = [...envelope.unknown.map(({ at }) => at), ...state.unknown.map(({ at }) => [...own.at, ...at])];
     return {
-      read: { stored: "read", version: envelope.value.version, refused, unknown, kept: Object.keys(envelope.value.kept) },
+      read: { stored: "read", version: own.version, refused, unknown, kept: Object.keys(envelope.value.kept) },
       state: { state: state.value, version },
     };
   } catch (error) {
@@ -150,26 +152,37 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   }
 }
 
-// [LAW:parse-dont-validate] An item as it is stored: persist's `{state, version}`, its state sent, and, kept beside
-// them, the state each other version of the item stored, by its version, which this build never reads as its own. A
-// `kept` that does not read is none, named among what the read refused, and costs the item nothing. A build that does
-// not know `kept` passes it over, as a field its envelope has no reader for.
+// [LAW:parse-dont-validate] [LAW:one-source-of-truth] An item as it is stored: persist's `{state, version}`, its state
+// sent, the state of the version that last wrote it; and `kept` beside them, by version, the state of each other
+// version that wrote it before, none when it holds none. Each version's state is in one place, the item's or kept. Its
+// fields are the format every build shares, so a `kept` of another shape makes what is stored no item, as a `version`
+// of another type does. A build that does not know `kept` passes it over, as a field its envelope has no reader for.
 type Envelope = { state: unknown; version: number; kept: Record<string, unknown> };
-const storedItem = object<Envelope>({ state: value(kinds.sent), version: value(kinds.integer), kept: orElse(entries(raw), {}) });
+const keptStates = entries(raw);
+const storedItem = object<Envelope>({ state: value(kinds.sent), version: value(kinds.integer), kept: (json, at) => keptStates(json === undefined ? {} : json, at) });
 const storedText: Reader<Envelope> = (text, at) => storedItem(encoded(text, at).value, at);
 
+// The state this build reads of an item, at `at` in it: its own version's, the item's or the one kept under its
+// version, so a state it stored comes back as it stored it whichever versions wrote the item since; and when the
+// item holds none of its version's, the state another version last stored, which it reads as its own.
+function ownState({ state, version: by, kept }: Envelope, version: number): { state: unknown; version: number; at: Path } {
+  if (by === version) return { state, version, at: ["state"] };
+  return Object.hasOwn(kept, String(version)) ? { state: kept[String(version)], version, at: ["kept", String(version)] } : { state, version: by, at: ["state"] };
+}
+
 // [LAW:one-source-of-truth] What a write of `state` stores over `stored`, the item as it is stored now: only the
-// reader's changes, those of `state` from `baseline`, over the item's state, so a field this build has no reader for,
-// a value it refused (whose fallback the store holds), and a change another tab made stay as stored until the reader
-// changes them. A state another version stored is kept as it is under its version, and the item's state is this
-// build's read of it with the reader's changes, so a value stored under another version is never written as this
-// version's; a state kept under this version is the one written, and is kept no more. An item that is none, or does not
-// read, is replaced. The envelope's other fields are written after it as stored.
+// reader's changes, those of `state` from `baseline`, over the state this build reads of it (ownState), so a field
+// this build has no reader for, a value it refused (whose fallback the store holds), and a change another tab made stay
+// as stored until the reader changes them. The item's state becomes this version's; the state another version last
+// stored is kept under its version, and every state kept stays as it was, but this version's own, which the item now
+// holds. An item that is none, or does not read, is replaced. The envelope's other fields are written after it as
+// stored.
 function written<T>({ version, read }: Item<T>, stored: string | null, baseline: T, state: T): Record<string, unknown> {
   const item = stored === null ? undefined : held(storedText)(stored, []);
   const envelope = item?.value.is === "read" ? item.value.value : { state: baseline, version, kept: {} };
   const others = (item?.unknown ?? []).map(({ at, value }): [string, unknown] => [at[0]!, value]);
-  const base = envelope.version === version ? envelope.state : read(envelope.state, envelope.version).value;
+  const own = ownState(envelope, version);
+  const base = own.version === version ? own.state : read(own.state, own.version).value;
   const keeping = envelope.version === version ? envelope.kept : { ...envelope.kept, [String(envelope.version)]: envelope.state };
   const kept = Object.fromEntries(Object.entries(keeping).filter(([stored]) => stored !== String(version)));
   const next = patch(base, state, diff(state, baseline, []));

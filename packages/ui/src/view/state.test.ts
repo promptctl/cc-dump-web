@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { exchanges, memoryStorage, recordedAt } from "../testing.ts";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
@@ -100,7 +101,7 @@ describe("the search", () => {
   });
 
   it("takes a match stepped to as current with the pattern it was found under, which the column's judge holds it to", () => {
-    view.goTo({ match, folds: [] }, "t1");
+    view.goTo({ match, folds: [] }, parseTraceId("t1"));
     expect(useView.getState().search.current).toEqual(match);
     // A change of the query or of an option, which every tab shares, is the pattern's; the judge, which runs in every
     // tab, finds the match taken under another (moves.ts `judge`).
@@ -119,15 +120,15 @@ describe("the search", () => {
 
   // What a step chose is the reader's choice, however the fold starts, so a change of level never hides the current match.
   it("chooses open the folds holding a match, over the reader's close, and records nothing for a step among what they hold open", () => {
-    view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, "t1");
+    view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, parseTraceId("t1"));
     expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true, r: true });
     // The next match in the same region: nothing is chosen, so the choices are the record they were.
     const { opened } = useView.getState();
-    view.goTo({ match: { ...match, nth: 1 }, folds: ["t1/tools", row.key, "r"] }, "t1");
+    view.goTo({ match: { ...match, nth: 1 }, folds: ["t1/tools", row.key, "r"] }, parseTraceId("t1"));
     expect(useView.getState().opened).toBe(opened);
     expect(useView.getState().search.current).toEqual({ ...match, nth: 1 });
     useView.setState({ opened: { "t1/tools": false } });
-    view.goTo({ match, folds: ["t1/tools"] }, "t1");
+    view.goTo({ match, folds: ["t1/tools"] }, parseTraceId("t1"));
     expect(useView.getState().opened).toEqual({ "t1/tools": true });
   });
 });
@@ -138,16 +139,16 @@ describe("a click on an entry of a text's contents", () => {
   it("opens the folds that show its heading, one the reader closed with them, and moves to its block's row, leaving now and the search as it was", () => {
     const search = { query: "x", current: { key: "elsewhere", at: "name", nth: 0, pattern: "/x/giu" } };
     useView.setState({ opened: { "p/2": false, other: false }, search });
-    view.toHeading(row.key, ["p/2", "p/6"], "t4");
+    view.toHeading(row.key, ["p/2", "p/6"], parseTraceId("t4"));
     expect(useView.getState()).toMatchObject({
       opened: { "p/2": true, "p/6": true, other: false },
       position: { at: "row", key: row.key, offset: 0 },
-      moment: { at: "left", trace: "t4" },
+      moment: { at: "left", trace: parseTraceId("t4") },
       search,
     });
     // Its folds already chosen open, another click chooses nothing, so the choices are the record they were.
     const { opened } = useView.getState();
-    view.toHeading(row.key, ["p/2", "p/6"], "t4");
+    view.toHeading(row.key, ["p/2", "p/6"], parseTraceId("t4"));
     expect(useView.getState().opened).toBe(opened);
   });
 });
@@ -177,39 +178,39 @@ describe("the moment", () => {
   beforeEach(() => useView.setState(useView.getInitialState(), true));
 
   it("is never changed by the view's own placing, now or held", () => {
-    view.place(place, "view", "t9");
+    view.place(place, "view", parseTraceId("t9"));
     expect(useView.getState().moment).toEqual({ at: "now" });
-    useView.setState({ moment: { at: "chosen", trace: "t3" } });
-    view.place(place, "view", "t9");
-    expect(useView.getState().moment).toEqual({ at: "chosen", trace: "t3" });
+    useView.setState({ moment: { at: "chosen", trace: parseTraceId("t3") } });
+    view.place(place, "view", parseTraceId("t9"));
+    expect(useView.getState().moment).toEqual({ at: "chosen", trace: parseTraceId("t3") });
   });
 
   it("is left at now's step by a reader's act away from it, and is now again at the end", () => {
-    view.place(place, "reader", "t9");
-    expect(useView.getState()).toMatchObject({ position: place, moment: { at: "left", trace: "t9" } });
+    view.place(place, "reader", parseTraceId("t9"));
+    expect(useView.getState()).toMatchObject({ position: place, moment: { at: "left", trace: parseTraceId("t9") } });
     // Another act leaves it where it was left.
-    view.place({ ...place, offset: 9 }, "reader", "t10");
-    expect(useView.getState().moment).toEqual({ at: "left", trace: "t9" });
-    view.place({ at: "end" }, "reader", "t10");
+    view.place({ ...place, offset: 9 }, "reader", parseTraceId("t10"));
+    expect(useView.getState().moment).toEqual({ at: "left", trace: parseTraceId("t9") });
+    view.place({ at: "end" }, "reader", parseTraceId("t10"));
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, "t10");
-    expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
+    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, parseTraceId("t10"));
+    expect(useView.getState().moment).toEqual({ at: "left", trace: parseTraceId("t10") });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, "t10");
-    view.moveInTime({ at: "chosen", trace: "t3" }, place);
+    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, parseTraceId("t10"));
+    view.moveInTime({ at: "chosen", trace: parseTraceId("t3") }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();
-    view.place({ ...place, offset: 9 }, "reader", "t10");
-    expect(useView.getState()).toMatchObject({ position: { ...place, offset: 9 }, moment: { at: "chosen", trace: "t3" } });
-    view.place({ at: "end" }, "view", "t10");
+    view.place({ ...place, offset: 9 }, "reader", parseTraceId("t10"));
+    expect(useView.getState()).toMatchObject({ position: { ...place, offset: 9 }, moment: { at: "chosen", trace: parseTraceId("t3") } });
+    view.place({ at: "end" }, "view", parseTraceId("t10"));
     expect(useView.getState().moment).toEqual({ at: "now" });
   });
 
   it("opens a recording now", () => {
-    useView.setState({ moment: { at: "chosen", trace: "t3" } });
+    useView.setState({ moment: { at: "chosen", trace: parseTraceId("t3") } });
     view.open(agent);
     expect(useView.getState().moment).toEqual({ at: "now" });
   });
@@ -223,7 +224,7 @@ describe("a stored view", () => {
     terminal: { window, shown: true },
     opened: { "t1/request/http": true, "thread:t1/message.0/content.0": false },
     position: { at: "row", key: "thread:t1/message.0/content.0", offset: 12.5 },
-    moment: { at: "left", trace: "t1" },
+    moment: { at: "left", trace: parseTraceId("t1") },
     search: { query: "x", current: { key: "thread:t1/message.0/content.0", at: '["part",0]', nth: 1, pattern: "/x/giu" } },
   };
 
@@ -268,6 +269,12 @@ describe("a stored view", () => {
       unknown: [],
       replaced: [{ at: ["opened", "b"], why: "is not a boolean" }],
     });
+  });
+
+  it("reads a moment whose trace is no trace id as now, saying why", () => {
+    const read = readView({ ...full, moment: { at: "chosen", trace: "not a trace" } }, 7);
+    expect(read.value.moment).toEqual({ at: "now" });
+    expect(read.replaced).toEqual([{ at: ["moment", "trace"], why: expect.stringContaining("is not a word") }]);
   });
 
   it.each([6, 8])("from row-key scheme %i, keeps the recording, terminal, moment and query, and resets what names a row", (version) => {

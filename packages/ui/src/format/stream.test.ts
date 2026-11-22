@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InputSoFar } from "./blocks.ts";
 import { createReassembly } from "./stream.ts";
 
 // A stream's text reassembled all at once.
@@ -62,7 +63,7 @@ describe("createReassembly", () => {
   it("shows a tool's input as its text until its block stops", () => {
     const text = stream("\n");
     const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect(sofar.content[1]).toMatchObject({ block: { input: '{"command": "ls"}' }, cut: false });
+    expect(sofar.content[1]).toMatchObject({ block: { input: new InputSoFar('{"command": "ls"}') }, cut: false });
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

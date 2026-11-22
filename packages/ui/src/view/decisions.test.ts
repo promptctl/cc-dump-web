@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { eventsWritten } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { viewLog, type StepTaken } from "./decisions.ts";
@@ -47,10 +48,10 @@ describe("the view's decisions", () => {
   it("say where a current match was and why it was cleared, and a moment replaced by now", () => {
     const { events, decisions } = logged();
     decisions.matchCleared({ key: "t9/said", at: '["part","text"]', nth: 2, pattern: "/needle/giu", why: "text_changed", searching: "/needle/giu" });
-    decisions.momentReplaced({ at: "chosen", trace: "t3" }, { at: "gone", why: "read_ended" });
+    decisions.momentReplaced({ at: "chosen", trace: parseTraceId("t3") }, { at: "gone", why: "read_ended" });
     expect(events).toEqual([
       expect.objectContaining({ event: "match_cleared", key: "t9/said", at: '["part","text"]', nth: 2, why: "text_changed", pattern: "/needle/giu", searching: "/needle/giu" }),
-      expect.objectContaining({ event: "moment_replaced", from: { at: "chosen", trace: "t3" }, why: "read_ended" }),
+      expect.objectContaining({ event: "moment_replaced", from: { at: "chosen", trace: parseTraceId("t3") }, why: "read_ended" }),
     ]);
   });
 

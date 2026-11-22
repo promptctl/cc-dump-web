@@ -1063,8 +1063,15 @@ describe("a value that does not read", () => {
         .filter(({ name }) => name.endsWith(" event"))
         .map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
     expect(notApplied([frame(messageStart), frame({ type: "message_stop" }), frame(messageDelta)])).toEqual(["message_delta event: comes after message_stop"]);
-    expect(notApplied([frame({ type: "message_start", message: { ...messageStart.message, usage: "none" } }), frame(messageDelta)])).toEqual(["message_delta event: usage: extends a message whose usage is not an object"]);
-    expect(notApplied([frame(messageStart), ...text(0, null)])).toEqual(["content_block_delta event: delta.type: extends a block whose text is not a string"]);
+    expect(notApplied([frame({ type: "message_start", message: { ...messageStart.message, usage: "none" } }), frame(messageDelta)])).toEqual(["message_delta event: extends a message whose usage is not an object"]);
+    expect(notApplied([frame({ type: "message_start", message: { ...messageStart.message, usage: null } }), frame(messageDelta)])).toEqual(["message_delta event: extends a message whose usage is not an object"]);
+    expect(notApplied([frame(messageStart), ...text(0, null)])).toEqual(["content_block_delta event: extends a block whose text is not a string"]);
+  });
+
+  it("never takes a tool's input sent whole as a string for the input a stream has sent so far", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "assistant", content: [{ type: "mcp_tool_use", id: "t1", name: "search", server_name: "s", input: "{}" }] }] }));
+    const [block] = group(formatted, "message.0");
+    expect(block!.parts.map(({ id }) => id)).not.toContain("partial_json");
   });
 
   it("keeps a message whose role does not read: its content formatted, its calls stated, and its role shown as received, with why", () => {

@@ -324,13 +324,16 @@ function messageGroups(sent: unknown, breakpoints: Field[]): { own: KeyedBlock[]
   const groups = messages.value.map((sentMessage, index) => {
     const at = ["messages", String(index)];
     const read = held(message)(sentMessage, at);
+    // [LAW:one-source-of-truth] The role a message speaks in, decided once: one that does not read, and one that is no
+    // object, speak as a system message does, the harness's.
     const role = read.value.is === "read" ? read.value.value.role : undefined;
-    const speaker = role?.is === "read" && role.value !== "system";
+    const speaking: Role = role?.is === "read" ? role.value : "system";
+    const speaker = speaking !== "system";
     const key = speaker ? `message.${speakers}` : `message.${speakers}.system.${standing}`;
     const place: Place = speaker ? { in: "message", index: speakers } : { in: "between", before: speakers, index: standing };
     standing = speaker ? 0 : standing + 1;
     speakers += speaker ? 1 : 0;
-    return messageGroup(read, sentMessage, key, place, at, breakpoints);
+    return messageGroup(read, speaking, sentMessage, key, place, at, breakpoints);
   });
   return { own: [], groups, speakers };
 }
@@ -340,13 +343,12 @@ function messageGroups(sent: unknown, breakpoints: Field[]): { own: KeyedBlock[]
 type Message = { role: Held<Role>; content: Held<string | unknown[]> };
 const message = object<Message>({ role: held(value(kinds.among(roles))), content: held(content) });
 
-// A message read at `at`, `sent` as it was: its role's blocks of its content, its content's breakpoints lifted, and its
-// other fields. One that is no object is shown as received, with why. One whose role does not read is no speaker's: its
-// content reads as a system message's does, the harness's, and its role is shown as received, with why, before it.
-function messageGroup(read: Read<Held<Message>>, sent: unknown, key: string, place: Place, at: Path, breakpoints: Field[]): Group {
+// A message read at `at`, `sent` as it was, speaking in `speaking`: its blocks of its content, its content's breakpoints
+// lifted, and its other fields. One that is no object is shown as received, with why. One whose role does not read has
+// its role shown as received, with why, before its content.
+function messageGroup(read: Read<Held<Message>>, speaking: Role, sent: unknown, key: string, place: Place, at: Path, breakpoints: Field[]): Group {
   if (read.value.is === "refused") return { key, title: "message", blocks: placed(place, one("message", [refusedBlock("http", "message", read.value.refusals, { kind: "json", value: sent })])) };
   const { role, content } = read.value.value;
-  const speaking: Role = role.is === "read" ? role.value : "system";
   const roleBlock: BlockOrNone = role.is === "read" ? [] : [refusedBlock("system", "role", role.refusals, { kind: "json", value: role.sent })];
   const blocks =
     content.is === "refused"

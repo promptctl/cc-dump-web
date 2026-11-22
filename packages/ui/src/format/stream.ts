@@ -1,6 +1,6 @@
-import { encoded, fieldOf, held, kinds, object, pathText, raw, refusalText, Refused, tagged, value, type Read, type Reader, type Refusal, type Unknown } from "@cc-dump/log/json";
+import { encoded, fieldOf, held, kinds, object, pathText, raw, refusalText, Refusals, tagged, value, type Read, type Reader, type Refusal, type Unknown } from "@cc-dump/log/json";
 import { serverSentEvents } from "@cc-dump/log/wire";
-import { errorBlock, type Block } from "./blocks.ts";
+import { errorBlock, InputSoFar, type Block } from "./blocks.ts";
 import { fieldValue, type Field } from "./parts.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
@@ -75,7 +75,7 @@ const index = value(kinds.integer);
 // show. Its fields, and a block's, are what it builds, read where it is formatted.
 const message: Reader<Record<string, unknown>> = (json, at) => {
   const read = value(kinds.object)(json, at);
-  if (fieldOf(read.value, "type") !== "message") throw new Refused([{ at: [...at, "type"], why: "is not message" }]);
+  if (fieldOf(read.value, "type") !== "message") throw new Refusals([{ at: [...at, "type"], why: "is not message" }]);
   return read;
 };
 const delta = tagged<"type", Delta>("type", {
@@ -140,7 +140,7 @@ const step =
   (state: State, name: string): Reader<State> =>
   (data, at) => {
     const read: Read<Event> = event(encoded(data, at).value, at);
-    if (read.value.type !== name) throw new Refused([{ at: [...at, "type"], why: `is not ${JSON.stringify(name)}, the event's name` }]);
+    if (read.value.type !== name) throw new Refusals([{ at: [...at, "type"], why: `is not ${JSON.stringify(name)}, the event's name` }]);
     const fields = read.unknown.reduce((kept, { at: path, value }: Unknown) => new Map(kept).set(pathText([read.value.type, ...path]), value), state.fields);
     return { ...read, value: apply({ ...state, fields }, read.value) };
   };
@@ -152,27 +152,27 @@ function apply(state: State, event: Event): State {
   const begun = (): Record<string, unknown> => {
     switch (state.message.is) {
       case "none":
-        throw new Refused([{ at: [], why: "comes before message_start" }]);
+        throw new Refusals([{ at: [], why: "comes before message_start" }]);
       case "stopped":
-        throw new Refused([{ at: [], why: "comes after message_stop" }]);
+        throw new Refusals([{ at: [], why: "comes after message_stop" }]);
       case "begun":
         return state.message.fields;
     }
   };
   const arriving = (at: number): Extract<Slot, { is: "arriving" }> => {
     const slot = state.content.get(at);
-    if (slot === undefined) throw new Refused([{ at: ["index"], why: "names no content block that has started" }]);
-    if (slot.is === "stopped") throw new Refused([{ at: ["index"], why: "names a content block that has stopped" }]);
+    if (slot === undefined) throw new Refusals([{ at: ["index"], why: "names no content block that has started" }]);
+    if (slot.is === "stopped") throw new Refusals([{ at: ["index"], why: "names a content block that has stopped" }]);
     return slot;
   };
   const content = (at: number, slot: Slot) => ({ ...state, content: new Map(state.content).set(at, slot) });
   switch (event.type) {
     case "message_start":
-      if (state.message.is !== "none") throw new Refused([{ at: [], why: "the message has already started" }]);
+      if (state.message.is !== "none") throw new Refusals([{ at: [], why: "the message has already started" }]);
       return { ...state, message: { is: "begun", fields: event.message } };
     case "content_block_start": {
       begun();
-      if (state.content.has(event.index)) throw new Refused([{ at: ["index"], why: "names a content block that has already started" }]);
+      if (state.content.has(event.index)) throw new Refusals([{ at: ["index"], why: "names a content block that has already started" }]);
       return content(event.index, { is: "arriving", block: event.content_block, input: "" });
     }
     case "content_block_delta": {
@@ -183,16 +183,17 @@ function apply(state: State, event: Event): State {
       const slot = arriving(event.index);
       // A tool's input is whole at its block's stop, so input that is not JSON by then does not apply.
       const input = slot.input === "" ? undefined : held(encoded)(slot.input, ["input"]).value;
-      if (input?.is === "refused") throw new Refused([{ at: [], why: `the input streamed to content block ${event.index} is not JSON` }]);
+      if (input?.is === "refused") throw new Refusals([{ at: [], why: `the input streamed to content block ${event.index} is not JSON` }]);
       return content(event.index, { is: "stopped", built: { block: input === undefined ? { ...slot.block } : { ...slot.block, input: input.value }, cut: false, index: event.index } });
     }
     // What the message ends with: why it stopped and its counts, and how its context was managed, which a whole
     // response holds on the message itself.
     case "message_delta": {
       const prior = begun();
-      // Its counts join those message_start began with, from none when it began with no usage.
-      const usage = fieldOf(prior, "usage") ?? {};
-      if (!kinds.object.fits(usage)) throw new Refused([{ at: ["usage"], why: "extends a message whose usage is not an object" }]);
+      // Its counts join those message_start began with, from none when it began with none.
+      const started = fieldOf(prior, "usage");
+      const usage = started === undefined ? {} : started;
+      if (!kinds.object.fits(usage)) throw new Refusals([{ at: [], why: "extends a message whose usage is not an object" }]);
       const { stop_reason, stop_sequence } = event.delta;
       const { context_management } = event;
       return {
@@ -228,17 +229,17 @@ function apply(state: State, event: Event): State {
 
 // A block as far as it has arrived: its tool input as the JSON text sent so far, which is not yet JSON.
 function assembled({ block, input }: Extract<Slot, { is: "arriving" }>): Record<string, unknown> {
-  return growthOf(block) === "input" && input !== "" ? { ...block, input } : { ...block };
+  return growthOf(block) === "input" && input !== "" ? { ...block, input: new InputSoFar(input) } : { ...block };
 }
 
 // A block extended by a delta of the kind it grows by, from nothing when its start did not carry the field, or carried
 // citations as `null`, which is how the API says a text has none.
 function grown(slot: Extract<Slot, { is: "arriving" }>, delta: Delta): Slot {
-  if (grows[delta.type] !== growthOf(slot.block)) throw new Refused([{ at: ["delta", "type"], why: `does not extend a ${String(fieldOf(slot.block, "type"))} block` }]);
+  if (grows[delta.type] !== growthOf(slot.block)) throw new Refusals([{ at: ["delta", "type"], why: `does not extend a ${String(fieldOf(slot.block, "type"))} block` }]);
   const appended = (field: string, more: string): Slot => {
     const started = fieldOf(slot.block, field);
     const prior = started === undefined ? "" : started;
-    if (!kinds.string.fits(prior)) throw new Refused([{ at: ["delta", "type"], why: `extends a block whose ${field} is not a string` }]);
+    if (!kinds.string.fits(prior)) throw new Refusals([{ at: [], why: `extends a block whose ${field} is not a string` }]);
     return { ...slot, block: { ...slot.block, [field]: prior + more } };
   };
   switch (delta.type) {
@@ -252,7 +253,7 @@ function grown(slot: Extract<Slot, { is: "arriving" }>, delta: Delta): Slot {
       return { ...slot, input: slot.input + delta.partial_json };
     case "citations_delta": {
       const prior = fieldOf(slot.block, "citations") ?? [];
-      if (!kinds.list.fits(prior)) throw new Refused([{ at: ["delta", "type"], why: "extends a block whose citations are not a list" }]);
+      if (!kinds.list.fits(prior)) throw new Refusals([{ at: [], why: "extends a block whose citations are not a list" }]);
       return { ...slot, block: { ...slot.block, citations: [...prior, delta.citation] } };
     }
   }

@@ -33,6 +33,13 @@ it("reads a file holding keys no setting is named, naming each, the rest at thei
   });
 });
 
+it("refuses to write a change its next read would refuse, leaving the file as it was", () => {
+  const path = join(dir(), "test.json");
+  file.write(path, { name: "kept", count: 2 });
+  expect(() => file.write(path, { count: 1.5 })).toThrow(/^test settings in .*, as changed: count: is not an integer$/);
+  expect(file.read(path).settings).toEqual({ name: "kept", count: 2 });
+});
+
 it("refuses a value a setting's reader would replace by a fallback, naming the key, never reading it as the fallback", () => {
   const lenient = settingsFile<Test>("test settings", { name: value(kinds.string), count: orElse(value(kinds.integer), 1) }, { name: "none", count: 1 });
   expect(() => lenient.parse('{"count":"many"}')).toThrow(/^test settings: count: is not an integer$/);

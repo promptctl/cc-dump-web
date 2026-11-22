@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { jsonObject, object, parse, parseJson, pathText, readDocument, Refused, type Reader, type Readers } from "@cc-dump/log/json";
+import { jsonObject, object, parse, parseJson, pathText, readDocument, Refusals, type Reader, type Readers } from "@cc-dump/log/json";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the keys the file set;
 // every other setting is its default. `unknown_keys`: the keys of the file no setting is named, another build's or a
@@ -18,7 +18,7 @@ export function settingsFile<S>(what: string, readers: Readers<S>, defaults: { [
   // value the part cannot take is.
   const settings: Reader<S> = (json, at) => {
     const read = object(readers)(json, at);
-    if (read.replaced.length > 0) throw new Refused(read.replaced);
+    if (read.replaced.length > 0) throw new Refusals(read.replaced);
     return read;
   };
   parse(settings, defaults, `${what}'s defaults`);
@@ -35,12 +35,14 @@ export function settingsFile<S>(what: string, readers: Readers<S>, defaults: { [
     // A file it cannot take is refused naming it, so the user knows which file to change.
     read: (path: string) => parseAs(`${what} in ${path}`)(fileText(path)),
     // [LAW:one-source-of-truth] The settings `changes` sets, over the file as it is: every other key in it, another
-    // build's included, is kept as it was. A file that is no JSON object is refused, naming it, not written over. The
-    // file is replaced at once: written beside it, then renamed over it, so a reader never sees half of it.
+    // build's included, is kept as it was. A file that is no JSON object is refused, naming it, not written over; so is
+    // a change the settings' readers refuse, so the file holds only what its next read takes. The file is replaced at
+    // once: written beside it, then renamed over it, so a reader never sees half of it.
     write: (path: string, changes: Partial<S>) => {
       const said = `${what} in ${path}`;
       const text = fileText(path);
       const file = text === undefined ? {} : jsonObject(parseJson(text, said), said);
+      readDocument(settings, { ...defaults, ...file, ...changes }, `${said}, as changed`);
       mkdirSync(dirname(path), { recursive: true });
       const written = `${path}.${process.pid}.tmp`;
       writeFileSync(written, `${JSON.stringify({ ...file, ...changes }, null, 2)}\n`);

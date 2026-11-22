@@ -75,14 +75,7 @@ describe("a stored item's read", () => {
     ]);
   });
 
-  it("reads a `kept` that does not read as none, named, and the item still read", async () => {
-    const { storeIn, events } = await reported();
-    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: true }, version: 0, kept: 5 }) }).storage);
-    expect(store.getState()).toEqual({ name: "a", on: true });
-    expect(events).toMatchObject([{ read: { stored: "read", refused: [{ at: ["kept"], why: "is not an object" }], kept: [] } }]);
-  });
-
-  it.each([["{"], [JSON.stringify({ name: "a" })], [JSON.stringify({ version: 0 })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
+  it.each([["{"], [JSON.stringify({ name: "a" })], [JSON.stringify({ version: 0 })], [JSON.stringify({ state: { name: "a" }, version: 0, kept: 5 })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
     const { storeIn, events } = await reported();
     const { storage, held } = memoryStorage({ [name]: text });
     const store = storeIn(storage);
@@ -216,13 +209,20 @@ describe("a stored item's write", () => {
     expect(held.get(name)).toBe(item({ name: "a", on: true }));
   });
 
-  it("keeps the state another version stored under it, and no state kept under the version it writes", async () => {
-    const { storeIn } = await reported();
+  it("keeps each version's state in one place through builds of other versions, and reads a build's own back as it stored it", async () => {
+    const { stored, events } = await reported();
     const later = { name: "later", on: true, extra: 1 };
-    const { storage, held } = memoryStorage({ [name]: JSON.stringify({ state: later, version: 1, kept: { 0: { name: "old", on: false } } }) });
-    const store = storeIn(storage);
-    store.setState({ on: false });
+    const { storage, held } = memoryStorage({ [name]: JSON.stringify({ state: later, version: 1 }) });
+    const build = (version: number) => create<Chosen>()(persist(() => first, stored({ name, version, storage: () => storage, initial: first, read: readChosen })));
+    // A build of version 0 reads the state version 1 stored as its own, and keeps that state as it was under 1.
+    build(0).setState({ on: false });
     expect(JSON.parse(held.get(name)!)).toEqual({ state: { name: "later", on: false }, version: 0, kept: { 1: later } });
+    // A build of version 1 reads back its own state, every field of it, and keeps version 0's in its place.
+    const again = build(1);
+    expect(again.getState()).toEqual({ name: "later", on: true });
+    expect(events.at(-1)).toMatchObject({ read: { stored: "read", version: 1, unknown: [["kept", "1", "extra"]], kept: ["1"] } });
+    again.setState({ name: "newer" });
+    expect(JSON.parse(held.get(name)!)).toEqual({ state: { ...later, name: "newer" }, version: 1, kept: { 0: { name: "later", on: false } } });
   });
 
   it("writes a change into a value stored as no object by the reader's whole value there", async () => {
