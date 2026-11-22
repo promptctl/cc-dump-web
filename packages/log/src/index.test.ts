@@ -339,7 +339,7 @@ describe("serve", () => {
     const { port, close } = await serve(log, () => {}, 0);
     await close();
 
-    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port: 0, bound_port: port });
+    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", requested_port: 0, port });
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
   });
 
@@ -392,7 +392,9 @@ describe("serve", () => {
     const { log, next } = eventLog();
 
     await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
-    expect(await next()).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, port, error: expect.stringContaining("EADDRINUSE") });
+    const listen = await next();
+    expect(listen).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, requested_port: port, error: expect.stringContaining("EADDRINUSE") });
+    expect(listen).not.toHaveProperty("port");
   });
 
   // macOS lets the bind to LOOPBACK share a port held on the wildcard, where Linux refuses it; sharing, serve's is the

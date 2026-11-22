@@ -143,13 +143,14 @@ export async function serve(log: Log, handler: Handler, port: number, upgrade?: 
     log,
     mintTraceId(),
     "listen",
-    { address: LOOPBACK, port },
+    // `port` is the port bound, as on every event of this server; the port asked for is its own fact.
+    { address: LOOPBACK, requested_port: port },
     async () => {
       server.listen(port, LOOPBACK);
       await once(server, "listening");
       return (server.address() as AddressInfo).port;
     },
-    (bound) => ({ bound_port: bound }),
+    (bound) => ({ port: bound }),
   );
   return {
     port: bound,

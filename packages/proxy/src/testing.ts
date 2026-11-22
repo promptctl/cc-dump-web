@@ -36,6 +36,6 @@ export async function proxyProcess(upstream: string, dir: string, fileSizeLimit:
     { event: "listen" },
     { event: "listen" },
   ]);
-  const [proxyPort, readerPort] = started.slice(3).map(({ bound_port }) => bound_port) as [number, number];
+  const [proxyPort, readerPort] = started.slice(3).map(({ port }) => port) as [number, number];
   return { child, proxyPort, readerPort, next };
 }

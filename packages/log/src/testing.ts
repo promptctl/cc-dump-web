@@ -60,7 +60,7 @@ export async function serving(handler: Handler, upgrade?: Upgrade) {
   const { log, next } = eventLog();
   const { port, close } = await serve(log, handler, 0, upgrade);
   onTestFinished(close);
-  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, port: 0, bound_port: port });
+  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, requested_port: 0, port });
   return { port, url: `http://${LOOPBACK}:${port}`, next };
 }
 

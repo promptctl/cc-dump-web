@@ -131,7 +131,7 @@ async function bytesAt({ path }: Reading, position: number, length: number, limi
 // read under way runs on, and what it read is dropped when it finds the stream destroyed. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
 // [LAW:nothing-unseen] Catching up to the end of what exists is the reader's bounded work, and its own event
 // in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or the
-// request ends before then, with the request's ending. Following is the request itself; what it delivered is
+// request ends before then, with how the request's response ended. Following is the request itself; what it delivered is
 // every event written after.
 function recordingEvents(reading: Reading, from: number, fail: (error: unknown) => void) {
   const { log, trace_id, ended, name, followed, recordings } = reading;
