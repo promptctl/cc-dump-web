@@ -1,4 +1,4 @@
-import { attempt, fieldOf, kinds, list, nullable, object, optional, parse, parseJson, raw as rawValue, readShown, tagged, unreadFields, value, type Readers, type Unread } from "@cc-dump/log/json";
+import { attempt, fieldOf, kinds, list, nullable, object, optional, parse, parseJson, raw as rawValue, readShown, tagged, tolerant, unreadFields, value, type Readers, type Tolerant, type Unread } from "@cc-dump/log/json";
 import { statusText } from "@cc-dump/log/status";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
@@ -252,7 +252,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
       let standing = 0;
       const messages = body.messages.map((sent) => {
         const message = readMessage(sent);
-        const system = "role" in message && message.role === "system";
+        const system = message.is === "read" && message.role === "system";
         const key = system ? `message.${speakers}.system.${standing}` : `message.${speakers}`;
         const place: Place = system ? { in: "system message", before: speakers, index: standing } : { in: "message", index: speakers };
         standing = system ? standing + 1 : 0;
@@ -262,8 +262,8 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = unreadFields(unread);
-      const said = parse(requestFacts, rest, "parameters");
-      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied)] };
+      const said = tolerated(requestFacts, rest, "parameters");
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters"), ...said.misfit], preview: [pickedPart(rest, varied)] };
       // Its line previews where they are.
       const places: PartBody = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
       const cache: BlockOrNone =
@@ -276,8 +276,8 @@ function requestBody(text: string, whole: boolean): RequestShown {
           ...messages,
         ],
         messages: speakers,
-        model: said.model,
-        session: sessionOf(said.metadata?.user_id),
+        model: said.value.model,
+        session: sessionOf(said.value.metadata?.user_id),
       };
     },
     (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
@@ -294,11 +294,18 @@ function sessionOf(userId: string | undefined): string | undefined {
 
 const string = value(kinds.string);
 
-// What a request's parameters say of it beside showing it: the model it asks for and the user its metadata names.
-const requestFacts = object<{ model: string | undefined; metadata: { user_id: string | undefined } | undefined }>({
-  model: optional(string),
-  metadata: optional(object({ user_id: optional(string) })),
-});
+// What a request's parameters say of it beside showing it, each read on its own from the parameters the request's line
+// shows (`tolerated`): the model it asks for and the user its metadata names.
+type RequestFacts = { model: string | undefined; metadata: { user_id: string | undefined } | undefined };
+const requestFacts = tolerant<RequestFacts>({ model: optional(string), metadata: optional(object({ user_id: optional(string) })) }, { model: undefined, metadata: undefined });
+
+// [LAW:no-silent-failure] The facts a tolerant read takes from `json`, the value a block shows as `what`, and why it
+// dropped each it could not take, as the one part that block shows it in, where it dropped any.
+function tolerated<T>(reader: Tolerant<T>, json: unknown, what: string): { value: T; misfit: Part[] } {
+  const { value, dropped } = reader(json, []);
+  return { value, misfit: dropped.length === 0 ? [] : [doesNotFit(dropped.map(({ at, why }) => [what, ...at, why].join(": ")).join("; "))] };
+}
+
 
 // What a request body sends: its tool definitions, its system prompt and its messages, each read on its own as it is
 // shown. Every other field is a parameter.
@@ -319,29 +326,35 @@ function lift(list: unknown[], at: (index: number, list: unknown[]) => string, b
 // how many tokens it may write, how it thinks and with what effort, and how it samples.
 const varied = ["model", "max_tokens", "thinking", "output_config.effort", "temperature"];
 
-// A message a request sends, read once: its role, its content and the fields no read asked for, or, refused, why, with
-// the message as it was sent.
-type MessageRead = { role: Role; content: unknown; unread: readonly Unread[] } | { refused: string; sent: unknown };
-const sentMessage = object({ role, content: rawValue });
+
+// A message a request sends, read once: its role, its content, which is read apart (`messageGroup`), and the fields no
+// read asked for; or, refused, why, with the message as it was sent.
+type MessageRead = { is: "read"; role: Role; content: unknown; unread: readonly Unread[] } | { is: "refused"; refused: string; sent: unknown };
+const sentMessage = object({ role, content: optional(rawValue) });
 const readMessage = (sent: unknown): MessageRead =>
   attempt(
     (): MessageRead => {
       const { value, unread } = readShown(sentMessage, sent, "message");
-      return { ...value, unread };
+      return { is: "read", ...value, unread };
     },
-    (refused) => ({ refused, sent }),
+    (refused) => ({ is: "refused", refused, sent }),
   );
 
 // A message's group, headed by its role, its content's breakpoints lifted out; one whose read is refused is shown raw,
-// headed by no speaker. Its content is read apart from its role, so a message whose content does not read keeps its
-// speaker and its place, its content shown raw, with why.
+// headed by no speaker. Its content is read apart from its role, so a message whose content does not read, or that
+// holds none, keeps its speaker and its place, its content shown raw, with why.
 function messageGroup(read: MessageRead, key: string, place: Place, breakpoints: Field[]): Group {
-  if ("refused" in read) return { key, title: "message", blocks: placed(place, one("message", [raw("http", "message", read.refused, { kind: "json", value: read.sent })])) };
-  const content = attempt(
-    () => messageContent(lift(asBlocks(parse(contents, read.content, "content")), (index) => `${key}/content.${index}`, breakpoints), read.role, place),
-    (reason) => placed(place, one("message", [raw("http", "message", reason, { kind: "json", value: read.content })])),
-  );
-  return { key, title: read.role, blocks: [...content, ...placed(place, one("fields", restBlock(read.unread, "parameters", "message")))] };
+  switch (read.is) {
+    case "refused":
+      return { key, title: "message", blocks: placed(place, one("message", [raw("http", "message", read.refused, { kind: "json", value: read.sent })])) };
+    case "read": {
+      const content = attempt(
+        () => messageContent(lift(asBlocks(parse(contents, read.content, "content")), (index) => `${key}/content.${index}`, breakpoints), read.role, place),
+        (reason) => placed(place, one("message", [raw("http", "message", reason, { kind: "json", value: read.content })])),
+      );
+      return { key, title: read.role, blocks: [...content, ...placed(place, one("fields", restBlock(read.unread, "parameters", "message")))] };
+    }
+  }
 }
 
 // Each tool definition as a block of its own, named for its tool, its description read first and its schema after.
@@ -411,7 +424,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
     // left over, as a stream cut short leaves it: shown earlier, it would come and go as each frame's bytes end.
     const tail = side.completedBy === undefined ? "" : stream.tail;
     const { own, reply, message } = stream.message === undefined ? none([]) : streamedBlocks(stream.message);
-    return { own: [...own, ...each("event", stream.blocks), ...one("tail", leftover("stream tail", tail))], reply: [...reply, ...each("error", stream.errors)], message };
+    return { own: [...own, ...each("event", stream.blocks), ...stream.fields.map((block) => keyed(block, block.name)), ...one("tail", leftover("stream tail", tail))], reply: [...reply, ...each("error", stream.errors)], message };
   }
   if (!whole) return none(one("body", leftover("response body so far", text)));
   return attempt(
@@ -451,7 +464,7 @@ function messageBlocks(fields: Message, unread: readonly Unread[]): ResponseShow
   const stopReason = fields.stop_reason;
   const stop = { stop_reason: stopReason, stop_sequence: fields.stop_sequence };
   const { usage } = fields;
-  const { counts, misfit } = countsOf(usage);
+  const { value: counts, misfit } = tolerated(usageCounts, usage, "usage");
   return {
     reply,
     own: [
@@ -482,24 +495,16 @@ function messageBlocks(fields: Message, unread: readonly Unread[]): ResponseShow
 // the thinking's.
 const counted = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens", "output_tokens_details.thinking_tokens"];
 
-// The counts of a message's usage the facts hold, where the API gave one: a count it gave as null, or not at all, is
-// none.
+// [LAW:no-silent-failure] The counts of a message's usage the facts hold, each read on its own from the usage the line
+// shows (`tolerated`): a count given as null, or not at all, is none; one that does not read, or a usage that is not an
+// object, is none, and the line says why.
 type Counts = { input_tokens: Count; cache_read_input_tokens: Count; cache_creation_input_tokens: Count; output_tokens: Count };
 type Count = number | null | undefined;
 const count = optional(nullable(value(kinds.number)));
-const usageCounts = object<Counts>({ input_tokens: count, cache_read_input_tokens: count, cache_creation_input_tokens: count, output_tokens: count });
-const uncounted: Counts = { input_tokens: undefined, cache_read_input_tokens: undefined, cache_creation_input_tokens: undefined, output_tokens: undefined };
-// [LAW:no-silent-failure] The counts a usage holds, read from the usage the line shows: a usage of another shape than an
-// object, which the line shows as its JSON, holds none; a usage whose counts do not read holds none and shows why.
-function countsOf(usage: unknown): { counts: Counts; misfit: Part[] } {
-  return kinds.object.fits(usage)
-    ? attempt(
-        () => ({ counts: parse(usageCounts, usage, "usage"), misfit: [] }),
-        (reason) => ({ counts: uncounted, misfit: [doesNotFit(reason)] }),
-      )
-    : { counts: uncounted, misfit: [] };
-}
-
+const usageCounts = tolerant<Counts>(
+  { input_tokens: count, cache_read_input_tokens: count, cache_creation_input_tokens: count, output_tokens: count },
+  { input_tokens: undefined, cache_read_input_tokens: undefined, cache_creation_input_tokens: undefined, output_tokens: undefined },
+);
 
 // A response's message, as a body or a stream builds it, beside its type: its content, why it stopped and what it
 // counted. A streamed message has not stopped until its message_delta, so it says null.

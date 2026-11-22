@@ -34,9 +34,9 @@ describe("each kind of document decides what a field it does not read means, at 
     expect(Object.getPrototypeOf(fields.source)).toBe(Object.prototype);
   });
 
-  it("a message a tolerant read dropped a part of is refused, naming each", () => {
-    const stored = object({ kept: tolerant({ on: value(kinds.boolean) }, { on: false }) });
-    expect(() => parse(stored, { kept: { on: "yes" } }, "event")).toThrow("event: kept: on: is not a boolean");
+  it("a tolerant read is a field of no message, settings file or shown value, whose reads drop nothing", () => {
+    // @ts-expect-error A tolerant read drops, and `object`'s fields are readers, which never do.
+    expect(typeof object({ kept: tolerant({ on: value(kinds.boolean) }, { on: false }) })).toBe("function");
   });
 });
 

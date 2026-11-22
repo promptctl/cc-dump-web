@@ -37,7 +37,8 @@ describe("createReassembly", () => {
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
+      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use" },
+      fields: [{ name: "message events", parts: [{ fields: [["message_stop.metrics", [["ms", "1"]]]] }] }],
       tail: "",
     });
     for (let at = 0; at <= text.length; at++) {

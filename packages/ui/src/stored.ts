@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, notRead, object, parseJson, raw, value, type Dropped, type Path, type Read } from "@cc-dump/log/json";
+import { kinds, notRead, object, parseJson, raw, value, type Dropped, type Path, type Read, type Tolerated } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -60,7 +60,7 @@ function ended(span: Span): Span {
 
 // An item as one store keeps it: its name, the version this build stores it under, the storage it is kept in, the
 // store's first state, and how a stored state is read, by the version it was stored under.
-export type Item<T> = { name: StoreName; version: number; storage: () => Storage; initial: T; read: (state: unknown, version: number) => Read<T> };
+export type Item<T> = { name: StoreName; version: number; storage: () => Storage; initial: T; read: (state: unknown, version: number) => Tolerated<T> };
 
 // [LAW:single-enforcer] [LAW:one-source-of-truth] An item's options for zustand `persist`, which owns the item from
 // here: it reads it as the store is made, and again as `rehydrate` asks, through the raw set, which writes nothing, and
@@ -140,7 +140,7 @@ const envelopeOf = (json: unknown) => envelope(json, []);
 
 // [LAW:nothing-unseen] What a read of a stored item, at `at` in it, did not take: each part it dropped, and each field it
 // does not read, which is gone once the item is written again.
-const droppedOf = ({ dropped, unread }: Read<unknown>, at: Path): Dropped[] =>
+const droppedOf = ({ dropped = [], unread }: Read<unknown> | Tolerated<unknown>, at: Path): Dropped[] =>
   [...dropped, ...unread.map(({ at }) => ({ at, why: notRead }))].map((part) => ({ ...part, at: [...at, ...part.at] }));
 
 // Whether a change another tab made to a storage (a `StorageEvent`) is to `item`: in its storage, at its name, or a

@@ -1,7 +1,7 @@
 import type { Event } from "@cc-dump/log/event";
 import { startTrace } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, tolerant, value, type Read } from "@cc-dump/log/json";
+import { kinds, tolerant, value, type Tolerated } from "@cc-dump/log/json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -10,7 +10,7 @@ import { memoryStorage } from "./testing.ts";
 
 type Chosen = { name: string; on: boolean };
 const first: Chosen = { name: "none", on: false };
-const readChosen = (state: unknown): Read<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
+const readChosen = (state: unknown): Tolerated<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
 const name = "cc-dump.settings";
 const item = (state: unknown, version = 0) => JSON.stringify({ state, version });
 

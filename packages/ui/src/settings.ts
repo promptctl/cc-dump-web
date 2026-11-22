@@ -1,4 +1,4 @@
-import { kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/json";
+import { kinds, tolerant, value, type Tolerated, type TolerantReaders } from "@cc-dump/log/json";
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -66,7 +66,7 @@ export const defaultSettings: Settings = {
 const boolean = value(kinds.boolean);
 // [LAW:types-are-the-program] One reader for each category, as `categories` lists them, which is what
 // `Record<Category, Visibility>` holds.
-const visibility = Object.fromEntries(categories.map((category) => [category, value(kinds.among(visibilities))])) as Readers<Record<Category, Visibility>>;
+const visibility = Object.fromEntries(categories.map((category) => [category, value(kinds.among(visibilities))])) as TolerantReaders<Record<Category, Visibility>>;
 
 // [LAW:parse-dont-validate] Settings as stored, read as this build reads them: each setting, and each category's level
 // and each way of reading a query, the one stored, or its default where none is stored or the one stored is not a value
@@ -84,7 +84,7 @@ const settingsReader = tolerant<Settings>(
   },
   defaultSettings,
 );
-export const readSettings = (state: unknown): Read<Settings> => settingsReader(state, []);
+export const readSettings = (state: unknown): Tolerated<Settings> => settingsReader(state, []);
 
 // The settings as the browser keeps them, in localStorage, in `storage` for a test. Stored at persist's first version,
 // as every build has stored them, and read alike under any.
