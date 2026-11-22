@@ -2,7 +2,7 @@ import { kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/js
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { categories, type Category } from "./format/blocks.ts";
+import type { Category } from "./format/blocks.ts";
 import { stored, type Item } from "./stored.ts";
 import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
@@ -64,9 +64,10 @@ export const defaultSettings: Settings = {
 };
 
 const boolean = value(kinds.boolean);
-// [LAW:types-are-the-program] One reader for each category, as `categories` lists them, which is what
-// `Record<Category, Visibility>` holds.
-const visibility = Object.fromEntries(categories.map((category) => [category, value(kinds.among(visibilities))])) as Readers<Record<Category, Visibility>>;
+// [LAW:types-are-the-program] One reader for each category, which the compiler holds to `Record<Category, Visibility>`:
+// a category added to `categories` is a compile error here until it is read.
+const level = value(kinds.among(visibilities));
+const visibility: Readers<Record<Category, Visibility>> = { user: level, assistant: level, tools: level, system: level, thinking: level, parameters: level, usage: level, http: level };
 
 // [LAW:parse-dont-validate] Settings as stored, read as this build reads them: each setting, and each category's level
 // and each way of reading a query, the one stored, or its default where none is stored or the one stored is not a value

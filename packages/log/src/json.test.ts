@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Malformed } from "./failure.ts";
-import { droppedOf, entries, kinds, list, nullable, object, optional, parse, parseExact, parsed, parseJson, readShown, tagged, tolerant, value } from "./json.ts";
+import { droppedOf, entries, kinds, list, nullable, object, optional, parse, parseExact, parsed, parseJson, readShown, tagged, tagOf, tolerant, value } from "./json.ts";
 import { parseTraceId } from "./trace.ts";
 
 describe("parse", () => {
@@ -76,6 +76,12 @@ describe("a tolerant read", () => {
     expect(loose({ name: 1 }, [])).toEqual({ value: {}, dropped: [{ at: ["name"], why: "is not a string" }], unread: [] });
   });
 
+  it("takes an optional field not sent as the fallback's, as one sent and refused is", () => {
+    const loose = tolerant<{ n?: number }>({ n: optional(value(kinds.integer)) }, { n: 3 });
+    expect(loose({}, [])).toEqual({ value: { n: 3 }, dropped: [], unread: [] });
+    expect(loose({ n: "x" }, [])).toEqual({ value: { n: 3 }, dropped: [{ at: ["n"], why: "is not an integer" }], unread: [] });
+  });
+
   it("passes a reader's own bug as it is", () => {
     const bug = new TypeError("not a function");
     const buggy = tolerant<{ name: string }>(
@@ -110,6 +116,15 @@ describe("a tagged read", () => {
     expect(shown({ at: "middle", key: 1 }, []).value).toEqual({ at: "other", sent: { at: "middle", key: 1 } });
     expect(shown({ key: 1 }, []).value).toEqual({ at: "other", sent: { key: 1 } });
     expect(() => shown({ at: "row" }, [])).toThrow("key: is missing");
+  });
+});
+
+describe("a tag", () => {
+  it("reads an object's tag apart from its other fields, and refuses a tag missing or not a string", () => {
+    expect(tagOf("type")({ type: "text", text: "hi" }, []).value).toEqual({ tag: "text", fields: { text: "hi" } });
+    expect(() => tagOf("type")({ text: "hi" }, [])).toThrow("type: is missing");
+    expect(() => tagOf("type")({ type: 1 }, [])).toThrow("type: is not a string");
+    expect(() => tagOf("type")("text", [])).toThrow("is not an object");
   });
 });
 
@@ -152,6 +167,18 @@ describe("each entry point's rule for a field no declaration names, at every dep
     expect(parseExact(read, { window: { id: "@1" } }, "settings")).toEqual({ window: { id: "@1" } });
   });
 
+  it("names every one in a settings file, so each misspelling is found at once", () => {
+    expect(() => parseExact(read, sent, "settings")).toThrow(
+      "settings: extra: is not read by this build, which reads window; window: size: is not read by this build, which reads id",
+    );
+  });
+
+  it("refuses in a message or a settings file what a tolerant read would drop, never reading it as its fallback", () => {
+    const nested = object({ n: tolerant<{ x: number }>({ x: value(kinds.integer) }, { x: 1 }) });
+    expect(() => parse(nested, { n: { x: "bad" } }, "message")).toThrow("message: n: x: is not an integer");
+    expect(() => parseExact(nested, { n: { x: "bad" } }, "settings")).toThrow("settings: n: x: is not an integer");
+  });
+
   it("drops and names it in a stored item", () => {
     expect(droppedOf(read(sent, []))).toEqual([
       { at: ["extra"], why: "is not read by this build, which reads window" },
@@ -161,13 +188,16 @@ describe("each entry point's rule for a field no declaration names, at every dep
 
   it("keeps it, with its value, for the formatter to show, or says why the value was refused", () => {
     expect(readShown(read, sent)).toEqual({
-      value: { window: { id: "@1" } },
-      dropped: [],
-      unread: [
-        { at: ["extra"], value: true, reads: ["window"] },
-        { at: ["window", "size"], value: 3, reads: ["id"] },
-      ],
+      is: "read",
+      read: {
+        value: { window: { id: "@1" } },
+        dropped: [],
+        unread: [
+          { at: ["extra"], value: true, reads: ["window"] },
+          { at: ["window", "size"], value: 3, reads: ["id"] },
+        ],
+      },
     });
-    expect(readShown(read, { window: { id: 1 } })).toEqual({ refused: "window: id: is not a string" });
+    expect(readShown(read, { window: { id: 1 } })).toEqual({ is: "refused", why: "window: id: is not a string" });
   });
 });

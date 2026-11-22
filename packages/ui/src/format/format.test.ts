@@ -65,9 +65,9 @@ describe("fieldValue", () => {
     ]);
   });
 
-  it("shows a string that is the JSON of an object or a list as its fields only when they show every byte of it, as received otherwise", () => {
+  it("shows a string as the string it is, quoted, though it be the JSON of an object or a list", () => {
     expect(fieldValue({ held: '{"device_id":"d1"}', spaced: '{"a": 1}', precise: '{"a":12345678901234567890}', twice: '{"a":1,"a":2}' })).toEqual([
-      ["held", [["device_id", '"d1"']]],
+      ["held", JSON.stringify('{"device_id":"d1"}')],
       ["spaced", JSON.stringify('{"a": 1}')],
       ["precise", JSON.stringify('{"a":12345678901234567890}')],
       ["twice", JSON.stringify('{"a":1,"a":2}')],
@@ -179,19 +179,23 @@ describe("format", () => {
     ]);
     const [thinking, text, toolUse] = group(formatted, "reply");
     const [, , usage, message] = group(formatted, "response");
-    // A field of an event that nothing reads lands on the block the event builds: the thinking delta's estimate.
+    // A field of an event that nothing reads is shown on the block the event builds, by its path from the event's name:
+    // the thinking delta's estimate.
     expect(thinking!.parts).toEqual([
       { id: "thinking", kind: "text", form: "markdown", text: "" },
       { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] },
-      { kind: "rest", id: "unread", label: "fields", fields: [["estimated_tokens", "50"]] },
+      { kind: "rest", id: "events", label: "event fields", fields: [["content_block_delta", [["delta", [["estimated_tokens", "50"]]]]]] },
     ]);
     expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Red and blue." }]);
     expect(toolUse!.parts).toContainEqual({ kind: "text", form: "verbatim", id: "command", label: "command", text: "ls" });
     expect(usage!.parts).toEqual([{ id: "usage", kind: "fields", fields: [["input_tokens", "2"], ["output_tokens", "90"]] }]);
-    expect(message!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"'], ["context_management", [["applied_edits", "[]"]]]]) }]);
+    expect(message!.parts).toEqual([
+      { kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) },
+      { kind: "rest", id: "events", label: "event fields", fields: [["message_delta", [["context_management", [["applied_edits", "[]"]]]]]] },
+    ]);
     // A parameter or a field this view does not name is shown with the rest, not dropped.
-    // An object's members are the fields it holds, a list's named by index; a string that is the JSON of one, as
-    // metadata.user_id is, holds its fields too; any other value, an empty object or list too, reads as its JSON.
+    // An object's members are the fields it holds, a list's named by index; any other value, an empty object or list
+    // too, reads as its JSON, so a string that is the JSON of an object, as metadata.user_id is, reads as the string it is.
     expect(group(formatted, "request")[1]!.parts).toEqual([
       {
         id: "parameters",
@@ -200,7 +204,7 @@ describe("format", () => {
           ["model", '"claude-fable-5-2"'],
           ["max_tokens", "32000"],
           ["thinking", [["type", '"adaptive"'], ["display", '"omitted"']]],
-          ["metadata", [["user_id", [["device_id", '"d1"'], ["session_id", '"s1"']]]]],
+          ["metadata", [["user_id", JSON.stringify(JSON.stringify({ device_id: "d1", session_id: "s1" }))]]],
           ["context_management", [["edits", [["0", [["type", '"clear_thinking_20251015"'], ["keep", '"all"']]]]]]],
           ["stop_sequences", "[]"],
         ],
@@ -294,6 +298,15 @@ describe("format", () => {
     expect(group(formatted, "request")[2]!.preview).toEqual([{ kind: "text", form: "verbatim", text: "message.3/content.0  message.4.system.0/content.0" }]);
   });
 
+  it("reads the system prompt, the tool definitions and the messages each on its own, so one that does not read is raw with why and costs the others nothing", () => {
+    const system = { type: "text", text: "Be brief." };
+    const formatted = one(request("a", { model: "m", system, tools: { name: "Read" }, messages: [{ role: "user", content: "hi" }] }));
+    expect(group(formatted, "system").map(({ name, parts }) => [name, parts])).toEqual([["system", [doesNotFit("is not a string or a list of blocks"), { id: "received", kind: "json", value: system }]]]);
+    expect(group(formatted, "tools").map(({ name, parts }) => [name, parts[0]])).toEqual([["tools", doesNotFit("is not a list")]]);
+    expect(formatted.messages).toBe(1);
+    expect(group(formatted, "message.0").map(({ parts }) => parts[0])).toEqual([{ id: "text", kind: "text", form: "markdown", text: "hi" }]);
+  });
+
   it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
     const blocks = group(
       one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }, { name: "a%2Fb" }, { name: "x\ud800" }] })),
@@ -314,13 +327,18 @@ describe("format", () => {
     expect(blocks[4]!.parts[0]).toEqual(doesNotFit("description: is not a string"));
   });
 
-  it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
-    for (const usage of [null, {}, undefined, "[]"]) {
+  it("shows a reply's usage as sent when it holds no counts, and the reply's content beside it", () => {
+    const formattedWith = (usage: unknown) => {
       const message = { type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage };
-      const formatted = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]);
+      return one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]);
+    };
+    for (const usage of [null, {}, undefined]) {
+      const formatted = formattedWith(usage);
       expect(group(formatted, "reply").map(({ parts }) => parts)).toEqual([[{ id: "text", kind: "text", form: "markdown", text: "hi" }]]);
       expect(group(formatted, "response").find(({ name }) => name === "usage")!.parts).toEqual([{ id: "usage", kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
     }
+    // A usage that is not counts is no message's: the body is shown as received, with why.
+    expect(group(formattedWith("[]"), "response").find(({ name }) => name === "response body")!.parts[0]).toEqual(doesNotFit("usage: is not an object"));
   });
 
   it("returns beside the blocks the facts the exchange line prints: the model from the request, the usage and stop reason from the message, the timing from the events", () => {
@@ -663,7 +681,10 @@ describe("format", () => {
     const events = [messageStart, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }].map((data) => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
     const body = `${events}event: content_block_delta\ndata: ${delta}\n\n`;
     const [text] = group(one([...request("b", { model: "m", messages: [] }), ...response("b", 200, [["Content-Type", "text/event-stream"]], Buffer.from(body))]), "reply");
-    expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Hi." }, { id: "unread", label: "fields", kind: "rest", fields: [["__proto__", [["text", "7"]]]] }]);
+    expect(text!.parts).toEqual([
+      { id: "text", kind: "text", form: "markdown", text: "Hi." },
+      { id: "events", label: "event fields", kind: "rest", fields: [["content_block_delta", [["delta", [["__proto__", [["text", "7"]]]]]]]] },
+    ]);
   });
 
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
@@ -870,16 +891,23 @@ describe("format", () => {
     );
     expect(blocks.find(({ name }) => name === "thinking")!.parts).toEqual([{ id: "thinking", kind: "text", form: "markdown", text: "" }, { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] }]);
     const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
-    expect(notApplied).toEqual([
-      expect.stringMatching(/^content_block_stop event: the block's streamed input is not JSON/),
-      "content_block_start event: content block 1 has already started",
-      // A block whose stop was refused is still arriving, so the message cannot stop.
-      "message_stop event: content block 1 is still arriving",
-    ]);
-    // A field an applied event carries lands on the message; the refused message_stop's does not.
-    const fields = blocks.find(({ name }) => name === "message")!.parts[0];
-    expect(fields).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["context_management", [["applied_edits", "[]"]]]]) });
-    expect(JSON.stringify(fields)).not.toContain("metrics");
+    expect(notApplied).toEqual(["content_block_start event: content block 1 has already started"]);
+    // A tool's input that is not JSON stops its block refused, with why and the input sent, so the message can stop.
+    const bash = blocks.find(({ name }) => name === "tool_use: Bash")!;
+    expect(bash.parts[0]).toEqual(doesNotFit(expect.stringMatching(/^its streamed input is not JSON/)));
+    expect(JSON.stringify(bash.parts)).toContain('{\\"command\\": ');
+    // A field of the message's own is shown among its fields; one an event carries beside it, by its event's name.
+    const [fields, events] = blocks.find(({ name }) => name === "message")!.parts;
+    expect(fields).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) });
+    expect(events).toEqual({
+      kind: "rest",
+      id: "events",
+      label: "event fields",
+      fields: [
+        ["message_delta", [["context_management", [["applied_edits", "[]"]]]]],
+        ["message_stop", [["metrics", [["latency_ms", "812"]]]]],
+      ],
+    });
   });
 
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {

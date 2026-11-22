@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { requestEnding } from "./ending.ts";
+import { ending, requestEnding } from "./ending.ts";
+import { parse } from "./json.ts";
 
 describe("requestEnding", () => {
   const overloaded = { status: 529, reason: "Overloaded" };
@@ -14,5 +15,14 @@ describe("requestEnding", () => {
     expect(requestEnding({ outcome: "aborted" }, overloaded)).toEqual({ outcome: "aborted" });
     expect(requestEnding({ outcome: "stopped" }, overloaded)).toEqual({ outcome: "stopped" });
     expect(requestEnding({ outcome: "ok" }, undefined)).toEqual({ outcome: "ok" });
+  });
+});
+
+describe("ending", () => {
+  it("reads each outcome, an error's with why, and refuses an error with none or an outcome this build has no variant for", () => {
+    expect(parse(ending, { outcome: "stopped" }, "ended")).toEqual({ outcome: "stopped" });
+    expect(parse(ending, { outcome: "error", error: "Refused" }, "ended")).toEqual({ outcome: "error", error: "Refused" });
+    expect(() => parse(ending, { outcome: "error" }, "ended")).toThrow("ended: error: is missing");
+    expect(() => parse(ending, { outcome: "lost" }, "ended")).toThrow("ended: outcome: is not one of ok, aborted, stopped, error");
   });
 });

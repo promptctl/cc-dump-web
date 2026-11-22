@@ -18,6 +18,8 @@ const { kinds, parse, parsed } = await import("@cc-dump/log/json");
 function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest]: string[]) {
   if (readerPort === undefined || rest.length > 0) throw new Error("usage: isolated.ts <upstream> <recordings-dir> <run-start> <proxy-port> <reader-port>");
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(runStart!)) throw new Error(`run-start must be a UTC time like 2026-11-13T09:00:00Z, got ${JSON.stringify(runStart)}`);
+  // A port to listen on, 0 for one the OS picks, as the tests ask: not the settings file's port (settings.ts), which
+  // agents are pointed at, so is one they can name.
   const port = (text: string) => {
     if (!/^\d{1,5}$/.test(text) || Number(text) > 65535) throw new Error(`a port must be an integer from 0 to 65535, got ${JSON.stringify(text)}`);
     return Number(text);

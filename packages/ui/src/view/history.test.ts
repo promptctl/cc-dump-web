@@ -280,6 +280,12 @@ describe("what a step stands after", () => {
     expect(versioned(after)).toEqual([]);
   });
 
+  it("records what a step waits on and did from its reply though its request's messages did not read, so its reply stands in no thread", () => {
+    const read = { type: "tool_use", id: "toolu_r", name: "Read", input: { file_path: "/a" } };
+    const after = history([...request("t1", { ...main, messages: "hi" }), ...reply("t1", [text("Reading."), read], "tool_use")]);
+    expect(after.segments.map(({ wire: { waits, did } }) => [waits, did?.name])).toEqual([[["toolu_r"], "tool_use: Read"]]);
+  });
+
   it("keeps twins, two subagents sent one prompt that answer it alike, each on its own thread", () => {
     const agent = { model: "m", system: [text("You are an agent.")], tools: [{ name: "Read", input_schema: {} }] };
     const task = user(text("Find the longest word."));

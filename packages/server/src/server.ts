@@ -3,7 +3,7 @@ import { bodyOf, json, routes, type Route } from "@cc-dump/log/answer";
 import { ROUTES } from "@cc-dump/log/wire";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
 import { parseLaunch, type Launched, type Launcher } from "./format.ts";
-import { launchSettings } from "./settings.ts";
+import { launchSettingsFile } from "./settings.ts";
 import type { Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
@@ -27,7 +27,7 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
   // rest being their defaults.
   const readSettings = async (trace_id: TraceId) =>
     (
-      await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
+      await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettingsFile.read(settingsPath), ({ file_keys }) => ({ file_keys }))
     ).settings;
 
   // `GET /launch` (docs/design/01-features.md, F1): what a launch starts from.
@@ -42,7 +42,7 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
   // run as the user wrote it. The proxy makes the recording that process will be, since it is the proxy that writes it.
   const launch: Route = async (req, { trace_id }) => {
     const { session, command } = await bodyOf(req, parseLaunch);
-    launchSettings.write(settingsPath, { session, command });
+    launchSettingsFile.write(settingsPath, { session, command });
     const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info);
     const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name }));
     const window = await loggedIn(

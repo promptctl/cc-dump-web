@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { jsonObject, object, parseExact, parseJson } from "@cc-dump/log/json";
+import { jsonObject, object, parse, parseExact, parseJson } from "@cc-dump/log/json";
 import type { Settings } from "./settings.ts";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the settings the file
@@ -13,6 +13,10 @@ export type ReadSettings<S> = { settings: S; file_keys: string[] | null };
 // misspelled (`parseExact`).
 export function settingsFile<S>(what: string, { readers, defaults }: Settings<S>) {
   const reader = object(readers);
+  // [LAW:types-are-the-program] exception: a default is the JSON the file would hold, which no type ties to its
+  // reader, so the defaults are read by the readers where the file is declared, and a default its reader refuses fails
+  // the part as it loads, not on the first read with no file.
+  parse(reader, defaults, `${what} defaults`);
   // `text` is the file's, or undefined when there is no file; `said`, the file as its failures name it.
   const parseAs =
     (said: string) =>

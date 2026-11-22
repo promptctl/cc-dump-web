@@ -4,7 +4,7 @@ import { categories, launchName, type Category, type Launch } from "../src/forma
 import type { FormattedExchange, KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";
-import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, replyOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
+import { createHistory, firstMessageOf, levelKey, levelOf, placeOf, saidIn, type After, type History, type Level } from "../src/view/history.ts";
 import { blockIn, createLayout, nestKey, pastOf, type Doing, type Layout, type Parent, type Row } from "../src/view/rows.ts";
 import { readRecording, type Frames } from "../src/reading.ts";
 import { fileConnection } from "./recording.ts";
@@ -54,7 +54,7 @@ function saidOf({ formatted }: History["segments"][number]): Said {
     calls: new Map(),
     end: formatted.exchange.end?.timestamp,
   };
-  const reply = replyOf(formatted);
+  const { reply } = formatted;
   said.replied = reply.at(-1);
   if (formatted.facts.stopReason === "tool_use") for (const { call } of reply) if (call?.waits) said.waits.push(call.id);
   for (const { result, notice, call, parts } of blocks) {

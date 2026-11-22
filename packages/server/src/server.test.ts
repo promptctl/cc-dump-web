@@ -39,6 +39,15 @@ describe("GET /launch", () => {
     expect(refused).toBe('launcher: settings: command: is blank or more than one line: ""');
   });
 
+  // A message carries no defaults: a setting it leaves out is not known, never the default's.
+  it("refuses a launcher whose settings leave one out", () => {
+    expect(() => parseLauncher(JSON.stringify({ settings: { session: null }, sessions: ["work"] }))).toThrow("launcher: settings: command: is missing");
+  });
+
+  it("refuses a launcher naming a session it cannot take, at its place in the list", () => {
+    expect(() => parseLauncher(JSON.stringify({ settings: { session: null, command: "claude" }, sessions: ["work", "a\nb"] }))).toThrow("launcher: sessions: 1: is blank or more than one line");
+  });
+
   it("fails naming the settings file it cannot take", async () => {
     const { url, settingsPath, next } = await app();
     mkdirSync(dirname(settingsPath), { recursive: true });

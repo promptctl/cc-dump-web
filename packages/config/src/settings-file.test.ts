@@ -32,13 +32,18 @@ it("refuses a key it does not read, naming it and the settings there are, and a 
 
 it("passes a setting's reader's own bug as it is", () => {
   const bug = new TypeError("not a function");
-  const buggy = settingsFile<{ name: string }>("test settings", {
-    readers: {
-      name: parsed(kinds.string, () => {
-        throw bug;
-      }),
-    },
-    defaults: { name: "none" },
-  });
-  expect(() => buggy.parse(undefined)).toThrow(bug);
+  const buggy = () =>
+    settingsFile<{ name: string }>("test settings", {
+      readers: {
+        name: parsed(kinds.string, () => {
+          throw bug;
+        }),
+      },
+      defaults: { name: "none" },
+    });
+  expect(buggy).toThrow(bug);
+});
+
+it("refuses, where it is declared, a default its setting's reader refuses", () => {
+  expect(() => settingsFile<{ port: number }>("test settings", { readers: { port: value(kinds.integer) }, defaults: { port: "3344" } })).toThrow("test settings defaults: port: is not an integer");
 });

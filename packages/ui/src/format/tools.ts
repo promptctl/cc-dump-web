@@ -1,6 +1,6 @@
-import { kinds, object, readShown, value, type Reader, type Unread } from "@cc-dump/log/json";
+import { object, readShown, string, type Reader, type Unread } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
-import { doesNotFit, type Part } from "./parts.ts";
+import { doesNotFit, ownFields, type Part } from "./parts.ts";
 
 // A tool call's input, shown as the tool's work: a command as the shell line it is, an edit as the change it makes, a
 // file as the file. Every byte stays verbatim (docs/design/02-design.md, "Two voices"): a tool's entry arranges its
@@ -13,10 +13,8 @@ const tool =
   <T>(reader: Reader<T>, parts: (input: T) => Part[]) =>
   (input: unknown): Part[] => {
     const read = readShown(reader, input);
-    return "refused" in read ? [doesNotFit(read.refused), ...jsonInput(input)] : [...parts(read.value), ...unreadInputParts(read.unread)];
+    return read.is === "refused" ? [doesNotFit(read.why), ...jsonInput(input)] : [...parts(read.read.value), ...unreadInputParts(read.read.unread)];
   };
-
-const string = value(kinds.string);
 // An input all of whose fields read as fields has an entry that reads none of them.
 const fieldsOnly = tool(object<Record<never, never>>({}), () => []);
 
@@ -50,10 +48,11 @@ export function inputParts(name: string, input: unknown): Part[] {
 // A tool's input as the JSON it was sent.
 export const jsonInput = (input: unknown): Part[] => [{ id: "input", label: "input", kind: "json", value: input }];
 
-// The fields of an input its entry did not read, each a field of the input itself: the ones a line holds, a string, a
-// number or a boolean, as fields, in the order they were sent, and the others together as the input's JSON.
+// The fields of an input its entry did not read, each a field of the input itself, since an entry reads only fields it
+// shows whole: the ones a line holds, a string, a number or a boolean, as fields, in the order they were sent, and the
+// others together as the input's JSON.
 function unreadInputParts(unread: readonly Unread[]): Part[] {
-  const named = unread.map(({ at, value }) => [at.join("."), value] as const);
+  const named = Object.entries(ownFields(unread));
   const fields: Header[] = named.filter(([, value]) => isScalar(value)).map(([name, value]) => [name, String(value)]);
   const values = named.filter(([, value]) => !isScalar(value));
   return [...(fields.length === 0 ? [] : [{ id: "input fields", kind: "fields" as const, fields }]), ...(values.length === 0 ? [] : jsonInput(Object.fromEntries(values)))];

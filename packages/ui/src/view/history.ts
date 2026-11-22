@@ -315,7 +315,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       replace(location, { ...item, versions: [...item.versions, { step, block: undefined, was, previous }] });
       undo.push(() => replace(location, item));
     }
-    const reply = replyOf(formatted);
+    const { reply } = formatted;
     const waits = formatted.facts.stopReason === "tool_use" ? reply.flatMap(({ call }) => (call?.waits ? [call.id] : [])) : [];
     const did = reply.at(-1);
     const names = formatted.sender.kind === "agent" ? formatted.sender.parent : undefined;
@@ -417,9 +417,8 @@ function pathOf(formatted: FormattedExchange): { at: string; message: number; he
   );
 }
 
-// [LAW:one-source-of-truth] An exchange's blocks of its first message, which its thread is known by, and of its reply.
+// [LAW:one-source-of-truth] An exchange's blocks of its first message, which its thread is known by.
 export const firstMessageOf = ({ groups }: FormattedExchange): KeyedBlock[] => groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "message" && place.index === 0));
-export const replyOf = ({ groups }: FormattedExchange): KeyedBlock[] => groups.flatMap(({ blocks }) => blocks.filter(({ place }) => place?.in === "reply"));
 
 // The thread of its level an exchange is part of: the one whose first message it sends, or, when none was sent before, a
 // new one it begins, which `undo` drops. None while its request sends no message, as while its body is not yet read.

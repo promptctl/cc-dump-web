@@ -36,7 +36,7 @@ describe("a match and an open section as a tool call's input streams and becomes
   // An Edit call whose input carries an `id` of its own: as it streams, its input so far, then the block's id; whole,
   // its file, its change, its fields no entry reads, among them its own id, then the block's id.
   const call = (input: unknown) => ({ type: "tool_use", id: "toolu_needle", name: "Edit", input });
-  const soFar = shownRow(formatArriving(call({}), '{"file_path":"a.ts","id":"needle-7"')[0]!);
+  const soFar = shownRow(formatArriving({ start: call({}), grows: { by: "input", input: '{"file_path":"a.ts","id":"needle-7"' } })[0]!);
   const whole = rowOf(call({ file_path: "a.ts", old_string: "x", new_string: "y", id: "needle-7" }));
 
   it("adds parts of the block id's kind and label ahead of it as the input becomes whole", () => {

@@ -66,26 +66,12 @@ export function fieldLines(fields: Field[], holding: FieldPath = []): FieldLine[
 // How deep a field's line stands among the fields holding it: 0 for a part's own field.
 export const depthOf = ({ path }: FieldLine): number => path.length - 1;
 
-// What a field shows a value as: an object or a list with members, or a string that is the JSON of one to the byte, as
-// metadata.user_id is, as its members' fields, a list's named by index; any other value as its JSON, so a string reads
-// quoted and no value reads as one of another type.
+// What a field shows a value as: an object or a list with members as its members' fields, a list's named by index; any
+// other value as its JSON, so a string reads quoted, as the text sent, and no value reads as one of another type.
 export function fieldValue(value: unknown): string | Field[] {
-  const held = typeof value === "string" ? heldJson(value) : value;
-  return typeof held === "object" && held !== null && Object.keys(held).length > 0
-    ? Object.entries(held).map(([name, member]): Field => [name, fieldValue(member)])
+  return typeof value === "object" && value !== null && Object.keys(value).length > 0
+    ? Object.entries(value).map(([name, member]): Field => [name, fieldValue(member)])
     : (JSON.stringify(value) ?? "undefined");
-}
-
-// The value a string is the JSON of, when showing that value shows every byte of the string; otherwise the string. Only
-// an object's or a list's JSON shows as fields, and it begins with its bracket, so no other string is parsed.
-function heldJson(text: string): unknown {
-  if (!/^[[{]/.test(text)) return text;
-  try {
-    const value: unknown = JSON.parse(text);
-    return JSON.stringify(value) === text ? value : text;
-  } catch {
-    return text;
-  }
 }
 
 // A value as the part `id` showing it: its fields when it holds any, else the JSON text a field would show it as.
@@ -100,6 +86,11 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
   const held = paths.map((path): [string, unknown] => [path, path.split(".").reduce(fieldOf, value)]);
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
+
+// The fields of an object no declaration read that are its own, by name: those under a declared field are shown where
+// that field is (the usage's, on the usage line).
+export const ownFields = (unread: readonly Pick<Unread, "at" | "value">[]): Record<string, unknown> =>
+  Object.fromEntries(unread.flatMap(({ at: [name, ...under], value }) => (under.length === 0 ? [[name!, value]] : [])));
 
 // The fields of a value no declaration read, `unread`, as the part `named`, its id and its label, when there are any:
 // each under the fields holding it, by its path, so one deep in the value is shown where it was sent.
