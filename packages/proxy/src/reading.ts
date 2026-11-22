@@ -1,4 +1,4 @@
-import { readdir, open, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { failed, startSpan, unitOfWork, type Ending, type Log, type TraceId } from "@cc-dump/log";
@@ -79,7 +79,6 @@ type Reading = {
   trace_id: TraceId;
   ended: Promise<Ending>;
   name: ReadableName;
-  path: string;
   followed: boolean;
   recordings: Recordings;
   limit: () => number;
@@ -98,7 +97,6 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
     trace_id,
     ended,
     name,
-    path,
     followed,
     recordings,
     limit: followed ? () => recordings.readable(name) : () => measured().terminated,
@@ -116,14 +114,11 @@ async function atLineStart(reading: Reading, position: number) {
 }
 
 // Up to `length` bytes of the recording from `position`, of the first `limit` bytes, which are whole events; with none
-// there may be no file. Each read opens the file and closes it before it returns, so a
-// reader that leaves mid-read holds nothing open.
-async function bytesAt({ path }: Reading, position: number, length: number, limit: number) {
+// there may be no file.
+async function bytesAt({ recordings, name }: Reading, position: number, length: number, limit: number) {
   const readable = Math.max(0, Math.min(length, limit - position));
   if (readable === 0) return Buffer.alloc(0);
-  await using file = await open(path);
-  const { bytesRead, buffer } = await file.read(Buffer.alloc(readable), 0, readable, position);
-  return buffer.subarray(0, bytesRead);
+  return recordings.read(name, position, readable);
 }
 
 // [LAW:no-ambient-temporal-coupling] The read is a stream piped into the response, so node owns backpressure
@@ -196,10 +191,11 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         void fill();
       });
     } catch (error) {
-      if (readable.destroyed) return;
       catchUp.end(failed(error), read);
-      // The request's failure, on its event, written at the close the stream's end brings.
+      // The request's failure: on its event, written at the close the stream's end brings, or, when its reader left
+      // while the read was under way, its `late_failure`.
       fail(error);
+      if (readable.destroyed) return;
       // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has
       // with its stack.
       const failure: Failure = { error: describe(error) };

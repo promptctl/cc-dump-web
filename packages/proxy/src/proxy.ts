@@ -52,7 +52,10 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
 
     // An upstream failure reaches the agent as it would on a direct connection: before the
     // response started, an error response in the API's own shape; after, the cut itself.
+    // [LAW:one-source-of-truth] Once the response has closed, the exchange's ending is the close's: the close below
+    // destroys `outgoing`, and an upstream error from then on is that cut, not a failure of the upstream.
     const upstreamFailed = (error: NodeJS.ErrnoException) => {
+      if (res.closed) return;
       fail(error);
       if (res.headersSent) res.destroy();
       else res.writeHead(502, { "content-type": "application/json" }).end(apiError(url, error));

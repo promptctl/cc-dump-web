@@ -132,6 +132,21 @@ describe("unitOfWork", () => {
     expect(await unit.ended).toEqual({ outcome: "error", error: events[0]!.error });
   });
 
+  it("writes a failure reported after its end as a late_failure of its own, in its trace, and its event stands", () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "request", { url: "/" }, span);
+
+    unit.end({ outcome: "aborted" });
+    unit.fail(new Error("EIO"));
+    unit.fail(new Error("EACCES"));
+    expect(events).toMatchObject([
+      { event: "request", url: "/", outcome: "aborted" },
+      { event: "late_failure", unit: "request", ...span.end(), outcome: "error", error: expect.stringContaining("EIO") },
+      { event: "late_failure", unit: "request", outcome: "error", error: expect.stringContaining("EACCES") },
+    ]);
+    expect(events[1]).not.toHaveProperty("url");
+  });
+
   it("writes the ending as its event judges it, and resolves `ended` with the unit's own", async () => {
     const { events, log } = eventsWritten();
     const unit = unitOfWork(log, "request", {}, span, () => failed(new Error("500 Internal Server Error")));
@@ -245,6 +260,26 @@ describe("serve", () => {
 
     expect(await request).toBe("aborted");
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", status: null });
+  });
+
+  it("records a failure the handler's work meets after its client left as the request's late_failure, which `close` does not wait on", async () => {
+    const { log, next } = eventLog();
+    const arrived = Promise.withResolvers<Work>();
+    const { port, close } = await serve(log, (_req, _res, work) => arrived.resolve(work), 0);
+    await next();
+
+    const abort = new AbortController();
+    const request = fetch(`http://${LOOPBACK}:${port}/`, { signal: abort.signal }).catch(() => "aborted");
+    const work = await arrived.promise;
+    abort.abort();
+    expect(await request).toBe("aborted");
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", outcome: "aborted" });
+
+    work.fail(new Error("EACCES"));
+    expect(await next()).toMatchObject({ event: "late_failure", unit: "request", trace_id: event.trace_id, outcome: "error", error: expect.stringContaining("EACCES") });
+    await close();
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", requests_open: 0 });
   });
 
   it("records the first failure the handler reports, beside the answer it sent", async () => {

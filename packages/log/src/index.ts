@@ -86,13 +86,20 @@ export function failed(error: unknown): Ending {
 // gives. Only then is it ended, `ended` resolved, and the event written: a write that throws surfaces as itself, is never
 // followed by a second write, and leaves nothing waiting on `ended`.
 // `judged` is how the event reads the unit's ending, where it judges more than `ended` says: a request's, by its status.
+// [LAW:nothing-unseen] Work can go on after its unit has ended (a route still running when its client left, a file read
+// under way as its reader leaves), and nothing waits on it: its end has no bound, and `close` waits on `ended`. So a
+// failure reported after the end is an event of its own, `late_failure`, in the unit's trace, naming the `unit` it
+// follows and timed from that unit's start; the unit's own event, written already, stands.
 export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, judged: (ending: Ending) => Ending = (ending) => ending) {
   let failure: Ending | undefined;
   let open = true;
   const { promise: ended, resolve } = Promise.withResolvers<Ending>();
   return {
     ended,
-    fail: (error: unknown) => void (failure ??= failed(error)),
+    fail: (error: unknown) => {
+      if (open) return void (failure ??= failed(error));
+      log({ event: "late_failure", unit: event, ...span.end(), ...failed(error) });
+    },
     end: (reached: Ending, found: () => Facts = () => ({})) => {
       if (!open) return;
       const ending = failure ?? reached;
@@ -104,8 +111,9 @@ export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, ju
   };
 }
 
-// The request's unit of work as its event records it. A handler reports a failure through `fail`;
-// what the client is sent when that happens is the handler's decision, made before or after `fail`.
+// The request's unit of work as its event records it. A handler reports a failure through `fail`, one reported after
+// the response closed as the request's `late_failure`; what the client is sent when that happens is the handler's
+// decision, made before or after `fail`.
 // `ended` resolves when the response closes, with how its response ended: sent in full, cut, or failed as the handler
 // reported. How the request ended, which its event records, is judged from that and its status (`requestEnding`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what

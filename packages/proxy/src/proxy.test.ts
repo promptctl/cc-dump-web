@@ -225,6 +225,34 @@ describe("createProxy", () => {
     expect(await next()).toMatchObject({ outcome: "aborted" });
   });
 
+  // The proxy's side of the cut errors as the proxy destroys it, before the upstream can see the connection close, so
+  // once each upstream request has closed, the cut's error has been handled; the next event is the next request's.
+  it("logs the cut the agent's leaving makes upstream as no failure of the upstream", async () => {
+    let upstreamClosed = Promise.withResolvers<void>();
+    let arrived = Promise.withResolvers<void>();
+    const upstream = await upstreamServing((_req, res) => {
+      const closed = upstreamClosed;
+      res.on("close", () => closed.resolve());
+      arrived.resolve();
+    });
+    const { port, next } = await proxyTo(upstream);
+    const leaveBeforeTheResponse = async () => {
+      [upstreamClosed, arrived] = [Promise.withResolvers(), Promise.withResolvers()];
+      const req = request({ host: LOOPBACK, port, method: "POST", path: "/v1/messages" });
+      const hungUp = once(req, "error");
+      req.end();
+      await arrived.promise;
+      req.destroy();
+      await hungUp;
+      await upstreamClosed.promise;
+    };
+
+    await leaveBeforeTheResponse();
+    expect(await next()).toMatchObject({ event: "request", outcome: "aborted" });
+    await leaveBeforeTheResponse();
+    expect(await next()).toMatchObject({ event: "request", outcome: "aborted" });
+  });
+
   // llhttp's parse errors carry the bytes they were parsing as rawPacket, on either side of the proxy.
   it("answers oversized request headers with node's 431 and logs it without the request's bytes", async () => {
     const { port, next } = await proxyTo(refusingAddress);

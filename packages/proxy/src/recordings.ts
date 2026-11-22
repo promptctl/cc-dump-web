@@ -1,4 +1,5 @@
 import { closeSync, constants, mkdirSync, openSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { startSpan, unitOfWork, type Log } from "@cc-dump/log";
 import { recordingName } from "./format.ts";
@@ -15,12 +16,16 @@ import { createWriter, eventLine, type Recorder, type Writer } from "./recording
 //   that a request continued after a restart of the proxy. Any other is finished, as far as this run knows.
 // - `onWritten(listener)`: called with the name of each recording after an event is written to it, until the function
 //   it returned is called.
+// - `read(name, position, length)`: up to `length` bytes of the recording's file from `position`; fewer where the file
+//   ends first. Each read opens the file and closes it before it settles, so a reader that leaves mid-read holds
+//   nothing open.
 export type Recordings = {
   dir: string;
   run: string;
   record: Recorder;
   create: () => string;
   readable: (name: string) => number;
+  read: (name: string, position: number, length: number) => Promise<Buffer>;
   follows: (name: string) => boolean;
   onWritten: (listener: (name: string) => void) => () => void;
 };
@@ -90,6 +95,11 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
       const writer = writers.get(name);
       if (writer === undefined) throw new Error(`${name}: this run holds no writer for it`);
       return writer.written();
+    },
+    read: async (name, position, length) => {
+      await using file = await open(join(dir, name));
+      const { bytesRead, buffer } = await file.read(Buffer.alloc(length), 0, length, position);
+      return buffer.subarray(0, bytesRead);
     },
     follows: (name) => writers.has(name),
     onWritten: (listener) => {

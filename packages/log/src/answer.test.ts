@@ -167,6 +167,23 @@ describe("a part's routes", () => {
     expect([ok.statusCode, (await buffer(ok)).toString()]).toEqual([200, '{"fine":true}']);
   });
 
+  it("records a route that rejects after its client left as the request's late_failure", async () => {
+    const arrived = Promise.withResolvers<void>();
+    const rejection = Promise.withResolvers<never>();
+    const { url, next } = await serving(routes({ "/slow": { GET: () => (arrived.resolve(), rejection.promise) } }));
+
+    const abort = new AbortController();
+    const request = fetch(`${url}/slow`, { signal: abort.signal }).catch(() => "aborted");
+    await arrived.promise;
+    abort.abort();
+    expect(await request).toBe("aborted");
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", outcome: "aborted", status: null });
+
+    rejection.reject(new Error("EACCES: permission denied, scandir"));
+    expect(await next()).toMatchObject({ event: "late_failure", unit: "request", trace_id: event.trace_id, error: expect.stringContaining("EACCES") });
+  });
+
   it("takes a request target in absolute form, as RFC 9112 has a server", async () => {
     const { port } = await part();
     const res = await send(port, { path: `http://${LOOPBACK}:${port}/ok` });
