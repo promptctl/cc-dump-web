@@ -40,13 +40,13 @@ export function logged<T>(
   work: () => T extends PromiseLike<unknown> ? never : T,
   found: (result: T) => Facts = () => ({}),
 ): T {
-  const end = endEvent(log, event, facts, startTrace());
+  const end = unitEvent(log, event, facts, startTrace());
   try {
     const result = work();
-    end.ok(found(result));
+    end({ outcome: "ok" }, () => found(result));
     return result;
   } catch (error) {
-    end.failed(error);
+    end(failed(error));
     throw error;
   }
 }
@@ -54,32 +54,55 @@ export function logged<T>(
 // An asynchronous unit of work done inside another, in its trace (a request's): its event is written once `work`
 // settles, with the facts `found` reads off its result, or when it rejects, and then the error is rethrown.
 export async function loggedIn<T>(log: Log, trace_id: TraceId, event: string, facts: Facts, work: () => Promise<T>, found: (result: T) => Facts = () => ({})): Promise<T> {
-  const end = endEvent(log, event, facts, startSpan(trace_id));
+  const end = unitEvent(log, event, facts, startSpan(trace_id));
   try {
     const result = await work();
-    end.ok(found(result));
+    end({ outcome: "ok" }, () => found(result));
     return result;
   } catch (error) {
-    end.failed(error);
+    end(failed(error));
     throw error;
   }
 }
 
 // A unit of work, inside another's trace, that something else did and timed, reported once it has ended: it took
-// `duration_ms`, up to now, and failed with `error`, or did not, when `error` is undefined.
-export function loggedAfter(log: Log, trace_id: TraceId, event: string, facts: Facts, duration_ms: number, error: Error | undefined) {
+// `duration_ms`, up to now, and ended as `ending` says.
+export function loggedAfter(log: Log, trace_id: TraceId, event: string, facts: Facts, duration_ms: number, ending: Ending) {
   const span = { end: () => ({ trace_id, started_at: new Date(Date.now() - duration_ms).toISOString(), duration_ms }) };
-  const end = endEvent(log, event, facts, span);
-  if (error === undefined) end.ok({});
-  else end.failed(error);
+  unitEvent(log, event, facts, span)(ending);
 }
 
-// [LAW:single-enforcer] The one writer of a unit of work's event, once the work has ended: `ok` with the facts found
-// off its result, or `failed` with its error.
-function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<typeof startSpan>, "end">) {
+// The ending of work that failed with `error`.
+export function failed(error: unknown): Ending {
+  return { outcome: "error", error: describeError(error) };
+}
+
+// [LAW:single-enforcer] The one writer of a unit of work's event, and so the one place each unit's event is written once.
+// A unit ends once: the first ending it is given is how it ended, and is written, with the facts `found` measures then,
+// which are what the work learned at its end (a count, an offset, the port bound) and the later word over `facts`. An
+// ending given after that came after the unit's end and changes nothing, so where several paths can end one unit (a
+// read caught up, failed, or cut by its request), the first to arrive is its ending, and none of them keeps a flag.
+// `found` runs only for the ending written, and before the unit is ended, so a measure that throws leaves the unit open
+// for the failure its caller then gives. The unit is ended before the line is written, so a write that throws is never
+// followed by a second write of the unit, whatever catch it reaches, and its own error is what surfaces.
+export function unitEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<typeof startSpan>, "end">) {
+  let open = true;
+  return (ending: Ending, found: () => Facts = () => ({})) => {
+    if (!open) return;
+    const learned = found();
+    open = false;
+    log({ event, ...facts, ...span.end(), ...learned, ...ending });
+  };
+}
+
+// [LAW:single-enforcer] The one keeper of a unit's first failure, for work whose failures are reported while it runs (a
+// request's, an upgrade's, a recording's): `or` is the unit's ending, the first failure reported, or else `reached`, how
+// the work itself ended.
+export function firstFailure() {
+  let failure: Ending | undefined;
   return {
-    ok: (found: Facts) => log({ event, ...facts, ...span.end(), ...found, outcome: "ok" }),
-    failed: (error: unknown) => log({ event, ...facts, ...span.end(), outcome: "error", error: describeError(error) }),
+    fail: (error: unknown) => void (failure ??= failed(error)),
+    or: (reached: Ending): Ending => failure ?? reached,
   };
 }
 
@@ -118,16 +141,19 @@ export async function serve(log: Log, handler: Handler, port: number, upgrade?: 
   // (an h2c POST included) to the upgrade listener once there is one, so every other reaches `handler` as before.
   const server = loggedServer(log, handler, inFlight, (req) => upgrade !== undefined && req.headers.upgrade?.toLowerCase() === "websocket");
   if (upgrade) server.on("upgrade", withUpgradeEvent(log, upgrade, server, upgraded));
-  const span = startTrace();
-  try {
-    server.listen(port, LOOPBACK);
-    await once(server, "listening");
-  } catch (error) {
-    log({ event: "listen", ...span.end(), outcome: "error", error: describeError(error), address: LOOPBACK, port });
-    throw error;
-  }
-  const { address, port: bound } = server.address() as AddressInfo;
-  log({ event: "listen", ...span.end(), outcome: "ok", address, port: bound });
+  // The port asked for, which the port bound replaces once there is one.
+  const bound = await loggedIn(
+    log,
+    mintTraceId(),
+    "listen",
+    { address: LOOPBACK, port },
+    async () => {
+      server.listen(port, LOOPBACK);
+      await once(server, "listening");
+      return (server.address() as AddressInfo).port;
+    },
+    (bound) => ({ port: bound }),
+  );
   return {
     port: bound,
     close: () => {
@@ -170,13 +196,13 @@ export function shutdownOnSignal(log: Log, servers: Serving[]) {
 // A unit of work that is several at once: its event is written once every one has settled, so one that
 // fails cuts none of the others short, and then the first failure is rethrown.
 async function loggedAll(log: Log, event: string, facts: Facts, work: Promise<unknown>[]) {
-  const end = endEvent(log, event, facts, startTrace());
+  const end = unitEvent(log, event, facts, startTrace());
   const failure = (await Promise.allSettled(work)).find((result) => result.status === "rejected");
   if (failure) {
-    end.failed(failure.reason);
+    end(failed(failure.reason));
     throw failure.reason;
   }
-  end.ok({});
+  end({ outcome: "ok" });
 }
 
 function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>, shouldUpgradeCallback: (req: IncomingMessage) => boolean): Server {
@@ -190,7 +216,7 @@ function loggedServer(log: Log, handler: Handler, inFlight: Set<Promise<Ending>>
     // the error, after node has answered if it could, so this observes them and the answer stays node's.
     // A connection's lifecycle is not a request's, so the event is its own, spanning the connection up to
     // its error; `client` joins it to the request events of the same connection.
-    socket.on("error", (error) => log({ event: "client_error", ...span.end(), outcome: "error", error: describeError(error), ...client }));
+    socket.on("error", (error) => unitEvent(log, "client_error", client, span)(failed(error)));
   });
   return server;
 }
@@ -206,31 +232,23 @@ function clientOf(socket: Socket) {
 // which only `close` does, and left by its client otherwise; or ok.
 // [LAW:one-source-of-truth] This is the one place that decides how a request's response ended, which the handler reads
 // from `ended` and the event's outcome is judged from. The request is in flight, for `close` to wait on, until it is.
+// [LAW:no-ambient-temporal-coupling] `ended` resolves before the event is written, so a write that throws, which is
+// this listener's uncaught exception, never leaves `close` waiting on the request.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
   return (req, res) => {
     const span = startTrace();
-    const client = clientOf(req.socket);
-    let failure: string | undefined;
-    const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
+    const end = unitEvent(log, "request", { method: req.method, url: req.url, ...clientOf(req.socket) }, span);
+    const { fail, or } = firstFailure();
+    const { promise: ended, resolve } = Promise.withResolvers<Ending>();
     inFlight.add(ended);
     res.on("close", () => {
       const cut = server.listening ? "aborted" : "stopped";
-      const ending: Ending =
-        failure === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error: failure };
+      const response = or({ outcome: res.writableFinished ? "ok" : cut });
       inFlight.delete(ended);
-      end(ending);
-      log({
-        event: "request",
-        ...span.end(),
-        ...requestEnding(ending, { status: res.statusCode, reason: res.statusMessage }),
-        method: req.method,
-        url: req.url,
-        // The status the handler set; on a cut response the client may not have received it.
-        status: res.headersSent ? res.statusCode : null,
-        ...client,
-      });
+      resolve(response);
+      // The status the handler set; on a cut response the client may not have received it.
+      end(requestEnding(response, { status: res.statusCode, reason: res.statusMessage }), () => ({ status: res.headersSent ? res.statusCode : null }));
     });
-    const fail = (error: unknown) => (failure ??= describeError(error));
     // A handler that throws fails its own request, which is cut, and not the process with every other request in it.
     try {
       handler(req, res, { trace_id: span.trace_id, fail, ended });
@@ -247,10 +265,9 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
 function withUpgradeEvent(log: Log, upgrade: Upgrade, server: Server, upgraded: Map<Duplex, Promise<Ending>>) {
   return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const span = startTrace();
-    const client = clientOf(req.socket);
-    let failure: string | undefined;
-    const fail = (error: unknown) => (failure ??= describeError(error));
-    const { promise: ended, resolve: end } = Promise.withResolvers<Ending>();
+    const end = unitEvent(log, "upgrade", { url: req.url, protocol: req.headers.upgrade, ...clientOf(req.socket) }, span);
+    const { fail, or } = firstFailure();
+    const { promise: ended, resolve } = Promise.withResolvers<Ending>();
     upgraded.set(socket, ended);
     const closed = new Promise<Exclude<Ending["outcome"], "error">>((resolve) =>
       socket.once("close", (hadError: boolean) => resolve(!server.listening ? "stopped" : hadError ? "aborted" : "ok")),
@@ -260,10 +277,10 @@ function withUpgradeEvent(log: Log, upgrade: Upgrade, server: Server, upgraded: 
       socket.destroy();
     });
     void Promise.all([closed, done]).then(([outcome]) => {
-      const ending: Ending = failure === undefined ? { outcome } : { outcome: "error", error: failure };
+      const ending = or({ outcome });
       upgraded.delete(socket);
+      resolve(ending);
       end(ending);
-      log({ event: "upgrade", ...span.end(), ...ending, url: req.url, protocol: req.headers.upgrade, ...client });
     });
   };
 }

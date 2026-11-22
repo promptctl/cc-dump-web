@@ -1,5 +1,5 @@
 import { admit, askedOf, refuseUpgrade, Refused } from "@cc-dump/log/answer";
-import { loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
+import { failed, loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
 import { describe } from "@cc-dump/log/describe";
 import { Malformed } from "@cc-dump/log/failure";
 import type { SpawnOptions } from "@promptctl/tmux-control-mode-js";
@@ -76,7 +76,7 @@ function bridgeEvent(log: Log, work: Work) {
     if (event.kind === "event-out") return;
     const { facts, duration_ms, failure } = verdict(event);
     if (failure?.of === "connection") work.fail(failure.error);
-    loggedAfter(log, work.trace_id, "tmux_bridge", facts, duration_ms, failure?.error);
+    loggedAfter(log, work.trace_id, "tmux_bridge", facts, duration_ms, failure === undefined ? { outcome: "ok" } : failed(failure.error));
   };
 }
 

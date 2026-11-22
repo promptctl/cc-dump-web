@@ -64,14 +64,14 @@ describe("watchSource", () => {
     expect(await next()).toEqual({ state: "watching", changed_source: [second] });
   });
 
-  it("fails, and says so, when a file cannot be checked", () => {
+  it("fails, and says so in the check's one event, when a file cannot be checked", () => {
     const { dir, source } = sourceFiles();
     const unreadable = join(dir, "unreadable");
     mkdirSync(unreadable);
     const logged: Event[] = [];
     const watch = watchSource((event) => void logged.push(event), new Map([...source, [unreadable, "0"]]));
     expect(watch.state()).toEqual({ state: "failed", message: expect.stringContaining("EISDIR") });
-    expect(logged.at(-1)).toMatchObject({ event: "source_check", outcome: "error", error: expect.stringContaining("EISDIR") });
+    expect(logged.filter(({ event }) => event === "source_check")).toMatchObject([{ outcome: "error", error: expect.stringContaining("EISDIR") }]);
   });
 });
 

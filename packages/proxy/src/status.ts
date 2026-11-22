@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
-import { describeError, startTrace, type Handler, type Log } from "@cc-dump/log";
+import { failed, logged, startTrace, unitEvent, type Handler, type Log } from "@cc-dump/log";
 import { stream, type Route } from "@cc-dump/log/answer";
 import { frame } from "@cc-dump/log/wire";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
@@ -41,36 +41,42 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     for (const watcher of watchers) watcher.close();
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
+  // A check is its reading of the files: what the state then tells its listeners is not the check's, so a listener that
+  // throws throws out of the watcher's callback as itself, and the check has written its one event.
   const check = () => {
-    const span = startTrace();
+    let changed: string[];
     try {
-      const changed = [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path);
-      log({ event: "source_check", ...span.end(), outcome: "ok", files_checked: source.size, changed_source: changed });
-      become({ state: "watching", changed_source: changed });
+      changed = logged(
+        log,
+        "source_check",
+        { files_checked: source.size },
+        () => [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path),
+        (changed) => ({ changed_source: changed }),
+      );
     } catch (error) {
-      log({ event: "source_check", ...span.end(), outcome: "error", error: describeError(error) });
-      failWith(error);
+      return failWith(error);
     }
+    become({ state: "watching", changed_source: changed });
   };
 
   const directories = new Set([...source.keys()].map(dirname));
-  const span = startTrace();
   try {
-    for (const directory of directories) {
-      const watcher = watch(directory, { persistent: false }, check);
-      watcher.on("error", (error) => {
-        log({ event: "source_watch", ...startTrace().end(), outcome: "error", error: describeError(error), directory });
-        failWith(error);
-      });
-      watchers.push(watcher);
-    }
-    log({ event: "watch_source", ...span.end(), outcome: "ok", files: source.size, directories: directories.size });
-    // The text on disk may have changed between its load and the watch.
-    check();
+    logged(log, "watch_source", { files: source.size, directories: directories.size }, () => {
+      for (const directory of directories) {
+        const watcher = watch(directory, { persistent: false }, check);
+        watcher.on("error", (error) => {
+          unitEvent(log, "source_watch", { directory }, startTrace())(failed(error));
+          failWith(error);
+        });
+        watchers.push(watcher);
+      }
+    });
   } catch (error) {
-    log({ event: "watch_source", ...span.end(), outcome: "error", error: describeError(error), files: source.size, directories: directories.size });
     failWith(error);
+    return watched;
   }
+  // The text on disk may have changed between its load and the watch.
+  check();
 
   return watched;
 }

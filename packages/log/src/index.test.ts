@@ -6,7 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { createLog, logged, loggedAfter, serve, type Event, type Work } from "./index.ts";
+import { createLog, failed, firstFailure, logged, loggedAfter, serve, unitEvent, type Event, type Work } from "./index.ts";
 import { eventLog, send, sendRaw, serving } from "./testing.ts";
 import { parseTraceId } from "./trace.ts";
 
@@ -88,7 +88,7 @@ describe("loggedAfter", () => {
     const { log, next } = eventLog();
     const before = Date.now();
 
-    loggedAfter(log, parseTraceId("t1"), "call", { method: "send-keys" }, 900, undefined);
+    loggedAfter(log, parseTraceId("t1"), "call", { method: "send-keys" }, 900, { outcome: "ok" });
     const event = await next();
     expect(event).toMatchObject({ event: "call", trace_id: "t1", method: "send-keys", duration_ms: 900, outcome: "ok" });
     expect(Date.parse(event.started_at)).toBeGreaterThanOrEqual(before - 900);
@@ -98,8 +98,71 @@ describe("loggedAfter", () => {
   it("records the failure it reports", async () => {
     const { log, next } = eventLog();
 
-    loggedAfter(log, parseTraceId("t1"), "call", {}, 0, new Error("denied"));
+    loggedAfter(log, parseTraceId("t1"), "call", {}, 0, failed(new Error("denied")));
     expect(await next()).toMatchObject({ event: "call", outcome: "error", error: expect.stringContaining("denied") });
+  });
+});
+
+describe("unitEvent", () => {
+  const span = { end: () => ({ trace_id: parseTraceId("t1"), started_at: "s", duration_ms: 0 }) };
+  const written = () => {
+    const events: Event[] = [];
+    return { events, log: (event: Event) => void events.push(event) };
+  };
+
+  it("writes the first ending it is given, and no later one", () => {
+    const { events, log } = written();
+    const end = unitEvent(log, "read", { from: 0 }, span);
+
+    end({ outcome: "aborted" }, () => ({ to: 4 }));
+    end(failed(new Error("late")), () => ({ to: 9 }));
+    expect(events).toEqual([{ event: "read", from: 0, ...span.end(), to: 4, outcome: "aborted" }]);
+  });
+
+  it("measures the facts found only for the ending it writes", () => {
+    const { log } = written();
+    const end = unitEvent(log, "read", {}, span);
+    let measured = 0;
+
+    end({ outcome: "ok" }, () => ({ measured: ++measured }));
+    end({ outcome: "ok" }, () => ({ measured: ++measured }));
+    expect(measured).toBe(1);
+  });
+
+  it("stays open when measuring its facts throws, for the failure its caller gives", () => {
+    const { events, log } = written();
+    const end = unitEvent(log, "read", {}, span);
+
+    expect(() =>
+      end({ outcome: "ok" }, () => {
+        throw new Error("EIO");
+      }),
+    ).toThrow("EIO");
+    end(failed(new Error("EIO")));
+    expect(events).toMatchObject([{ event: "read", outcome: "error", error: expect.stringContaining("EIO") }]);
+  });
+
+  it("surfaces a write that throws as itself, and attempts no second write", () => {
+    let writes = 0;
+    const log = () => {
+      writes++;
+      throw new Error("sink gone");
+    };
+
+    expect(() => logged(log, "setup", {}, () => 7)).toThrow("sink gone");
+    expect(writes).toBe(1);
+  });
+});
+
+describe("firstFailure", () => {
+  it("is the first failure reported, or else the ending the work reached", () => {
+    const failures = firstFailure();
+    expect(failures.or({ outcome: "aborted" })).toEqual({ outcome: "aborted" });
+
+    failures.fail(new Error("first"));
+    failures.fail(new Error("second"));
+    expect(failures.or({ outcome: "ok" })).toMatchObject({ outcome: "error", error: expect.stringContaining("first") });
+    expect(failures.or({ outcome: "ok" })).not.toMatchObject({ error: expect.stringContaining("second") });
   });
 });
 

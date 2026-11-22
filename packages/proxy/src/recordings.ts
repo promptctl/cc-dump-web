@@ -1,6 +1,6 @@
 import { closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
+import { firstFailure, startSpan, unitEvent, type Log } from "@cc-dump/log";
 import { recordingName } from "./format.ts";
 import { createWriter, eventLine, type Recorder, type Writer } from "./recording.ts";
 
@@ -58,24 +58,28 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     }
   };
   const record: Recorder = (name, trace_id) => {
-    const path = join(dir, name);
-    const span = startSpan(trace_id);
+    const end = unitEvent(log, "record", { path: join(dir, name) }, startSpan(trace_id));
+    const { fail, or } = firstFailure();
     const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
-    let failure: string | undefined;
-    return (seen) => {
-      const line = eventLine(trace_id, seen);
+    // Whether the line was appended: a write's failure is counted, and is the recording's first failure if none came before.
+    const appended = (line: Buffer) => {
       try {
         writerOf(name).append(line);
-        counts.events_written++;
-        counts.bytes_written += line.length;
-        for (const listener of listeners) listener(name);
       } catch (error) {
         counts.events_failed++;
-        failure ??= describeError(error);
+        fail(error);
+        return false;
       }
-      if (seen.type !== "end") return;
-      const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
-      log({ event: "record", ...span.end(), ...ending, path, counts });
+      counts.events_written++;
+      counts.bytes_written += line.length;
+      return true;
+    };
+    return (seen) => {
+      const told = appended(eventLine(trace_id, seen)) ? listeners : [];
+      if (seen.type === "end") end(or({ outcome: "ok" }), () => ({ counts }));
+      // The listeners are told after the event is written, so one that throws neither counts as a failed write nor
+      // loses the recording's event.
+      for (const listener of told) listener(name);
     };
   };
   return {
