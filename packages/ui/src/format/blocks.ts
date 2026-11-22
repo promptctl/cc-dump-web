@@ -1,6 +1,7 @@
+import { fieldOf, kinds, mapped, object, optional, raw as asSent, readShown, tagged, value, type Kind, type Reader, type Readers, type Unread, type Variants } from "@cc-dump/log/json";
 import { split, type Piece } from "./injected.ts";
-import { restParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
-import { fitting, Misfit, readObject, type Fields } from "./read.ts";
+import { restParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received, type Source } from "./parts.ts";
+import type { Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
 
@@ -45,6 +46,7 @@ export type BlockOrNone = [] | [Block];
 // The roles a message speaks in. Claude Code sends system-role messages among the user's and the assistant's.
 export type Role = "user" | "assistant" | "system";
 export const roleCategory: Record<Role, Category> = { user: "user", assistant: "assistant", system: "system" };
+export const role = kinds.among<Role>(["user", "assistant", "system"]);
 // The pieces a message's text is, by its role: what its sender said, or the harness's, as the system role's is, split
 // where the harness injected its own; an assistant's text whole, since the harness injects into the turns it sends
 // (docs/design/01-features.md, F3), so a reply that quotes a reminder is one block as sent and as resent.
@@ -64,34 +66,81 @@ export function raw(category: Category, name: string, reason: string, received: 
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
 export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: fields.value("error") }, ...unreadParts(fields)] };
+  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: fields.value("error") }, ...unreadParts(unreadOf(fields))] };
 }
 
-// The fields of an object no read asked for, as a part, when there are any.
-export const unreadParts = (fields: Fields) => restParts(fields.rest(), unreadPart);
+// The fields of an object `readObject` read that no read asked for, each at its name.
+export const unreadOf = (fields: Fields) => Object.entries(fields.rest()).map(([name, value]) => ({ at: [name], value }));
 
-// The fields of an object no read asked for, as a block of their own in `category`, when there are any.
-export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
-  const parts = unreadParts(fields);
+// The fields of a value no declaration read, as a part, when there are any.
+export const unreadParts = (unread: readonly Pick<Unread, "at" | "value">[]) => restParts(unread, unreadPart);
+
+// The fields of a value no declaration read, as a block of their own in `category`, when there are any.
+export function restBlock(unread: readonly Pick<Unread, "at" | "value">[], category: Category, name: string): BlockOrNone {
+  const parts = unreadParts(unread);
   return parts.length === 0 ? [] : [{ category, name, parts }];
 }
 
-// How one content block type is shown. `category` from the role of the message holding it and the block as sent, so a
-// block its entry cannot read has the same one; `name`, where it is not the block's type, and `parts` from its fields.
-// Each reads the fields it shows; the ones it does not read are shown after its parts. `form`: how a text block's text
-// reads where the block is: Markdown in a message, verbatim in what a tool or a document returned. `failed`: whether a
-// tool's result says its tool failed, read off the block as sent, so one its entry cannot read says so too. `stated`:
-// what the block states that a thread stands after (Stated), read off the block as sent too.
-type Entry = {
+// What a message's content is, and a tool result's, a document's or a search result's: a text, or content blocks, each
+// read on its own (`formatBlock`), so one that does not read is shown raw among the others.
+export type Content = string | unknown[];
+const contentKind: Kind<Content> = { fits: (json): json is Content => typeof json === "string" || Array.isArray(json), expected: "a string or a list of blocks" };
+export const content: Reader<Content> = value(contentKind);
+
+const string = value(kinds.string);
+
+// An image's or a document's source, by its type: media the view shows, the text a text document holds, the blocks of
+// a content document, or, `other`, a source of a type not here, shown by its type.
+type SourceRead = Source | { type: "text"; data: string } | { type: "content"; content: Content };
+const source = tagged<"type", SourceRead, { other: string }>(
+  "type",
+  { base64: { media_type: string, data: string }, url: { url: string }, file: { file_id: string }, text: { data: string }, content: { content } },
+  mapped(object<{ type: string }>({ type: string }), ({ type }) => ({ other: type })),
+);
+
+// [LAW:types-are-the-program] Every content block type the Messages API documents, each the fields it shows: a field
+// not declared here is shown after its block's parts, as it was sent.
+type ToolUse<T extends string> = { type: T; id: string; name: string; input: unknown };
+type ToolResult<T extends string> = { type: T; tool_use_id: string; content?: Content; is_error?: boolean };
+type ServerToolResult<T extends string> = { type: T; tool_use_id: string; content: unknown };
+type Sourced<T extends string> = { type: T; source: SourceRead | { other: string } };
+type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "redacted_thinking"; data: string }
+  | ToolUse<"tool_use">
+  | ToolUse<"server_tool_use">
+  | ToolUse<"mcp_tool_use">
+  | ToolResult<"tool_result">
+  | ToolResult<"mcp_tool_result">
+  | ServerToolResult<"web_search_tool_result">
+  | ServerToolResult<"web_fetch_tool_result">
+  | ServerToolResult<"code_execution_tool_result">
+  | ServerToolResult<"bash_code_execution_tool_result">
+  | ServerToolResult<"text_editor_code_execution_tool_result">
+  | ServerToolResult<"tool_search_tool_result">
+  | { type: "container_upload" }
+  | Sourced<"image">
+  | Sourced<"document">
+  | { type: "search_result"; source: string; title: string; content: Content };
+type Type = ContentBlock["type"];
+
+// What a block states, read off it as sent, each fact by its own field and never by its type's declaration, so a block
+// its declaration refuses states them too. `category` from the role of the message holding it; `failed`, whether a
+// tool's result says its tool failed; `stated`, what a thread stands after (Stated).
+type Facts = {
   category: (role: Role, block: unknown) => Category;
-  name?: (fields: Fields, role: Role) => string;
-  parts: (fields: Fields, role: Role, form: Form) => Part[];
   failed?: (block: unknown) => boolean;
   stated?: (block: unknown, role: Role) => Stated;
 };
-
-// A field of what was sent, if it is an object that has it.
-const sentField = (value: unknown, name: string): unknown => (typeof value === "object" && value !== null ? (value as Record<string, unknown>)[name] : undefined);
+// How one content block type is shown: its declaration, `fields`; its `name`, where it is not its type; and its `parts`.
+// `form`: how a text block's text reads where the block is: Markdown in a message, verbatim in what a tool or a
+// document returned.
+type Entry<B extends { type: string }> = Facts & {
+  fields: Readers<Omit<B, "type">>;
+  name?: (block: B) => string;
+  parts: (block: B, role: Role, form: Form) => Part[];
+};
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
@@ -100,21 +149,21 @@ const tools = () => "tools" as const;
 // reply, how long its signature or its data is: it is `usage`, so it is no row among what was said until the reader
 // shows the usage, and is never dropped (docs/design/01-features.md, F3).
 const thought = (_: Role, block: unknown): Category => {
-  const text = sentField(block, "thinking");
+  const text = fieldOf(block, "thinking");
   return typeof text === "string" && text !== "" ? "thinking" : "usage";
 };
 
 // A tool use, its input read by `read`: a client tool's by the tool's own shape (format/tools.ts), a server tool's or
 // an MCP server's, whose names are their own and may be any, as its JSON.
-const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
+const toolUse = (read: (name: string, input: unknown) => Part[]): Entry<ToolUse<string>> => ({
+  fields: { id: string, name: string, input: asSent },
   category: tools,
-  name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
-  parts: (fields) => {
-    const input = fields.value("input");
+  name: (block) => `${block.type}: ${block.name}`,
+  parts: ({ id, name, input }) => {
     // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is:
     // the input's deltas' `partial_json`, joined, another text than the input it becomes.
-    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(fields.string("name"), input);
-    return [...parts, { id: "id", kind: "fields", fields: [["id", fields.string("id")]] }];
+    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(name, input);
+    return [...parts, { id: "id", kind: "fields", fields: [["id", id]] }];
   },
 });
 // What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
@@ -122,25 +171,24 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
 // Its Skill tool runs the `skill` its input names, so one whose input is still streaming text launches none yet, while
 // an Agent call launches an agent whatever its input holds, of the type it names once it is read. A subagent
 // hands its report back with SubagentHandback, the last block of a reply that stops for a tool's use, where its turn
-// never ends. A call with no id is shown as not fitting (`toolUse`), and states none.
+// never ends. A call with no id states none.
 const launchOf = (name: unknown, input: unknown): Launch | undefined => {
-  const type = sentField(input, "subagent_type");
-  const skill = sentField(input, "skill");
+  const type = fieldOf(input, "subagent_type");
+  const skill = fieldOf(input, "skill");
   if (name === "Agent") return { tool: "Agent", type: typeof type === "string" ? type : undefined };
   return name === "Skill" && typeof skill === "string" ? { tool: "Skill", skill } : undefined;
 };
 const called = (block: unknown): Stated => {
-  const id = sentField(block, "id");
-  const name = sentField(block, "name");
-  return typeof id === "string" ? { call: { id, launches: launchOf(name, sentField(block, "input")), waits: name !== "SubagentHandback" } } : {};
+  const id = fieldOf(block, "id");
+  const name = fieldOf(block, "name");
+  return typeof id === "string" ? { call: { id, launches: launchOf(name, fieldOf(block, "input")), waits: name !== "SubagentHandback" } } : {};
 };
 
-// What a client tool's result states: the call it answers, and the agent its texts name. One with no id is shown as not
-// fitting (`toolResult`), and states none.
+// What a client tool's result states: the call it answers, and the agent its texts name. One with no id states none.
 const answered = (block: unknown): Stated => {
-  const id = sentField(block, "tool_use_id");
-  const content = sentField(block, "content");
-  const texts = typeof content === "string" ? [content] : Array.isArray(content) ? content.flatMap((one) => (typeof sentField(one, "text") === "string" ? [sentField(one, "text") as string] : [])) : [];
+  const id = fieldOf(block, "tool_use_id");
+  const sent = fieldOf(block, "content");
+  const texts = typeof sent === "string" ? [sent] : Array.isArray(sent) ? sent.flatMap((one) => (typeof fieldOf(one, "text") === "string" ? [fieldOf(one, "text") as string] : [])) : [];
   return typeof id === "string" ? { result: { answers: id, names: namedIn(texts) } } : {};
 };
 
@@ -150,7 +198,7 @@ const answered = (block: unknown): Stated => {
 // `<summary>` inside a line and ends after it, so it is none; nor is a summary of nothing.
 const summaryEnding = /(?<![^\n])<summary>([\s\S]*)<\/summary>\s*$/;
 const summarized = (block: unknown, role: Role): Stated => {
-  const text = sentField(block, "text");
+  const text = fieldOf(block, "text");
   const summary = role === "assistant" && typeof text === "string" ? summaryEnding.exec(text)?.[1]!.trim() : undefined;
   return summary === undefined || summary === "" ? {} : { summary };
 };
@@ -158,28 +206,28 @@ const summarized = (block: unknown, role: Role): Stated => {
 // A tool result's content is optional: a result may say only that its tool failed. A call's or a result's id follows
 // what it holds: it is how the two refer to each other, not what either says. Its tool failed as its is_error says,
 // which follows the id where it was sent.
-const toolResult: Entry = {
+const toolResult: Entry<ToolResult<string>> = {
+  fields: { tool_use_id: string, content: optional(content), is_error: optional(value(kinds.boolean)) },
   category: tools,
   stated: answered,
-  failed: (block) => sentField(block, "is_error") === true,
-  parts: (fields, role) => {
-    const content = fields.value("content");
-    const failed = fields.value("is_error");
-    const id: Field[] = [["tool_use_id", fields.string("tool_use_id")], ...(failed === undefined ? [] : [["is_error", fieldValue(failed)] satisfies Field])];
+  failed: (block) => fieldOf(block, "is_error") === true,
+  parts: ({ tool_use_id, content, is_error }, role) => {
+    const id: Field[] = [["tool_use_id", tool_use_id], ...(is_error === undefined ? [] : [["is_error", fieldValue(is_error)] satisfies Field])];
     return [...(content === undefined ? [] : contentParts(content, role)), { id: "tool_use_id", kind: "fields", fields: id }];
   },
 };
 // A server tool's result says its tool failed by its content's type, the tool's error type (`web_search_tool_result_error`,
 // `code_execution_tool_result_error`, ...), as the Messages API names each.
-const serverToolResult: Entry = {
+const serverToolResult: Entry<ServerToolResult<string>> = {
+  fields: { tool_use_id: string, content: asSent },
   category: tools,
-  failed: (block) => String(sentField(sentField(block, "content"), "type")).endsWith("_error"),
-  parts: (fields) => [
-    { id: "content", label: "content", kind: "json", value: fields.value("content") },
-    { id: "tool_use_id", kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
+  failed: (block) => String(fieldOf(fieldOf(block, "content"), "type")).endsWith("_error"),
+  parts: ({ tool_use_id, content }) => [
+    { id: "content", label: "content", kind: "json", value: content },
+    { id: "tool_use_id", kind: "fields", fields: [["tool_use_id", tool_use_id]] },
   ],
 };
-const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), of, role) });
+const ofSource = (of: Medium): Entry<Sourced<string>> => ({ fields: { source }, category: byRole, parts: (block, role) => sourceParts(block.source, of, role) });
 
 // [LAW:one-source-of-truth] A text block's text as a part, the one name it has wherever it is made: in the text's block,
 // and in each piece of it and that piece's preview (`formatContent`).
@@ -188,69 +236,67 @@ const textPart = (text: string, form: Form): Part => ({ id: textId, kind: "text"
 
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
-const entries = new Map<string, Entry>([
-  ["text", { category: byRole, parts: (fields, _, form) => [textPart(fields.string("text"), form)], stated: summarized }],
+const entries: { [T in Type]: Entry<Extract<ContentBlock, { type: T }>> } = {
+  text: { fields: { text: string }, category: byRole, parts: ({ text }, _, form) => [textPart(text, form)], stated: summarized },
   // A streamed thinking block has no signature until its signature delta, just before its stop.
-  [
-    "thinking",
-    {
-      category: thought,
-      parts: (fields) => {
-        const text = fields.string("thinking");
-        const signature = fields.optionalString("signature");
-        return [
-          { id: "thinking", kind: "text", form: "markdown", text },
-          { id: "signature", kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
-        ];
-      },
-    },
-  ],
-  ["redacted_thinking", { category: thought, parts: (fields) => [{ id: "data", kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
-  ["tool_use", { ...toolUse(inputParts), stated: called }],
-  ["server_tool_use", toolUse((_, input) => jsonInput(input))],
-  ["mcp_tool_use", toolUse((_, input) => jsonInput(input))],
-  ["tool_result", toolResult],
-  ["mcp_tool_result", toolResult],
-  ["web_search_tool_result", serverToolResult],
-  ["web_fetch_tool_result", serverToolResult],
-  ["code_execution_tool_result", serverToolResult],
-  ["bash_code_execution_tool_result", serverToolResult],
-  ["text_editor_code_execution_tool_result", serverToolResult],
-  ["tool_search_tool_result", serverToolResult],
-  ["container_upload", { category: tools, parts: () => [] }],
-  ["image", ofSource("image")],
-  ["document", ofSource("document")],
-  [
-    "search_result",
-    {
-      category: byRole,
-      parts: (fields, role) => [
-        { id: "search result", kind: "fields", fields: [["source", fields.string("source")], ["title", fields.string("title")]] },
-        ...contentParts(fields.value("content"), role),
-      ],
-    },
-  ],
-]);
+  thinking: {
+    fields: { thinking: string, signature: optional(string) },
+    category: thought,
+    parts: ({ thinking, signature }) => [
+      { id: "thinking", kind: "text", form: "markdown", text: thinking },
+      { id: "signature", kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
+    ],
+  },
+  redacted_thinking: { fields: { data: string }, category: thought, parts: ({ data }) => [{ id: "data", kind: "fields", fields: [["data", `${data.length} characters`]] }] },
+  tool_use: { ...toolUse(inputParts), stated: called },
+  server_tool_use: toolUse((_, input) => jsonInput(input)),
+  mcp_tool_use: toolUse((_, input) => jsonInput(input)),
+  tool_result: toolResult,
+  mcp_tool_result: toolResult,
+  web_search_tool_result: serverToolResult,
+  web_fetch_tool_result: serverToolResult,
+  code_execution_tool_result: serverToolResult,
+  bash_code_execution_tool_result: serverToolResult,
+  text_editor_code_execution_tool_result: serverToolResult,
+  tool_search_tool_result: serverToolResult,
+  container_upload: { fields: {}, category: tools, parts: () => [] },
+  image: ofSource("image"),
+  document: ofSource("document"),
+  search_result: {
+    fields: { source: string, title: string, content },
+    category: byRole,
+    parts: ({ source, title, content }, role) => [{ id: "search result", kind: "fields", fields: [["source", source], ["title", title]] }, ...contentParts(content, role)],
+  },
+};
+const types = kinds.among(Object.keys(entries) as Type[]);
+
+// [LAW:single-enforcer] The one reader of a content block: its type's declaration, by its `type`, or, for a type with no
+// entry, the block as it was sent.
+const variants = Object.fromEntries(Object.entries(entries).map(([type, entry]) => [type, entry.fields])) as Variants<"type", ContentBlock>;
+const contentBlock = tagged<"type", ContentBlock, "unknown">("type", variants, mapped(asSent, () => "unknown" as const));
+// What a block of a type with no entry states: nothing but the category of the message holding it.
+const unknownFacts: Facts = { category: byRole };
 
 // A content block of a message in `role`, as the block the view shows, a text block's text read in `form`.
-// [LAW:no-silent-failure] A type with no entry is shown as its raw JSON under its type name; a block its entry cannot
-// read is shown the same way, with why.
+// [LAW:no-silent-failure] A type with no entry is shown as its raw JSON under its type name; a block its declaration
+// refuses is shown the same way, with why, and still states what its own fields say.
 export function formatBlock(block: unknown, role: Role, form: Form): Block {
-  const type = typeof block === "object" && block !== null && "type" in block && typeof block.type === "string" ? block.type : "block";
-  const entry = entries.get(type);
-  if (entry === undefined) return { category: byRole(role), name: type, parts: [{ id: "block", kind: "json", value: block }] };
-  const shown = fitting(
-    (): Block => {
-      const fields = readObject(block, type);
-      fields.value("type");
-      const parts = entry.parts(fields, role, form);
-      return { category: entry.category(role, block), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
-    },
-    (reason) => raw(entry.category(role, block), type, reason, { kind: "json", value: block }),
-  );
-  const stating = { ...shown, ...entry.stated?.(block, role) };
+  const sent = fieldOf(block, "type");
+  const type = typeof sent === "string" ? sent : "block";
+  const facts: Facts = types.fits(sent) ? entries[sent] : unknownFacts;
+  const stating: Block = { category: facts.category(role, block), ...shownOf(block, type, role, form), ...facts.stated?.(block, role) };
   // A tool's result that says its tool failed is named for it.
-  return entry.failed?.(block) ? { ...stating, name: `${stating.name}: error`, failed: true } : stating;
+  return facts.failed?.(block) ? { ...stating, name: `${stating.name}: error`, failed: true } : stating;
+}
+
+// A block's name and parts: its entry's, its unread fields after them; raw where it has no entry or its entry refuses it.
+function shownOf(block: unknown, type: string, role: Role, form: Form): Pick<Block, "name" | "parts"> {
+  const read = readShown(contentBlock, block);
+  if ("refused" in read) return { name: type, parts: receivedParts(read.refused, { kind: "json", value: block }) };
+  if (read.value === "unknown") return { name: type, parts: [{ id: "block", kind: "json", value: block }] };
+  // [LAW:types-are-the-program] The entry of the type `contentBlock` read the block by, so it takes that type's block.
+  const entry = entries[read.value.type] as Entry<ContentBlock>;
+  return { name: entry.name?.(read.value) ?? type, parts: [...entry.parts(read.value, role, form), ...unreadParts(read.unread)] };
 }
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
@@ -299,36 +345,26 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
   }
 }
 
-// The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows, each
-// named under its block's index in the list, which only grows at its end. Its text is what the tool or the source
-// returned, read verbatim.
-function contentParts(content: unknown, role: Role): Part[] {
+// The content of a tool result, a document or a search result, as parts: a text, or the parts of its blocks, each named
+// under its block's index in the list, which only grows at its end. Its text is what the tool or the source returned,
+// read verbatim.
+function contentParts(content: Content, role: Role): Part[] {
   if (typeof content === "string") return [{ id: "content", kind: "text", form: "verbatim", text: content }];
-  if (Array.isArray(content)) return content.flatMap((block, index) => formatBlock(block, role, "verbatim").parts.map((part) => ({ ...part, id: `${index}/${part.id}` })));
-  throw new Misfit("content is neither a string nor a list of blocks");
+  return content.flatMap((block, index) => formatBlock(block, role, "verbatim").parts.map((part) => ({ ...part, id: `${index}/${part.id}` })));
 }
 
-// An image's or a document's source: media the view shows, the text a text document holds, or the blocks of a
-// content document. A source of another type is shown as its JSON.
-function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
-  const fields = readObject(source, "source");
-  const type = fields.string("type");
-  const parts = ((): Part[] => {
-    switch (type) {
-      case "base64":
-        return [{ id: "source", kind: "media", of, source: { type, media_type: fields.string("media_type"), data: fields.string("data") } }];
-      case "url":
-        return [{ id: "source", kind: "media", of, source: { type, url: fields.string("url") } }];
-      case "file":
-        return [{ id: "source", kind: "media", of, source: { type, file_id: fields.string("file_id") } }];
-      case "text":
-        return [{ id: "source", kind: "text", form: "verbatim", text: fields.string("data") }];
-      case "content":
-        return contentParts(fields.value("content"), role);
-      // A source of a type not here: its other fields follow.
-      default:
-        return [{ id: "source", label: "source", kind: "fields", fields: [["type", type]] }];
-    }
-  })();
-  return [...parts, ...restParts(fields.rest(), { id: "source/unread", label: "source fields" })];
+// An image's or a document's source as parts: media the view shows, the text a text document holds, the blocks of a
+// content document, or a source of a type not here by its type, its other fields among its block's unread fields.
+function sourceParts(source: SourceRead | { other: string }, of: Medium, role: Role): Part[] {
+  if ("other" in source) return [{ id: "source", label: "source", kind: "fields", fields: [["type", source.other]] }];
+  switch (source.type) {
+    case "base64":
+    case "url":
+    case "file":
+      return [{ id: "source", kind: "media", of, source }];
+    case "text":
+      return [{ id: "source", kind: "text", form: "verbatim", text: source.data }];
+    case "content":
+      return contentParts(source.content, role);
+  }
 }

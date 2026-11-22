@@ -92,6 +92,28 @@ export const nullable =
 // A value taken as it is, for a part read on its own later (a stored item's state, by its version).
 export const raw: Reader<unknown> = (json) => read(json);
 
+// What `reader` reads, as `as` makes it: the same read, a value of another shape.
+export const mapped =
+  <T, U>(reader: Reader<T>, as: (value: T) => U): Reader<U> =>
+  (json, at) => {
+    const result = reader(json, at);
+    return { ...result, value: as(result.value) };
+  };
+
+// A string that is JSON text, read by `reader` as the value it holds, or refused as `parseJson` refuses a document.
+export const fromJsonText =
+  <T>(reader: Reader<T>): Reader<T> =>
+  (json, at) => {
+    const text = value(kinds.string)(json, at).value;
+    let held: unknown;
+    try {
+      held = JSON.parse(text);
+    } catch (error) {
+      throw new Malformed("is not JSON", { cause: error });
+    }
+    return reader(held, at);
+  };
+
 const fieldsOf = value(kinds.object);
 
 // What `reader` gives, or why it refused: only `Malformed` is a refusal.

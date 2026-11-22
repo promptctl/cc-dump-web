@@ -158,6 +158,9 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   // leaves them, and adds the rest of its path, as its own.
   const readStep = (formatted: FormattedExchange, step: number): Read => {
     const undo: (() => void)[] = [];
+    // A request whose messages were not read is in no thread: what it sends of one is not known.
+    const { messages } = formatted;
+    if (messages === undefined) return { formatted, thread: undefined, fact: undefined, undo };
     const thread = threadOf(formatted, levelOf(formatted.sender), threads, alike, step, undo);
     if (thread === undefined) return { formatted, thread, fact: undefined, undo };
     const begun = thread.root.owner === step;
@@ -170,7 +173,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       if (next === undefined) break;
       node = next;
     }
-    const message = path[index]?.message ?? formatted.messages;
+    const message = path[index]?.message ?? messages;
     const left = begun ? undefined : node.ends.length > 0 ? { step: node.ends.at(-1)!, whole: true, message } : { step: node.owner, whole: false, message };
     for (const { at, held } of path.slice(index)) {
       const added: Node = { at, held, owner: step, children: [], ends: [] };
@@ -182,7 +185,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const end = node;
     end.ends.push(step);
     undo.push(() => end.ends.pop());
-    return { formatted, thread, fact: { step, left, messages: formatted.messages }, undo };
+    return { formatted, thread, fact: { step, left, messages }, undo };
   };
 
   // The chain of a step that follows `followed`: that step's, while it is its last, or one begun on it.
@@ -278,7 +281,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
           state(block, key);
           continue;
         }
-        const at = `${placeName(block.place, formatted.messages)}/${block.key}`;
+        const at = `${placeName(block.place)}/${block.key}`;
         const reply = block.place.in === "reply";
         sent.add(at);
         const location = find(chain, at);
@@ -408,7 +411,7 @@ export function sameFields(a: object, b: object): boolean {
 function pathOf(formatted: FormattedExchange): { at: string; message: number; held: Extract<Held, { reply: boolean }> }[] {
   return formatted.groups.flatMap(({ blocks }) =>
     blocks.flatMap((block) => {
-      const message = block.place?.in === "message" ? block.place.index : block.place?.in === "reply" ? formatted.messages : undefined;
+      const message = block.place?.in === "message" || block.place?.in === "reply" ? block.place.index : undefined;
       return message === undefined ? [] : [{ at: `message.${message}/${block.key}`, message, held: { block, reply: block.place!.in === "reply" } }];
     }),
   );
@@ -440,7 +443,7 @@ export function saidIn(blocks: KeyedBlock[]): string {
 
 // A place's name in its thread: the request's own for its parameters, its tools, its system prompt; a speaker's
 // message, the reply the one after the request's; or a system's message, by the speaker's it stands before.
-function placeName(place: Place, messages: number): string {
+function placeName(place: Place): string {
   switch (place.in) {
     case "parameters":
       return "request";
@@ -452,7 +455,7 @@ function placeName(place: Place, messages: number): string {
     case "system message":
       return `message.${place.before}.system.${place.index}`;
     case "reply":
-      return `message.${messages}`;
+      return `message.${place.index}`;
   }
 }
 

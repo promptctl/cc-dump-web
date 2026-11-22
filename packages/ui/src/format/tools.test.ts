@@ -88,11 +88,11 @@ describe("inputParts", () => {
   it("shows an input its entry cannot read as why, and its JSON", () => {
     const input = { file_path: "/src/app.ts", old_string: "a" };
     expect(inputParts("Edit", input)).toEqual([
-      { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "input's new_string is not a string" },
+      { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "new_string: is missing" },
       { kind: "json", id: "input", label: "input", value: input },
     ]);
     expect(inputParts("Read", ["/tmp/x"])).toEqual([
-      { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "input is not an object" },
+      { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "is not an object" },
       { kind: "json", id: "input", label: "input", value: ["/tmp/x"] },
     ]);
   });

@@ -169,8 +169,8 @@ describe("format", () => {
     expect(group(formatted, "message.0")[1]!.parts).toEqual([{ id: "source", kind: "media", of: "image", source: png }]);
     expect(group(formatted, "message.0")[2]!.parts).toEqual([
       { id: "source", kind: "text", form: "verbatim", text: "Quarterly notes" },
-      { kind: "rest", id: "source/unread", label: "source fields", fields: [["media_type", '"text/plain"']] },
-      { kind: "rest", id: "unread", label: "fields", fields: [["title", '"notes"']] },
+      // A field no declaration reads is shown under the fields holding it, however deep.
+      { kind: "rest", id: "unread", label: "fields", fields: [["title", '"notes"'], ["source", [["media_type", '"text/plain"']]]] },
     ]);
     expect(group(formatted, "message.2")[0]!.parts).toEqual([
       { id: "0/text", kind: "text", form: "verbatim", text: "Read 1 image" },
@@ -310,8 +310,8 @@ describe("format", () => {
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
     ]);
-    expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition is not an object"), { id: "received", kind: "json", value: "Bash" }]);
-    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition's description is not a string, if present"));
+    expect(blocks[3]!.parts).toEqual([doesNotFit("is not an object"), { id: "received", kind: "json", value: "Bash" }]);
+    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("description: is not a string"));
   });
 
   it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
@@ -389,7 +389,7 @@ describe("format", () => {
       ]),
     ]);
     expect(group(formatted, "message.0")).toEqual([{ key: "content.0", place: firstMessage, category: "user", name: "hologram", parts: [{ id: "block", kind: "json", value: hologram }] }]);
-    expect(group(formatted, "reply")).toEqual([{ key: "content.0", place: { in: "reply" }, category: "assistant", name: "hologram", parts: [{ id: "block", kind: "json", value: hologram }] }]);
+    expect(group(formatted, "reply")).toEqual([{ key: "content.0", place: { in: "reply", index: 1 }, category: "assistant", name: "hologram", parts: [{ id: "block", kind: "json", value: hologram }] }]);
     // The events it cannot apply are shown too, with the exchange's own, each raw under its event name with why.
     const blocks = group(formatted, "response");
     expect(lines(blocks)).toEqual(expect.arrayContaining(["http content_block_delta event", "http sparkle event"]));
@@ -405,7 +405,7 @@ describe("format", () => {
         category: "user",
         name: "text",
         parts: [
-          { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "text's text is not a string" },
+          { kind: "text", form: "verbatim", id: "misfit", label: "does not fit", text: "text: is not a string" },
           { id: "received", kind: "json", value: { type: "text", text: 5 } },
         ],
       },
@@ -617,8 +617,47 @@ describe("format", () => {
     ]);
     const reply = group(replied!, "reply");
     expect(replied!.messages).toBe(1);
-    expect(reply.map(({ place, ...block }) => [place, block])).toEqual(group(resent!, "message.1").map((block) => [{ in: "reply" }, { ...block, place: undefined }]));
+    expect(reply.map(({ place, ...block }) => [place, block])).toEqual(group(resent!, "message.1").map(({ place, ...block }) => [{ in: "reply", index: place?.in === "message" ? place.index : undefined }, block]));
     expect(group(resent!, "message.1").map(({ place }) => place)).toEqual(content.map(() => ({ in: "message", index: 1 })));
+  });
+
+  it("places no reply of a request whose messages were not read, and counts none of its messages", () => {
+    const formatted = one([
+      ...request("a", { model: "m", messages: "Hi." }),
+      ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify({ ...messageStart.message, content: [{ type: "text", text: "Hello." }] }))),
+    ]);
+    expect(formatted.messages).toBeUndefined();
+    expect(group(formatted, "request").find(({ key }) => key === "body")!.parts[0]).toEqual(doesNotFit("messages: is not a list"));
+    expect(group(formatted, "reply").map(({ name, place }) => [name, place])).toEqual([["text", undefined]]);
+  });
+
+  it("states what a block's own fields say when its declaration refuses it: the call, the answer, the failure, the launch and the breakpoint", () => {
+    const formatted = one(
+      request("a", {
+        model: "m",
+        messages: [
+          { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Agent", cache_control: { type: "ephemeral" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true, content: 7 }] },
+        ],
+      }),
+    );
+    const [call] = group(formatted, "message.0");
+    expect(call).toMatchObject({ name: "tool_use", call: { id: "toolu_1", launches: { tool: "Agent", type: undefined }, waits: true } });
+    expect(call!.parts[0]).toEqual(doesNotFit("input: is missing"));
+    const [result] = group(formatted, "message.1");
+    expect(result).toMatchObject({ name: "tool_result: error", failed: true, result: { answers: "toolu_1", names: undefined } });
+    expect(result!.parts[0]).toEqual(doesNotFit("content: is not a string or a list of blocks"));
+    expect(group(formatted, "request").find(({ key }) => key === "cache")!.parts).toEqual([{ id: "breakpoints", kind: "fields", fields: [["message.0/content.0", [["type", '"ephemeral"']]]] }]);
+  });
+
+  it("formats a tool, a tool input's field and a block type named __proto__ as any other, throwing nothing", () => {
+    const sent = JSON.parse('{"model":"m","tools":[{"name":"__proto__","description":"d"}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"__proto__","input":{"__proto__":1}},{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"ls","__proto__":{"x":1}}},{"type":"__proto__","__proto__":2}]}]}') as unknown;
+    const formatted = one(request("a", sent));
+    expect(group(formatted, "tools").map(({ key, name }) => [key, name])).toEqual([["tools.__proto__.0", "__proto__"]]);
+    const [proto, bash, block] = group(formatted, "message.0");
+    expect(proto!.parts[0]).toEqual({ id: "input", label: "input", kind: "json", value: JSON.parse('{"__proto__":1}') });
+    expect(bash!.parts.map(({ id }) => id)).toEqual(["command", "input", "id"]);
+    expect(block!.name).toBe("__proto__");
   });
 
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
@@ -904,7 +943,7 @@ describe("format", () => {
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [image] }] }));
     expect(group(formatted, "message.0")[0]!.parts).toEqual([
       { kind: "fields", id: "source", label: "source", fields: [["type", "s3"]] },
-      { kind: "rest", id: "source/unread", label: "source fields", fields: [["bucket", '"b"'], ["key", '"k"']] },
+      { kind: "rest", id: "unread", label: "fields", fields: [["source", [["bucket", '"b"'], ["key", '"k"']]]] },
     ]);
   });
 });

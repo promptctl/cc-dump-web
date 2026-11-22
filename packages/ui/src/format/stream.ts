@@ -1,5 +1,5 @@
 import { serverSentEvents } from "@cc-dump/log/wire";
-import { formatError, restBlock, type Block } from "./blocks.ts";
+import { formatError, restBlock, unreadOf, type Block } from "./blocks.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
@@ -90,7 +90,7 @@ export function createReassembly(): Reassembly {
         return;
       // A keep-alive, which may come at any time and builds nothing: a field it carries is shown on its own.
       case "ping":
-        blocks.push(...restBlock(event, "http", "ping event"));
+        blocks.push(...restBlock(unreadOf(event), "http", "ping event"));
         return;
       // The stream's end, which the trailers already mark: it carries no content.
       case "message_stop":

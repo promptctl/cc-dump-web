@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { fieldOf, type Unread } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -101,10 +101,19 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
-// The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
-export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
-  const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
+// The fields of a value no declaration read, `unread`, as the part `named`, its id and its label, when there are any:
+// each under the fields holding it, by its path, so one deep in the value is shown where it was sent.
+export function restParts(unread: readonly Pick<Unread, "at" | "value">[], named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
+  const fields = nested(unread);
   return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
+}
+function nested(unread: readonly Pick<Unread, "at" | "value">[]): Field[] {
+  const names = [...new Set(unread.map(({ at }) => at[0]!))];
+  return names.map((name): Field => {
+    const under = unread.filter(({ at }) => at[0] === name);
+    const own = under.find(({ at }) => at.length === 1);
+    return [name, own === undefined ? nested(under.map((field) => ({ ...field, at: field.at.slice(1) }))) : fieldValue(own.value)];
+  });
 }
 
 // Why a value is not shown as what it was read as, set before the value as it was received.
