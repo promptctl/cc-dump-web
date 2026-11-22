@@ -1053,6 +1053,63 @@ describe("a value that does not read", () => {
     expect(group(formatted, "reply").map(({ parts }) => parts[0])).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Hi." }]);
   });
 
+  it("applies no event after message_stop, nor usage over a usage that is no object, nor text over a text that is no string", () => {
+    const text = (index: number, start: unknown) => [
+      frame({ type: "content_block_start", index, content_block: { type: "text", text: start } }),
+      frame({ type: "content_block_delta", index, delta: { type: "text_delta", text: "Hi." } }),
+    ];
+    const notApplied = (events: string[]) =>
+      group(one([...request("a", { model: "m", messages: [] }), ...frames("a", events)]), "response")
+        .filter(({ name }) => name.endsWith(" event"))
+        .map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
+    expect(notApplied([frame(messageStart), frame({ type: "message_stop" }), frame(messageDelta)])).toEqual(["message_delta event: comes after message_stop"]);
+    expect(notApplied([frame({ type: "message_start", message: { ...messageStart.message, usage: "none" } }), frame(messageDelta)])).toEqual(["message_delta event: usage: extends a message whose usage is not an object"]);
+    expect(notApplied([frame(messageStart), ...text(0, null)])).toEqual(["content_block_delta event: delta.type: extends a block whose text is not a string"]);
+  });
+
+  it("keeps a message whose role does not read: its content formatted, its calls stated, and its role shown as received, with why", () => {
+    const content = [
+      { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
+      { type: "text", text: "Done." },
+    ];
+    const formatted = one(request("a", { model: "m", messages: [{ role: "developer", content }] }));
+    expect(formatted.groups.find(({ key }) => key === "message.0.system.0")!.title).toBe("message");
+    const blocks = group(formatted, "message.0.system.0");
+    expect(lines(blocks)).toEqual(["system role", "tools tool_use: Bash", "system system reminder"]);
+    expect(blocks[0]!.parts[0]).toEqual(doesNotFit([{ at: ["messages", "0", "role"], why: "is not one of user, assistant, system" }]));
+    expect(blocks[1]!.call).toMatchObject({ id: "t1" });
+  });
+
+  it("keys a reply's blocks by the index the API gives each, whatever order they stop in", () => {
+    const formatted = one([
+      ...request("a", { model: "m", messages: [] }),
+      ...streamed("a", [
+        messageStart,
+        { type: "content_block_start", index: 1, content_block: { type: "text", text: "Second." } },
+        { type: "content_block_stop", index: 1 },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "First." } },
+        { type: "content_block_stop", index: 0 },
+      ]),
+    ]);
+    expect(group(formatted, "reply").map(({ key, parts }) => [key, (parts[0] as { text: string }).text])).toEqual([
+      ["content.0", "First."],
+      ["content.1", "Second."],
+    ]);
+  });
+
+  it("costs a count that does not read its own fact alone, and reads a text's citations sent as null as none", () => {
+    const message = { ...messageStart.message, content: [{ type: "text", text: "Hi.", citations: null }], stop_reason: "end_turn", usage: { input_tokens: 120, output_tokens: 3.5 } };
+    const formatted = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
+    expect(formatted.facts).toMatchObject({ uncached: 120, output: undefined });
+    expect(group(formatted, "response").find(({ name }) => name === "usage")!.parts[0]).toEqual(doesNotFit([{ at: ["usage", "output_tokens"], why: "is not an integer" }]));
+    expect(group(formatted, "reply").map(({ parts }) => parts)).toEqual([[{ id: "text", kind: "text", form: "markdown", text: "Hi." }]]);
+  });
+
+  it("keeps a thinking block whose thinking does not read among the thinking", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "assistant", content: [{ type: "thinking", thinking: 5, signature: "c2ln" }] }] }));
+    expect(lines(group(formatted, "message.0"))).toEqual(["thinking thinking"]);
+  });
+
   it("shows an event's fields no declaration reads by their path from its name, a later event's replacing an earlier's", () => {
     const formatted = one([...request("a", { model: "m", messages: [] }), ...streamed("a", [messageStart, { type: "ping", beat: 1 }, { type: "ping", beat: 2, nested: { deep: true } }, { type: "message_stop" }])]);
     expect(group(formatted, "response").find(({ name }) => name === "event fields")!.parts).toEqual([

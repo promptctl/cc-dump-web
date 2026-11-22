@@ -1,6 +1,6 @@
 import type { Block } from "../format/blocks.ts";
 import type { Launch } from "../format/tools.ts";
-import { equal } from "../format/equal.ts";
+import { equal } from "../equal.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
 import type { Sender } from "../format/wire.ts";

@@ -1,4 +1,4 @@
-import { encoded, fieldOf, held, refusalText, type Path, type Refusal, type Unknown } from "@cc-dump/log/json";
+import { encoded, fieldOf, held, pathText, refusalText, type Path, type Refusal, type Unknown } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -104,7 +104,7 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
 // The fields of a value read at `at` that no declaration names, `unknown`, as the part `named`, its id and its label,
 // when there are any: each named by its path from the value, its keys as they were sent.
 export function unknownParts(unknown: readonly Unknown[], at: Path, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
-  const fields = unknown.map(({ at: path, value }): Field => [path.slice(at.length).join("."), fieldValue(value)]);
+  const fields = unknown.map(({ at: path, value }): Field => [pathText(path.slice(at.length)), fieldValue(value)]);
   return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
 }
 

@@ -1,4 +1,4 @@
-import { fieldOf, held, kinds, object, optional, raw, tagged, value, type Held, type Kind, type Path, type Readers, type Refusal, type Unknown } from "@cc-dump/log/json";
+import { fieldOf, held, joined, kinds, nullable, object, optional, raw, tagged, value, type Held, type Path, type Readers, type Refusal, type Unknown } from "@cc-dump/log/json";
 import { split, type Piece } from "./injected.ts";
 import { fieldValue, receivedParts, unknownParts, valuePart, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
 import { callOf, inputParts, jsonInput, type Launch } from "./tools.ts";
@@ -76,9 +76,8 @@ const readOf = <T>(field: Held<T>): T | undefined => (field.is === "read" ? fiel
 // [LAW:parse-dont-validate] The values of the fields `names` when each reads, or every refusal among them, with what
 // was sent.
 function whole<T>(fields: Fields<T>, names: readonly (keyof T & string)[], sent: unknown): Held<T> {
-  const read = names.map((name): [string, Held<unknown>] => [name, fields[name]]);
-  const refusals = read.flatMap(([, field]) => (field.is === "refused" ? field.refusals : []));
-  return refusals.length > 0 ? { is: "refused", refusals, sent } : { is: "read", value: Object.fromEntries(read.map(([name, field]) => [name, readOf(field)])) as T };
+  const all = joined(names.map((name): Held<unknown> => fields[name]));
+  return all.is === "refused" ? { ...all, sent } : { is: "read", value: Object.fromEntries(names.map((name, index) => [name, all.value[index]])) as T };
 }
 
 // How one content block type is shown. `fields`: the readers of the fields it shows, each held, so a field that does
@@ -119,17 +118,18 @@ function entry<T>({ fields, category, name, parts, failed, stated }: Entry<T>): 
 
 const text = value(kinds.string);
 const sent = value(kinds.sent);
-// A tool's result's, a document's or a search result's content: its text, or its content blocks.
-const contentKind: Kind<string | unknown[]> = { fits: (json): json is string | unknown[] => typeof json === "string" || Array.isArray(json), expected: "a string or a list of blocks" };
-const content = value(contentKind);
+// [LAW:single-enforcer] Content, wherever it is sent: a system prompt's, a message's, a tool's result's, a document's or
+// a search result's. Its text, or its content blocks.
+export const content = value<string | unknown[]>({ fits: (json): json is string | unknown[] => typeof json === "string" || Array.isArray(json), expected: "a string or a list of blocks" });
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
 // [LAW:types-are-the-program] Thinking is what was thought, its text. A thinking block that holds none, as every one
 // in Claude Code's traffic of 2026-11-16 does, and as a redacted one does, says only what the API reported about its
 // reply, how long its signature or its data is: it is `usage`, so it is no row among what was said until the reader
-// shows the usage, and is never dropped (docs/design/01-features.md, F3).
-const thought = (_: Role, { thinking }: Fields<{ thinking: string }>): Category => (readOf(thinking) ? "thinking" : "usage");
+// shows the usage, and is never dropped (docs/design/01-features.md, F3). One whose thinking does not read is thinking
+// still, shown as received among the rest.
+const thought = (_: Role, { thinking }: Fields<{ thinking: string }>): Category => (thinking.is === "refused" || thinking.value !== "" ? "thinking" : "usage");
 
 // A tool use, its input read by `read`: a client tool's by the tool's own shape (format/tools.ts), a server tool's or
 // an MCP server's, whose names are their own and may be any, as its JSON.
@@ -158,7 +158,8 @@ const called = ({ id, name, input }: Fields<Use>): Stated => {
 // space around it, which the harness drops as it sends the summary on. A Markdown `<details>` holds its
 // `<summary>` inside a line and ends after it, so it is none; nor is a summary of nothing.
 const summaryEnding = /(?<![^\n])<summary>([\s\S]*)<\/summary>\s*$/;
-type Text = { text: string; citations: unknown[] | undefined };
+// The API sends a text's citations as `null` when it has none.
+type Text = { text: string; citations: unknown[] | null | undefined };
 const summarized = ({ text }: Fields<Text>, role: Role): Stated => {
   const said = readOf(text);
   const summary = role === "assistant" && said !== undefined ? summaryEnding.exec(said)?.[1]!.trim() : undefined;
@@ -209,9 +210,9 @@ const formats = new Map<string, Format>([
   [
     "text",
     entry<Text>({
-      fields: { text, citations: optional(value(kinds.list)) },
+      fields: { text, citations: optional(nullable(value(kinds.list))) },
       category: byRole,
-      parts: ({ text, citations }, _, __, form) => [textPart(text, form), ...(citations === undefined ? [] : [{ ...valuePart(citations, "citations"), label: "citations" }])],
+      parts: ({ text, citations }, _, __, form) => [textPart(text, form), ...(citations === undefined || citations === null ? [] : [{ ...valuePart(citations, "citations"), label: "citations" }])],
       stated: summarized,
     }),
   ],
@@ -345,9 +346,7 @@ function sourceParts(sent: unknown, of: Medium, role: Role, at: Path): Part[] {
   const parts = ((): Part[] => {
     switch (shown.type) {
       case "base64":
-        return [{ id: "source", kind: "media", of, source: shown }];
       case "url":
-        return [{ id: "source", kind: "media", of, source: shown }];
       case "file":
         return [{ id: "source", kind: "media", of, source: shown }];
       case "text":

@@ -1,15 +1,18 @@
 import { kinds, tagged, value, type Reader, type Readers } from "./json.ts";
 import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 
-// [LAW:types-are-the-program] How a unit of work ended. An error is carried exactly when the outcome is
-// "error". "aborted" is work its client left; "stopped" is work cut because its server was closed.
-// Its own module, importing nothing that needs node, so code that runs without node (the UI) can name it.
-export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
-
-// `Ending`, one variant per outcome, as a message says it.
+// [LAW:types-are-the-program] How a unit of work ended, one variant per outcome, as a message says it. An error is
+// carried exactly when the outcome is "error". "aborted" is work its client left; "stopped" is work cut because its
+// server was closed. Its own module, importing nothing that needs node, so code that runs without node (the UI) can
+// name it.
 export type Ended = { outcome: "ok" } | { outcome: "aborted" } | { outcome: "stopped" } | { outcome: "error"; error: string };
 
-// [LAW:one-source-of-truth] The fields each outcome carries, keyed by outcome, so an outcome added to `Ending` is a
+// [LAW:one-source-of-truth] `Ended` as code holds it, derived from it: every variant but the error's says it carries
+// none, so `error` is read off any ending without telling the outcomes apart first.
+type Carrying<E> = E extends { error: string } ? E : E & { error?: never };
+export type Ending = Carrying<Ended>;
+
+// [LAW:one-source-of-truth] The fields each outcome carries, keyed by outcome, so an outcome added to `Ended` is a
 // compile error here until it is read. A message holding an ending beside fields of its own (a log line) reads its
 // own fields in each variant.
 export const endings: { [O in Ended["outcome"]]: Readers<Omit<Extract<Ended, { outcome: O }>, "outcome">> } = { ok: {}, aborted: {}, stopped: {}, error: { error: value(kinds.string) } };

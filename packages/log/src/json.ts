@@ -120,13 +120,19 @@ export const held =
     }
   };
 
-// Several values read together, each held: their values when every one reads, and otherwise one refusal joining every
-// refusal among them, so a value holding them is whole or refused, never partial.
+// [LAW:single-enforcer] Held values taken together: each one's value when every one reads, and otherwise one refusal
+// joining every refusal among them, so what holds them is whole or refused, never partial.
+export function joined<T>(values: readonly Held<T>[]): { is: "read"; value: T[] } | { is: "refused"; refusals: Refusal[] } {
+  const refusals = values.flatMap((value) => (value.is === "refused" ? value.refusals : []));
+  return refusals.length > 0 ? { is: "refused", refusals } : { is: "read", value: values.map((value) => (value as Extract<Held<T>, { is: "read" }>).value) };
+}
+
+// Several values read together, each held, joined: refused as one when any is.
 function together<T>(reads: readonly (readonly [string, Read<Held<T>>])[]): Read<[string, T][]> {
-  const refusals = reads.flatMap(([, { value }]) => (value.is === "refused" ? value.refusals : []));
-  if (refusals.length > 0) throw new Refused(refusals);
+  const all = joined(reads.map(([, { value }]) => value));
+  if (all.is === "refused") throw new Refused(all.refusals);
   return {
-    value: reads.map(([key, { value }]) => [key, (value as Extract<Held<T>, { is: "read" }>).value]),
+    value: reads.map(([key], index) => [key, all.value[index]!]),
     unknown: reads.flatMap(([, { unknown }]) => unknown),
     replaced: reads.flatMap(([, { replaced }]) => replaced),
   };
@@ -191,17 +197,15 @@ export const entries =
   };
 
 // One of a union told apart by its field `tag`: the variant its tag names, an `object` of its other fields, the tag
-// looked up as an own key, so `__proto__` or `constructor` is a tag like any other. A tag no variant has is
-// `otherwise`'s to read, the whole value, or refused.
+// looked up as an own key, so `__proto__` or `constructor` is a tag like any other. A tag no variant has is refused.
 export const tagged =
-  <K extends string, T extends Record<K, string>>(tag: K, variants: { [V in T[K]]: Readers<Omit<Extract<T, Record<K, V>>, K>> }, otherwise?: Reader<T>): Reader<T> =>
+  <K extends string, T extends Record<K, string>>(tag: K, variants: { [V in T[K]]: Readers<Omit<Extract<T, Record<K, V>>, K>> }): Reader<T> =>
   (json, at) => {
     const is = fieldOf(fieldsOf(json, at).value, tag);
     if (typeof is === "string" && Object.hasOwn(variants, is)) {
       const readers = variants[is as T[K]] as Readers<Record<string, unknown>>;
       return object({ ...readers, [tag]: raw })(json, at) as Read<T>;
     }
-    if (otherwise !== undefined) return otherwise(json, at);
     throw new Refused([{ at: [...at, tag], why: is === undefined ? "is missing" : `is not one of ${Object.keys(variants).join(", ")}` }]);
   };
 

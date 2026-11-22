@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { jsonObject, object, parse, parseJson, readDocument, type Readers } from "@cc-dump/log/json";
+import { jsonObject, object, parse, parseJson, pathText, readDocument, Refused, type Reader, type Readers } from "@cc-dump/log/json";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the keys the file set;
 // every other setting is its default. `unknown_keys`: the keys of the file no setting is named, another build's or a
@@ -14,7 +14,13 @@ export type ReadSettings<S> = { settings: S; file_keys: string[] | null; unknown
 // would act on a setting the user did not set. A default its reader refuses is this build's bug, thrown as the file is
 // declared, as the part's module loads.
 export function settingsFile<S>(what: string, readers: Readers<S>, defaults: { [K in keyof S]: unknown }) {
-  const settings = object(readers);
+  // [LAW:no-silent-failure] A value a setting's reader would replace by a fallback is refused too, as every other
+  // value the part cannot take is.
+  const settings: Reader<S> = (json, at) => {
+    const read = object(readers)(json, at);
+    if (read.replaced.length > 0) throw new Refused(read.replaced);
+    return read;
+  };
   parse(settings, defaults, `${what}'s defaults`);
   // `text` is the file's, or undefined when there is no file; `said`, the file as its failures name it.
   const parseAs =
@@ -22,7 +28,7 @@ export function settingsFile<S>(what: string, readers: Readers<S>, defaults: { [
     (text: string | undefined): ReadSettings<S> => {
       const file = text === undefined ? {} : jsonObject(parseJson(text, said), said);
       const { value, unknown } = readDocument(settings, { ...defaults, ...file }, said);
-      return { settings: value, file_keys: text === undefined ? null : Object.keys(file), unknown_keys: unknown.map(({ at }) => at.join(".")) };
+      return { settings: value, file_keys: text === undefined ? null : Object.keys(file), unknown_keys: unknown.map(({ at }) => pathText(at)) };
     };
   return {
     parse: parseAs(what),

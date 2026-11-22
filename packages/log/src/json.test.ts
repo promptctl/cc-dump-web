@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Malformed } from "./failure.ts";
-import { entries, fieldOf, held, kinds, list, nullable, object, optional, parse, parsed, parseJson, raw, tagged, tolerant, value } from "./json.ts";
+import { entries, fieldOf, held, kinds, list, nullable, object, optional, parse, parsed, parseJson, tagged, tolerant, value } from "./json.ts";
 import { parseTraceId } from "./trace.ts";
 
 describe("parse", () => {
@@ -182,10 +182,5 @@ describe("a tagged read", () => {
     expect(() => place({ at: "toString" }, [])).toThrow("at: is not one of end, row");
     expect(named(parseJson('{"type":"__proto__","n":1}', "named"), []).value).toEqual(JSON.parse('{"type":"__proto__","n":1}'));
     expect(named({ type: "constructor" }, []).value).toEqual({ type: "constructor" });
-  });
-
-  it("gives a tag no variant names to its otherwise reader, whole", () => {
-    const anyPlace = tagged<"at", Place | { at: string }>("at", { end: {}, row: { key: value(kinds.string) } } as never, raw as never);
-    expect(anyPlace({ at: "middle", by: 2 }, []).value).toEqual({ at: "middle", by: 2 });
   });
 });

@@ -10,10 +10,11 @@ import { fieldValue, type Field } from "./parts.ts";
 // the next event still arriving or what a cut-off stream left.
 export type Stream = { message: Record<string, unknown> | undefined; content: Built[]; fields: Field[]; errors: Block[]; refused: Block[]; tail: string };
 
-// A content block as far as its events have built it, its JSON, and whether its message stopped before it did, so it
-// was `cut`. [LAW:one-source-of-truth] One a stop ended is the same object in every stream after, so its formatting
-// is kept with it (format.ts), and a finished block is not formatted again.
-export type Built = { readonly block: unknown; readonly cut: boolean };
+// A content block as far as its events have built it, its JSON, whether its message stopped before it did, so it was
+// `cut`, and its `index` in its message's content, as the API numbers it. [LAW:one-source-of-truth] One a stop ended
+// is the same object in every stream after, so its formatting is kept with it (format.ts), keyed by the index it
+// carries, and a finished block is not formatted again.
+export type Built = { readonly block: unknown; readonly cut: boolean; readonly index: number };
 
 // The reassembly of one streamed Messages response as its text arrives: `reassemble` takes the text decoded so far, and
 // whether it is all the text there will be, and returns the stream as far as it has arrived. Events it has applied
@@ -23,8 +24,8 @@ export type Built = { readonly block: unknown; readonly cut: boolean };
 // once. Each call returns objects of its own, so a stream already returned is never changed by an event after it.
 export type Reassembly = { reassemble: (text: string, complete: boolean) => Stream };
 
-// How a content block grows from its deltas, by its type: its text, its thinking, its tool input as JSON text, or not
-// at all.
+// [LAW:one-source-of-truth] How a content block grows from its deltas, by its type: its text, its thinking, its tool
+// input as JSON text, or not at all; and what each delta grows. A block grows by a delta that grows what it does.
 type Growth = "text" | "thinking" | "input" | "nothing";
 const growths = new Map<string, Growth>([
   ["text", "text"],
@@ -33,14 +34,23 @@ const growths = new Map<string, Growth>([
   ["server_tool_use", "input"],
   ["mcp_tool_use", "input"],
 ]);
+const grows: Record<Delta["type"], Growth> = { text_delta: "text", citations_delta: "text", thinking_delta: "thinking", signature_delta: "thinking", input_json_delta: "input" };
+const growthOf = (block: Record<string, unknown>): Growth => {
+  const type = fieldOf(block, "type");
+  return (kinds.string.fits(type) ? growths.get(type) : undefined) ?? "nothing";
+};
 
 // [LAW:types-are-the-program] A content block of the message: arriving, its JSON as its start and deltas built it and
 // its tool input's JSON text so far; or stopped, built.
-type Slot = { is: "arriving"; block: Record<string, unknown>; grows: Growth; input: string } | { is: "stopped"; built: Built };
+type Slot = { is: "arriving"; block: Record<string, unknown>; input: string } | { is: "stopped"; built: Built };
+
+// [LAW:types-are-the-program] The message, by where its events are in it: none before message_start, begun, and
+// stopped at message_stop, after which no event builds on it.
+type Message = { is: "none" } | { is: "begun" | "stopped"; fields: Record<string, unknown> };
 
 // [LAW:types-are-the-program] The stream as its events have built it, a value of its own after each event, so an event
-// that does not apply changes nothing.
-type State = { message: Record<string, unknown> | undefined; content: ReadonlyMap<number, Slot>; fields: ReadonlyMap<string, unknown>; errors: readonly Block[] };
+// that does not apply changes nothing but the events refused, which it joins.
+type State = { message: Message; content: ReadonlyMap<number, Slot>; fields: ReadonlyMap<string, unknown>; errors: readonly Block[]; refused: readonly Block[] };
 
 // The events of a Messages stream, as the API documents them, and the deltas of a content block.
 type Delta =
@@ -94,8 +104,7 @@ export function createReassembly(): Reassembly {
   let read = 0;
   // The text after the last complete event.
   let tail = "";
-  let state: State = { message: undefined, content: new Map(), fields: new Map(), errors: [] };
-  const refused: Block[] = [];
+  let state: State = { message: { is: "none" }, content: new Map(), fields: new Map(), errors: [], refused: [] };
 
   return {
     reassemble: (text, complete) => {
@@ -105,12 +114,12 @@ export function createReassembly(): Reassembly {
       tail = rest;
       for (const { event: name, data } of events) {
         const applied = held(step(state, name))(data, []).value;
-        if (applied.is === "read") state = applied.value;
-        else refused.push(notApplied(name, applied.refusals, data));
+        state = applied.is === "read" ? applied.value : { ...state, refused: [...state.refused, notApplied(name, applied.refusals, data)] };
       }
-      const content = [...state.content.entries()].sort(([a], [b]) => a - b).map(([, slot]) => (slot.is === "stopped" ? slot.built : { block: assembled(slot), cut: false }));
+      const content = [...state.content.entries()].sort(([a], [b]) => a - b).map(([index, slot]) => (slot.is === "stopped" ? slot.built : { block: assembled(slot), cut: false, index }));
       const fields = [...state.fields].map(([path, value]): Field => [path, fieldValue(value)]);
-      return { message: state.message, content, fields, errors: [...state.errors], refused: [...refused], tail };
+      const message = state.message.is === "none" ? undefined : state.message.fields;
+      return { message, content, fields, errors: [...state.errors], refused: [...state.refused], tail };
     },
   };
 }
@@ -137,11 +146,18 @@ const step =
   };
 
 // [LAW:single-enforcer] What each event does to the stream. Every event but message_start, a ping and an error builds
-// on the message message_start began; a block's deltas and its stop come between its start and its stop.
+// on the message message_start began and message_stop has not stopped; a block's deltas and its stop come between its
+// start and its stop.
 function apply(state: State, event: Event): State {
   const begun = (): Record<string, unknown> => {
-    if (state.message === undefined) throw new Refused([{ at: [], why: "comes before message_start" }]);
-    return state.message;
+    switch (state.message.is) {
+      case "none":
+        throw new Refused([{ at: [], why: "comes before message_start" }]);
+      case "stopped":
+        throw new Refused([{ at: [], why: "comes after message_stop" }]);
+      case "begun":
+        return state.message.fields;
+    }
   };
   const arriving = (at: number): Extract<Slot, { is: "arriving" }> => {
     const slot = state.content.get(at);
@@ -152,13 +168,12 @@ function apply(state: State, event: Event): State {
   const content = (at: number, slot: Slot) => ({ ...state, content: new Map(state.content).set(at, slot) });
   switch (event.type) {
     case "message_start":
-      if (state.message !== undefined) throw new Refused([{ at: [], why: "the message has already started" }]);
-      return { ...state, message: event.message };
+      if (state.message.is !== "none") throw new Refused([{ at: [], why: "the message has already started" }]);
+      return { ...state, message: { is: "begun", fields: event.message } };
     case "content_block_start": {
       begun();
       if (state.content.has(event.index)) throw new Refused([{ at: ["index"], why: "names a content block that has already started" }]);
-      const type = fieldOf(event.content_block, "type");
-      return content(event.index, { is: "arriving", block: event.content_block, grows: (kinds.string.fits(type) ? growths.get(type) : undefined) ?? "nothing", input: "" });
+      return content(event.index, { is: "arriving", block: event.content_block, input: "" });
     }
     case "content_block_delta": {
       const slot = arriving(event.index);
@@ -169,30 +184,39 @@ function apply(state: State, event: Event): State {
       // A tool's input is whole at its block's stop, so input that is not JSON by then does not apply.
       const input = slot.input === "" ? undefined : held(encoded)(slot.input, ["input"]).value;
       if (input?.is === "refused") throw new Refused([{ at: [], why: `the input streamed to content block ${event.index} is not JSON` }]);
-      return content(event.index, { is: "stopped", built: { block: input === undefined ? { ...slot.block } : { ...slot.block, input: input.value }, cut: false } });
+      return content(event.index, { is: "stopped", built: { block: input === undefined ? { ...slot.block } : { ...slot.block, input: input.value }, cut: false, index: event.index } });
     }
     // What the message ends with: why it stopped and its counts, and how its context was managed, which a whole
     // response holds on the message itself.
     case "message_delta": {
       const prior = begun();
-      const usage = fieldOf(prior, "usage");
+      // Its counts join those message_start began with, from none when it began with no usage.
+      const usage = fieldOf(prior, "usage") ?? {};
+      if (!kinds.object.fits(usage)) throw new Refused([{ at: ["usage"], why: "extends a message whose usage is not an object" }]);
       const { stop_reason, stop_sequence } = event.delta;
       const { context_management } = event;
       return {
         ...state,
         message: {
-          ...prior,
-          ...(stop_reason === undefined ? {} : { stop_reason }),
-          ...(stop_sequence === undefined ? {} : { stop_sequence }),
-          ...(context_management === undefined ? {} : { context_management }),
-          usage: { ...(kinds.object.fits(usage) ? usage : {}), ...event.usage },
+          is: "begun",
+          fields: {
+            ...prior,
+            ...(stop_reason === undefined ? {} : { stop_reason }),
+            ...(stop_sequence === undefined ? {} : { stop_sequence }),
+            ...(context_management === undefined ? {} : { context_management }),
+            usage: { ...usage, ...event.usage },
+          },
         },
       };
     }
     // The stream's end, which the trailers already mark: a block still arriving stops as far as it came, cut.
     case "message_stop": {
-      begun();
-      return { ...state, content: new Map([...state.content].map(([at, slot]) => [at, slot.is === "stopped" ? slot : { is: "stopped", built: { block: assembled(slot), cut: true } }])) };
+      const fields = begun();
+      return {
+        ...state,
+        message: { is: "stopped", fields },
+        content: new Map([...state.content].map(([at, slot]) => [at, slot.is === "stopped" ? slot : { is: "stopped", built: { block: assembled(slot), cut: true, index: at } }])),
+      };
     }
     // A keep-alive, which may come at any time and builds nothing.
     case "ping":
@@ -203,16 +227,17 @@ function apply(state: State, event: Event): State {
 }
 
 // A block as far as it has arrived: its tool input as the JSON text sent so far, which is not yet JSON.
-function assembled({ block, grows, input }: Extract<Slot, { is: "arriving" }>): Record<string, unknown> {
-  return grows === "input" && input !== "" ? { ...block, input } : { ...block };
+function assembled({ block, input }: Extract<Slot, { is: "arriving" }>): Record<string, unknown> {
+  return growthOf(block) === "input" && input !== "" ? { ...block, input } : { ...block };
 }
 
-// A block extended by a delta of the kind it grows by, from nothing when its start did not carry the field.
+// A block extended by a delta of the kind it grows by, from nothing when its start did not carry the field, or carried
+// citations as `null`, which is how the API says a text has none.
 function grown(slot: Extract<Slot, { is: "arriving" }>, delta: Delta): Slot {
-  const grows: Record<Delta["type"], Growth> = { text_delta: "text", citations_delta: "text", thinking_delta: "thinking", signature_delta: "thinking", input_json_delta: "input" };
-  if (grows[delta.type] !== slot.grows) throw new Refused([{ at: ["delta", "type"], why: `does not extend a ${String(fieldOf(slot.block, "type"))} block` }]);
+  if (grows[delta.type] !== growthOf(slot.block)) throw new Refused([{ at: ["delta", "type"], why: `does not extend a ${String(fieldOf(slot.block, "type"))} block` }]);
   const appended = (field: string, more: string): Slot => {
-    const prior = fieldOf(slot.block, field) ?? "";
+    const started = fieldOf(slot.block, field);
+    const prior = started === undefined ? "" : started;
     if (!kinds.string.fits(prior)) throw new Refused([{ at: ["delta", "type"], why: `extends a block whose ${field} is not a string` }]);
     return { ...slot, block: { ...slot.block, [field]: prior + more } };
   };

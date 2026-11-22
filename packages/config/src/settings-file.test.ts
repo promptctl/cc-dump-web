@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, parsed, value } from "@cc-dump/log/json";
+import { kinds, orElse, parsed, value } from "@cc-dump/log/json";
 import { settingsFile } from "./settings-file.ts";
 
 type Test = { name: string; count: number };
@@ -31,6 +31,11 @@ it("reads a file holding keys no setting is named, naming each, the rest at thei
     file_keys: ["name", "colour", "__proto__"],
     unknown_keys: ["colour", "__proto__"],
   });
+});
+
+it("refuses a value a setting's reader would replace by a fallback, naming the key, never reading it as the fallback", () => {
+  const lenient = settingsFile<Test>("test settings", { name: value(kinds.string), count: orElse(value(kinds.integer), 1) }, { name: "none", count: 1 });
+  expect(() => lenient.parse('{"count":"many"}')).toThrow(/^test settings: count: is not an integer$/);
 });
 
 it("refuses a value of a key it reads that does not fit, naming the key and the file", () => {

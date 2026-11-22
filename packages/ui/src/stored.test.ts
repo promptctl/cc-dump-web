@@ -75,7 +75,14 @@ describe("a stored item's read", () => {
     ]);
   });
 
-  it.each([["{"], [JSON.stringify({ name: "a" })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
+  it("reads a `kept` that does not read as none, named, and the item still read", async () => {
+    const { storeIn, events } = await reported();
+    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: true }, version: 0, kept: 5 }) }).storage);
+    expect(store.getState()).toEqual({ name: "a", on: true });
+    expect(events).toMatchObject([{ read: { stored: "read", refused: [{ at: ["kept"], why: "is not an object" }], kept: [] } }]);
+  });
+
+  it.each([["{"], [JSON.stringify({ name: "a" })], [JSON.stringify({ version: 0 })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
     const { storeIn, events } = await reported();
     const { storage, held } = memoryStorage({ [name]: text });
     const store = storeIn(storage);
@@ -189,6 +196,33 @@ describe("a stored item's write", () => {
     store.setState({ on: true });
     store.setState({ on: false });
     expect(JSON.parse(held.get(name)!).state.on).toBe(false);
+  });
+
+  it("writes over the item as another tab left it, keeping what that tab changed", async () => {
+    const { storeIn } = await reported();
+    const { storage, held } = memoryStorage({ [name]: item({ name: "a", on: false }) });
+    const store = storeIn(storage);
+    held.set(name, item({ name: "elsewhere", on: false }));
+    store.setState({ on: true });
+    expect(held.get(name)).toBe(item({ name: "elsewhere", on: true }));
+  });
+
+  it("writes an item removed since it was read afresh, with nothing of what was removed", async () => {
+    const { storeIn } = await reported();
+    const { storage, held } = memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: false, size: 2 }, version: 0, by: "a later build" }) });
+    const store = storeIn(storage);
+    store.persist.clearStorage();
+    store.setState({ on: true });
+    expect(held.get(name)).toBe(item({ name: "a", on: true }));
+  });
+
+  it("keeps the state another version stored under it, and no state kept under the version it writes", async () => {
+    const { storeIn } = await reported();
+    const later = { name: "later", on: true, extra: 1 };
+    const { storage, held } = memoryStorage({ [name]: JSON.stringify({ state: later, version: 1, kept: { 0: { name: "old", on: false } } }) });
+    const store = storeIn(storage);
+    store.setState({ on: false });
+    expect(JSON.parse(held.get(name)!)).toEqual({ state: { name: "later", on: false }, version: 0, kept: { 1: later } });
   });
 
   it("writes a change into a value stored as no object by the reader's whole value there", async () => {

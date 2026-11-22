@@ -1,10 +1,10 @@
-import { encoded, fieldOf, held, kinds, nullable, object, optional, raw, value, type Held, type Path, type Reader } from "@cc-dump/log/json";
+import { encoded, fieldOf, held, joined, kinds, nullable, object, optional, raw, value, type Held, type Path, type Read, type Reader } from "@cc-dump/log/json";
 import { statusText } from "@cc-dump/log/status";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
-import { equal } from "./equal.ts";
-import { errorBlock, formatBlock, formatContent, refusedBlock, roleCategory, roles, unreadBlock, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { equal } from "../equal.ts";
+import { content, errorBlock, formatBlock, formatContent, refusedBlock, roleCategory, roles, unreadBlock, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fieldValue, notSent, occurrences, pickedPart, valuePart, type Field, type Part, type PartBody } from "./parts.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Built, type Reassembly, type Stream } from "./stream.ts";
@@ -92,7 +92,7 @@ export function createFormatter(): (exchanges: Exchange[]) => FormattedExchange[
   const sides: Sides = {
     decode: (side) => decodeSide(growing(decodings, side, () => createDecoding(side.head?.headers ?? [])), side),
     reassemble: (side, body) => growing(reassemblies, side, createReassembly).reassemble(body.text, side.completedBy !== undefined),
-    reply: (built, index) => cached(replies, built, () => replyContent(built, index)),
+    reply: (built) => cached(replies, built, () => replyContent(built)),
   };
   return (exchanges) =>
     exchanges.filter(isMessages).map((exchange) => {
@@ -152,11 +152,11 @@ function createInterning(): (shown: RequestShown) => RequestShown {
 }
 
 // The decoding of each side's body and the reassembly of each streamed response, kept as they grow, and the blocks of
-// each content block of a reply, kept with it.
+// each content block of a reply, kept with it, keyed by the index it carries.
 type Sides = {
   decode: (side: RequestSide | ResponseSide) => { body: Body; whole: boolean };
   reassemble: (side: ResponseSide, body: Body) => Stream;
-  reply: (built: Built, index: number) => KeyedBlock[];
+  reply: (built: Built) => KeyedBlock[];
 };
 
 // A request formatted: the blocks that are its exchange's own, the groups it sends, its tools, its system prompt and
@@ -221,9 +221,9 @@ function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
 function messageContent(content: unknown[], role: Role, at: Path): KeyedBlock[] {
   return content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role, [...at, String(index)])));
 }
-// The blocks of a reply's content block, at `index` in its message's content, as a request resends it but for one its
-// message stopped before it did, whose last block says it was cut.
-function replyContent({ block, cut }: Built, index: number): KeyedBlock[] {
+// The blocks of a reply's content block, at its `index` in its message's content, as a request resends it but for one
+// its message stopped before it did, whose last block says it was cut.
+function replyContent({ block, cut, index }: Built): KeyedBlock[] {
   const blocks = formatContent(block, "assistant", ["content", String(index)]);
   const cutPart: Part = { id: "cut", kind: "text", form: "verbatim", text: "The message stopped before this block did." };
   const shown = cut ? blocks.map((one, at) => (at === blocks.length - 1 ? { ...one, parts: [...one.parts, cutPart] } : one)) : blocks;
@@ -249,8 +249,6 @@ function requestShown(sides: Sides, side: RequestSide): RequestShown {
 const bodyObject: Reader<Record<string, unknown>> = (text, at) => value(kinds.object)(encoded(text, at).value, at);
 // What a request sends beside its parameters, each read on its own: its system prompt, its tools and its messages.
 const requestFields = object({ system: raw, tools: raw, messages: raw });
-// A system prompt's or a message's content: its text, or its content blocks.
-const content = value<string | unknown[]>({ fits: (json): json is string | unknown[] => typeof json === "string" || Array.isArray(json), expected: "a string or a list of blocks" });
 
 // The request body: its parameters and its cache breakpoints, which stand with the exchange's own; what it sends, its
 // tool definitions, its system prompt and each message, each read on its own, so one that does not read is shown as
@@ -300,6 +298,8 @@ function sessionOf(metadata: unknown): string | undefined {
 
 // A list of blocks with each block's cache breakpoint taken out, and added to `breakpoints` with the place `at` names. A
 // value that is not a list, or a block that is not an object, holds no breakpoint, and is left for its reader to show.
+function lift(list: unknown[], at: (index: number, list: unknown[]) => string, breakpoints: Field[]): unknown[];
+function lift(list: unknown, at: (index: number, list: unknown[]) => string, breakpoints: Field[]): unknown;
 function lift(list: unknown, at: (index: number, list: unknown[]) => string, breakpoints: Field[]): unknown {
   if (!Array.isArray(list)) return list;
   return list.map((block: unknown, index) => {
@@ -313,44 +313,46 @@ function lift(list: unknown, at: (index: number, list: unknown[]) => string, bre
 // how many tokens it may write, how it thinks and with what effort, and how it samples.
 const varied = ["model", "max_tokens", "thinking", "output_config.effort", "temperature"];
 
-// Each message at its place, its content's breakpoints lifted: a speaker's numbered among the speakers', one no speaker
-// sent, a system-role one or one whose role does not read, among those standing before the next speaker's message.
-// Messages that are no list are shown as received, with why, among the request's own blocks.
-const role = value(kinds.among(roles));
+// Each message, read once, at its place, its content's breakpoints lifted: a speaker's numbered among the speakers', one
+// no speaker sent, a system-role one or one whose role does not read, among those standing before the next speaker's
+// message. Messages that are no list are shown as received, with why, among the request's own blocks.
 function messageGroups(sent: unknown, breakpoints: Field[]): { own: KeyedBlock[]; groups: Group[]; speakers: number } {
   const messages = held(value(kinds.list))(sent, ["messages"]).value;
   if (messages.is === "refused") return { own: one("messages", [refusedBlock("http", "messages", messages.refusals, { kind: "json", value: sent })]), groups: [], speakers: 0 };
   let speakers = 0;
   let standing = 0;
-  const groups = messages.value.map((message, index) => {
+  const groups = messages.value.map((sentMessage, index) => {
     const at = ["messages", String(index)];
-    const said = held(role)(fieldOf(message, "role"), [...at, "role"]).value;
-    const speaker = said.is === "read" && said.value !== "system";
+    const read = held(message)(sentMessage, at);
+    const role = read.value.is === "read" ? read.value.value.role : undefined;
+    const speaker = role?.is === "read" && role.value !== "system";
     const key = speaker ? `message.${speakers}` : `message.${speakers}.system.${standing}`;
     const place: Place = speaker ? { in: "message", index: speakers } : { in: "between", before: speakers, index: standing };
     standing = speaker ? 0 : standing + 1;
     speakers += speaker ? 1 : 0;
-    return messageGroup(liftContent(message, key, breakpoints), key, place, at);
+    return messageGroup(read, sentMessage, key, place, at, breakpoints);
   });
   return { own: [], groups, speakers };
 }
-function liftContent(message: unknown, at: string, breakpoints: Field[]): unknown {
-  if (!kinds.object.fits(message) || !Object.hasOwn(message, "content")) return message;
-  return { ...message, content: lift(message.content, (index) => `${at}/content.${index}`, breakpoints) };
-}
 
-// A message, at `at`: its role's blocks of its content, and its other fields. A message whose role does not read is no
-// speaker's, and is shown as received, with why; one whose content does not read keeps its role and its other fields.
-const message = object({ role, content: held(content) });
-function messageGroup(sent: unknown, key: string, place: Place, at: Path): Group {
-  const read = held(message)(sent, at);
+// [LAW:types-are-the-program] A message: its role and its content, each held, so one that does not read costs only its
+// own block, and its other fields.
+type Message = { role: Held<Role>; content: Held<string | unknown[]> };
+const message = object<Message>({ role: held(value(kinds.among(roles))), content: held(content) });
+
+// A message read at `at`, `sent` as it was: its role's blocks of its content, its content's breakpoints lifted, and its
+// other fields. One that is no object is shown as received, with why. One whose role does not read is no speaker's: its
+// content reads as a system message's does, the harness's, and its role is shown as received, with why, before it.
+function messageGroup(read: Read<Held<Message>>, sent: unknown, key: string, place: Place, at: Path, breakpoints: Field[]): Group {
   if (read.value.is === "refused") return { key, title: "message", blocks: placed(place, one("message", [refusedBlock("http", "message", read.value.refusals, { kind: "json", value: sent })])) };
   const { role, content } = read.value.value;
+  const speaking: Role = role.is === "read" ? role.value : "system";
+  const roleBlock: BlockOrNone = role.is === "read" ? [] : [refusedBlock("system", "role", role.refusals, { kind: "json", value: role.sent })];
   const blocks =
     content.is === "refused"
-      ? one("content", [refusedBlock(roleCategory[role], "content", content.refusals, { kind: "json", value: content.sent })])
-      : messageContent(typeof content.value === "string" ? [{ type: "text", text: content.value }] : content.value, role, [...at, "content"]);
-  return { key, title: role, blocks: placed(place, [...blocks, ...one("fields", unreadBlock(read.unknown, at, "parameters", "message"))]) };
+      ? one("content", [refusedBlock(roleCategory[speaking], "content", content.refusals, { kind: "json", value: content.sent })])
+      : messageContent(typeof content.value === "string" ? [{ type: "text", text: content.value }] : lift(content.value, (index) => `${key}/content.${index}`, breakpoints), speaking, [...at, "content"]);
+  return { key, title: role.is === "read" ? role.value : "message", blocks: placed(place, [...one("role", roleBlock), ...blocks, ...one("fields", unreadBlock(read.unknown, at, "parameters", "message"))]) };
 }
 
 // The system prompt's blocks: a string is the text of one text block. One that does not read is shown as received,
@@ -448,7 +450,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
   if (type.is === "refused") return received(type);
   if (type.value === "message") {
     const content = held(value(kinds.list))(fieldOf(read.value, "content"), ["content"]).value;
-    return messageBlocks(sides, read.value, content.is === "read" ? { is: "read", value: content.value.map((block) => ({ block, cut: false })) } : content);
+    return messageBlocks(sides, read.value, content.is === "read" ? { is: "read", value: content.value.map((block, index) => ({ block, cut: false, index })) } : content);
   }
   const error = held(apiError)(read.value, []);
   return error.value.is === "read" ? { ...none([]), reply: one("error", [errorBlock(error.value.value.error, unreadParts(error.unknown, []))]) } : received(error.value);
@@ -458,9 +460,13 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
 const none = (own: KeyedBlock[]): ResponseShown => ({ own, reply: [], message: noMessage });
 
 // [LAW:types-are-the-program] What the API reported about its message, each read on its own, so one that does not
-// read costs only its own block: why it stopped, and what it counted, the counts the facts take read too.
-const count = optional(nullable(value(kinds.integer)));
+// read costs only its own block: why it stopped, and what it counted, each count the facts take read on its own too, so
+// one that does not read costs only its own fact.
+const count = held(optional(nullable(value(kinds.integer))));
 const counts = object({ input_tokens: count, cache_read_input_tokens: count, cache_creation_input_tokens: count, output_tokens: count });
+const uncounted: Held<number | null | undefined> = { is: "read", value: undefined };
+const noCounts = { input_tokens: uncounted, cache_read_input_tokens: uncounted, cache_creation_input_tokens: uncounted, output_tokens: uncounted };
+const countOf = (field: Held<number | null | undefined>): number | undefined => (field.is === "read" ? (field.value ?? undefined) : undefined);
 const reported = object({ type: raw, content: raw, stop_reason: held(optional(nullable(text))), stop_sequence: raw, usage: raw });
 
 // A response message, its fields as a whole response or a stream's events built them, and its content: its content,
@@ -469,10 +475,11 @@ function messageBlocks(sides: Sides, message: Record<string, unknown>, content: 
   // Every field it declares is held or taken as it is, so the read is never refused.
   const { value: fields, unknown } = reported(message, []);
   const { stop_reason, stop_sequence, usage } = fields;
-  const counted_ = held(optional(nullable(counts)))(usage, ["usage"]).value;
-  const read = counted_.is === "read" ? counted_.value : undefined;
+  const usageRead = held(optional(nullable(counts)))(usage, ["usage"]).value;
+  const read = (usageRead.is === "read" ? usageRead.value : undefined) ?? noCounts;
+  const counted_ = usageRead.is === "read" ? joined(Object.values(read)) : usageRead;
   const stop = { stop_reason: stop_reason.is === "read" ? stop_reason.value : stop_reason.sent, stop_sequence };
-  const reply = content.is === "read" ? content.value.flatMap((built, index) => sides.reply(built, index)) : one("content", [refusedBlock("assistant", "content", content.refusals, { kind: "json", value: content.sent })]);
+  const reply = content.is === "read" ? content.value.flatMap(sides.reply) : one("content", [refusedBlock("assistant", "content", content.refusals, { kind: "json", value: content.sent })]);
   return {
     reply,
     own: [
@@ -496,10 +503,10 @@ function messageBlocks(sides: Sides, message: Record<string, unknown>, content: 
       ...one("fields", unreadBlock(unknown, [], "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(message, ["id"])] })),
     ],
     message: {
-      uncached: read?.input_tokens ?? undefined,
-      cacheRead: read?.cache_read_input_tokens ?? undefined,
-      cacheWritten: read?.cache_creation_input_tokens ?? undefined,
-      output: read?.output_tokens ?? undefined,
+      uncached: countOf(read.input_tokens),
+      cacheRead: countOf(read.cache_read_input_tokens),
+      cacheWritten: countOf(read.cache_creation_input_tokens),
+      output: countOf(read.output_tokens),
       stopReason: stop_reason.is === "read" ? (stop_reason.value ?? undefined) : undefined,
     },
   };
