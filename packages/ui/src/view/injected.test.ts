@@ -70,9 +70,9 @@ describe("the injected blocks", () => {
     expect(from({ at: "end" }, "next")).toBe("b");
   });
 
-  it("counts from the row a position inside it is nearest, and from before every row while that has not arrived", () => {
+  it("counts from the row a position inside it is nearest, and is a broken caller's to ask from one the rows do not hold", () => {
     expect(from(at("c/body"), "next")).toBe("d");
-    expect(from(at("z"), "next")).toBe("b");
+    expect(() => from(at("z"), "next")).toThrow("not among the rows");
   });
 
   it("goes nowhere when no injected block is listed", () => {

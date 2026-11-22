@@ -9,7 +9,7 @@ import { render } from "./rendering.ts";
 import { request as fixtureRequest } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, searchStartOf, shownTexts, whole, type Match, type Searched } from "./search.ts";
 
 // A request whose header holds what a search can find.
 const request = (trace_id: string, body: unknown): RecordedEvent[] => fixtureRequest(trace_id, body, { headers: [["x-probe", "needle in a header"]] });
@@ -36,6 +36,8 @@ const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(
 const { pattern } = read("needle");
 // The view at its start, where a step with no current match goes on from.
 const top = { at: "start" } as const;
+// A step from `match`, the current match, or, with none, from the start.
+const matchAt = (match: Match | undefined) => (match === undefined ? top : { at: "match" as const, match });
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
@@ -152,16 +154,16 @@ describe("search", () => {
     const seen: Match[] = [];
     let current: Match | undefined;
     for (let index = 0; index < 11; index++) {
-      current = adjacent(found, current, top, "next", pattern, keys)!.match;
+      current = adjacent(found, matchAt(current), "next", pattern, keys)!.match;
       seen.push(current);
     }
     expect(seen.slice(0, 10).map((match) => ordinal(found, match, pattern))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(seen[10]).toEqual(seen[0]);
-    expect(adjacent(found, seen[0], top, "previous", pattern, keys)!.match).toEqual(seen[9]);
-    expect(adjacent(found, undefined, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
+    expect(adjacent(found, matchAt(seen[0]), "previous", pattern, keys)!.match).toEqual(seen[9]);
+    expect(adjacent(found, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
     expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10 });
     const absent = read("absent").pattern;
-    expect(adjacent(createSearch()(every.rows, absent), undefined, top, "next", absent, keys)).toBeUndefined();
+    expect(adjacent(createSearch()(every.rows, absent), top, "next", absent, keys)).toBeUndefined();
   });
 
   it("steps through the same matches in the same order whichever categories are hidden, and counts them the same", () => {
@@ -169,7 +171,7 @@ describe("search", () => {
       const { every } = layOut(visibility);
       const found = createSearch()(every.rows, pattern);
       const matches: Match[] = [];
-      for (let index = 0; index < found.count; index++) matches.push(adjacent(found, matches.at(-1), top, "next", pattern, every.keys)!.match);
+      for (let index = 0; index < found.count; index++) matches.push(adjacent(found, matchAt(matches.at(-1)), "next", pattern, every.keys)!.match);
       return { count: found.count, matches, ordinals: matches.map((match) => ordinal(found, match, pattern)) };
     };
     const hidden = stepsOf({ ...shown, tools: "hidden", parameters: "hidden", usage: "hidden", http: "hidden" });
@@ -180,10 +182,10 @@ describe("search", () => {
   it("steps on from a current match in a hidden category to the match before and after it in the conversation", () => {
     const { every } = layOut({ ...shown, tools: "hidden" });
     const found = createSearch()(every.rows, pattern);
-    const toolResult = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, every.keys)!.match;
+    const toolResult = adjacent(found, matchAt({ key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }), "next", pattern, every.keys)!.match;
     // After exchange a's tool result: exchange b's header; before it: the JSON of exchange a's tool call, also hidden.
-    expect(adjacent(found, toolResult, top, "next", pattern, every.keys)!.match.key).toBe("b/request/http");
-    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
+    expect(adjacent(found, matchAt(toolResult), "next", pattern, every.keys)!.match.key).toBe("b/request/http");
+    expect(adjacent(found, matchAt(toolResult), "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
   });
 
   it("lists a hidden category's block while it holds the current match, and no longer once a step moves on from it", () => {
@@ -199,7 +201,7 @@ describe("search", () => {
     let current: Match | undefined;
     const inHidden: string[] = [];
     for (let index = 0; index < found.count; index++) {
-      const step = adjacent(found, current, top, "next", pattern, every.keys)!;
+      const step = adjacent(found, matchAt(current), "next", pattern, every.keys)!;
       current = step.match;
       const isHidden = hidden[categoryOf(current.key)] === "hidden";
       // The step's block is the only one of a hidden category listed, so the one before it is no longer.
@@ -213,32 +215,50 @@ describe("search", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
     const replaced = { key: "thread:a/message.1/content.0/so-far", at: address.part(0), start: 0 };
-    expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
-    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
-    // One whose exchange is not among the rows at all: the first match going on, the last going back.
-    expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
+    expect(adjacent(found, matchAt(replaced), "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
+    expect(adjacent(found, matchAt(replaced), "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
+  });
+
+  it("starts a step from the current match while the rows hold it, waits while the read has still to bring it, and is from the reader's place otherwise", () => {
+    const { keys } = layOut().every;
+    const place = { at: "row", key: "b", offset: 0 } as const;
+    const current = (key: string): Match => ({ key, at: address.part(0), start: 0 });
+    const toBeRead = (key: string) => key.startsWith("z/");
+    // In the rows, or in the row it was inside when the formatter replaced its block.
+    expect(searchStartOf(current("thread:a/message.1/content.0"), place, keys.indexOf, toBeRead)).toEqual({ at: "match", match: current("thread:a/message.1/content.0") });
+    expect(searchStartOf(current("thread:a/message.1/content.0/so-far"), place, keys.indexOf, toBeRead).at).toBe("match");
+    expect(searchStartOf(current("z/request/http"), place, keys.indexOf, toBeRead)).toEqual({ at: "waiting", on: "match" });
+    // One that will not arrive is no current match, as is none at all, and the place's own start stands, waiting too.
+    expect(searchStartOf(current("y/request/http"), place, keys.indexOf, toBeRead)).toBe(place);
+    expect(searchStartOf(undefined, { at: "waiting", on: "place" }, keys.indexOf, toBeRead)).toEqual({ at: "waiting", on: "place" });
+  });
+
+  it("is a broken caller to step from a start the rows do not hold", () => {
+    const { rows, keys } = layOut().every;
+    const found = createSearch()(rows, pattern);
+    expect(() => adjacent(found, { at: "row", key: "z/request/http", offset: 0 }, "next", pattern, keys)).toThrow("not among the rows");
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
     const at = { at: "row", key: "thread:b/message.0/content.0", offset: 40 } as const;
-    expect(adjacent(found, undefined, at, "next", pattern, keys)!.match.key).toBe("thread:b/message.0/content.0");
-    expect(adjacent(found, undefined, at, "previous", pattern, keys)!.match.key).toBe("b/request/http");
+    expect(adjacent(found, at, "next", pattern, keys)!.match.key).toBe("thread:b/message.0/content.0");
+    expect(adjacent(found, at, "previous", pattern, keys)!.match.key).toBe("b/request/http");
     // At the end, going on wraps to the first match.
-    expect(adjacent(found, undefined, { at: "end" }, "next", pattern, keys)!.match.key).toBe("a/request/http");
+    expect(adjacent(found, { at: "end" }, "next", pattern, keys)!.match.key).toBe("a/request/http");
   });
 
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const result = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, keys)!;
+    const result = adjacent(found, matchAt({ key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }), "next", pattern, keys)!;
     const part = partKey("thread:a/message.2/content.0", address.part(0));
     expect(result).toEqual({
       match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
       folds: ["thread:a/message.2/content.0", regionKey(part, 1), regionKey(part, 3)],
     });
-    const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
+    const name = adjacent(found, matchAt({ key: "thread:a/message.1/content.0", at: address.name, start: -1 }), "next", pattern, keys)!;
     expect(name).toMatchObject({ match: { key: "thread:a/message.1/content.0" }, folds: [] });
   });
 
@@ -246,16 +266,16 @@ describe("search", () => {
     const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", level: { kind: "unread" }, prompt: "", count: 1, depth, dimmed: false });
     const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
     const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
-    expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
+    expect(adjacent(found, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
   });
 
   it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {
     const row = added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "markdown", text: "# Needle plan\n\n## Steps\n\nfind the needle\n" }] });
     const found = createSearch()([row], pattern);
     const part = partKey("k", address.part(0));
-    const heading = adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!;
+    const heading = adjacent(found, top, "next", pattern, layOut().every.keys)!;
     expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, folds: ["k"] });
-    expect(adjacent(found, heading.match, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
+    expect(adjacent(found, matchAt(heading.match), "next", pattern, layOut().every.keys)!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
   });
 
   it("gives the matches holding any of a slice of a text", () => {

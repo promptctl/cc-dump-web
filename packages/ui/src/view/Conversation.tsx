@@ -15,8 +15,8 @@ import { injectedFrom } from "./injected.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
-import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
+import { positionAt, rowIndex, startOf, type Direction, type Placed, type Position } from "./position.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, exchangeOf, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -24,11 +24,12 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, adjacent, createSearch, ordinal, patternOf, searchStartOf, type SearchStart } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
-import { useView, view, type Moment } from "./state.ts";
+import { useView, view, type Moment, type View } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
+import { waitingLine } from "./waiting.ts";
 
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
 // and near the view are mounted. `reading`: whether the read can still bring an exchange its end. `theme`: what the
@@ -49,7 +50,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const current = useView((state) => state.search.current);
   const opened = useView((state) => state.opened);
   const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, current?.key, opened), [layOut, conversation, shown, current?.key, opened]);
-  // The position's row, which is always mounted: a step to a match commits with that row on screen.
+  // The position's row, which is mounted while it is among the rows: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
   // The UI is not built with React Compiler, so nothing memoizes the virtualizer's functions.
@@ -60,8 +61,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     getItemKey: keys.measuredBy,
     estimateSize: (index) => estimateHeight(rows[index]!, opened, visibility),
     overscan: 10,
-    // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
-    // height is known, and a row placed by its estimate may end before the offset does.
+    // The position's row is mounted while it is among the rows, so it is measured: an offset into it is only where it
+    // says once its height is known, and a row placed by its estimate may end before the offset does.
     rangeExtractor: (range) => {
       const anchor = anchorKey === undefined ? undefined : rowIndex(anchorKey, keys.indexOf);
       const indexes = defaultRangeExtractor(range);
@@ -148,6 +149,34 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
+  // [LAW:one-source-of-truth] Where the moves from the reader's place start (position.ts, search.ts), for the moves and
+  // the line under the rows alike. A row is still to be read while the read can still bring its exchange, and a nest's,
+  // which is a level's, not an exchange's, while the read goes on.
+  const read = useMemo(() => new Set<string>(formatted.map(({ exchange }) => exchange.trace_id)), [formatted]);
+  const toBeRead = (key: string) => {
+    const trace = exchangeOf(key);
+    return reading && (trace === undefined || !read.has(trace));
+  };
+  const startsOf = ({ position, search: { current } }: Pick<View, "position" | "search">) => {
+    const place = startOf(position, keys.indexOf, toBeRead);
+    return { place, search: searchStartOf(current, place, every.keys.indexOf, toBeRead) };
+  };
+  const waiting = useView((state) => {
+    const { place, search } = startsOf(state);
+    return waitingLine(place, search);
+  });
+  // [LAW:single-enforcer] A move from `start`: none while it waits to be read, as the line under the rows says; from the
+  // place under the view's top where it will not arrive; and otherwise from it.
+  const moveFrom = <S extends SearchStart>(start: S, move: (from: Exclude<S, { at: "waiting" | "view" }> | Position) => void) => {
+    switch (start.at) {
+      case "waiting":
+        return;
+      case "view":
+        return move(positionAt(scroller.current!.scrollTop, rowAt));
+      default:
+        return move(start as Exclude<S, { at: "waiting" | "view" }>);
+    }
+  };
   // [LAW:single-enforcer] The view put at `target`, drawn in the element `text` of the row `key`, a few of the text's
   // lines below the top: what ends a move to something a commit has just shown, a match or a heading.
   const putAt = (key: string, text: HTMLElement, target: Range | HTMLElement) => {
@@ -161,8 +190,9 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   };
   // A step to a match, as one act: it is committed with the folds holding it open and its row mounted, then the view is
   // put at the match's line.
-  const stepTo = (direction: Direction) => {
-    const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
+  const stepTo = (direction: Direction) => moveFrom(startsOf(useView.getState()).search, (from) => stepFrom(from, direction));
+  const stepFrom = (from: Parameters<typeof adjacent>[1], direction: Direction) => {
+    const next = adjacent(found, from, direction, pattern, every.keys);
     if (next === undefined) return;
     flushSync(() => view.goTo(next, now));
     const match = currentMatch();
@@ -231,11 +261,12 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The reader choosing another history at `fork`: the one before or after the one the view is at (forks.ts), by a move
   // to its first step.
   const switchAt = (fork: ForkRow, direction: Direction) => go(siblingFrom(fork, aimed.current, direction), fork.key);
-  // A switch at the nearest fork above the view; nothing where the column lists no fork.
-  const sibling = (direction: Direction) => {
-    const fork = forkAbove(rows, keys.indexOf, positionAt(scroller.current!.scrollTop, rowAt));
-    if (fork !== undefined) switchAt(fork, direction);
-  };
+  // A switch at the nearest fork above the reader's place; nothing where the column lists no fork.
+  const sibling = (direction: Direction) =>
+    moveFrom(startsOf(useView.getState()).place, (from) => {
+      const fork = forkAbove(rows, keys.indexOf, from);
+      if (fork !== undefined) switchAt(fork, direction);
+    });
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
   // as what they show changes.
   const moves = useRef({ go, goBy, toStep, switchAt, hold, placeAt, toHeading });
@@ -255,8 +286,9 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // put at the block's line, which the position then is, so the move after goes on from it. The line takes the focus,
   // which marks the block where the view is at the end and cannot move, and opens it at Enter. Committed first, so the
   // block's row is mounted, as the position's is.
-  const toInjected = (direction: Direction) => {
-    const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
+  const toInjected = (direction: Direction) => moveFrom(startsOf(useView.getState()).place, (from) => injectedTo(from, direction));
+  const injectedTo = (from: Position, direction: Direction) => {
+    const key = injectedFrom(rows, keys.indexOf, from, direction);
     if (key === undefined) return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
     const line = scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`);
@@ -319,7 +351,11 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           )}
           {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
               rather than over it. */}
-          <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
+          <div className="pointer-events-none sticky bottom-0 mt-auto flex items-center justify-end gap-3 px-4 pt-1 pb-3">
+            {/* Always mounted, so a screen reader announces its text as it changes. */}
+            <p role="status" data-waiting={waiting !== ""} className="rounded-full bg-panel px-3 py-1 text-xs text-foreground-muted empty:hidden">
+              {waiting}
+            </p>
             <Toggle
               data-follow={following}
               pressed={control.pressed}

@@ -9,7 +9,7 @@ import type { Visibility } from "../settings.ts";
 import { createHistory } from "./history.ts";
 import { adjacent, createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, exchangeOf, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
 
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
@@ -316,7 +316,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
+      const to = adjacent(createSearch()(layout.every.rows, pattern), { at: "start" }, "next", pattern, layout.every.keys);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -816,5 +816,13 @@ describe("the column", () => {
     expect(dimmed.filter((key) => !key.includes("/"))).toEqual(["t1", "compact"]);
     expect(dimmed).toContain("t1/fork");
     expect(dimmed.some((key) => key.includes("probe") || key.includes("c1"))).toBe(false);
+  });
+});
+
+describe("the exchange a row is of", () => {
+  it("is a key's first word, after `thread:` for a thread's item, and none for a nest's line", () => {
+    const keys = ["t1", "t1/request/http", "t1/fork", "thread:t1/message.0/content.0", "thread:t1/tools/x/thread"];
+    expect(keys.map(exchangeOf)).toEqual(["t1", "t1", "t1", "t1", "t1"]);
+    expect(exchangeOf("nest:agent:a1")).toBeUndefined();
   });
 });

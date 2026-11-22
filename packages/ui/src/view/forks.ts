@@ -1,13 +1,12 @@
-import { rowIndex, type Position } from "./position.ts";
+import { placeIndex, type Direction, type Position } from "./position.ts";
 import type { ForkRow, Keys, Row } from "./rows.ts";
-import type { Direction } from "./search.ts";
 
-// The fork a press of [ or ] switches at (docs/design/02-design.md, "Keys"): the nearest above the view, the last
-// whose line is listed at or before the row at the view's top, `top`, or, with none there, the first listed.
-// Undefined where the column lists no fork. `rows`: the rows listed, each at the place `indexOf` gives its key. A top
-// whose row has not arrived, as after a reload, is before them all.
-export function forkAbove(rows: readonly Row[], indexOf: Keys["indexOf"], top: Exclude<Position, { at: "end" }>): ForkRow | undefined {
-  const at = top.at === "start" ? -1 : (rowIndex(top.key, indexOf) ?? -1);
+// The fork a press of [ or ] switches at (docs/design/02-design.md, "Keys"): the nearest above the reader's place, the
+// last whose line is listed at or before the place's row, or, with none there, the first listed; at the end, which is
+// after every row, the last. Undefined where the column lists no fork. `rows`: the rows listed, each at the place
+// `indexOf` gives its key.
+export function forkAbove(rows: readonly Row[], indexOf: Keys["indexOf"], place: Position): ForkRow | undefined {
+  const at = place.at === "start" ? -1 : place.at === "end" ? rows.length : placeIndex(place.key, indexOf);
   const forks = rows.flatMap((row, index) => (row.kind === "fork" ? [{ row, index }] : []));
   return (forks.findLast(({ index }) => index <= at) ?? forks[0])?.row;
 }

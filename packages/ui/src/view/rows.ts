@@ -331,6 +331,9 @@ type Column = {
 const top = levelKey({ kind: "main" });
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
 export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
+// The trace_id of the exchange a row's `key` is of (Row): its first word, after `thread:` for a thread's item
+// (view/history.ts). Undefined for a nest's line, which is a level's, not an exchange's. A trace_id holds no `/`.
+export const exchangeOf = (key: string): string | undefined => (key.startsWith("nest:") ? undefined : key.replace(/^thread:/, "").split("/")[0]);
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
+import { positionAt, resolve, rowIndex, startOf, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -62,6 +62,17 @@ describe("position", () => {
     expect(inside("//", ["x"])).toBeUndefined();
     expect(inside("/request/http", ["x"])).toBeUndefined();
     expect(inside("", ["x"])).toBeUndefined();
+  });
+
+  it("starts a move from the reader's place while the rows hold it, waits while the read has still to bring it, and is from the view otherwise", () => {
+    const toBeRead = (key: string) => key.startsWith("d");
+    const at = (key: string) => ({ at: "row", key, offset: 20 }) as const;
+    expect([startOf({ at: "start" }, indexOf, toBeRead), startOf({ at: "end" }, indexOf, toBeRead)]).toEqual([{ at: "start" }, { at: "end" }]);
+    // Its row, or the row it is inside, as a block the formatter replaced is.
+    expect([startOf(at("c"), indexOf, toBeRead), startOf(at("c/body"), indexOf, toBeRead)]).toEqual([at("c"), at("c/body")]);
+    expect(startOf(at("d/body"), indexOf, toBeRead)).toEqual({ at: "waiting", on: "place" });
+    // A row that will not arrive: the read ended without it, or it is another history's.
+    expect(startOf(at("e"), indexOf, toBeRead)).toEqual({ at: "view" });
   });
 
   it("reads the position back from an offset: the row at the top and how far into it, or the start", () => {

@@ -4,6 +4,29 @@
 // are measured. The end is not a place: while follow is on, being at the end is following (docs/design/01-features.md, F4).
 export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: string; offset: number };
 
+export type Direction = "next" | "previous";
+
+// [LAW:types-are-the-program] Where a move from the reader's place starts (docs/design/02-design.md, "Keys"): the place
+// itself, its row among the rows; `waiting` on the place, for a row the read has still to bring, as after a reload; or
+// `view`, for a row that will not arrive, the read having ended without it or the column showing another history, so
+// the reader is where the view shows, read off the scroller as the move is made.
+export type Start = Position | { at: "waiting"; on: "place" } | { at: "view" };
+
+// [LAW:single-enforcer] The one judge of whether the reader's place is among the rows: `toBeRead`, whether the read can
+// still bring a key's row.
+export function startOf(position: Position, indexOf: (key: string) => number | undefined, toBeRead: (key: string) => boolean): Start {
+  if (position.at !== "row" || rowIndex(position.key, indexOf) !== undefined) return position;
+  return toBeRead(position.key) ? { at: "waiting", on: "place" } : { at: "view" };
+}
+
+// The index of the row a move starts from, at `key`, among the rows `indexOf` lists (rowIndex). [LAW:no-silent-failure]
+// A move is given a start found among the rows (startOf), so one that is not is a broken caller.
+export function placeIndex(key: string, indexOf: (key: string) => number | undefined): number {
+  const index = rowIndex(key, indexOf);
+  if (index === undefined) throw new Error(`A move was given a start not among the rows: ${key}`);
+  return index;
+}
+
 // A placed row: its key, where it starts, in pixels from the top of the conversation, and its height.
 export type Placed = { key: string; start: number; size: number };
 
