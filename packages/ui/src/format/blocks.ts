@@ -158,9 +158,10 @@ const string = value(kinds.string);
 
 // [LAW:parse-dont-validate] A content field: a string, or content blocks, each holding its own refusal, so one block
 // that does not read costs only itself.
+export const contentBlocks: Reader<readonly Content[]> = (json, at) => list(held(contentBlock))(json, at);
 export const contents: Reader<Contents> = (json, at) => {
   if (typeof json === "string") return string(json, at);
-  if (Array.isArray(json)) return list(held(contentBlock))(json, at);
+  if (Array.isArray(json)) return contentBlocks(json, at);
   throw new Malformed("is not a string or a list of blocks");
 };
 
@@ -175,7 +176,9 @@ const source = union<"type", SourceVariants, Fields<{ type: string }>>(
 // it states (Stated) and whether it says its tool failed; and its parts, from the block read whole. `form`: how a text
 // block's text reads where the block is: Markdown in a message, verbatim in what a tool or a document returned.
 type Shows<F> = Stated & { category: Category; name?: string; failed?: true; parts: (block: F) => Part[] };
-type Entry<F> = { readonly fields: Readers<F>; readonly show: (read: Partial<F>, role: Role, form: Form) => Shows<F> };
+// `grows`: what a streamed block of the type grows by, its deltas.
+export type Grows = "text" | "thinking" | "input" | "nothing";
+type Entry<F> = { readonly fields: Readers<F>; readonly grows: Grows; readonly show: (read: Partial<F>, role: Role, form: Form) => Shows<F> };
 type Entries = { readonly [T in keyof ContentVariants]: Entry<ContentVariants[T]> };
 
 const byRole = (role: Role) => roleCategory[role];
@@ -201,6 +204,7 @@ const summarized = (text: string | undefined, role: Role): Stated => {
 // states none.
 const toolUse = (type: string, call: (name: string | undefined, input: unknown) => Called, states: boolean): Entry<ToolUse> => ({
   fields: { ...breakpoint, id: string, name: string, input: asIs },
+  grows: "input",
   show: ({ id, name, input }) => {
     const { parts, launches } = call(name, input);
     const stated: Stated = states && id !== undefined ? { call: { id, launches, waits: name !== "SubagentHandback" } } : {};
@@ -220,6 +224,7 @@ function textsOf(content: Contents | undefined): string[] {
 // which follows the id where it was sent. It states the call it answers, and the agent its texts name.
 const toolResult: Entry<ToolResult> = {
   fields: { ...breakpoint, tool_use_id: string, content: optional(contents), is_error: optional(value(kinds.boolean)) },
+  grows: "nothing",
   show: ({ tool_use_id, content, is_error }, role) => ({
     category: "tools",
     ...(tool_use_id === undefined ? {} : { result: { answers: tool_use_id, names: namedIn(textsOf(content)) } }),
@@ -240,6 +245,7 @@ const isError = (content: unknown): boolean => {
 };
 const serverToolResult: Entry<ServerToolResult> = {
   fields: { ...breakpoint, tool_use_id: string, content: asIs },
+  grows: "nothing",
   show: ({ content }) => ({
     category: "tools",
     ...(isError(content) ? { failed: true } : {}),
@@ -252,6 +258,7 @@ const serverToolResult: Entry<ServerToolResult> = {
 
 const ofSource = (of: Medium): Entry<OfSource> => ({
   fields: { ...breakpoint, source },
+  grows: "nothing",
   show: (_, role) => ({ category: byRole(role), parts: (block) => sourceParts(block.source, of, role) }),
 });
 
@@ -263,6 +270,7 @@ const ofSource = (of: Medium): Entry<OfSource> => ({
 const entries: Entries = {
   text: {
     fields: { ...breakpoint, text: string, citations: optional(nullable(list(asIs))) },
+    grows: "text",
     show: ({ text }, role, form) => ({
       category: byRole(role),
       ...summarized(text, role),
@@ -271,6 +279,7 @@ const entries: Entries = {
   },
   thinking: {
     fields: { ...breakpoint, thinking: string, signature: optional(string) },
+    grows: "thinking",
     show: ({ thinking }) => ({
       category: thinking === "" ? "usage" : "thinking",
       parts: (block) => [
@@ -281,6 +290,7 @@ const entries: Entries = {
   },
   redacted_thinking: {
     fields: { ...breakpoint, data: string },
+    grows: "nothing",
     show: () => ({ category: "usage", parts: (block) => [{ id: "data", kind: "fields", fields: [["data", `${block.data.length} characters`]] }] }),
   },
   tool_use: toolUse("tool_use", clientCall, true),
@@ -294,11 +304,12 @@ const entries: Entries = {
   bash_code_execution_tool_result: serverToolResult,
   text_editor_code_execution_tool_result: serverToolResult,
   tool_search_tool_result: serverToolResult,
-  container_upload: { fields: breakpoint, show: () => ({ category: "tools", parts: () => [] }) },
+  container_upload: { fields: breakpoint, grows: "nothing", show: () => ({ category: "tools", parts: () => [] }) },
   image: ofSource("image"),
   document: ofSource("document"),
   search_result: {
     fields: { ...breakpoint, source: string, title: string, content: contents },
+    grows: "nothing",
     show: (_, role) => ({
       category: byRole(role),
       parts: (block) => [{ id: "search result", kind: "fields", fields: [["source", block.source], ["title", block.title]] }, ...contentParts(block.content, role)],
@@ -319,6 +330,10 @@ const contentBlock = union<"type", ContentVariants, Fields<Breakpoint>>("type", 
 
 // A content block as sent, read.
 export const contentOf = (json: unknown): Content => readShown(contentBlock, json);
+
+// What a streamed block of `type` grows by, looked up as an own key: a type with no entry grows by nothing.
+const grows: Readonly<Record<string, Grows>> = Object.fromEntries(Object.entries(entries).map(([type, entry]) => [type, entry.grows]));
+export const growsOf = (type: unknown): Grows => (typeof type === "string" && Object.hasOwn(grows, type) ? grows[type]! : "nothing");
 
 // The blocks a content field holds: a string is the text of one text block.
 export const blocksOf = (contents: Contents): readonly Content[] => (typeof contents === "string" ? [contentOf({ type: "text", text: contents })] : contents);
