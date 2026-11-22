@@ -1,3 +1,5 @@
+import { Malformed } from "@cc-dump/log/failure";
+
 // One setting: its default, written as a settings file would hold it, and its parse.
 export type Setting<T> = { default: unknown; parse: (value: unknown) => T };
 export type Table = Record<string, Setting<unknown>>;
@@ -12,18 +14,19 @@ export type SettingsOf<T extends Table> = { [K in keyof T]: ReturnType<T[K]["par
 export function parseSettings<T extends Table>(what: string, table: T, object: Record<string, unknown>): SettingsOf<T> {
   const unknown = Object.keys(object).filter((key) => !Object.hasOwn(table, key));
   if (unknown.length > 0)
-    throw new Error(`${what}: no setting is named ${unknown.map((key) => JSON.stringify(key)).join(", ")}; the settings are ${Object.keys(table).join(", ")}`);
+    throw new Malformed(`${what}: no setting is named ${unknown.map((key) => JSON.stringify(key)).join(", ")}; the settings are ${Object.keys(table).join(", ")}`);
   const missing = Object.keys(table).filter((key) => !Object.hasOwn(object, key));
-  if (missing.length > 0) throw new Error(`${what}: ${missing.join(", ")} missing`);
+  if (missing.length > 0) throw new Malformed(`${what}: ${missing.join(", ")} missing`);
   return Object.fromEntries(Object.entries(table).map(([key, setting]) => [key, parsed(what, setting, object[key])])) as SettingsOf<T>;
 }
 
-// A setting's value as its parse takes it, or its parse's refusal, saying where the value was.
+// A setting's value as its parse takes it, or its parse's refusal (`Malformed`), saying where the value was. Any other error
+// of the parse is its own bug, and passes as it is.
 function parsed(what: string, setting: Setting<unknown>, value: unknown): unknown {
   try {
     return setting.parse(value);
   } catch (error) {
-    throw new Error(what, { cause: error });
+    throw error instanceof Malformed ? new Malformed(what, { cause: error }) : error;
   }
 }
 

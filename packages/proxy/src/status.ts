@@ -1,6 +1,8 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import { describeError, startTrace, type Handler, type Log } from "@cc-dump/log";
+import { stream, type Route } from "@cc-dump/log/answer";
+import { frame } from "@cc-dump/log/wire";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
@@ -73,8 +75,8 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   return watched;
 }
 
-// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy serves passes: `counted`
-// wraps the proxy's handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends,
+// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy forwards passes:
+// `counted` wraps the forwarding handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends,
 // however it ends.
 export function countTraffic(now: () => Date = () => new Date()): Watched<Traffic> & { counted: (handler: Handler) => Handler } {
   const { become, ...traffic } = watchable<Traffic>({ in_flight: 0, last_request: null });
@@ -103,13 +105,12 @@ function onDisk(path: string) {
 // closes. A failed watch is one more state, not the stream's end: the stream stays open, so a reader's EventSource sees
 // the proxy's restart as a dropped connection and reconnects to the restarted proxy. That open stream is the browser's
 // connection to the proxy (F8).
-export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Handler {
-  return (req, res) => {
-    if (req.method !== "GET") return void res.writeHead(405, { allow: "GET" }).end();
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-    const send = () => void res.write(`data: ${JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus)}\n\n`);
-    const unwatched = [source.onChanged(send), traffic.onChanged(send)];
-    res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
-    send();
-  };
+export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Route {
+  return () =>
+    stream((res) => {
+      const send = () => void res.write(frame({ data: JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus) }));
+      const unwatched = [source.onChanged(send), traffic.onChanged(send)];
+      res.on("close", () => unwatched.forEach((unwatch) => unwatch()));
+      send();
+    });
 }

@@ -15,7 +15,7 @@ export type Connection = {
   read: (name: string, reader: Reader, signal: AbortSignal) => void;
   // The proxy's status, what the proxy is among it, now and at each change, across restarts of the proxy (the restarted proxy's status follows),
   // until `signal` aborts it, which reports nothing, or the status is not served, which fails it. A status it cannot
-  // read is reported as failed, and the statuses after it still arrive. Its connection is the UI's to the proxy: one
+  // read is reported as unreadable, and the statuses after it still arrive. Its connection is the UI's to the proxy: one
   // lost, or not made, is reported as dropped while it is tried again, and the next status says it is back. A signal
   // already aborted throws its reason.
   status: (watcher: StatusWatcher, signal: AbortSignal) => void;
@@ -43,8 +43,11 @@ export type Connection = {
 // that drops retries on its own, a bounded number of times, then stays closed.
 export type TmuxConnection = TerminalConnection & { connect: () => Promise<void>; close: () => Promise<void> };
 
+// [LAW:types-are-the-program] What happens to a status stream, by whether it goes on: a status arrives, one cannot be
+// read (and the next may be), the connection is lost (and tried again), or the stream is not served (and is closed).
 export type StatusWatcher = {
   status: (status: ProxyStatus) => void;
+  unreadable: (error: Error) => void;
   dropped: () => void;
   failed: (error: Error) => void;
 };

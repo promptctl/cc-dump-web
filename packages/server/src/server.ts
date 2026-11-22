@@ -1,12 +1,10 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { buffer } from "node:stream/consumers";
-import { loggedIn, type Handler, type Log, type TraceId, type Work } from "@cc-dump/log";
-import { describe } from "@cc-dump/log/describe";
+import { loggedIn, type Handler, type Log, type TraceId } from "@cc-dump/log";
+import { bodyOf, json, routes, type Route } from "@cc-dump/log/answer";
+import { ROUTES } from "@cc-dump/log/wire";
 import { agentBaseUrl, type Listing, type ProxyInfo } from "@cc-dump/proxy/format";
-import { parseLaunch, type Failure, type Launched, type Launcher } from "./format.ts";
-import { fromThisMachine } from "./origin.ts";
+import { parseLaunch, type Launched, type Launcher } from "./format.ts";
 import { launchSettings } from "./settings.ts";
-import { TmuxRefused, type Tmux } from "./tmux.ts";
+import type { Tmux } from "./tmux.ts";
 
 // What the app server works with, chosen by its composition root (main.ts): where the launch settings are kept, the
 // tmux server, the running proxy (what it says it is, and the recording it makes for an agent), and `directory`, the one
@@ -14,24 +12,13 @@ import { TmuxRefused, type Tmux } from "./tmux.ts";
 // `GET /logs` serves to the logs panel (docs/design/01-features.md, F9).
 export type Parts = {
   log: Log;
-  logs: Handler;
+  logs: Route;
   settingsPath: string;
   tmux: Tmux;
   proxyInfo: () => Promise<ProxyInfo>;
   proxyRecording: () => Promise<Listing>;
   directory: string;
 };
-
-// A request the app server refuses, answered with `status` and the refusal's message.
-class Refused extends Error {
-  readonly status: number;
-  constructor(status: number, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.status = status;
-  }
-}
-
-type Answer = (req: IncomingMessage, work: Work) => Promise<unknown>;
 
 // The app server restarts on every source change, so it holds nothing that must survive one: the settings are on disk,
 // and tmux and the proxy are asked again on each request.
@@ -44,23 +31,20 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
     ).settings;
 
   // `GET /launch` (docs/design/01-features.md, F1): what a launch starts from.
-  const launcher: Answer = async (_req, { trace_id }): Promise<Launcher> => ({
-    settings: await readSettings(trace_id),
-    sessions: await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length })),
-  });
+  const launcher: Route = async (_req, { trace_id }) =>
+    json({
+      settings: await readSettings(trace_id),
+      sessions: await loggedIn(log, trace_id, "tmux_sessions", {}, tmux.sessions, (sessions) => ({ sessions: sessions.length })),
+    } satisfies Launcher);
 
   // `POST /launch`: stores the settings asked for, then opens the agent's window, pointed at the running proxy by a path
   // of its own, which is how the proxy tells its process's requests from every other's (`agentBaseUrl`). The command is
   // run as the user wrote it. The proxy makes the recording that process will be, since it is the proxy that writes it.
-  const launch: Answer = async (req, { trace_id }): Promise<Launched> => {
-    const { session, command } = parsed(parseLaunch, (await buffer(req)).toString());
+  const launch: Route = async (req, { trace_id }) => {
+    const { session, command } = await bodyOf(req, parseLaunch);
     launchSettings.write(settingsPath, { session, command });
-    const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info).catch((error: unknown) => {
-      throw new Refused(502, `The proxy did not say where agents reach it: ${describe(error)}`, { cause: error });
-    });
-    const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name })).catch((error: unknown) => {
-      throw new Refused(502, `The proxy did not make a recording for the agent: ${describe(error)}`, { cause: error });
-    });
+    const { base_url } = await loggedIn(log, trace_id, "proxy_info", {}, proxyInfo, (info) => info);
+    const { name: recording } = await loggedIn(log, trace_id, "proxy_recording", {}, proxyRecording, ({ name }) => ({ recording: name }));
     const window = await loggedIn(
       log,
       trace_id,
@@ -69,61 +53,8 @@ export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecor
       () => tmux.newWindow({ session, command, cwd: directory, env: { ANTHROPIC_BASE_URL: agentBaseUrl(base_url, recording) } }),
       (window) => window,
     );
-    return { session, ...window, recording };
+    return json({ session, ...window, recording } satisfies Launched);
   };
 
-  const routes: Record<string, Handler> = { "/launch": answering({ GET: launcher, POST: launch }), "/logs": logs };
-
-  return (req, res, work) => {
-    // [LAW:single-enforcer] Every answer, any route's: the browser's origin is the UI's, and who may reach the server is
-    // fromThisMachine's to say.
-    res.setHeader("access-control-allow-origin", "*");
-    if (!fromThisMachine(req.headers.origin)) return failed(res, work, new Refused(403, `A page at ${req.headers.origin} is not one this machine serves`));
-    const route = routes[new URL(req.url!, "http://server").pathname];
-    if (route === undefined) return void res.writeHead(404).end();
-    route(req, res, work);
-  };
-}
-
-// A route answered in JSON, an answer per method: the browser's preflight of a JSON POST from the UI's origin is
-// answered, and any other method refused.
-function answering(answers: Partial<Record<string, Answer>>): Handler {
-  const allow = Object.keys(answers).join(", ");
-  return (req, res, work) => {
-    if (req.method === "OPTIONS") return void res.writeHead(204, { "access-control-allow-methods": allow, "access-control-allow-headers": "content-type" }).end();
-    const answer = answers[req.method!];
-    if (answer === undefined) return void res.writeHead(405, { allow }).end();
-    answer(req, work).then(
-      (body) => json(res, 200, body),
-      (error: unknown) => failed(res, work, error),
-    );
-  };
-}
-
-// [LAW:nothing-unseen] Every answer that is not the request's is its failure, on its event as on its answer.
-function failed(res: ServerResponse, work: Work, error: unknown) {
-  const { status, message } = refusal(error);
-  work.fail(error);
-  json(res, status, { error: message } satisfies Failure);
-}
-
-// [LAW:single-enforcer] The one place an error becomes an answer: a request refused says why, and tmux refusing is a
-// dependency failing, in tmux's words; anything else is the app server failing.
-function refusal(error: unknown): { status: number; message: string } {
-  if (error instanceof Refused) return error;
-  if (error instanceof TmuxRefused) return { status: 502, message: error.message };
-  return { status: 500, message: describe(error) };
-}
-
-// A request body the app server cannot take is refused, saying why.
-function parsed<T>(parse: (text: string) => T, text: string): T {
-  try {
-    return parse(text);
-  } catch (error) {
-    throw new Refused(400, describe(error), { cause: error });
-  }
-}
-
-function json(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+  return routes({ [ROUTES.launch]: { GET: launcher, POST: launch }, [ROUTES.logs]: { GET: logs } });
 }

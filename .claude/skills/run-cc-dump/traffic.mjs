@@ -3,20 +3,25 @@
 // reader port), then sends a growing conversation of streaming /v1/messages requests to the proxy under that
 // recording's path, one turn at a time, as Claude Code would.
 //   node .claude/skills/run-cc-dump/traffic.mjs [turns]       (default 3)
-// Env: CC_DUMP_READER_PORT (3347); the proxy's address is the one its `GET /info` gives agents.
+// Env: CC_DUMP_READER_PORT (the reader's port, 3347); the proxy's address is the one its `GET /info` gives agents.
 // A proxy whose upstream is not mock-anthropic (a stack forwarding to the real API, recording into the user's real
 // recordings) is refused before anything is sent: the mock, asked at its upstream for a path it has no endpoint for,
 // names itself in its error.
+// The app's own wire (node runs the .ts source as it is): the routes, the one client reader and the one Server-Sent
+// Events decoder.
+import { ask, ROUTES, serverSentEvents } from "../../../packages/log/src/wire.ts";
+import { READER_PORT } from "../../../packages/proxy/src/address.ts";
+
 const turns = Number(process.argv[2] ?? 3);
 if (!Number.isInteger(turns) || turns < 1) throw new Error(`turns must be a positive integer, got ${JSON.stringify(process.argv[2])}`);
-const reader = `http://127.0.0.1:${process.env.CC_DUMP_READER_PORT ?? 3347}`;
+const reader = `http://127.0.0.1:${process.env.CC_DUMP_READER_PORT ?? READER_PORT}`;
 
 async function ok(res, what) {
   if (!res.ok) throw new Error(`${what}: ${res.status} ${await res.text()}`);
   return res;
 }
 
-const { base_url, upstream } = await (await ok(await fetch(`${reader}/info`), `GET ${reader}/info`)).json();
+const { base_url, upstream } = await ask(`${reader}${ROUTES.info}`, {}, JSON.parse);
 // A proxy older than `upstream` in its info says nothing of where it forwards, and is refused the same way.
 const probe = URL.parse("run-cc-dump-probe", upstream);
 const mock =
@@ -26,7 +31,7 @@ const mock =
     .catch(() => false));
 if (!mock) throw new Error(`the proxy at ${base_url} forwards to ${upstream}, where no mock-anthropic answers; refusing to send it traffic`);
 
-const { name } = await (await ok(await fetch(`${reader}/recordings`, { method: "POST" }), `POST ${reader}/recordings`)).json();
+const { name } = await ask(`${reader}${ROUTES.recordings}`, { method: "POST" }, JSON.parse);
 const base = `${base_url}/agent/${name.slice(0, -".jsonl".length)}`;
 console.log(`recording ${name}  (ANTHROPIC_BASE_URL=${base}, upstream ${upstream})`);
 
@@ -41,10 +46,8 @@ for (let turn = 1; turn <= turns; turn++) {
   });
   const text = await (await ok(res, `turn ${turn}`)).text();
   // The assistant's reply goes back into the history, as an agent's would: the text deltas joined.
-  const said = text
-    .split("\n")
-    .filter((line) => line.startsWith("data: "))
-    .map((line) => JSON.parse(line.slice("data: ".length)).delta)
+  const said = serverSentEvents(text, true)
+    .events.map(({ data }) => JSON.parse(data).delta)
     .filter((delta) => delta?.type === "text_delta")
     .map((delta) => delta.text)
     .join("");

@@ -1,4 +1,5 @@
 import { outcomes, type Ending } from "@cc-dump/log/ending";
+import { Malformed } from "@cc-dump/log/failure";
 import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
@@ -92,10 +93,6 @@ export function offsetOf(text: string): number | undefined {
 // The data of a finished recording's `end` event: the bytes after its last newline, which a write cut short left.
 export type RecordingEnd = { unterminated_bytes: number };
 
-// The data of a read's `failed` event, sent when the reader fails after the read began: the error's message.
-// The whole error, stack and all, is the request's log event's.
-export type ReadFailure = { message: string };
-
 // Each message of `GET /status`: the proxy's state now, whole (docs/design/01-features.md, F8, F12): what it is, so a reader
 // following it across a restart knows the restarted proxy, whether it runs its source on disk, and its traffic.
 export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traffic };
@@ -105,7 +102,8 @@ export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traf
 // is never an empty `changed_source`: a dead watch must not read as nothing pending.
 export type SourceStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
-// The requests this run of the proxy serves, on any path. `in_flight`: those that arrived and have not ended.
+// The agents' requests this run of the proxy forwards, on any path of its agent port, and none of its reader port's,
+// where the UI's own open reads would keep `in_flight` above 0. `in_flight`: those that arrived and have not ended.
 // `last_request`: when the latest arrived, as an ISO time; null until the run's first.
 export type Traffic = { in_flight: number; last_request: string | null };
 
@@ -120,7 +118,7 @@ export type ProxyInfo = { base_url: string; upstream: string; recordings: string
 
 export function parseListings(json: string): Listing[] {
   const listings = parseJson(json, "recordings list");
-  if (!Array.isArray(listings)) throw new Error("recordings list: is not an array");
+  if (!Array.isArray(listings)) throw new Malformed("recordings list: is not an array");
   return listings.map((listing: unknown) => listingOf(listing, "recordings list entry"));
 }
 
@@ -132,10 +130,6 @@ const listingOf = (listing: unknown, what: string): Listing => ({ name: fields(l
 
 export function parseRecordingEnd(json: string): RecordingEnd {
   return { unterminated_bytes: fields(parseJson(json, "recording end"), "recording end").integer("unterminated_bytes") };
-}
-
-export function parseReadFailure(json: string): ReadFailure {
-  return { message: fields(parseJson(json, "read failure"), "read failure").string("message") };
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {

@@ -4,15 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
-import { serve, type Event } from "@cc-dump/log";
+import { serve, type Event, type Log } from "@cc-dump/log";
+import { routes } from "@cc-dump/log/answer";
 import { eventLog, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
-import { agentBaseUrl, parseListing, parseListings, parseReadFailure, recordingName, type RecordedEvent } from "./format.ts";
+import { agentBaseUrl, parseListing, parseListings, recordingName, type RecordedEvent } from "./format.ts";
 import { createRecordings, type Recordings } from "./recordings.ts";
 import { proxyProcess, runName } from "./testing.ts";
-import { subscribe, type ServerSentEvent } from "@cc-dump/log/testing";
+import { subscribe } from "@cc-dump/log/testing";
+import { parseFailure, ROUTES, type ServerSentEvent } from "@cc-dump/log/wire";
 
 // A recordings directory, removed when the test finishes.
 function recordingsDir() {
@@ -26,6 +28,12 @@ function recordingsDir() {
 const agentName = recordingName(new Date("2026-11-13T08:00:00.000Z"));
 const pastRun = "run-20261101T000000.000Z.jsonl";
 
+// The reader's routes, as the reader port serves them.
+function readerOver(log: Log, recordings: Recordings) {
+  const { list, read } = createReader(log, recordings);
+  return routes({ [ROUTES.recordings]: { GET: list }, [ROUTES.recording]: { GET: read } });
+}
+
 // The proxy recording into the directory, an upstream that answers every request, and the reader. `recordings.create()`
 // makes `agentName`, the moment the proxy's clock stands at.
 async function proxyAndReader(dir = recordingsDir(), wrap = (recordings: Recordings) => recordings) {
@@ -33,7 +41,7 @@ async function proxyAndReader(dir = recordingsDir(), wrap = (recordings: Recordi
   const upstream = await serving((_req, res) => res.end("answer"));
   const proxy = await serving(createProxy(parseUpstream(upstream.url), recordings));
   const readerLog = eventLog();
-  const reader = await serving(createReader(readerLog.log, recordings));
+  const reader = await serving(readerOver(readerLog.log, recordings));
   // One exchange through the proxy, as the agent `agentName` makes it unless `agent` is null, waited on until its request
   // event (and so its recording) is complete.
   const exchange = async (path: string, agent: string | null = agentName) => {
@@ -48,7 +56,7 @@ const linesOf = (path: string) => readFileSync(path, "utf8").split("\n").filter(
 // What a reader should be sent for `lines`, starting at byte `from`: each line, its id the offset past it.
 function expected(lines: string[], from = 0) {
   let offset = from;
-  return lines.map((data) => ({ id: String((offset += Buffer.byteLength(data) + 1)), data }));
+  return lines.map((data) => ({ id: String((offset += Buffer.byteLength(data) + 1)), event: "message", data }));
 }
 
 describe("createReader", () => {
@@ -296,7 +304,7 @@ describe("createReader", () => {
     const line = JSON.stringify({ data: "x".repeat(1000) });
     writeFileSync(join(dir, pastRun), `${line}\n`.repeat(20_000));
     const { log, next } = eventLog();
-    const reader = await serve(log, createReader(log, createRecordings(() => {}, dir, runName)), 0);
+    const reader = await serve(log, readerOver(log, createRecordings(() => {}, dir, runName)), 0);
     await next();
 
     const stream = await subscribe(reader.port, `/recordings/${pastRun}`);
@@ -323,7 +331,7 @@ describe("createReader", () => {
     const watched = Object.defineProperty({ ...recordings }, "follows", { get: () => (list(), recordings.follows) });
     const logged: Event[] = [];
     const log = (event: Event) => void logged.push(event);
-    const handle = createReader(log, watched);
+    const handle = readerOver(log, watched);
     let closed: Promise<void> | undefined;
     const reader = await serve(
       log,
@@ -384,7 +392,7 @@ describe("createReader", () => {
     const failed = await stream.next();
     await ended;
     expect(failed).toEqual({ event: "failed", data: expect.any(String) });
-    const { message } = parseReadFailure(failed.data);
+    const { error: message } = parseFailure(failed.data);
     expect(message).toMatch(/^EISDIR/);
     expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "error", error: expect.stringContaining(message) });
     expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining(message), status: 200 });

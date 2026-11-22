@@ -85,7 +85,8 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
 
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
 // what the client is sent when that happens is the handler's decision, made before or after `fail`.
-// `ended` resolves when the response closes, with the ending the event records.
+// `ended` resolves when the response closes, with how the work ended: the ending the event records, unless a request's
+// event records its answer's error status in its place (`answered`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
 export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
@@ -221,7 +222,7 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       log({
         event: "request",
         ...span.end(),
-        ...ending,
+        ...answered(ending, res),
         method: req.method,
         url: req.url,
         // The status the handler set; on a cut response the client may not have received it.
@@ -238,6 +239,15 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       res.destroy();
     }
   };
+}
+
+// [LAW:single-enforcer] The one place a request's answer is judged: a request answered in full with a 4xx or 5xx
+// status (RFC 9110's client and server errors) failed, and its event says so by the answer's status line, whoever wrote
+// it, the part or an upstream the part relays. A failure the part reported is already the ending's error and stands.
+// A cut response is aborted or stopped whatever its status, as `ended` says. `ended` itself is not judged: it is also
+// what the proxy records as an exchange's end, where an upstream's error status is the response's, not the exchange's.
+function answered(ending: Ending, res: ServerResponse): Ending {
+  return ending.outcome === "ok" && res.statusCode >= 400 ? { outcome: "error", error: `${res.statusCode} ${res.statusMessage}` } : ending;
 }
 
 // The upgrade's event is written once, when its socket closes: an error the part reported is its outcome; otherwise a
