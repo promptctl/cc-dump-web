@@ -66,6 +66,11 @@ export type Tie = { agent: string; call: string } & ({ found: true; key: string;
 // and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was,
 // `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
+// [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace.
+const threadPrefix = "thread:";
+// The trace of the exchange an item's or a row's key starts with, as the keys are made here: after a thread's prefix,
+// up to its first `/`. A key no exchange's trace begins, as a nest's line's, gives a trace no step has.
+export const traceOf = (key: string): string => (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0]!;
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it
 // stands `after`, and what it says of its level's agents (StepWire).
@@ -99,7 +104,8 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 // recording's forks (forksOf), derived once per history for the column and the strip alike.
 // [LAW:parse-dont-validate] exception: `stepOf` takes any string, since a view's moment names its trace as stored, and
 // the stored view is not parsed as it is loaded yet (dump-design-ajl.6nq); until then a trace it does not hold is a
-// miss, which the conversation shows as its latest step (Conversation.tsx).
+// miss, which the conversation shows as its latest step while the read can still bring it, and replaces with now
+// once nothing can (Conversation.tsx).
 export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; forks: ReadonlyMap<string, number[]> };
 
 // A thread: its level, the first message every request of it sends, what that message says, and the tree of the paths
@@ -277,7 +283,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
         sent.add(at);
         const location = find(chain, at);
         if (location === undefined) {
-          const key = `thread:${trace}/${at}`;
+          const key = `${threadPrefix}${trace}/${at}`;
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));

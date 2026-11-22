@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { forkAbove, siblingFrom } from "./forks.ts";
-import type { Position } from "./position.ts";
+import type { At } from "./position.ts";
 import type { ForkRow, Row } from "./rows.ts";
 
 const standing = { depth: 0, dimmed: false };
@@ -16,33 +16,36 @@ const fork = (key: string, steps: number[] = [2, 5], shown: number | undefined =
 });
 // A line, a fork, two lines, a fork, a line.
 const rows = [line("a"), fork("b/fork"), line("c"), line("d"), fork("e/fork"), line("f")];
-const indexOf = (listed: readonly Row[]) => (key: string) => {
-  const index = listed.findIndex((row) => row.key === key);
-  return index === -1 ? undefined : index;
-};
-const above = (top: Exclude<Position, { at: "end" }>, listed: readonly Row[] = rows) => forkAbove(listed, indexOf(listed), top)?.key;
-const at = (key: string, offset = 0): Position & { at: "row" } => ({ at: "row", key, offset });
+// The fork above the place `at`, among `listed`.
+const above = (at: At, listed: readonly Row[] = rows) => forkAbove(listed, at)?.key;
+// A place at the row at `index`, `offset` into it.
+const row = (index: number, offset = 0): At => ({ at: "row", index, offset });
+// A place past the row at `index`, at the end of the row standing in for its own.
+const past = (index: number): At => ({ at: "past", index });
 
-describe("the fork above the view", () => {
-  it("is the last whose line is listed at or before the row at the view's top", () => {
-    expect([above(at("c")), above(at("d", 40)), above(at("f"))]).toEqual(["b/fork", "b/fork", "e/fork"]);
+describe("the fork above the reader's place", () => {
+  it("is the last whose line is listed at or before the row the place is at", () => {
+    expect([above(row(2)), above(row(3, 40)), above(row(5))]).toEqual(["b/fork", "b/fork", "e/fork"]);
   });
 
-  it("is the fork whose line is at the view's top", () => {
-    expect([above(at("b/fork")), above(at("e/fork", 4))]).toEqual(["b/fork", "e/fork"]);
+  it("is the fork whose line the place is at", () => {
+    expect([above(row(1)), above(row(4, 4))]).toEqual(["b/fork", "e/fork"]);
   });
 
-  it("is the first listed where none is above: at the start, in a row before them all, and before a top's row arrives", () => {
-    expect([above({ at: "start" }), above(at("a")), above(at("z"))]).toEqual(["b/fork", "b/fork", "b/fork"]);
+  it("is the first listed where none is above: at the start, and in a row before them all", () => {
+    expect([above({ at: "start" }), above(row(0))]).toEqual(["b/fork", "b/fork"]);
   });
 
-  it("counts a top in a row not listed from the row listed before it", () => {
-    // `d/hidden` is not listed: `d` stands for it.
-    expect(above(at("d/hidden"))).toBe("b/fork");
+  it("is the last listed at the end, following", () => {
+    expect(above({ at: "end" })).toBe("e/fork");
+  });
+
+  it("counts a place at the end of a row standing in for its own from that row", () => {
+    expect(above(past(3))).toBe("b/fork");
   });
 
   it("is none where the column lists no fork", () => {
-    expect(above(at("a"), [line("a"), line("c")])).toBeUndefined();
+    expect(above(row(0), [line("a"), line("c")])).toBeUndefined();
   });
 });
 

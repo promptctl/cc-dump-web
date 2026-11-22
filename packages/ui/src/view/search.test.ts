@@ -8,8 +8,10 @@ import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { request as fixtureRequest } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
-import { blockOf, createLayout, type BlockRow, type Layout, type Row } from "./rows.ts";
-import { address, adjacent, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Match, type Searched } from "./search.ts";
+import { blockOf, createLayout, type BlockRow, type Keys, type Layout, type Row } from "./rows.ts";
+import { matchMove } from "./moves.ts";
+import type { Position } from "./position.ts";
+import { address, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Direction, type Found, type Match, type Searched } from "./search.ts";
 
 // A request whose header holds what a search can find.
 const request = (trace_id: string, body: unknown): RecordedEvent[] => fixtureRequest(trace_id, body, { headers: [["x-probe", "needle in a header"]] });
@@ -36,6 +38,14 @@ const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(
 const { pattern } = read("needle");
 // The view at its start, where a step with no current match goes on from.
 const top = { at: "start" } as const;
+// A step of the search as the view takes it (moves.ts), in a column listing every row `found` was made from, keyed
+// `keys`, none of them still to be read.
+const adjacent = (found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys) => {
+  const rows = [...found.rows];
+  return matchMove({ rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: { at: "read", pending: () => undefined } }, found, current, position, direction, pattern);
+};
+// The keys of `rows`, in order.
+const keysOf = (rows: readonly Row[]): Keys => ({ at: (index) => rows[index]!.key, indexOf: (key) => { const index = rows.findIndex((row) => row.key === key); return index === -1 ? undefined : index; } });
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
 const added = (block: Block, gone = false): BlockRow => {
   const shown = { ...block, key: "k" };
@@ -215,8 +225,8 @@ describe("search", () => {
     const replaced = { key: "thread:a/message.1/content.0/so-far", at: address.part(0), start: 0 };
     expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
     expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
-    // One whose exchange is not among the rows at all: the first match going on, the last going back.
-    expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)!.match.key).toBe("a/request/http");
+    // One whose exchange is not among the rows at all, with nothing more to read, is gone: no step counts from it.
+    expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)).toBeUndefined();
   });
 
   it("steps with no current match from the view's position: its top row's matches going on, those above it going back", () => {
@@ -227,6 +237,17 @@ describe("search", () => {
     expect(adjacent(found, undefined, at, "previous", pattern, keys)!.match.key).toBe("b/request/http");
     // At the end, going on wraps to the first match.
     expect(adjacent(found, undefined, { at: "end" }, "next", pattern, keys)!.match.key).toBe("a/request/http");
+  });
+
+  it("steps from the view's position counted among every row, so rows hidden above it move no step", () => {
+    const hidden = layOut({ ...shown, http: "hidden", tools: "hidden" });
+    const found = createSearch()(hidden.every.rows, pattern);
+    // The column as the view holds it: its listed rows, fewer than every row, the hidden HTTP blocks among them.
+    const column = { ...hidden, moment: { at: "read", pending: () => undefined } } as const;
+    const at = { at: "row", key: "thread:b/message.0/content.0", offset: 40 } as const;
+    expect(hidden.keys.indexOf(at.key)).not.toBe(hidden.every.keys.indexOf(at.key));
+    expect(matchMove(column, found, undefined, at, "next", pattern)!.match.key).toBe("thread:b/message.0/content.0");
+    expect(matchMove(column, found, undefined, at, "previous", pattern)!.match.key).toBe("b/request/http");
   });
 
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
@@ -245,17 +266,18 @@ describe("search", () => {
   it("opens the nests a match's block is inside, the innermost first", () => {
     const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", level: { kind: "unread" }, prompt: "", count: 1, depth, dimmed: false });
     const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
-    const found = createSearch()([nest("outer/nest", 0), nest("inner/nest", 1), inner], pattern);
-    expect(adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
+    const nested = [nest("outer/nest", 0), nest("inner/nest", 1), inner];
+    const found = createSearch()(nested, pattern);
+    expect(adjacent(found, undefined, top, "next", pattern, keysOf(nested))!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
   });
 
   it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {
     const row = added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "markdown", text: "# Needle plan\n\n## Steps\n\nfind the needle\n" }] });
     const found = createSearch()([row], pattern);
     const part = partKey("k", address.part(0));
-    const heading = adjacent(found, undefined, top, "next", pattern, layOut().every.keys)!;
+    const heading = adjacent(found, undefined, top, "next", pattern, keysOf([row]))!;
     expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, folds: ["k"] });
-    expect(adjacent(found, heading.match, top, "next", pattern, layOut().every.keys)!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
+    expect(adjacent(found, heading.match, top, "next", pattern, keysOf([row]))!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
   });
 
   it("gives the matches holding any of a slice of a text", () => {

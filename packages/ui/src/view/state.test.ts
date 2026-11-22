@@ -110,6 +110,13 @@ describe("the search", () => {
     expect(useSettings.getState().search.wholeWord).toBe(true);
   });
 
+  it("has no current match once it is one nothing will bring, and keeps the query and the place", () => {
+    const place = { at: "row", key: "t1", offset: 12 } as const;
+    useView.setState({ position: place, search: { query: "x", current: match } });
+    view.matchGone();
+    expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: undefined } });
+  });
+
   // What a step chose is the reader's choice, however the fold starts, so a change of level never hides the current match.
   it("chooses open the folds holding a match, over the reader's close, and records nothing for a step among what they hold open", () => {
     view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, "t1");

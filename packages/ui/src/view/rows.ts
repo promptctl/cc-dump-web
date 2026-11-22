@@ -2,8 +2,9 @@ import { launchName, type Block, type Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
+import type { Reading } from "../reading.ts";
 import type { Visibility } from "../settings.ts";
-import { levelKey, placeOf, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
+import { levelKey, placeOf, sameFields, traceOf, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -160,7 +161,8 @@ export function summaryOf(set: SetRow): Summary {
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// row listed before it, whose end is where it stands: a closed nest's line, for a row the nest holds.
+// row listed before it, whose end is where it stands: a closed nest's line, for a row the nest holds. None for a row
+// not listed before every listed one, which stands before them all.
 // [LAW:types-are-the-program] The same object while no row, listed or not, arrives, goes or moves, so what reads rows
 // by key reads them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
@@ -271,13 +273,13 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
     forks = listedForks;
 
     const rows = every.filter((_, index) => isShown[index]);
-    // Each row's place among those listed: its own, or the place of the row listed before it.
+    // Each row's place among those listed: its own, or the place of the row listed before it; none for a row before
+    // every listed one.
     const places = new Map<string, number>();
-    let before = 0;
     let count = 0;
     every.forEach((row, index) => {
-      if (isShown[index]) before = count++;
-      places.set(row.key, before);
+      if (isShown[index]) count++;
+      if (count > 0) places.set(row.key, count - 1);
     });
     const listedKeys = rows.map(({ key }) => key);
     const listedMeasured = rows.map((row) => measuredBy(row, visibility, opened));
@@ -331,6 +333,55 @@ type Column = {
 const top = levelKey({ kind: "main" });
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
 export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
+
+// How the read of a recording open stands (reading.ts), as the conversation shown is read: reading, ended or failed.
+export type Read = Exclude<Reading["state"], "none">;
+// What can still bring a step not read yet: the read as it goes on, or, after it failed, a new read of the recording,
+// as a reload begins; nothing once it ended.
+export type Pending = Exclude<Read, "ended">;
+export const bringerOf = (read: Read): Pending | undefined => (read === "ended" ? undefined : read);
+
+// [LAW:one-source-of-truth] Each nested level's step that opens it (view/history.ts, StepWire), by the level's key,
+// with its level and what the step says of it, of the steps `segments`.
+function openingsOf(segments: readonly Segment[]) {
+  const openings = new Map<string, { own: number; level: Exclude<Level, { kind: "main" }>; opens: NonNullable<Segment["wire"]["opens"]> }>();
+  segments.forEach(({ wire: { level, opens } }, index) => {
+    if (opens !== undefined && level.kind !== "main") openings.set(levelKey(level), { own: index + 1, level, opens });
+  });
+  return openings;
+}
+
+// Whether a step's exchange is still running: no end has been read of it.
+const running = ({ formatted }: Segment) => formatted.exchange.end === undefined;
+
+// The moment a column is of (view/state.ts, Moment), by its step: now's, the latest wherever the read takes it; or one
+// held, by its number, undefined while the read has not brought it, when the column shows now's step instead.
+export type MomentStep = { at: "now" } | { at: "held"; step: number | undefined };
+
+// [LAW:types-are-the-program] What can still bring the rows of the moment a column shows: its step read, and `pending`
+// says by key what can still bring a row not among its rows (bringerOf), or none, so it is gone; its step not read
+// yet, by what can still bring it (`read`), while the column shown is another's, so every place waits on it; or gone,
+// as a moment the read ended without is, with every place in it.
+export type MomentStanding = { at: "read"; pending: (key: string) => Pending | undefined } | { at: "pending"; read: Pending } | { at: "gone" };
+
+// The standing of a moment, `moment`, whose column lists the steps `steps` (Layout), as the read stands. A row not
+// among the column's rows can still come while the step it stands with is listed and its exchange still running, and a
+// row of a step not read yet, which comes after every step read, only into now's column, whose steps grow with it.
+// The step a row stands with is, for a nest's line, the one that opens its level, and for every other row the step
+// whose trace its key starts with. A key names the step it stands with, not the one that brings it: a fork's line comes
+// with a later sibling, and a thread's line with the step that carries the thread on.
+export function standingOf({ segments, stepOf }: History, read: Read, moment: MomentStep, steps: ReadonlySet<number>): MomentStanding {
+  const by = bringerOf(read);
+  if (moment.at === "held" && moment.step === undefined) return by === undefined ? { at: "gone" } : { at: "pending", read: by };
+  const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
+  const pending = (key: string) => {
+    const step = opening.get(key) ?? stepOf(traceOf(key));
+    const comes = step === undefined ? moment.at === "now" : steps.has(step) && running(segments[step - 1]!);
+    return comes ? by : undefined;
+  };
+  return { at: "read", pending };
+}
+
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 
@@ -339,11 +390,8 @@ function columnOf({ segments, forks }: History, step: number): Column {
   const add = <K, V>(lists: Map<K, V[]>, key: K, value: V) => lists.set(key, lists.get(key) ?? []).get(key)!.push(value);
   const arrived = segments.slice(0, step);
   const levelAt = (own: number) => levelKey(arrived[own - 1]!.wire.level);
-  // Each nested level's first step by the moment, the one that opens it (view/history.ts, StepWire), by its key.
-  const first = new Map<string, { own: number; level: Exclude<Level, { kind: "main" }>; opens: NonNullable<Segment["wire"]["opens"]> }>();
-  arrived.forEach(({ wire: { level, opens } }, index) => {
-    if (opens !== undefined && level.kind !== "main") first.set(levelKey(level), { own: index + 1, level, opens });
-  });
+  // Each nested level's step that opens it, by the moment.
+  const first = openingsOf(arrived);
   // The parent each nested level stands under by the moment (Parent): the level its parent header names, `namedOf`,
   // where that level has a step by the moment and the chain of parent headers from it does not come back.
   const namedOf = (key: string) => {
@@ -448,12 +496,13 @@ function doingOf(arrived: readonly Segment[], step: number): (agent: string) => 
   const coming = ({ formatted: { exchange } }: Segment) => exchange.end === undefined || (now !== undefined && Date.parse(exchange.end.timestamp) > now);
   const answered = new Map<string, Set<string>>();
   const stopped = new Map<string, { own: number; status: string }>();
-  arrived.forEach(({ wire, formatted }, index) => {
+  arrived.forEach((segment, index) => {
+    const { wire } = segment;
     for (const { agent, status } of wire.stops) stopped.set(agent, { own: index + 1, status });
     if (wire.level.kind !== "agent") return;
     const own = answered.get(wire.level.id) ?? new Set<string>();
     answered.set(wire.level.id, own);
-    if (wire.did !== undefined || formatted.exchange.end !== undefined) for (const call of wire.answers) own.add(call);
+    if (wire.did !== undefined || !running(segment)) for (const call of wire.answers) own.add(call);
   });
   const runs = new Map<string, KeyedBlock | undefined>();
   arrived.forEach((segment, index) => {

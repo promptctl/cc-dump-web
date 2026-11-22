@@ -1,8 +1,9 @@
-import { positionAt, resolve, type Placed, type Position } from "./position.ts";
+import { positionAt, resolve, type Placed, type Position, type Presence } from "./position.ts";
 
-// Where the rows are: a row's index by its key, a row by its index, and the row at an offset.
+// Where the rows are: where a position stands among them (position.ts `presence`), a row by its index, and the row at
+// an offset.
 export type Rows = {
-  indexOf: (key: string) => number | undefined;
+  judge: (position: Position) => Presence;
   placed: (index: number) => Placed | undefined;
   rowAt: (offset: number) => Placed | undefined;
 };
@@ -43,14 +44,16 @@ export function step(
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   const by: By = own ? "view" : "reader";
   if (!own && cause === "change") return { position, written, write: undefined, by };
-  // A reader's offset becomes the position.
-  const read = readAt(offset, end, follow, resumable, rows.rowAt);
-  const next = own && (position.at !== "end" || follow) ? position : read;
-  // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
-  // arrived, as after a reload, writes nothing until it does.
-  const resolved = resolve(next, rows.indexOf, rows.placed);
+  // The position the step keeps, judged among the rows: the view's own, unless the end it holds no longer follows.
+  const kept = own && (position.at !== "end" || follow) ? rows.judge(position) : undefined;
+  // A reader's offset, or a kept place nothing will bring, gives way to the place under the view, which is where the
+  // view already is, so nothing is written.
+  if (kept === undefined || kept.at === "gone") return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: offset, write: undefined, by };
+  // A kept place is resolved against where the rows now are, within reach, and written when it moved; one not read yet,
+  // or whose row is not placed yet, writes nothing until it is, so the moves wait for it.
+  const resolved = resolve(kept, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
-  return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
+  return { position, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
 }
 
 // The position a reader's offset reads as, by a scroll or a press on the minimap. Following, an offset within a pixel of

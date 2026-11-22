@@ -6,10 +6,11 @@ import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
-import { createHistory } from "./history.ts";
-import { adjacent, createSearch } from "./search.ts";
+import { createHistory, traceOf, type History } from "./history.ts";
+import { matchMove } from "./moves.ts";
+import { createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, standingOf, summaryOf, type BlockRow, type Doing, type ForkRow, type MomentStep, type NestRow, type Opened, type Read, type Row, type SetRow } from "./rows.ts";
 
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
@@ -31,6 +32,13 @@ function layouts(events: RecordedEvent[], visibility: Record<Category, Visibilit
 // The block's row at `key` among a layout's.
 const blockAt = ({ rows }: { rows: Row[] }, key: string) => rows.find((row): row is BlockRow => row.kind === "block" && row.key === key)!;
 const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "block" ? `${row.key} ${row.change}` : row.key));
+// What can still bring a row by key into the column of `moment` listing `steps`, whose step is read.
+const now: MomentStep = { at: "now" };
+function pendingIn(history: History, read: Read, moment: MomentStep, steps: ReadonlySet<number>) {
+  const standing = standingOf(history, read, moment, steps);
+  if (standing.at !== "read") throw new Error(`the moment's step is not read: ${standing.at}`);
+  return standing.pending;
+}
 
 describe("layout", () => {
   it("lays out the conversation at a step: each step's exchange, then what first arrived with it, the step shown's added", () => {
@@ -316,7 +324,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
+      const to = matchMove({ ...layout, moment: { at: "read", pending: () => undefined } }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -816,5 +824,43 @@ describe("the column", () => {
     expect(dimmed.filter((key) => !key.includes("/"))).toEqual(["t1", "compact"]);
     expect(dimmed).toContain("t1/fork");
     expect(dimmed.some((key) => key.includes("probe") || key.includes("c1"))).toBe(false);
+  });
+
+  it("brings, as the read goes on, of the rows the layout makes, only those of a step still running: each stands with a step read, a nest's line with the step that opens its level", () => {
+    // A fork's line and nests open to the innermost among them, among every row; the nested agents' last step, t2, runs.
+    for (const events of [parted, nested]) {
+      const history = createHistory()(createFormatter()(exchanges(events)));
+      const { every, steps } = layouts(events)(history.segments.length, undefined, { [outer]: true, [inner]: true });
+      const pending = pendingIn(history, "reading", now, steps);
+      const running = new Set<string>(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
+      const keys = every.rows.map(({ key }) => key);
+      expect(keys.filter((key) => pending(key) !== undefined)).toEqual(keys.filter((key) => running.has(traceOf(key))));
+    }
+    // A nest's line of a level no step opens is one the read can still bring.
+    const nests = createHistory()(createFormatter()(exchanges(nested)));
+    expect([outer, inner, "nest:agent:z"].map(pendingIn(nests, "reading", now, new Set([1, 2, 3])))).toEqual([undefined, undefined, "reading"]);
+  });
+
+  it("says what can still bring a row into the column, by key: its step while the column lists it and it still runs, a step not read only into now's; the read, or after it failed a new read; nothing once it ended", () => {
+    const events = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")]), ...request("t2", { ...main, messages: more }), ...streaming("t2", [text("More")])];
+    const history = createHistory()(createFormatter()(exchanges(events)));
+    // A row of the step that ended, of the step still running, of an agent with no step read, and of an exchange not read.
+    const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x"];
+    const can = (read: Read, moment: MomentStep = now, steps = new Set([1, 2])) => keys.map(pendingIn(history, read, moment, steps));
+    expect(can("reading")).toEqual([undefined, "reading", "reading", "reading"]);
+    // A row of a step that ended is gone after a failed read as after one that goes on.
+    expect(can("failed")).toEqual([undefined, "failed", "failed", "failed"]);
+    expect(can("ended")).toEqual(keys.map(() => undefined));
+    // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet.
+    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(keys.map(() => undefined));
+    expect(can("reading", { at: "held", step: 2 })).toEqual([undefined, "reading", undefined, undefined]);
+    // Nor can now's column hold the rows of a running step it does not list, as a fork's sibling not chosen.
+    expect(can("reading", now, new Set([1]))).toEqual([undefined, undefined, "reading", "reading"]);
+  });
+
+  it("holds a moment whose step is not read by what can still bring it, and lets it go once nothing can", () => {
+    const history = createHistory()(createFormatter()(exchanges([...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")])])));
+    const unread: MomentStep = { at: "held", step: undefined };
+    expect((["reading", "failed", "ended"] as const).map((read) => standingOf(history, read, unread, new Set([1])))).toEqual([{ at: "pending", read: "reading" }, { at: "pending", read: "failed" }, { at: "gone" }]);
   });
 });

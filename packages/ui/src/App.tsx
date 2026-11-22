@@ -69,10 +69,10 @@ export function App({ connection }: { connection: Connection }) {
         {/* Each opening is shown by a view of its own, mounted as a page reload mounts one, so it finds its position the
             one way (docs/design/01-features.md, "One path to the screen"). With no recording open there is none to show. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {open === null ? (
+          {reading.state === "none" ? (
             <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
           ) : (
-            <Conversation key={read} formatted={shown} reading={reading.state === "reading"} theme={theme} />
+            <Conversation key={read} formatted={shown} read={reading.state} theme={theme} />
           )}
         </div>
         {terminal?.shown ? <Terminal key={`${terminal.window.start_time} ${terminal.window.session_id} ${terminal.window.window_id}`} connection={connection} window={terminal.window} theme={theme} /> : null}
