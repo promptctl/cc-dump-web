@@ -2,7 +2,7 @@ import { eventsWritten } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { viewLog, type StepTaken } from "./decisions.ts";
 import type { Position } from "./position.ts";
-import type { By, Stepped } from "./scroll.ts";
+import type { Stepped } from "./scroll.ts";
 
 const end: Position = { at: "end" };
 const inC: Position = { at: "row", key: "c", offset: 20 };
@@ -14,32 +14,33 @@ function logged() {
   return { events, decisions: viewLog(log) };
 }
 
-// A step from the place `from`, the one `by` last moved, last written at 170, to what `next` says.
-const stepped = (from: Position, by: By, next: Partial<Stepped>, cause: StepTaken["cause"] = "scroll"): StepTaken => ({
+// A step from the place `from`, last written at 170, one a reader's scroll took or not (`scrolled`), to what `next`
+// says.
+const stepped = (from: Position, scrolled: boolean, next: Partial<Stepped>, cause: StepTaken["cause"] = "scroll"): StepTaken => ({
   cause,
   offset: 120,
   end: 250,
-  kept: { position: from, written: 170, by },
-  next: { position: from, written: 120, write: undefined, by, ...next } as Stepped,
+  kept: { position: from, written: 170, scrolled },
+  next: { position: from, written: 120, scrolled, write: undefined, by: "view", ...next } as Stepped,
 });
 
 describe("the view's decisions", () => {
   it("say which judgement replaced a kept place, and with what", () => {
     const { events, decisions } = logged();
-    decisions.stepped(stepped(inD, "view", { position: inC, by: "view", replaced: "read_ended" }, "change"));
+    decisions.stepped(stepped(inD, false, { position: inC, scrolled: false, replaced: "read_ended" }, "change"));
     expect(events).toEqual([expect.objectContaining({ event: "place_replaced", outcome: "ok", from: inD, to: inC, why: "read_ended" })]);
   });
 
-  it("write nothing for a step that leaves the place whose it was", () => {
+  it("write nothing for a step that keeps the place, or goes on with a run of the reader's scrolls", () => {
     const { events, decisions } = logged();
-    decisions.stepped(stepped(inC, "view", { write: 300 }, "change"));
-    decisions.stepped(stepped(inC, "reader", { position: inD }));
+    decisions.stepped(stepped(inC, false, { write: 300 }, "change"));
+    decisions.stepped(stepped(inC, true, { position: inD, by: "reader" }));
     expect(events).toEqual([]);
   });
 
-  it("say that the view took an offset for the reader's as the view's place becomes the reader's, with what tells it from a clamp", () => {
+  it("say that the view took an offset for the reader's as a run of their scrolls begins, with what tells it from a clamp", () => {
     const { events, decisions } = logged();
-    decisions.stepped(stepped(end, "view", { position: inC, by: "reader" }));
+    decisions.stepped(stepped(end, false, { position: inC, scrolled: true, by: "reader" }));
     expect(events).toEqual([expect.objectContaining({ event: "reader_scroll", from: end, to: inC, cause: "scroll", offset: 120, written: 170, end: 250 })]);
   });
 
@@ -58,14 +59,17 @@ describe("the view's decisions", () => {
     decisions.held(undefined);
     decisions.held({ held: "place", read: "reading" });
     decisions.held({ held: "place", read: "reading" });
+    // The read failing leaves the moves held by the place: the one hold goes on, and its end says how the read stood.
     decisions.held({ held: "place", read: "failed" });
+    // A match not read yet holding them in its place is a hold of its own.
+    decisions.held({ held: "match", read: "failed" });
     decisions.held(undefined);
     decisions.held(undefined);
     expect(events).toEqual([
       expect.objectContaining({ event: "moves_held", held: "place", read: "reading", outcome: "ok" }),
-      expect.objectContaining({ event: "moves_freed", held: "place", read: "reading", outcome: "ok" }),
-      expect.objectContaining({ event: "moves_held", held: "place", read: "failed", outcome: "ok" }),
       expect.objectContaining({ event: "moves_freed", held: "place", read: "failed", outcome: "ok" }),
+      expect.objectContaining({ event: "moves_held", held: "match", read: "failed", outcome: "ok" }),
+      expect.objectContaining({ event: "moves_freed", held: "match", read: "failed", outcome: "ok" }),
     ]);
     // A hold's two events are of one span: begun at one time, the end timed from it.
     for (const [begun, freed] of [[events[0]!, events[1]!], [events[2]!, events[3]!]] as const) {

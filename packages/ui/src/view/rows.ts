@@ -363,14 +363,14 @@ export type MomentStep = { at: "now" } | { at: "held"; step: number | undefined 
 // held one, whose column lists no step read after it (`step_unread`); its step is read and not one the moment's column
 // lists, being another history's (`step_unlisted`); or its step is listed and was read whole without it (`step_ended`).
 export type Gone<Why extends string = "read_ended" | "step_unread" | "step_unlisted" | "step_ended"> = { at: "gone"; why: Why };
-// What can still bring a row not among a column's rows: the read, as `read` says, or nothing.
-export type Unread = { at: "pending"; read: Pending } | Gone;
+// A row absent from a column's rows, by what can still bring it: the read, as `read` says, or nothing.
+export type Absent = { at: "pending"; read: Pending } | Gone;
 
 // [LAW:types-are-the-program] What can still bring the rows of the moment a column shows: its step read, and `pending`
 // says by key what can still bring a row not among its rows; its step not read yet, by what can still bring it
 // (`read`), while the column shown is another's, so every place waits on it; or gone, as a moment the read ended
 // without is, with every place in it.
-export type MomentStanding = { at: "read"; pending: (key: string) => Unread } | { at: "pending"; read: Pending } | Gone<"read_ended">;
+export type MomentStanding = { at: "read"; pending: (key: string) => Absent } | { at: "pending"; read: Pending } | Gone<"read_ended">;
 
 // The standing of a moment, `moment`, whose column lists the steps `steps` (Layout), as the read stands. A row not
 // among the column's rows can still come while the step it stands with is listed and its exchange still running, and a
@@ -385,7 +385,7 @@ export function standingOf({ segments, stepOf }: History, read: Read, moment: Mo
   const comes: { at: "pending"; read: Pending } | Gone<"read_ended"> = by === undefined ? { at: "gone", why: "read_ended" } : { at: "pending", read: by };
   if (moment.at === "held" && moment.step === undefined) return comes;
   const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
-  const pending = (key: string): Unread => {
+  const pending = (key: string): Absent => {
     const step = opening.get(key) ?? stepOf(traceOf(key));
     if (step === undefined) return moment.at === "now" ? comes : { at: "gone", why: "step_unread" };
     if (!steps.has(step)) return { at: "gone", why: "step_unlisted" };

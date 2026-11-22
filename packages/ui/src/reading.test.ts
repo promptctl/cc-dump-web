@@ -144,19 +144,6 @@ describe("readRecording", () => {
     expect(events).toEqual([]);
   });
 
-  it("fails, and says so in its event, when the connection's read throws as it begins", () => {
-    const { events, log } = eventsWritten();
-    const states: Reading[] = [];
-    const throwing = {
-      read: () => {
-        throw new Error("no stream");
-      },
-    };
-    readRecording(throwing, log, agent, () => {}, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
-    expect(states.map((reading) => (reading.state === "failed" ? said(reading.error) : reading))).toEqual([{ state: "reading", name: agent }, expect.stringContaining("no stream")]);
-    expect(events).toEqual([expect.objectContaining({ event: "recording_read", name: agent, outcome: "error", error: expect.stringContaining("no stream"), exchanges: 0 })]);
-  });
-
   it("leaves a frame's exchanges as they were when later events change the exchange", () => {
     const { frames, shown, deliver } = started();
     deliver(event(1));

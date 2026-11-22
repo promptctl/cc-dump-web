@@ -106,8 +106,8 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   // What holds the moves, which the line under the rows says.
   const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
 
-  // What the view keeps between steps beside the position, which is the store's (scroll.ts `Kept`).
-  const scrolled = useRef<Omit<Kept, "position">>({ written: 0, by: "view" });
+  // What the view keeps between steps that is the scroller's, made with it; the position is the store's (scroll.ts `Kept`).
+  const scrollerKept = useRef<Omit<Kept, "position">>({ written: 0, scrolled: false });
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, against
   // the rows of the render last committed, and carries it out.
   const sync = (cause: Cause) => {
@@ -118,10 +118,10 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
       rowAt,
     };
-    const kept = { ...scrolled.current, position: live.position };
+    const kept = { ...scrollerKept.current, position: live.position };
     const [offset, end] = [element.scrollTop, largest(element)];
     const next = step(cause, offset, end, kept, useSettings.getState().follow, live.moment.at !== "chosen", rowsNow);
-    scrolled.current = { written: next.written, by: next.by };
+    scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
     const cleared = matchGone(column, useView.getState().search.current);
@@ -137,7 +137,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
-    scrolled.current = { ...scrolled.current, written: element.scrollTop };
+    scrollerKept.current = { ...scrollerKept.current, written: element.scrollTop };
   };
   const latest = useRef(sync);
   // A step runs whenever what it reads changes: after a render, on a scroll event, and when the scroller is resized.

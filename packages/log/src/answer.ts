@@ -5,6 +5,7 @@ import { LOOPBACK, UI_PORT } from "./address.ts";
 import { describe } from "./describe.ts";
 import type { Handler, Work } from "./index.ts";
 import { DependencyFailed, Malformed } from "./failure.ts";
+import type { Json } from "./json.ts";
 import { statusLine, type FailedStatus, type Failure } from "./wire.ts";
 
 // [LAW:single-enforcer] The one way a part answers a request over HTTP (the wire's reading side is wire.ts): the part
@@ -49,9 +50,9 @@ export type Method = "GET" | "POST";
 // byte is representable, and one after it is not. A `Stream` writes a Server-Sent Events body, which begins once the
 // route has answered.
 export type Stream = (res: ServerResponse) => void;
+export type { Json };
 
-// What JSON text can say, so a body `JSON.stringify` turns into no text at all (undefined, a function) is no reply.
-export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
+// A body is what JSON text can say (json.ts `Json`), so one `JSON.stringify` turns into no text at all is no reply.
 export type Reply = { kind: "json"; body: Json } | { kind: "stream"; write: Stream };
 
 // The answer to an OPTIONS request, which only the route table gives: the preflight of a browser's request.

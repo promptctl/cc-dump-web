@@ -70,9 +70,10 @@ function windowOf({ pathname }: URL): TmuxWindow {
 // opening and closing, each call the page made of tmux (a keystroke's send-keys, a resize) with how long tmux took and
 // whether it failed, and the bridge's own trouble. Each event the bridge forwards to the page is left out: it is tmux's
 // own notification stream, as many as the panes' output. An event's failure is the connection's only when it says the
-// connection failed; a call that fails or is denied is that call's, and the connection goes on.
+// connection failed; a call that fails or is denied is that call's, and the connection goes on. The bridge takes no
+// `authenticate`, so its events carry no identity (undefined), and each is facts JSON says.
 function bridgeEvent(log: Log, work: Work) {
-  return (event: BridgeObservabilityEvent) => {
+  return (event: BridgeObservabilityEvent<undefined>) => {
     if (event.kind === "event-out") return;
     const { facts, duration_ms, fault } = verdict(event);
     if (fault.of === "connection") work.fail(fault.error);
@@ -87,7 +88,7 @@ function bridgeEvent(log: Log, work: Work) {
 type Fault = { of: "none" } | { of: "call" | "connection"; error: Error };
 type Verdict = { facts: Facts; duration_ms: number; fault: Fault };
 const none: Fault = { of: "none" };
-function verdict(event: Exclude<BridgeObservabilityEvent, { kind: "event-out" }>): Verdict {
+function verdict(event: Exclude<BridgeObservabilityEvent<undefined>, { kind: "event-out" }>): Verdict {
   const said = (fault: Fault): Verdict => ({ facts: event, duration_ms: 0, fault });
   const ofConnection = (error: Error): Fault => ({ of: "connection", error });
   switch (event.kind) {

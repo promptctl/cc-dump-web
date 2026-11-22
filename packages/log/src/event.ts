@@ -1,11 +1,13 @@
 // The event every part writes and the one writer of it, importing nothing that needs node, so the UI writes its own
 // events through it as the proxy and the app server write theirs.
 import type { Ending } from "./ending.ts";
+import type { Json } from "./json.ts";
 import { mintTraceId, type TraceId } from "./trace.ts";
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
 // fields. Parts add facts beside them and never rename them; `service` is added by the sink, and `unit` names the unit
 // of work a `failure` is of (`unitOfWork`).
+// [LAW:types-are-the-program] A fact is what JSON says (a fact left undefined is not written), so every event encodes.
 export type Event = {
   event: string;
   trace_id: TraceId;
@@ -13,37 +15,18 @@ export type Event = {
   duration_ms: number;
   service?: never;
   unit?: string;
-  [fact: string]: unknown;
+  [fact: string]: Json | undefined;
 } & Ending;
 export type Log = (event: Event) => void;
 
-// [LAW:single-enforcer] [LAW:nothing-unseen] The export edge, the one checkpoint every event leaves by: one JSON line per
-// event, written wherever the entry point's `write` sends it. A telemetry failure is itself telemetry, and never the
-// work's: writing an event throws nothing into the work it records. An event whose facts do not encode is written with
-// the floor's fields and `sink_error`, which says why; a line `write` refuses is counted, and each line written after
-// it carries the count so far, `sink_unwritten`.
+// The export edge: one JSON line per event, written wherever the entry point's `write` sends it.
 export function createLog(service: string, write: (line: string) => void): Log {
-  let unwritten = 0;
-  return (event) => {
-    const counted = unwritten === 0 ? {} : { sink_unwritten: unwritten };
-    let line: string;
-    try {
-      line = JSON.stringify({ service, ...event, ...counted });
-    } catch (error) {
-      const { event: name, trace_id, started_at, duration_ms, unit, outcome, error: failure } = event;
-      line = JSON.stringify({ service, event: name, trace_id, started_at, duration_ms, unit, outcome, error: failure, ...counted, sink_error: String(error) });
-    }
-    try {
-      write(`${line}\n`);
-    } catch {
-      unwritten++;
-    }
-  };
+  return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
 }
 
 // A part's facts about a unit of work: any name but the floor's, read off `Event`.
 type FloorField = keyof { [K in keyof Event as string extends K ? never : K]: unknown };
-export type Facts = { [fact: string]: unknown } & { [K in FloorField]?: never };
+export type Facts = { [fact: string]: Json | undefined } & { [K in FloorField]?: never };
 
 // The floor's span fields, for any unit of work a part times itself: one that begins a trace of its own, or one inside
 // another's trace (a request's recording), joining it. Two entries, so a span that joins a trace names the trace it
@@ -81,8 +64,8 @@ export function unitsOf(describeError: (error: unknown) => string) {
   // [LAW:no-ambient-temporal-coupling] `end` measures all the event carries (the span, the facts `found` reads off the
   // work's end) while the unit is still open, so a measure that throws leaves it open for the failure its caller then
   // gives, and a failure reported while it measures is its ending. Only then is it ended, `ended` resolved, and the event
-  // written: a write that throws surfaces as itself, is never followed by a second write, and leaves nothing waiting on
-  // `ended`.
+  // written, so whatever `log` does, a `log` that throws included (createLog's writes do not), the write surfaces as
+  // itself, is never followed by a second write, and leaves nothing waiting on `ended`.
   // `judged` is how the event reads the unit's ending, where it judges more than `ended` says: a request's, by its status.
   function unitOfWork(log: Log, event: string, facts: Facts, span: Span, judged: (ending: Ending) => Ending = (ending) => ending) {
     let failure: Ending | undefined;

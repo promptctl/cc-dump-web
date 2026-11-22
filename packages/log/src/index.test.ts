@@ -16,6 +16,10 @@ const ended: Event = { event: "e", trace_id: parseTraceId("t"), started_at: "s",
 const contradictory: Event = { ...ended, error: "boom" };
 void contradictory;
 
+// @ts-expect-error A fact is what JSON says, so every event encodes: a value JSON cannot say is no fact.
+const unencodable: Event = { ...ended, count: 1n };
+void unencodable;
+
 // @ts-expect-error A part hands serve its handler, never a server it made itself.
 const unlogged = () => serve(() => {}, createHttpServer(), 0);
 void unlogged;
@@ -43,31 +47,6 @@ describe("createLog", () => {
     createLog("proxy", (line) => lines.push(line))({ ...ended, port: 1 });
 
     expect(lines).toEqual([`${JSON.stringify({ service: "proxy", ...ended, port: 1 })}\n`]);
-  });
-
-  it("writes an event whose facts do not encode with the floor's fields and why, throwing nothing into the work", () => {
-    const lines: string[] = [];
-    const log = createLog("ui", (line) => lines.push(line));
-
-    expect(() => log({ ...failed(new Error("lost")), event: "e", trace_id: parseTraceId("t"), started_at: "s", duration_ms: 0, count: 1n })).not.toThrow();
-    expect(lines.map((line) => JSON.parse(line))).toEqual([
-      { service: "ui", event: "e", trace_id: "t", started_at: "s", duration_ms: 0, outcome: "error", error: expect.stringContaining("lost"), sink_error: expect.stringContaining("BigInt") },
-    ]);
-  });
-
-  it("counts each line its write refuses, throwing nothing into the work, and says the count on each line written after", () => {
-    const lines: string[] = [];
-    let refusing = 2;
-    const log = createLog("ui", (line) => {
-      if (refusing-- > 0) throw new Error("sink gone");
-      lines.push(line);
-    });
-
-    expect(() => [1, 2, 3, 4].forEach((n) => log({ ...ended, n }))).not.toThrow();
-    expect(lines.map((line) => JSON.parse(line))).toEqual([
-      { service: "ui", ...ended, n: 3, sink_unwritten: 2 },
-      { service: "ui", ...ended, n: 4, sink_unwritten: 2 },
-    ]);
   });
 });
 

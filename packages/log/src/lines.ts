@@ -2,7 +2,7 @@ import type { Writable } from "node:stream";
 import { stream, type Route } from "./answer.ts";
 import { createLog, failed, startTrace, unitOfWork, type Log } from "./index.ts";
 import { keptLines } from "./kept.ts";
-import { positionOf } from "./line.ts";
+import { lineId, positionOf } from "./line.ts";
 import { frame } from "./wire.ts";
 
 // [LAW:single-enforcer] A part's log, the one its process writes: each event a JSON line on `out`, stdout, which
@@ -33,7 +33,7 @@ export function processLog(service: string, out: Writable = process.stdout, keep
       const next = lines.from(resumedAfter(req.headers["last-event-id"], lines.run) + 1);
       let full = false;
       const send = () => {
-        for (let kept; !full && (kept = next()); ) full = !res.write(frame({ id: kept.id, data: kept.line }));
+        for (let kept; !full && (kept = next()); ) full = !res.write(frame({ id: lineId(kept.position), data: kept.line }));
       };
       send();
       const unwatch = lines.watch(send);
