@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { injectedFrom } from "./injected.ts";
-import type { Position } from "./position.ts";
-import type { Row } from "./rows.ts";
+import { presence, type Position } from "./position.ts";
+import type { Keys, Row } from "./rows.ts";
 
 // A block's row at `key`: what was said, or, `injected`, what the harness put into the message.
 const block = (key: string, injected: boolean): Row => ({
@@ -24,11 +24,22 @@ const block = (key: string, injected: boolean): Row => ({
 });
 // Said, injected, said, injected, injected, said.
 const rows = [block("a", false), block("b", true), block("c", false), block("d", true), block("e", true), block("f", false)];
-const indexOf = (listed: Row[]) => (key: string) => {
-  const index = listed.findIndex((row) => row.key === key);
-  return index === -1 ? undefined : index;
+// The keys of `listed`, every row among them listed.
+const keysOf = (listed: Row[]): Keys => ({
+  at: (index) => listed[index]!.key,
+  indexOf: (key) => {
+    const index = listed.findIndex((row) => row.key === key);
+    return index === -1 ? undefined : index;
+  },
+});
+// The injected block from `position`, judged among `listed` (position.ts); one not among them is none of these cases
+// (moves.ts).
+const from = (position: Position, direction: "next" | "previous", listed = rows) => {
+  const keys = keysOf(listed);
+  const at = presence(position, keys, keys.indexOf, () => false);
+  if (at.at === "unread" || at.at === "gone") throw new Error(`${JSON.stringify(position)} is not among the rows`);
+  return injectedFrom(listed, at, direction);
 };
-const from = (position: Position, direction: "next" | "previous", listed = rows) => injectedFrom(listed, indexOf(listed), position, direction);
 const at = (key: string, offset = 0): Position => ({ at: "row", key, offset });
 
 describe("the injected blocks", () => {
@@ -70,9 +81,9 @@ describe("the injected blocks", () => {
     expect(from({ at: "end" }, "next")).toBe("b");
   });
 
-  it("counts from the row a position inside it is nearest, and from before every row while that has not arrived", () => {
+  it("counts from the end of the row a position inside it is nearest", () => {
     expect(from(at("c/body"), "next")).toBe("d");
-    expect(from(at("z"), "next")).toBe("b");
+    expect(from(at("c/body"), "previous")).toBe("b");
   });
 
   it("goes nowhere when no injected block is listed", () => {

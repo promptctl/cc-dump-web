@@ -7,16 +7,17 @@ import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
+import type { Reading } from "../reading.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
-import { forkAbove, siblingFrom } from "./forks.ts";
+import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
-import { injectedFrom } from "./injected.ts";
+import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type Column } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
-import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
+import { positionAt, type Placed, type Position } from "./position.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, unreadOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -24,16 +25,18 @@ import { currentMatch } from "./highlights.ts";
 import { Highlighted, HighlightedText } from "./Highlighted.tsx";
 import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } from "./painting.ts";
 import { TextView } from "./Text.tsx";
-import { address, adjacent, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
+import { address, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
 import { useView, view, type Moment } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
+import { WaitingLine } from "./WaitingLine.tsx";
 
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
-// and near the view are mounted. `reading`: whether the read can still bring an exchange its end. `theme`: what the
-// minimap's canvas is painted in.
-export function Conversation({ formatted, reading, theme }: { formatted: FormattedExchange[]; reading: boolean; theme: Theme }) {
+// and near the view are mounted. `read`: how the read of the recording stands (reading.ts), which says whether it can
+// still bring an exchange its end, or a row the view's place names. `theme`: what the minimap's canvas is painted in.
+export function Conversation({ formatted, read, theme }: { formatted: FormattedExchange[]; read: Reading["state"]; theme: Theme }) {
+  const reading = read === "reading";
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
   const conversation = useMemo(() => history(formatted), [history, formatted]);
@@ -49,6 +52,10 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const current = useView((state) => state.search.current);
   const opened = useView((state) => state.opened);
   const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, current?.key, opened), [layOut, conversation, shown, current?.key, opened]);
+  // Whether the read can still bring a row the view's place or current match names, and the column the moves count in.
+  const held = moment.at === "now" ? undefined : moment.trace;
+  const unread = useMemo(() => unreadOf(conversation, read, held), [conversation, read, held]);
+  const column: Column = { layout: { rows, keys, every }, unread };
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -63,7 +70,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     // The position's row is always mounted, so it is measured: an offset into it is only where it says once its
     // height is known, and a row placed by its estimate may end before the offset does.
     rangeExtractor: (range) => {
-      const anchor = anchorKey === undefined ? undefined : rowIndex(anchorKey, keys.indexOf);
+      const at = anchorKey === undefined ? undefined : inListed(column, { at: "row", key: anchorKey, offset: 0 });
+      const anchor = at?.at === "row" ? at.index : undefined;
       const indexes = defaultRangeExtractor(range);
       return anchor === undefined || indexes.includes(anchor) ? indexes : [anchor, ...indexes];
     },
@@ -89,6 +97,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const chosen = useView((state) => state.moment.at === "chosen");
   const following = !follow ? "off" : atEnd ? "on" : chosen ? "chosen" : "paused";
   const control = followStates[following];
+  // What holds the moves, which the line under the rows says.
+  const waiting = useView((state) => waitingOf(column, state.position, state.search.current));
 
   const written = useRef(0);
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
@@ -97,7 +107,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const element = scroller.current!;
     const { position, moment } = useView.getState();
     const rowsNow = {
-      indexOf: keys.indexOf,
+      judge: (position: Position) => inListed(column, position),
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
       rowAt,
     };
@@ -105,6 +115,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
     const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
     written.current = next.written;
     if (next.position !== position) view.place(next.position, next.by, now);
+    if (matchGone(column, useView.getState().search.current)) view.matchGone();
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
@@ -162,7 +173,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // A step to a match, as one act: it is committed with the folds holding it open and its row mounted, then the view is
   // put at the match's line.
   const stepTo = (direction: Direction) => {
-    const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
+    const next = matchMove(column, found, current, useView.getState().position, direction, pattern);
     if (next === undefined) return;
     flushSync(() => view.goTo(next, now));
     const match = currentMatch();
@@ -231,9 +242,10 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The reader choosing another history at `fork`: the one before or after the one the view is at (forks.ts), by a move
   // to its first step.
   const switchAt = (fork: ForkRow, direction: Direction) => go(siblingFrom(fork, aimed.current, direction), fork.key);
-  // A switch at the nearest fork above the view; nothing where the column lists no fork.
+  // A switch at the nearest fork above the reader's place; nothing where the column lists no fork, or while the place
+  // is not read yet.
   const sibling = (direction: Direction) => {
-    const fork = forkAbove(rows, keys.indexOf, positionAt(scroller.current!.scrollTop, rowAt));
+    const fork = forkMove(column, useView.getState().position);
     if (fork !== undefined) switchAt(fork, direction);
   };
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
@@ -256,7 +268,7 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // which marks the block where the view is at the end and cannot move, and opens it at Enter. Committed first, so the
   // block's row is mounted, as the position's is.
   const toInjected = (direction: Direction) => {
-    const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
+    const key = injectedMove(column, useView.getState().position, direction);
     if (key === undefined) return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
     const line = scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`);
@@ -319,7 +331,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           )}
           {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
               rather than over it. */}
-          <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
+          <div className="pointer-events-none sticky bottom-0 mt-auto flex items-center justify-end gap-3 px-4 pt-1 pb-3">
+            <WaitingLine waiting={waiting} />
             <Toggle
               data-follow={following}
               pressed={control.pressed}

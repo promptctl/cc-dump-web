@@ -2,8 +2,9 @@ import { launchName, type Block, type Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
+import type { Reading } from "../reading.ts";
 import type { Visibility } from "../settings.ts";
-import { levelKey, placeOf, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
+import { levelKey, placeOf, sameFields, threadPrefix, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -160,7 +161,8 @@ export function summaryOf(set: SetRow): Summary {
 export type Layout = { rows: Row[]; keys: ListedKeys; every: { rows: Row[]; keys: Keys }; steps: ReadonlySet<number> };
 
 // The rows' keys in order: the key at an index, and the index of a key: of its row, or, for a row not listed, of the
-// row listed before it, whose end is where it stands: a closed nest's line, for a row the nest holds.
+// row listed before it, whose end is where it stands: a closed nest's line, for a row the nest holds. None for a row
+// not listed before every listed one, which stands before them all.
 // [LAW:types-are-the-program] The same object while no row, listed or not, arrives, goes or moves, so what reads rows
 // by key reads them again only when one did.
 export type Keys = { at: (index: number) => string; indexOf: (key: string) => number | undefined };
@@ -271,13 +273,13 @@ export function createLayout(visibility: Record<Category, Visibility>): (history
     forks = listedForks;
 
     const rows = every.filter((_, index) => isShown[index]);
-    // Each row's place among those listed: its own, or the place of the row listed before it.
+    // Each row's place among those listed: its own, or the place of the row listed before it; none for a row before
+    // every listed one.
     const places = new Map<string, number>();
-    let before = 0;
     let count = 0;
     every.forEach((row, index) => {
-      if (isShown[index]) before = count++;
-      places.set(row.key, before);
+      if (isShown[index]) count++;
+      if (count > 0) places.set(row.key, count - 1);
     });
     const listedKeys = rows.map(({ key }) => key);
     const listedMeasured = rows.map((row) => measuredBy(row, visibility, opened));
@@ -330,7 +332,35 @@ type Column = {
 // The main agent's level, which stands in no nest.
 const top = levelKey({ kind: "main" });
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
-export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
+const nestPrefix = "nest:";
+export const nestKey = (level: Level) => `${nestPrefix}${levelKey(level)}`;
+
+// The step a row's key stands with, by its number in the history, undefined while it is not read: for a nest's line,
+// its level's first step, which opens the nest (StepWire.opens) as columnOf does; for every other row, the step whose
+// trace the key starts with, after a thread item's prefix. A key names the step it stands with, not the one that
+// brings it: a fork's line comes with a later sibling, and a thread's line with the step that carries the thread on.
+export function stepOfKey({ segments, stepOf }: History, key: string): number | undefined {
+  if (key.startsWith(nestPrefix)) {
+    const level = key.slice(nestPrefix.length);
+    const index = segments.findIndex(({ wire }) => wire.opens !== undefined && levelKey(wire.level) === level);
+    return index === -1 ? undefined : index + 1;
+  }
+  const path = key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key;
+  return stepOf(path.split("/", 1)[0]!);
+}
+
+// Whether the read can still bring a row not among the rows and inside none of them (position.ts), by its key: it
+// failed, which shows no row absent; or it is reading, and the step the key stands with is not read yet or its
+// exchange is still running, or the moment's step, `held` (view/state.ts), is not read yet, so the column shows
+// another. A read that ended, or none, brings nothing more.
+export function unreadOf(history: History, read: Reading["state"], held: string | undefined): (key: string) => boolean {
+  const heldUnread = held !== undefined && history.stepOf(held) === undefined;
+  return (key) => {
+    const step = stepOfKey(history, key);
+    const running = step === undefined || history.segments[step - 1]!.formatted.exchange.end === undefined;
+    return read === "failed" || (read === "reading" && (heldUnread || running));
+  };
+}
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
 

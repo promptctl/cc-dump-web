@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
 import { agentCall, assistant, launched, notification, reply, request, result, text, user } from "../../test/fixtures.ts";
 import { createHistory, sameFields, type History } from "./history.ts";
-import { rowIndex } from "./position.ts";
+import { presence } from "./position.ts";
 
 const main = { model: "m", system: [text("You are Claude Code.")], tools: [{ name: "Read", input_schema: {} }] };
 
@@ -146,8 +146,12 @@ describe("history", () => {
   it("names a thread's places apart from every row of the exchange that began it", () => {
     const rows = ["t1", "t1/request/http", "t1/response/http", "t1/tools", "t1/system", "t1/message.0", "t1/reply"];
     const indexOf = (key: string) => (rows.includes(key) ? rows.indexOf(key) : undefined);
+    const keys = { at: (index: number) => rows[index]!, indexOf };
+    // Inside none of the exchange's rows, a thread's item not among them stands nowhere: with nothing more to read, gone.
     for (const { groups } of history(process).segments) {
-      for (const { key } of groups.flatMap(({ items }) => items).filter(({ key }) => key.startsWith("thread:"))) expect(rowIndex(key, indexOf)).toBeUndefined();
+      for (const { key } of groups.flatMap(({ items }) => items).filter(({ key }) => key.startsWith("thread:"))) {
+        expect(presence({ at: "row", key, offset: 0 }, keys, indexOf, () => false)).toEqual({ at: "gone" });
+      }
     }
   });
 

@@ -83,6 +83,9 @@ export const view = {
     settings.setSearchOption(option, on);
     useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
   },
+  // The current match is one nothing will bring (moves.ts `matchGone`), as one kept for a tab whose read ended without
+  // it: none is current.
+  matchGone: () => useView.setState(({ search }) => ({ search: { ...search, current: undefined } })),
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the folds holding it show open, and
   // the view moves to its row, which the step then refines to the match's line. The folds are chosen open, however they
   // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set

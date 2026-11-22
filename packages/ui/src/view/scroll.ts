@@ -1,8 +1,9 @@
-import { positionAt, resolve, type Placed, type Position } from "./position.ts";
+import { positionAt, resolve, type Placed, type Position, type Presence } from "./position.ts";
 
-// Where the rows are: a row's index by its key, a row by its index, and the row at an offset.
+// Where the rows are: where a position stands among them (position.ts `presence`), a row by its index, and the row at
+// an offset.
 export type Rows = {
-  indexOf: (key: string) => number | undefined;
+  judge: (position: Position) => Presence;
   placed: (index: number) => Placed | undefined;
   rowAt: (offset: number) => Placed | undefined;
 };
@@ -42,13 +43,22 @@ export function step(
   // listener, and a clamp's event can come after a render, so a render that took an offset for the reader's could take
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   const by: By = own ? "view" : "reader";
+  // The position the step keeps: the view's own, unless the end it holds no longer follows; and, until its event
+  // runs, the one under a reader's offset. Only a kept position is judged: a reader's offset reads as a row among the
+  // rows, so a scroll off a place not among them takes the reader's place.
+  const kept = own ? (position.at !== "end" || follow ? position : undefined) : cause === "change" ? position : undefined;
+  const judged = kept === undefined ? undefined : rows.judge(kept);
+  // A kept place not read yet is kept as it is until it is, and nothing is written, so the moves wait for it.
+  if (judged?.at === "unread") return { position, written: own ? offset : written, write: undefined, by };
+  // A kept place nothing will bring is replaced by the place under the view, as the view's own placing; a reader's
+  // offset under it is still the scroll event's to take.
+  if (judged?.at === "gone") return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: own ? offset : written, write: undefined, by: "view" };
   if (!own && cause === "change") return { position, written, write: undefined, by };
   // A reader's offset becomes the position.
-  const read = readAt(offset, end, follow, resumable, rows.rowAt);
-  const next = own && (position.at !== "end" || follow) ? position : read;
-  // Resolved against where the rows now are, within reach, and written when it moved; a position whose row has not
-  // arrived, as after a reload, writes nothing until it does.
-  const resolved = resolve(next, rows.indexOf, rows.placed);
+  const next = kept ?? readAt(offset, end, follow, resumable, rows.rowAt);
+  // Resolved against where the rows now are, within reach, and written when it moved; a row not placed yet writes
+  // nothing until it is.
+  const resolved = resolve(judged ?? rows.judge(next), rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
   return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
 }

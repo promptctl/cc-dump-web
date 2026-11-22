@@ -1,15 +1,15 @@
-import { rowIndex, type Position } from "./position.ts";
-import type { ForkRow, Keys, Row } from "./rows.ts";
+import type { At } from "./position.ts";
+import type { ForkRow, Row } from "./rows.ts";
 import type { Direction } from "./search.ts";
 
-// The fork a press of [ or ] switches at (docs/design/02-design.md, "Keys"): the nearest above the view, the last
-// whose line is listed at or before the row at the view's top, `top`, or, with none there, the first listed.
-// Undefined where the column lists no fork. `rows`: the rows listed, each at the place `indexOf` gives its key. A top
-// whose row has not arrived, as after a reload, is before them all.
-export function forkAbove(rows: readonly Row[], indexOf: Keys["indexOf"], top: Exclude<Position, { at: "end" }>): ForkRow | undefined {
-  const at = top.at === "start" ? -1 : (rowIndex(top.key, indexOf) ?? -1);
-  const forks = rows.flatMap((row, index) => (row.kind === "fork" ? [{ row, index }] : []));
-  return (forks.findLast(({ index }) => index <= at) ?? forks[0])?.row;
+// The fork a press of [ or ] switches at (docs/design/02-design.md, "Keys"): the nearest above the reader's place
+// `at`, the last whose line is listed at or before the row it stands at, or, with none there, the first listed. At the
+// end, following, that is the last listed. Undefined where the column lists no fork. `rows`: the rows listed, in the
+// order `at` was judged in (position.ts).
+export function forkAbove(rows: readonly Row[], at: At): ForkRow | undefined {
+  const index = at.at === "start" ? -1 : at.at === "end" ? rows.length : at.index;
+  const forks = rows.flatMap((row, place) => (row.kind === "fork" ? [{ row, place }] : []));
+  return (forks.findLast(({ place }) => place <= index) ?? forks[0])?.row;
 }
 
 // The sibling a switch at a fork goes to, by its first step: the one listed after, or before, the sibling the view is

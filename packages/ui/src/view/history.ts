@@ -66,6 +66,8 @@ export type Tie = { agent: string; call: string } & ({ found: true; key: string;
 // and a thread's item stands inside none of them. What is an exchange's own is keyed as its row always was,
 // `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
+// [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace.
+export const threadPrefix = "thread:";
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it
 // stands `after`, and what it says of its level's agents (StepWire).
@@ -277,7 +279,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
         sent.add(at);
         const location = find(chain, at);
         if (location === undefined) {
-          const key = `thread:${trace}/${at}`;
+          const key = `${threadPrefix}${trace}/${at}`;
           chain.places.set(at, { step, group: groupIndex, index: items.length });
           undo.push(() => chain.places.delete(at));
           items.push(arrived(key, reply));
