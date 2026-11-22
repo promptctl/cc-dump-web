@@ -37,7 +37,7 @@ async function watching(source: Map<string, string>, dir: string) {
     writeFileSync(join(dir, "probe"), "");
     live = await Promise.race([checked.then(() => true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 20))]);
   }
-  return { next };
+  return { watch, next, nextEvent };
 }
 
 describe("watchSource", () => {
@@ -62,6 +62,30 @@ describe("watchSource", () => {
     expect(await next()).toEqual({ state: "watching", changed_source: [] });
     unlinkSync(second);
     expect(await next()).toEqual({ state: "watching", changed_source: [second] });
+  });
+
+  it("logs a check whose state's listener throws as one failed check, and fails the watch", async () => {
+    const { dir, first, source } = sourceFiles();
+    const { watch, next, nextEvent } = await watching(source, dir);
+    const broken = Promise.withResolvers<void>();
+    onTestFinished(
+      watch.onChanged(() => {
+        if (watch.state().state === "failed") return;
+        broken.resolve();
+        throw new Error("listener broke");
+      }),
+    );
+    writeFileSync(first, "export const first = 10;\n");
+    await broken.promise;
+    const checks: Event[] = [];
+    while (checks.at(-1)?.outcome !== "error") {
+      const event = await nextEvent();
+      if (event.event === "source_check") checks.push(event);
+    }
+    expect(checks.filter(({ changed_source }) => (changed_source as string[] | undefined)?.includes(first))).toEqual([]);
+    expect(checks.at(-1)).toMatchObject({ files_checked: 2, error: expect.stringContaining("listener broke") });
+    expect(await next()).toEqual({ state: "watching", changed_source: [first] });
+    expect(await next()).toEqual({ state: "failed", message: "listener broke" });
   });
 
   it("fails, and says so, when a file cannot be checked", () => {

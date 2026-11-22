@@ -6,7 +6,7 @@ import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { createLog, logged, loggedAfter, serve, type Event, type Work } from "./index.ts";
+import { createLog, eventOwner, logged, loggedAfter, serve, startSpan, type Event, type Work } from "./index.ts";
 import { eventLog, send, sendRaw, serving } from "./testing.ts";
 import { parseTraceId } from "./trace.ts";
 
@@ -80,6 +80,29 @@ describe("logged", () => {
 
     expect(() => logged(log, "setup", {}, () => 7, found)).toThrow("no such fact");
     expect(await next()).toMatchObject({ event: "setup", outcome: "error", error: expect.stringContaining("no such fact") });
+  });
+});
+
+describe("eventOwner", () => {
+  it("writes its unit's event once, with the first failure it kept, and throws at a second end", async () => {
+    const { log, next } = eventLog();
+    const owner = eventOwner(log, "work", { path: "/a" }, startSpan(parseTraceId("t1")));
+
+    owner.fail(new Error("first"));
+    owner.fail(new Error("second"));
+    expect(owner.end({ outcome: "aborted" }, { count: 2 })).toEqual({ outcome: "error", error: expect.stringContaining("first") });
+    const event = await next();
+    expect(event).toMatchObject({ event: "work", trace_id: "t1", path: "/a", count: 2, outcome: "error" });
+    expect(event.error).not.toContain("second");
+    expect(() => owner.end()).toThrow("work event of trace t1 is already written");
+  });
+
+  it("ends as the work reached its end when nothing failed, and writes the event as its judge reads that", async () => {
+    const { log, next } = eventLog();
+    const judged = eventOwner(log, "work", {}, startSpan(parseTraceId("t1")), () => ({ outcome: "error", error: "judged" }));
+
+    expect(judged.end({ outcome: "stopped" })).toEqual({ outcome: "stopped" });
+    expect(await next()).toMatchObject({ event: "work", outcome: "error", error: "judged" });
   });
 });
 

@@ -1,7 +1,7 @@
 import { readdir, open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
-import { describeError, startSpan, type Ending, type Log, type TraceId } from "@cc-dump/log";
+import { eventOwner, startSpan, type Ending, type Log, type TraceId } from "@cc-dump/log";
 import { json, Refused, stream, type Route } from "@cc-dump/log/answer";
 import { describe } from "@cc-dump/log/describe";
 import { frame, READ_ENDED, READ_FAILED, type Failure } from "@cc-dump/log/wire";
@@ -135,23 +135,22 @@ async function bytesAt({ path }: Reading, position: number, length: number, limi
 // every event written after.
 function recordingEvents(reading: Reading, from: number, fail: (error: unknown) => void) {
   const { log, trace_id, ended, name, followed, recordings } = reading;
-  const span = startSpan(trace_id);
+  const catchingUp = eventOwner(log, "catch_up", { recording: name, followed, from }, startSpan(trace_id));
   let offset = from; // just past the last line read into the stream
   let pending: Buffer = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
   let eventsRead = 0;
   let stopWaiting: (() => void) | undefined;
-  let caughtUp = false;
-  // unterminated_bytes: the recording's, which only a read that reached its end has measured; absent otherwise.
-  const catchUp = (ending: Ending, unterminated_bytes?: number) => {
-    if (caughtUp) return;
-    caughtUp = true;
-    // events_read: read into the response stream; delivery past node's buffers is not knowable.
-    log({ event: "catch_up", ...span.end(), ...ending, recording: name, followed, from, to: offset, events_read: eventsRead, unterminated_bytes });
-  };
+  // The read reaches the end of what exists, or fails: `measured` is the recording's unterminated bytes, which only a
+  // read that reached its end measures. A followed read reaches the end after every event written; only the first counts.
+  type Reached = Ending & { measured?: () => number };
+  const { promise: reached, resolve: reach } = Promise.withResolvers<Reached>();
   // [LAW:one-source-of-truth] Why a read cut short ended is the request's to say (the client left, or the
   // server was closed). Subscribed as the read starts, as the proxy subscribes an exchange's recorded `end`,
   // so a stop that cuts the read has this written before its `close` resolves.
-  void ended.then(catchUp);
+  void Promise.race<Reached>([reached, ended]).then(({ measured, ...ending }) =>
+    // events_read: read into the response stream; delivery past node's buffers is not knowable.
+    catchingUp.end(ending, { to: offset, events_read: eventsRead, unterminated_bytes: measured?.() }),
+  );
 
   const readable = new Readable({
     read: () => void fill(),
@@ -186,12 +185,11 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         // [LAW:one-source-of-truth] What a finished recording ends with is what `recordedLength` finds after its last
         // newline, the measure that bounded the read.
         const end: RecordingEnd = { unterminated_bytes: reading.unterminated() };
-        catchUp({ outcome: "ok" }, end.unterminated_bytes);
+        reach({ outcome: "ok", measured: () => end.unterminated_bytes });
         readable.push(frame({ event: READ_ENDED, data: JSON.stringify(end) }));
         return void readable.push(null);
       }
-      // Measured by the first arrival at the end only: a followed read arrives at it after every event written.
-      if (!caughtUp) catchUp({ outcome: "ok" }, reading.unterminated());
+      reach({ outcome: "ok", measured: reading.unterminated });
       stopWaiting = recordings.onWritten((written) => {
         if (written !== name) return;
         stopWaiting?.();
@@ -200,7 +198,9 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
       });
     } catch (error) {
       if (readable.destroyed) return;
-      catchUp({ outcome: "error", error: describeError(error) });
+      // The read ends here, and the failure kept is its ending.
+      catchingUp.fail(error);
+      reach({ outcome: "ok" });
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
       // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has

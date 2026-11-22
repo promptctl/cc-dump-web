@@ -484,12 +484,12 @@ describe("createProxy", () => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
-      const { port, next, events } = await proxyTo(upstream);
+      const { port, events, recordLog } = await proxyTo(upstream);
 
       const res = await send(port, { method: "POST", path: "/v1/messages" });
       await once(res, "data");
       res.destroy();
-      await next();
+      await recordLog.next();
 
       expect(shape(events())).toEqual(["request", "request_trailers", "response", "response_body", "end"]);
       expect(events().at(-1)).toMatchObject({ outcome: "aborted" });

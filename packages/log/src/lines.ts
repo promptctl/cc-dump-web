@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Writable } from "node:stream";
 import { stream, type Route } from "./answer.ts";
-import { createLog, describeError, startTrace, type Log } from "./index.ts";
+import { createLog, eventOwner, startTrace, type Log } from "./index.ts";
 import { positionOf } from "./line.ts";
 import { frame } from "./wire.ts";
 
@@ -20,17 +20,19 @@ export function processLog(service: string, out: Writable = process.stdout, keep
   const first = () => Math.max(0, written - keep);
   const readers = new Set<() => void>();
   let writing = true;
-  const span = startTrace();
 
   const log = createLog(service, (line) => {
     if (writing) out.write(line);
     kept[written++ % keep] = line;
     for (const send of readers) send();
   });
-  out.on("error", (error) => {
-    if (!writing) return;
-    writing = false;
-    log({ event: "stdout", ...span.end(), outcome: "error", error: describeError(error) });
+  const stdout = eventOwner(log, "stdout", {}, startTrace());
+  // The first error ends stdout's life and its event; one after it, as each write queued before it fails, is the same
+  // failure's, and only stops the writes, as every error does.
+  out.on("error", () => (writing = false));
+  out.once("error", (error) => {
+    stdout.fail(error);
+    stdout.end();
   });
 
   // `GET /logs`: Server-Sent Events, each line kept and then each one written, until the reader leaves or the server
