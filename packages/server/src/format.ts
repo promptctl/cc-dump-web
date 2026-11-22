@@ -62,13 +62,12 @@ export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-const launcher = object<Launcher>({
-  settings: parsed(kinds.object, (settings) => parseSettings("launcher settings", launchSettingsTable, settings)),
-  sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))),
-});
+// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
+const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
 
 export function parseLauncher(json: string): Launcher {
-  return parse(launcher, parseJson(json, "launcher"), "launcher");
+  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
+  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.

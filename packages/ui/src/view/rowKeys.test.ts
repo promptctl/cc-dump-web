@@ -45,7 +45,7 @@ describe("the row-key scheme", () => {
       threads: layoutOf(compacted, 3)
         .every.rows.filter(({ kind }) => kind === "thread")
         .map(({ key }) => key),
-      made: [pastKey(block), nestKey({ kind: "main" }), partKey(block, address.name), regionKey(partKey(block, address.name), 2), contentsKey(partKey(block, address.name))],
+      made: [pastKey(block), nestKey({ kind: "main" }), nestKey({ kind: "agent", id: "a1" }), partKey(block, address.name), regionKey(partKey(block, address.name), 2), contentsKey(partKey(block, address.name))],
     };
     expect({ version: viewVersion, keys }).toEqual({
       version: 7,
@@ -76,6 +76,7 @@ describe("the row-key scheme", () => {
         made: [
           "past:thread:t1/message.0/content.0",
           "nest:main",
+          "nest:agent:a1",
           'thread:t1/message.0/content.0/["name"]',
           'thread:t1/message.0/content.0/["name"]/2',
           'contents:thread:t1/message.0/content.0/["name"]',

@@ -103,7 +103,7 @@ export const settings = {
   setKeys: (keys: boolean) => useSettings.setState({ keys }),
   // [LAW:single-enforcer] A category moved to its next level, by a click on its chip or a press of its key.
   stepVisibility: (category: Category) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: levelAfter(state.visibility[category]) } })),
-  // Another tab changed the settings, or cleared their storage (stored.ts `changes`): they are read again, so every tab
+  // Another tab changed the settings, or cleared their storage (main.tsx tells which): they are read again, so every tab
   // holds the settings the reader chose last. The read writes nothing (stored.ts).
   changedElsewhere: () => void useSettings.persist.rehydrate(),
 };
