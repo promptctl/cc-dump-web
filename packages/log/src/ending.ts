@@ -5,3 +5,6 @@ export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | 
 
 // Every outcome, for a parser to read one by.
 export const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
+
+// [LAW:single-enforcer] RFC 9110's client error (4xx) and server error (5xx) classes: a status that says its request failed.
+export const isErrorStatus = (status: number): boolean => status >= 400;

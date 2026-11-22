@@ -167,6 +167,7 @@ describe("createReader", () => {
     await buffer(res);
 
     expect(res.statusCode).toBe(400);
+    expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining("from must be 0 or the id of an event"), status: 400 });
   });
 
   // The run's recording spelled in lower case: a case-insensitive filesystem would open it. An agent's name that no

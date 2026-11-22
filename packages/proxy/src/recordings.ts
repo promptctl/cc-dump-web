@@ -1,6 +1,6 @@
 import { closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { describeError, startSpan, type Ending, type Log } from "@cc-dump/log";
+import { endEvent, failedWith, startSpan, type Ending, type Log } from "@cc-dump/log";
 import { recordingName } from "./format.ts";
 import { createWriter, eventLine, type Recorder, type Writer } from "./recording.ts";
 
@@ -59,9 +59,9 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
   };
   const record: Recorder = (name, trace_id) => {
     const path = join(dir, name);
-    const span = startSpan(trace_id);
     const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
-    let failure: string | undefined;
+    const recorded = endEvent(log, "record", { path, counts }, startSpan(trace_id));
+    let failed: Ending | undefined;
     return (seen) => {
       const line = eventLine(trace_id, seen);
       try {
@@ -71,11 +71,10 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
         for (const listener of listeners) listener(name);
       } catch (error) {
         counts.events_failed++;
-        failure ??= describeError(error);
+        failed ??= failedWith(error);
       }
       if (seen.type !== "end") return;
-      const ending: Ending = failure === undefined ? { outcome: "ok" } : { outcome: "error", error: failure };
-      log({ event: "record", ...span.end(), ...ending, path, counts });
+      recorded(failed ?? { outcome: "ok" });
     };
   };
   return {

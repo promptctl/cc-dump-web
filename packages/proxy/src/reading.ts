@@ -2,7 +2,7 @@ import { readdir, open, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
-import { describeError, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
+import { endEvent, failedWith, startSpan, type Ending, type Handler, type Log, type TraceId } from "@cc-dump/log";
 import { offsetOf, type Listing, type ReadFailure, type RecordingEnd } from "./format.ts";
 import { recordedLength } from "./recording.ts";
 import type { Recordings } from "./recordings.ts";
@@ -64,19 +64,20 @@ function list(names: string[], res: ServerResponse) {
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(listed));
 }
 
+declare const listedOrFollowed: unique symbol;
+// [LAW:types-are-the-program] A name `readableName` let through, the only name a read joins to the recordings directory.
+type ReadableName = string & { readonly [listedOrFollowed]: true };
+
 // [LAW:parse-dont-validate] [LAW:single-enforcer] The name that may be read, or none: a file the directory lists,
 // spelled as it lists it, or a recording the run holds a writer for, by the name it was given. Nothing else in the URL
 // reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
 // serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
 // A name that is neither, a typo or one nothing made, is not waited on.
+// The brand is stamped here and nowhere else.
 async function readableName(recordings: Recordings, asked: string | undefined): Promise<ReadableName | undefined> {
   if (asked === undefined) return undefined;
   return recordings.follows(asked) || (await files(recordings.dir)).includes(asked) ? (asked as ReadableName) : undefined;
 }
-
-declare const listedOrFollowed: unique symbol;
-// [LAW:types-are-the-program] A name `readableName` let through, the only name a read joins to the recordings directory.
-type ReadableName = string & { readonly [listedOrFollowed]: true };
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
 // the URL it first opened), else `?from=`, else the start. Anything but a decimal offset a file can have is
@@ -122,7 +123,9 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
 
 async function read(reading: Reading, position: number | undefined, res: ServerResponse, fail: (error: unknown) => void) {
   if (position === undefined || !(await atLineStart(reading, position))) {
-    return void res.writeHead(400, { "content-type": "text/plain" }).end("from must be 0 or the id of an event\n");
+    const refused = new Error("from must be 0 or the id of an event");
+    fail(refused);
+    return void res.writeHead(400, { "content-type": "text/plain" }).end(`${refused.message}\n`);
   }
   // A request cut while its recording was looked up, by its client or its server's close, has ended and its
   // event is written: there is no one to read to. One still open has not ended, so the read's subscription
@@ -160,7 +163,7 @@ async function bytesAt({ path }: Reading, position: number, length: number, limi
 // every event written after.
 function recordingEvents(reading: Reading, from: number, fail: (error: unknown) => void) {
   const { log, trace_id, ended, name, followed, recordings } = reading;
-  const span = startSpan(trace_id);
+  const caughtUpTo = endEvent(log, "catch_up", { recording: name, followed, from }, startSpan(trace_id));
   let offset = from; // just past the last line read into the stream
   let pending = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
   let eventsRead = 0;
@@ -171,7 +174,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
     if (caughtUp) return;
     caughtUp = true;
     // events_read: read into the response stream; delivery past node's buffers is not knowable.
-    log({ event: "catch_up", ...span.end(), ...ending, recording: name, followed, from, to: offset, events_read: eventsRead, unterminated_bytes });
+    caughtUpTo(ending, { to: offset, events_read: eventsRead, unterminated_bytes });
   };
   // [LAW:one-source-of-truth] Why a read cut short ended is the request's to say (the client left, or the
   // server was closed). Subscribed as the read starts, as the proxy subscribes an exchange's recorded `end`,
@@ -229,7 +232,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
       });
     } catch (error) {
       if (stream.destroyed) return;
-      catchUp({ outcome: "error", error: describeError(error) });
+      catchUp(failedWith(error));
       // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
       const failure: ReadFailure = { message: error instanceof Error ? error.message : String(error) };

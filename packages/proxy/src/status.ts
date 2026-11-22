@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
-import { describeError, startTrace, type Handler, type Log } from "@cc-dump/log";
+import { endEvent, failedWith, startTrace, type Handler, type Log } from "@cc-dump/log";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
 import { fileHash, type Source } from "./source.ts";
 
@@ -40,42 +40,42 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
   const check = () => {
-    const span = startTrace();
+    const checked = endEvent(log, "source_check", {}, startTrace());
     try {
       const changed = [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path);
-      log({ event: "source_check", ...span.end(), outcome: "ok", files_checked: source.size, changed_source: changed });
+      checked({ outcome: "ok" }, { files_checked: source.size, changed_source: changed });
       become({ state: "watching", changed_source: changed });
     } catch (error) {
-      log({ event: "source_check", ...span.end(), outcome: "error", error: describeError(error) });
+      checked(failedWith(error));
       failWith(error);
     }
   };
 
   const directories = new Set([...source.keys()].map(dirname));
-  const span = startTrace();
+  const watching = endEvent(log, "watch_source", { files: source.size, directories: directories.size }, startTrace());
   try {
     for (const directory of directories) {
       const watcher = watch(directory, { persistent: false }, check);
       watcher.on("error", (error) => {
-        log({ event: "source_watch", ...startTrace().end(), outcome: "error", error: describeError(error), directory });
+        endEvent(log, "source_watch", { directory }, startTrace())(failedWith(error));
         failWith(error);
       });
       watchers.push(watcher);
     }
-    log({ event: "watch_source", ...span.end(), outcome: "ok", files: source.size, directories: directories.size });
+    watching({ outcome: "ok" });
     // The text on disk may have changed between its load and the watch.
     check();
   } catch (error) {
-    log({ event: "watch_source", ...span.end(), outcome: "error", error: describeError(error), files: source.size, directories: directories.size });
+    watching(failedWith(error));
     failWith(error);
   }
 
   return watched;
 }
 
-// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request the proxy forwards passes:
-// `counted` wraps the forwarding handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends,
-// however it ends.
+// [LAW:single-enforcer] The one count of the proxy's traffic, kept where every request it counts passes: `counted`
+// wraps a handler, so a request is counted as it arrives, at the time `now` gives, and uncounted as it ends, however it
+// ends.
 export function countTraffic(now: () => Date = () => new Date()): Watched<Traffic> & { counted: (handler: Handler) => Handler } {
   const { become, ...traffic } = watchable<Traffic>({ in_flight: 0, last_request: null });
   return {

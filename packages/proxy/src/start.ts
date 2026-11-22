@@ -17,6 +17,8 @@ export async function startProxy(log: Log, { upstream, recordings, source, logs,
   const traffic = countTraffic();
   const watch = watchSource(log, source);
   const reader = createReader(log, recordings);
+  // [LAW:single-enforcer] Only the agent port's requests are counted: the UI's own open reads on the reader port would
+  // keep `in_flight` above 0 while the proxy is idle.
   const proxy = await serve(log, traffic.counted(createProxy(upstream, recordings)), proxyPort);
   const info: ProxyInfo = { base_url: `http://${LOOPBACK}:${proxy.port}`, upstream, recordings: recordings.dir };
   const routes: Record<string, Handler> = {

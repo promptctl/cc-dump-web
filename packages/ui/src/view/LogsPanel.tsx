@@ -109,9 +109,11 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }
   );
 });
 
-// What an event says on its row: its error's first line, or its facts.
+// What an event says on its row: its error's first line, if it failed, then its facts, which tell one failed request
+// from another.
 function summary({ error, facts }: LoggedEvent): string {
-  return error === undefined ? Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ") : error.split("\n")[0]!;
+  const said = Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return [...(error === undefined ? [] : [error.split("\n")[0]!]), ...said].join(" ");
 }
 
 const levelStyle: Record<Level, string> = { error: "text-error font-semibold", warn: "font-semibold", info: "text-foreground-muted" };

@@ -87,11 +87,19 @@ export async function subscribe(port: number, path: string, headers: Record<stri
   return { res, next, take };
 }
 
-// The next request event a part's `/logs` subscription sends, past the lines of every other event before it.
-export async function nextRequestEvent(next: () => Promise<ServerSentEvent>): Promise<LoggedEvent> {
-  for (;;) {
+// The next of what `next` resolves with that `matches`, past every one before it that does not.
+export async function nextMatching<T>(next: () => Promise<T>, matches: (each: T) => boolean): Promise<T> {
+  for (let each = await next(); ; each = await next()) if (matches(each)) return each;
+}
+
+// The next request event a part's `/logs` subscription sends, past the lines of every other event before it. A line
+// the build cannot read fails the test, naming why, instead of being passed over.
+export function nextRequestEvent(next: () => Promise<ServerSentEvent>): Promise<LoggedEvent> {
+  const nextEvent = async () => {
     const { data, id } = await next();
     const line = parseLogLine(data, id!);
-    if ("event" in line && line.event.event === "request") return line.event;
-  }
+    if (!("event" in line)) throw new Error(`/logs sent a line this build cannot read: ${line.error}: ${line.unread}`);
+    return line.event;
+  };
+  return nextMatching(nextEvent, ({ event }) => event === "request");
 }

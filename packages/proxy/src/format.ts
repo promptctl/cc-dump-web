@@ -13,7 +13,8 @@ export type Header = [name: string, value: string];
 // [LAW:decomposition] It holds the wire, not an interpretation of it: headers in arrival order, case and
 // repetition, trailers too; body chunks as the bytes received, base64 (a gzip body stays gzip), so later parsing
 // applies to old recordings too. A message's trailers are recorded when its body is complete, none if it had
-// none, so a body cut short has no trailers event. An exchange ends with the ending its log event records.
+// none, so a body cut short has no trailers event. An exchange ends as its relayed response did (`Work.ended`): one
+// relayed in full is ok whatever its status, which `response` records, though its request's log event says it failed.
 export type Recorded =
   | { type: "request"; method: string; url: string; http_version: string; headers: Header[] }
   | { type: "request_body"; base64: string }
@@ -105,8 +106,7 @@ export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traf
 // is never an empty `changed_source`: a dead watch must not read as nothing pending.
 export type SourceStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
 
-// The agents' requests this run of the proxy forwards, on any path of its agent port, and none of its reader port's,
-// where the UI's own open reads would keep `in_flight` above 0. `in_flight`: those that arrived and have not ended.
+// The agents' requests this run of the proxy forwards. `in_flight`: those that arrived and have not ended.
 // `last_request`: when the latest arrived, as an ISO time; null until the run's first.
 export type Traffic = { in_flight: number; last_request: string | null };
 
@@ -115,7 +115,8 @@ export type Traffic = { in_flight: number; last_request: string | null };
 // `recordings`: the directory its recordings are in, each the file there its name names.
 export type ProxyInfo = { base_url: string; upstream: string; recordings: string };
 
-// [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message crosses on its way to a reader.
+// [LAW:parse-dont-validate] [LAW:single-enforcer] The one checkpoint each message of these types crosses on its way to a
+// reader.
 // Recordings outlive edits to these types, and the proxy keeps running while its readers reload, so a message of
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
 

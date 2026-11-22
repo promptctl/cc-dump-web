@@ -128,7 +128,7 @@ describe("serve", () => {
     { status: 405, reason: undefined, error: "405 Method Not Allowed" },
     { status: 429, reason: "Slow Down", error: "429 Slow Down" },
     { status: 503, reason: undefined, error: "503 Service Unavailable" },
-  ])("records a request answered in full with $status as failed, by the answer's status line, with no word from the handler", async ({ status, reason, error }) => {
+  ])("records a request answered in full with $status as failed, by its status line", async ({ status, reason, error }) => {
     let work!: Work;
     const { url, next } = await serving((_req, res, given) => {
       work = given;
@@ -261,7 +261,7 @@ describe("serve", () => {
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
   });
 
-  it.each([200, 404])("cuts a request still open when closed, and resolves once its event, ended as stopped, is written, its answer's status %i or any", async (status) => {
+  it.each([200, 404, 503])("cuts a request still open when closed, and resolves once its event, stopped whatever its status (%i), is written", async (status) => {
     const { log, next } = eventLog();
     const { port, close } = await serve(log, (_req, res) => res.writeHead(status).flushHeaders(), 0);
     await next();

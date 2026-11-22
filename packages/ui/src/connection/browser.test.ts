@@ -7,7 +7,7 @@ import { buffer } from "node:stream/consumers";
 import { serve, type Event } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { processLog } from "@cc-dump/log/lines";
-import { arrivals, send, serving, workEvent as event } from "@cc-dump/log/testing";
+import { arrivals, nextMatching, send, serving, workEvent as event } from "@cc-dump/log/testing";
 import { PassThrough } from "node:stream";
 import { app, terminal, TmuxRefused } from "@cc-dump/server/testing";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -35,9 +35,7 @@ async function proxyAndConnection() {
   const upstream = await serving((_req, res) => res.end("answer"));
   const proxy = await proxyProcess(upstream.url, dir, "unlimited");
   // The next event of the proxy's log that `matches`.
-  const logged = async (matches: (event: Event) => boolean) => {
-    for (let event = await proxy.next(); ; event = await proxy.next()) if (matches(event)) return event;
-  };
+  const logged = (matches: (event: Event) => boolean) => nextMatching(proxy.next, matches);
   // A new agent's recording, as the proxy makes one, which is the one it follows.
   const newRecording = async () => parseListing((await buffer(await send(proxy.readerPort, { method: "POST", path: "/recordings" }))).toString()).name;
   return { dir, proxy, logged, newRecording, connection: createBrowserConnection({ readerPort: proxy.readerPort }) };
