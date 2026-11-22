@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { kinds, object, parseJson, raw, value, type Dropped, type Tolerated, type Unread } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -60,7 +60,7 @@ function ended(span: Span): Span {
 
 // An item as one store keeps it: its name, the version this build stores it under, the storage it is kept in, the
 // store's first state, and how a stored state is read, by the version it was stored under.
-export type Item<T> = { name: StoreName; version: number; storage: () => Storage; initial: T; read: (state: unknown, version: number) => Read<T> };
+export type Item<T> = { name: StoreName; version: number; storage: () => Storage; initial: T; read: (state: unknown, version: number) => Tolerated<T> };
 
 // [LAW:single-enforcer] [LAW:one-source-of-truth] An item's options for zustand `persist`, which owns the item from
 // here: it reads it as the store is made, and again as `rehydrate` asks, through the raw set, which writes nothing, and
@@ -127,13 +127,17 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    const dropped = [...notRead(envelope.unread), ...[...notRead(state.unread), ...state.dropped].map(({ at, why }) => ({ at: ["state", ...at], why }))];
     return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
     return error instanceof Malformed ? { read: { stored: "unreadable", error }, state: { state: initial, version } } : { read: { stored: "threw", error }, state: null };
   }
 }
+
+// [LAW:nothing-unseen] A field of an item, at any depth, this build does not read is dropped and named, since it is gone
+// once the item is written again: the one place a stored item's unread fields are given that meaning.
+const notRead = (unread: readonly Unread[]): Dropped[] => unread.map(({ at }) => ({ at, why: "is not read by this build" }));
 
 const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
 const envelopeOf = (json: unknown) => envelope(json, []);

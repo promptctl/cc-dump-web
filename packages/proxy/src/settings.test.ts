@@ -30,14 +30,14 @@ describe("parseProxySettings", () => {
   });
 
   it.each([
-    ['{"port":"3400"}', 'port must be an integer from 1 to 65535, got "3400"'],
-    ['{"port":0}', "port must be an integer from 1 to 65535, got 0"],
-    ['{"port":65536}', "port must be an integer from 1 to 65535, got 65536"],
-    ['{"port":3400.5}', "port must be an integer from 1 to 65535, got 3400.5"],
-    ['{"port":null}', "port must be an integer from 1 to 65535, got null"],
-    ['{"upstream":1}', "upstream must be an http or https origin with an optional path"],
-    ['{"upstream":"https://gw.example/?key=1"}', "upstream must be an http or https origin with an optional path"],
-    ['{"prot":3400,"upstrem":""}', 'proxy settings: no setting is named "prot", "upstrem"; the settings are port, upstream'],
+    ['{"port":"3400"}', "proxy settings: port: is not an integer"],
+    ['{"port":0}', "proxy settings: port: must be an integer from 1 to 65535, got 0"],
+    ['{"port":65536}', "proxy settings: port: must be an integer from 1 to 65535, got 65536"],
+    ['{"port":3400.5}', "proxy settings: port: is not an integer"],
+    ['{"port":null}', "proxy settings: port: is not an integer"],
+    ['{"upstream":1}', "proxy settings: upstream: is not a string"],
+    ['{"upstream":"https://gw.example/?key=1"}', "proxy settings: upstream: must be an http or https origin with an optional path"],
+    ['{"prot":3400,"upstrem":""}', "proxy settings: prot: is not read by this build, which reads port, upstream; upstrem: is not read by this build, which reads port, upstream"],
     ["port = 3400", "proxy settings: is not JSON"],
     ["[3400]", "proxy settings: is not an object"],
     ["null", "proxy settings: is not an object"],

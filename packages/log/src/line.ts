@@ -1,7 +1,7 @@
 import { describe } from "./describe.ts";
-import { ending, type Ending } from "./ending.ts";
+import { endingFields, endingOf, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
+import { kinds, mapped, object, parsed, parseJson, readShown, unreadFields, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -70,18 +70,21 @@ export function lineAt(position: LinePosition, data: string): LogLine {
   }
 }
 
-// The fields an event has a place of its own for, beside how it ended.
-const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
-  service: value(kinds.string),
-  event: value(kinds.string),
-  trace_id: parsed(kinds.string, parseTraceId),
-  started_at: value(kinds.string),
-  duration_ms: value(kinds.number),
-});
+// The fields an event has a place of its own for, how it ended among them.
+const logged = mapped(
+  object({
+    service: value(kinds.string),
+    event: value(kinds.string),
+    trace_id: parsed(kinds.string, parseTraceId),
+    started_at: value(kinds.string),
+    duration_ms: value(kinds.number),
+    ...endingFields,
+  }),
+  ({ outcome, error, ...fields }) => ({ ...fields, ...endingOf({ outcome, error }) }),
+);
 
+// The fields the event has a place of its own for are those `logged` reads; the rest, unread, are its facts.
 function parseLoggedEvent(json: string): LoggedEvent {
-  const event = jsonObject(parseJson(json, "log line"), "log line");
-  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
-  // The fields the event has a place of its own for are those just read; the rest are its facts.
-  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
+  const { value, unread } = readShown(logged, parseJson(json, "log line"), "log line");
+  return { ...value, facts: unreadFields(unread) };
 }

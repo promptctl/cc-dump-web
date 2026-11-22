@@ -1,7 +1,7 @@
 import type { Event } from "@cc-dump/log/event";
 import { startTrace } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, tolerant, value, type Read } from "@cc-dump/log/json";
+import { kinds, tolerant, value, type Tolerated } from "@cc-dump/log/json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -10,7 +10,7 @@ import { memoryStorage } from "./testing.ts";
 
 type Chosen = { name: string; on: boolean };
 const first: Chosen = { name: "none", on: false };
-const readChosen = (state: unknown): Read<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
+const readChosen = (state: unknown): Tolerated<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
 const name = "cc-dump.settings";
 const item = (state: unknown, version = 0) => JSON.stringify({ state, version });
 
@@ -64,7 +64,7 @@ describe("a stored item's read", () => {
 
   it("reads an item stored as persist stores it, naming what it dropped by its path in the item", async () => {
     const { storeIn, events } = await reported();
-    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes" }, version: 0, by: "a later build" }) }).storage);
+    const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes", later: { x: 1 } }, version: 0, by: "a later build" }) }).storage);
     expect(store.getState()).toEqual({ name: "a", on: false });
     expect(events).toMatchObject([
       {
@@ -75,6 +75,7 @@ describe("a stored item's read", () => {
           version: 0,
           dropped: [
             { at: ["by"], why: "is not read by this build" },
+            { at: ["state", "later"], why: "is not read by this build" },
             { at: ["state", "on"], why: "is not a boolean" },
           ],
         },

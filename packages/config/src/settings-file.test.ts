@@ -3,12 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { Malformed } from "@cc-dump/log/failure";
+import { kinds, parse, parsed, value } from "@cc-dump/log/json";
 import { settingsFile } from "./settings-file.ts";
-import { parseSettings } from "./settings.ts";
+import { settings } from "./settings.ts";
 
 const table = {
-  name: { default: "none", parse: (value: unknown) => String(value) },
-  count: { default: 1, parse: (value: unknown) => Number(value) },
+  name: { default: "none", read: value(kinds.string) },
+  count: { default: 1, read: value(kinds.integer) },
 };
 const file = settingsFile("test settings", table);
 
@@ -25,28 +26,24 @@ it("writes the settings where none were, so they read back as written, leaving n
 
 it("refuses a message's settings missing one, where a file's is its default", () => {
   expect(file.parse('{"name":"only"}').settings).toEqual({ name: "only", count: 1 });
-  expect(() => parseSettings("test message", table, { name: "only" })).toThrow("test message: count missing");
+  expect(() => parse(settings(table), { name: "only" }, "test message")).toThrow("test message: count: is missing");
 });
 
-it("refuses what it cannot take as Malformed, and passes a setting's parse's own bug as it is", () => {
-  expect(() => parseSettings("test message", table, { name: "only", count: 1, other: 2 })).toThrow(Malformed);
-  const odd = {
-    name: {
-      default: "none",
-      parse: () => {
-        throw new Malformed("name is odd");
-      },
-    },
-  };
-  expect(() => parseSettings("test message", odd, { name: "x" })).toThrow(Malformed);
+it("refuses a key no setting reads, naming the file, the key's path and the settings", () => {
+  expect(() => file.parse('{"name":"only","nmae":"x"}')).toThrow("test settings: nmae: is not read by this build, which reads name, count");
+});
+
+it("refuses what it cannot take as Malformed, and passes a setting's read's own bug as it is", () => {
+  expect(() => file.parse('{"count":"one"}')).toThrow("test settings: count: is not an integer");
   const bug = new TypeError("not a function");
   const buggy = {
     name: {
       default: "none",
-      parse: () => {
+      read: parsed(kinds.string, () => {
         throw bug;
-      },
+      }),
     },
   };
-  expect(() => parseSettings("test message", buggy, { name: "x" })).toThrow(bug);
+  expect(() => parse(settings(buggy), { name: "x" }, "test message")).toThrow(bug);
+  expect(() => file.parse("{")).toThrow(Malformed);
 });

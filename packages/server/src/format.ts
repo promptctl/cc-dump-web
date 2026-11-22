@@ -1,6 +1,6 @@
-import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
+import { settings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -11,8 +11,8 @@ import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-te
 // launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
 // command, a whole command line, `claude` until the user launches another.
 export const launchSettingsTable = {
-  session: { default: null, parse: (value: unknown) => (value === null ? null : sessionName(value)) },
-  command: { default: "claude", parse: commandLine },
+  session: { default: null, read: nullable(parsed(kinds.string, sessionName)) },
+  command: { default: "claude", read: parsed(kinds.string, commandLine) },
 };
 export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 
@@ -41,18 +41,18 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
-// from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
-// session target names a session by name.
-export function sessionName(value: unknown): string {
-  return oneLine(value, "session");
+// from the settings file alike, each refusal named by the field it read. tmux runs a window's command as one line, with
+// no NUL, which ends a C string, and a session target names a session by name.
+export function sessionName(value: string): string {
+  return oneLine(value);
 }
 
-export function commandLine(value: unknown): string {
-  return oneLine(value, "command");
+export function commandLine(value: string): string {
+  return oneLine(value);
 }
 
-function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+function oneLine(value: string): string {
+  if (value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`must be a line of text that is not blank, got ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -62,12 +62,11 @@ export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
-const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
+// The settings are read by the settings files' own table (@cc-dump/config), as a field of the message.
+const launcher = object<Launcher>({ settings: settings(launchSettingsTable), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
 
 export function parseLauncher(json: string): Launcher {
-  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
+  return parse(launcher, parseJson(json, "launcher"), "launcher");
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.

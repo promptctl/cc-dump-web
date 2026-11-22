@@ -29,7 +29,7 @@ it("reads its settings from cc-dump/proxy.json under the XDG config home, and do
 
   expect(code).toBe(1);
   expect(out.trim().split("\n").map((line) => JSON.parse(line) as unknown)).toEqual([
-    expect.objectContaining({ event: "settings", path, config_home_from: "XDG_CONFIG_HOME", outcome: "error", error: expect.stringContaining("port must be an integer from 1 to 65535, got 0") }),
+    expect.objectContaining({ event: "settings", path, config_home_from: "XDG_CONFIG_HOME", outcome: "error", error: expect.stringContaining("port: must be an integer from 1 to 65535, got 0") }),
   ]);
 });
 

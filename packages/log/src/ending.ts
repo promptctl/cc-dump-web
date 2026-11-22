@@ -1,4 +1,5 @@
-import { kinds, object, value, type Reader } from "./json.ts";
+import { Malformed } from "./failure.ts";
+import { kinds, mapped, object, optional, value, type Reader, type Readers } from "./json.ts";
 import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 
 // [LAW:types-are-the-program] How a unit of work ended. An error is carried exactly when the outcome is
@@ -8,15 +9,24 @@ export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | 
 
 // Every outcome, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
 const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) });
-const error = object({ error: value(kinds.string) });
+type Ended = { outcome: Ending["outcome"]; error: string | undefined };
 
-// [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`): its
-// outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.
-export const ending: Reader<Ending> = (json, at) => {
-  const ended = outcome(json, at).value;
-  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [] };
-};
+// The fields a message holding how a unit of work ended says it by, for a reader of the message's own fields beside
+// them (a log line's), which makes an `Ending` of them with `endingOf`.
+export const endingFields: Readers<Ended> = { outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])), error: optional(value(kinds.string)) };
+
+// [LAW:single-enforcer] How a unit of work ended, from its fields: an error there exactly when the outcome is "error".
+export function endingOf({ outcome, error }: Ended): Ending {
+  if (outcome !== "error") {
+    if (error !== undefined) throw new Malformed("error: is not allowed here");
+    return { outcome };
+  }
+  if (error === undefined) throw new Malformed("error: is missing");
+  return { outcome, error };
+}
+
+// How a unit of work ended, as a message holding it says (a recording's `end`). The message's other fields are its own.
+export const ending: Reader<Ending> = mapped(object(endingFields), endingOf);
 
 // [LAW:single-enforcer] How a request ended, from how its response ended and the status line it was sent with, which a
 // recording holds none of for a response failed before its head, or whose head's write failed (proxy/src/format.ts),

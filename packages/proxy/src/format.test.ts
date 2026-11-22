@@ -127,7 +127,7 @@ describe("the reader's messages", () => {
     const status = { info, source: { state: "watching", changed_source: [] }, traffic: { in_flight: 0, last_request: null } };
     const refused = (changed: object) => () => parseProxyStatus(JSON.stringify({ ...status, ...changed }));
     expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is missing");
-    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is not one of watching, failed");
+    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is missing");
     expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source: changed_source: is not a list of strings");
     expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source: message: is missing");
     expect(refused({ traffic: undefined })).toThrow("proxy status: traffic: is missing");

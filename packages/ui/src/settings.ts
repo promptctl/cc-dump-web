@@ -1,4 +1,4 @@
-import { kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/json";
+import { kinds, tolerant, value, type Readers, type Tolerated } from "@cc-dump/log/json";
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -84,7 +84,7 @@ const settingsReader = tolerant<Settings>(
   },
   defaultSettings,
 );
-export const readSettings = (state: unknown): Read<Settings> => settingsReader(state, []);
+export const readSettings = (state: unknown): Tolerated<Settings> => settingsReader(state, []);
 
 // The settings as the browser keeps them, in localStorage, in `storage` for a test. Stored at persist's first version,
 // as every build has stored them, and read alike under any.

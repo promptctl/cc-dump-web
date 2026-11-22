@@ -239,6 +239,7 @@ describe("a stored view", () => {
     // A current match as an older build named it, by where it started.
     expect(readView({ ...full, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 7)).toEqual({
       value: { ...full, search: { query: "x", current: undefined } },
+      unread: [],
       dropped: [{ at: ["search", "current"], why: "nth: is missing" }],
     });
   });
@@ -246,6 +247,7 @@ describe("a stored view", () => {
   it("drops a fold that is not a boolean alone", () => {
     expect(readView({ ...full, opened: { a: true, b: "open", c: false } }, 7)).toEqual({
       value: { ...full, opened: { a: true, c: false } },
+      unread: [],
       dropped: [{ at: ["opened", "b"], why: "is not a boolean" }],
     });
   });
@@ -254,6 +256,7 @@ describe("a stored view", () => {
     const why = `names a row as row-key scheme ${version} does; this build's is 7`;
     expect(readView(full, version)).toEqual({
       value: { ...full, opened: {}, position: { at: "end" }, search: { query: "x", current: undefined } },
+      unread: [],
       dropped: [
         { at: ["opened", "t1/request/http"], why },
         { at: ["opened", "thread:t1/message.0/content.0"], why },
@@ -264,6 +267,7 @@ describe("a stored view", () => {
     // A place at the start or the end, no folds and no current match name no row, so nothing is dropped.
     expect(readView({ ...full, opened: {}, position: { at: "start" }, search: { query: "x" } }, version)).toEqual({
       value: { ...full, opened: {}, position: { at: "start" }, search: { query: "x", current: undefined } },
+      unread: [],
       dropped: [],
     });
   });

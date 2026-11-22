@@ -35,11 +35,14 @@ describe("createReassembly", () => {
   ])("reassembles a stream whose lines end in %s, fed in two pieces at every split, as it does whole", (_, eol) => {
     const text = stream(eol);
     const whole = reassemble(text, true);
-    // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
+    // The stop's field shows its event was applied: a stream's last event is applied once its text is complete. It is
+    // the event's, shown beside the message it ends, not merged into it.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
+      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use" },
+      fields: [{ name: "message events", parts: [{ fields: [["message_stop", [["metrics", [["ms", "1"]]]]]] }] }],
       tail: "",
     });
+    expect(whole.message).not.toHaveProperty("metrics");
     for (let at = 0; at <= text.length; at++) {
       const reassembly = createReassembly();
       expect(reassembly.reassemble(text.slice(0, at), false), `split at ${at}`).toEqual(reassemble(text.slice(0, at), false));

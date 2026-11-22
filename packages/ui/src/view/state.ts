@@ -1,5 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
+import { entries, kinds, nullable, object, tagged, tolerant, value, type Reader, type Tolerated } from "@cc-dump/log/json";
 import { tmuxWindow, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -55,7 +55,7 @@ const current = object<Current>({ key: value(kinds.string), at: value(kinds.stri
 // A row key of another scheme names another row or none, so under another version each value that names a row (each
 // fold, a place at a row, the current match) is refused as it is read, and dropped and named alone; a place at the start
 // or the end, and all else, is kept.
-export function readView(state: unknown, version: number): Read<View> {
+export function readView(state: unknown, version: number): Tolerated<View> {
   const rows = <T,>(reader: Reader<T>): Reader<T> =>
     version === viewVersion
       ? reader
