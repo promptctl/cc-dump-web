@@ -74,12 +74,16 @@ const threadPrefix = "thread:";
 const nestPrefix = "nest:";
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
 export const nestKey = (level: Level) => `${nestPrefix}${levelKey(level)}`;
-// [LAW:parse-dont-validate] The trace an item's or a row's key names its step by, as the keys are made here: a nest's
-// line's names a level and no trace; any other's starts with its exchange's trace, after a thread's prefix, up to its
-// first `/`. A key no build makes, whose head is not a trace, names none.
-export function traceOf(key: string): TraceId | undefined {
-  const head = key.startsWith(nestPrefix) ? undefined : (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0];
-  return isTraceId(head) ? head : undefined;
+// [LAW:types-are-the-program] What a row's or an item's key names the step it stands with by, as the keys are made
+// here: a nest's line's, its level's key (levelKey), whose opening step it is; any other's, its exchange's trace, which
+// the key starts with, after a thread's prefix, up to its first `/`; or, for a key of no row or item, as a stored place
+// may hold, nothing.
+export type Named = { by: "level"; level: string } | { by: "trace"; trace: TraceId } | { by: "none" };
+// [LAW:parse-dont-validate] A row's or an item's key, read as what it names (Named).
+export function namedBy(key: string): Named {
+  if (key.startsWith(nestPrefix)) return { by: "level", level: key.slice(nestPrefix.length) };
+  const head = (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0];
+  return isTraceId(head) ? { by: "trace", trace: head } : { by: "none" };
 }
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it

@@ -5,7 +5,7 @@ import { fieldLines, fieldValue, jsonText, type Field, type Part, type PartBody 
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
 import type { Reading } from "../reading.ts";
 import type { Visibility } from "../settings.ts";
-import { levelKey, nestKey, placeOf, sameFields, traceOf, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
+import { levelKey, namedBy, nestKey, placeOf, sameFields, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -360,8 +360,9 @@ export type MomentStep = { at: "now" } | { at: "held"; step: number | undefined 
 // [LAW:types-are-the-program] A row, or a moment, nothing will bring, by the judgement that says so: the read ended
 // (`read_ended`), which is the only one a moment is gone by; the step it stands with is not read, while the moment is a
 // held one, whose column lists no step read after it (`step_unread`); its step is read and not one the moment's column
-// lists, being another history's or, held, one after it (`step_unlisted`); or its step is listed and was read whole without it (`step_ended`).
-export type Gone<Why extends string = "read_ended" | "step_unread" | "step_unlisted" | "step_ended"> = { at: "gone"; why: Why };
+// lists, being another history's or, held, one after it (`step_unlisted`); its step is listed and was read whole
+// without it (`step_ended`); or its key is of no row, so it names no step (`key_unknown`).
+export type Gone<Why extends string = "read_ended" | "step_unread" | "step_unlisted" | "step_ended" | "key_unknown"> = { at: "gone"; why: Why };
 // A row absent from a column's rows, by what can still bring it: the read, as `read` says, or nothing.
 export type Absent = { at: "pending"; read: Pending } | Gone;
 
@@ -375,7 +376,7 @@ export type MomentStanding = { at: "read"; pending: (key: string) => Absent } | 
 // among the column's rows can still come while the step it stands with is listed and its exchange still running, and a
 // row of a step not read yet, which comes after every step read, only into now's column, whose steps grow with it.
 // The step a row stands with is, for a nest's line, the one that opens its level, and for every other row the step of
-// the trace its key names (traceOf). A key names the step it stands with, not the one that brings it: a fork's line comes
+// the trace its key names (namedBy). A key names the step it stands with, not the one that brings it: a fork's line comes
 // with a later sibling, and a thread's line with the step that carries the thread on.
 // [LAW:nothing-unseen] Each judgement that a row will not come is named, so the view's event says which it was.
 export function standingOf({ segments, stepOf }: History, read: Read, moment: MomentStep, steps: ReadonlySet<number>): MomentStanding {
@@ -383,10 +384,11 @@ export function standingOf({ segments, stepOf }: History, read: Read, moment: Mo
   // What the read can still bring, or that it ended.
   const comes: { at: "pending"; read: Pending } | Gone<"read_ended"> = by === undefined ? { at: "gone", why: "read_ended" } : { at: "pending", read: by };
   if (moment.at === "held" && moment.step === undefined) return comes;
-  const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
+  const openings = openingsOf(segments);
   const pending = (key: string): Absent => {
-    const trace = traceOf(key);
-    const step = trace === undefined ? opening.get(key) : stepOf(trace);
+    const named = namedBy(key);
+    if (named.by === "none") return { at: "gone", why: "key_unknown" };
+    const step = named.by === "level" ? openings.get(named.level)?.own : stepOf(named.trace);
     if (step === undefined) return moment.at === "now" ? comes : { at: "gone", why: "step_unread" };
     if (!steps.has(step)) return { at: "gone", why: "step_unlisted" };
     return running(segments[step - 1]!) ? comes : { at: "gone", why: "step_ended" };

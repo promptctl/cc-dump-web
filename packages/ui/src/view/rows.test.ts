@@ -847,25 +847,32 @@ describe("the column", () => {
     // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));
     expect([outer, inner, "nest:agent:z"].map(pendingIn(nests, "reading", now, new Set([1, 2, 3])))).toEqual(["step_ended", "step_ended", "reading"]);
+    // A nest's line stands with the step that opens its level, not its level's latest: a2's runs while a1's ended, and
+    // then a1's next step runs while the one that opened it has ended.
+    const opening = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("On it."), agentCall("toolu_1", "Find the longest word.", "Explore")], "tool_use"), ...request("s1", { ...agent, messages: [task] }, { agent: "a1" }), ...reply("s1", [text("Looking."), agentCall("toolu_2", "Count the words.")], "tool_use"), ...request("inner", { ...agent, messages: [user(text("Count the words."))] }, { agent: "a2", parent: "a1" })];
+    const carrying = [...opening, ...reply("inner", [text("Three.")]), ...request("s2", { ...agent, messages: [task, assistant(text("Looking."), agentCall("toolu_2", "Count the words.")), user(result("toolu_2", returned("a2", "Three.")))] }, { agent: "a1" })];
+    const standing = (events: RecordedEvent[]) => [outer, inner].map(pendingIn(createHistory()(createFormatter()(exchanges(events))), "reading", now, new Set([1, 2, 3, 4])));
+    expect([standing(opening), standing(carrying)]).toEqual([["step_ended", "reading"], ["step_ended", "step_ended"]]);
   });
 
   it("says what can still bring a row into the column, by key: its step while the column lists it and it still runs, a step not read only into now's; the read, or after it failed a new read; nothing once it ended, and which judgement says so", () => {
     const events = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")]), ...request("t2", { ...main, messages: more }), ...streaming("t2", [text("More")])];
     const history = createHistory()(createFormatter()(exchanges(events)));
-    // A row of the step that ended, of the step still running, of an agent with no step read, and of an exchange not read.
-    const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x"];
+    // A row of the step that ended, of the step still running, of an agent with no step read, of an exchange not read,
+    // and a key of no row, which names no step to bring it.
+    const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x", "no trace/x"];
     const can = (read: Read, moment: MomentStep = now, steps = new Set([1, 2])) => keys.map(pendingIn(history, read, moment, steps));
-    expect(can("reading")).toEqual(["step_ended", "reading", "reading", "reading"]);
+    expect(can("reading")).toEqual(["step_ended", "reading", "reading", "reading", "key_unknown"]);
     // A row of a step that ended is gone after a failed read as after one that goes on.
-    expect(can("failed")).toEqual(["step_ended", "failed", "failed", "failed"]);
+    expect(can("failed")).toEqual(["step_ended", "failed", "failed", "failed", "key_unknown"]);
     // Once the read ended, a row its step's end did not already rule out is gone for that.
-    expect(can("ended")).toEqual(["step_ended", "read_ended", "read_ended", "read_ended"]);
+    expect(can("ended")).toEqual(["step_ended", "read_ended", "read_ended", "read_ended", "key_unknown"]);
     // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet, each said
     // by its own judgement.
-    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(["step_ended", "step_unlisted", "step_unread", "step_unread"]);
-    expect(can("reading", { at: "held", step: 2 })).toEqual(["step_ended", "reading", "step_unread", "step_unread"]);
+    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(["step_ended", "step_unlisted", "step_unread", "step_unread", "key_unknown"]);
+    expect(can("reading", { at: "held", step: 2 })).toEqual(["step_ended", "reading", "step_unread", "step_unread", "key_unknown"]);
     // Nor can now's column hold the rows of a running step it does not list, as a fork's sibling not chosen.
-    expect(can("reading", now, new Set([1]))).toEqual(["step_ended", "step_unlisted", "reading", "reading"]);
+    expect(can("reading", now, new Set([1]))).toEqual(["step_ended", "step_unlisted", "reading", "reading", "key_unknown"]);
   });
 
   it("holds a moment whose step is not read by what can still bring it, and lets it go once nothing can", () => {
