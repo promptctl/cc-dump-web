@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { agentCall, assistant, at, call, launched, notification, reply, request, result, returned, streaming, text, user } from "../../test/fixtures.ts";
 import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
-import { labelled, type Part } from "../format/parts.ts";
+import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
 import { createHistory, traceOf, type History } from "./history.ts";
 import { matchMove } from "./moves.ts";
@@ -330,7 +330,7 @@ describe("a set", () => {
       const layout = layouts(events)(1);
       const to = matchMove({ ...layout, moment: readWith(() => undefined) }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
-      view.goTo(to, pattern, "t1");
+      view.goTo(to, "t1");
     };
     const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
     // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:
@@ -409,7 +409,7 @@ describe("a block's line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text: "## Plan\n**first** `x`\n- one\n- two" }] })).toBe("Plan first x one two");
     expect(preview({ category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "verbatim", text: "## Plan **first**" }] })).toBe("## Plan **first**");
     // A JSON object reads as the fields it holds.
-    expect(preview({ category: "tools", name: "tool_use: Skill", parts: [{ kind: "json", ...labelled("input"), value: { skill: "laws:code" } }, { id: "id", kind: "fields", fields: [["id", "t1"]] }] })).toBe('skill "laws:code"');
+    expect(preview({ category: "tools", name: "tool_use: Skill", parts: [{ kind: "json", id: "input", label: "input", value: { skill: "laws:code" } }, { id: "id", kind: "fields", fields: [["id", "t1"]] }] })).toBe('skill "laws:code"');
     // A part with nothing to read, as a thinking block's omitted text is, is passed over.
     const thinking: Block = { category: "thinking", name: "thinking", parts: [{ id: "thinking", kind: "text", form: "markdown", text: "" }, { id: "signature", kind: "fields", fields: [["signature", "924 characters"]] }] };
     expect(preview(thinking)).toBe("signature 924 characters");
@@ -420,7 +420,7 @@ describe("a block's line", () => {
     expect(preview({ category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text: "x".repeat(200) }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text: `${"x".repeat(200)}\n\n` }] })).toBe("x".repeat(200));
     expect(preview({ category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text: `${"x".repeat(199)}🙂 more` }] })).toBe(`${"x".repeat(199)}…`);
-    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", ...labelled("input"), value: '{"command": "ls' }] })).toBe('{"command": "ls');
+    expect(preview({ category: "tools", name: "tool_use: Bash", parts: [{ kind: "json", id: "input", label: "input", value: '{"command": "ls' }] })).toBe('{"command": "ls');
     // A field that holds fields reads as theirs, each by its path; a null holds nothing to read.
     const nested: Block = { category: "parameters", name: "parameters", parts: [{ id: "parameters", kind: "fields", fields: [["model", '"m"'], ["stop", "null"], ["thinking", [["type", '"adaptive"'], ["list", [["0", "1"]]]]]] }] };
     expect(preview(nested)).toBe('model "m" thinking.type "adaptive" thinking.list.0 1');
@@ -437,10 +437,10 @@ describe("a block's line", () => {
   it("previews a block by its own preview when it has one, nothing when that holds nothing", () => {
     const reminder = "<system-reminder>\nContext left: 80%.\n</system-reminder>";
     const parts: Part[] = [{ id: "text", kind: "text", form: "markdown", text: reminder }];
-    expect(preview({ category: "user", name: "system reminder", parts, preview: [{ id: "text", kind: "text", form: "markdown", text: "\nContext left: 80%.\n" }] })).toBe("Context left: 80%.");
-    expect(preview({ category: "usage", name: "stop reason: end_turn", parts, preview: [{ id: "stop", kind: "fields", fields: [["stop_sequence", "null"]] }] })).toBe("");
+    expect(preview({ category: "user", name: "system reminder", parts, preview: [{ kind: "text", form: "markdown", text: "\nContext left: 80%.\n" }] })).toBe("Context left: 80%.");
+    expect(preview({ category: "usage", name: "stop reason: end_turn", parts, preview: [{ kind: "fields", fields: [["stop_sequence", "null"]] }] })).toBe("");
     // Its first part with anything to read, as a block's own are read.
-    expect(preview({ category: "user", name: "text", parts, preview: [{ id: "text", kind: "text", form: "markdown", text: "" }, { kind: "fields", ...labelled("fields"), fields: [["foo", "1"]] }] })).toBe("foo 1");
+    expect(preview({ category: "user", name: "text", parts, preview: [{ kind: "text", form: "markdown", text: "" }, { kind: "fields", label: "fields", fields: [["foo", "1"]] }] })).toBe("foo 1");
   });
 });
 

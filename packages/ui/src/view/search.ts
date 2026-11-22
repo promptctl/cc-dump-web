@@ -18,8 +18,18 @@ import { blockOf, nestsOf, type BlockRow, type Row } from "./rows.ts";
 export type Match = { key: string; at: string; nth: number };
 
 // The current match: a match, and the literal of the pattern it was taken under, so a match taken under another
-// pattern than the search's now is none (moves.ts `matchCleared`).
+// pattern than the search's now is none (moves.ts `judge`).
 export type Current = Match & { pattern: string };
+
+// [LAW:one-source-of-truth] A pattern's identity, as a current match keeps it: its source and flags, so one query read
+// one way is one pattern, whichever render or tab compiled it.
+export const literal = (pattern: RegExp): string => String(pattern);
+
+// [LAW:parse-dont-validate] A current match the column's judge found standing (moves.ts `judge`): taken under the
+// search's pattern, its row listed or still to come, and, once listed, its text holding it. The counter, the
+// highlight, the steps and the line under the rows each take one, so none judges it again.
+declare const judged: unique symbol;
+export type Standing = Current & { readonly [judged]: true };
 
 // [LAW:one-source-of-truth] The addresses of the texts a block shows, each one JSON tuple, so no two collide whatever
 // names a part or a field has: its name; a part's text or JSON, by the part's id; the name or value of a part's field,
@@ -171,38 +181,36 @@ export type Unresolved = "text_gone" | "text_changed";
 
 // [LAW:single-enforcer] The one place a match is found in its row as the row shows it now: the text it is in and its
 // characters there, or why there are none. A row other than a block's shows no text.
-export function resolve(row: Row, { at, nth }: Match, pattern: RegExp): { shown: Shown; range: Range } | { why: Unresolved } {
+export type Resolved = { resolved: true; shown: Shown; range: Range } | { resolved: false; why: Unresolved };
+export function resolve(row: Row, { at, nth }: Match, pattern: RegExp): Resolved {
   const shown = (row.kind === "block" ? shownTexts(row) : []).find((text) => text.at === at);
-  if (shown === undefined) return { why: "text_gone" };
+  if (shown === undefined) return { resolved: false, why: "text_gone" };
   const range = find(pattern, shown.searched)[nth];
-  return range === undefined ? { why: "text_changed" } : { shown, range };
+  return range === undefined ? { resolved: false, why: "text_changed" } : { resolved: true, shown, range };
 }
 
-// Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
-// block is one the formatter replaced, or its text no longer holds it.
-export function ordinal(found: Found, current: Match | undefined, pattern: RegExp): number | undefined {
+// Which match the standing `current` is, counting from 1, among the matches found: undefined when there is none, or
+// its row is not read yet.
+export function ordinal(found: Found, current: Standing | undefined, pattern: RegExp): number | undefined {
   const block = current === undefined ? undefined : found.byKey.get(current.key);
-  if (block === undefined) return undefined;
-  const index = matchesIn(block.row, pattern).findIndex(({ match }) => match.at === current!.at && match.nth === current!.nth);
-  return index === -1 ? undefined : block.before + index + 1;
+  return block === undefined ? undefined : block.before + matchesIn(block.row, pattern).findIndex(({ match }) => match.at === current!.at && match.nth === current!.nth) + 1;
 }
 
-// [LAW:types-are-the-program] A step to a match, and the `folds` that must show open for it to be on screen, by key:
-// the nests its block is inside, innermost first, and the set it is in, so its block is listed; then, for a match in
-// the block's content, not on its line, the block, and the regions and the headings' sections holding the match.
-export type Step = { match: Match; folds: string[] };
+// [LAW:types-are-the-program] A step to a match, taken under the pattern it was found with, and the `folds` that must
+// show open for it to be on screen, by key: the nests its block is inside, innermost first, and the set it is in, so
+// its block is listed; then, for a match in the block's content, not on its line, the block, and the regions and the
+// headings' sections holding the match.
+export type Step = { match: Current; folds: string[] };
 
 export type Direction = "next" | "previous";
 
-// Where a step of the search counts from: the current match, `match`, while there is one, or the reader's place; `at`:
+// Where a step of the search counts from: the current match, `match`, while one stands, or the reader's place; `at`:
 // where that stands, in the order of every row, hidden or not, which `found` was made from (position.ts).
-export type From = { match: Match | undefined; at: At };
+export type From = { match: Standing | undefined; at: At };
 
 // The match after or before the one `from` names, in the order the conversation shows them, wrapping at either end;
-// undefined when there is no match. A current whose block is not among the rows stands at the end of the row standing
-// in for it: the row it was inside when the formatter replaced it. So the steps go on from where it was. With no
-// current, the steps start from the reader's place: its top row's matches first going on, and the matches above it
-// going back.
+// undefined when there is no match. With no current, the steps start from the reader's place: its top row's matches
+// first going on, and the matches above it going back.
 export function adjacent(found: Found, from: From, direction: Direction, pattern: RegExp): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
@@ -213,7 +221,7 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
     const { at, nth } = from.match!;
     const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.nth - nth));
-    if (past !== undefined) return stepTo(found, own, past);
+    if (past !== undefined) return stepTo(found, own, past, pattern);
   }
   // Where the step starts among the rows (position.ts): after the current match's place, or before the reader's, so the
   // matches of the row at the view's top are ahead.
@@ -221,18 +229,23 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
-  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);
+  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!, pattern);
 }
 
-function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown, range }: Located): Step {
-  const listed = [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set])];
+function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown, range }: Located, pattern: RegExp): Step {
+  return { match: { ...match, pattern: literal(pattern) }, folds: [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set]), ...foldsIn(row, shown, range)] };
+}
+
+// The folds of a block's row that hold a match of the text `shown`, at `range`: none on the block's line; the block, in
+// its content; and the regions and the headings' sections around it, in a text's rendering.
+function foldsIn(row: BlockRow, shown: Shown, range: Range): string[] {
   switch (shown.in) {
     case "line":
-      return { match, folds: listed };
+      return [];
     case "content":
-      return { match, folds: [...listed, row.key] };
+      return [row.key];
     case "regions":
-      return { match, folds: [...listed, row.key, ...regionsAround(shown.searched, range.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line))] };
+      return [row.key, ...regionsAround(shown.searched, range.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line))];
   }
 }
 

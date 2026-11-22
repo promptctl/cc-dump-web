@@ -92,8 +92,7 @@ describe("a launch", () => {
 });
 
 describe("the search", () => {
-  const match = { key: "t1/request/http", at: "text", nth: 0 };
-  const pattern = /x/giu;
+  const match = { key: "t1/request/http", at: "text", nth: 0, pattern: "/x/giu" };
   beforeEach(() => {
     useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
@@ -101,34 +100,34 @@ describe("the search", () => {
   });
 
   it("takes a match stepped to as current with the pattern it was found under, which the column's judge holds it to", () => {
-    view.goTo({ match, folds: [] }, pattern, "t1");
-    expect(useView.getState().search.current).toEqual({ ...match, pattern: "/x/giu" });
+    view.goTo({ match, folds: [] }, "t1");
+    expect(useView.getState().search.current).toEqual(match);
     // A change of the query or of an option, which every tab shares, is the pattern's; the judge, which runs in every
-    // tab, finds the match taken under another (moves.ts `matchCleared`).
+    // tab, finds the match taken under another (moves.ts `judge`).
     view.search("xy");
     view.searchOption("wholeWord", true);
-    expect(useView.getState().search).toEqual({ query: "xy", current: { ...match, pattern: "/x/giu" } });
+    expect(useView.getState().search).toEqual({ query: "xy", current: match });
     expect(useSettings.getState().search.wholeWord).toBe(true);
   });
 
   it("has no current match once it is cleared, and keeps the query and the place", () => {
     const place = { at: "row", key: "t1", offset: 12 } as const;
-    useView.setState({ position: place, search: { query: "x", current: { ...match, pattern: "/x/giu" } } });
+    useView.setState({ position: place, search: { query: "x", current: match } });
     view.clearMatch();
     expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: undefined } });
   });
 
   // What a step chose is the reader's choice, however the fold starts, so a change of level never hides the current match.
   it("chooses open the folds holding a match, over the reader's close, and records nothing for a step among what they hold open", () => {
-    view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, pattern, "t1");
+    view.goTo({ match, folds: ["t1/tools", row.key, "r"] }, "t1");
     expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true, r: true });
     // The next match in the same region: nothing is chosen, so the choices are the record they were.
     const { opened } = useView.getState();
-    view.goTo({ match: { ...match, nth: 1 }, folds: ["t1/tools", row.key, "r"] }, pattern, "t1");
+    view.goTo({ match: { ...match, nth: 1 }, folds: ["t1/tools", row.key, "r"] }, "t1");
     expect(useView.getState().opened).toBe(opened);
-    expect(useView.getState().search.current).toEqual({ ...match, nth: 1, pattern: "/x/giu" });
+    expect(useView.getState().search.current).toEqual({ ...match, nth: 1 });
     useView.setState({ opened: { "t1/tools": false } });
-    view.goTo({ match, folds: ["t1/tools"] }, pattern, "t1");
+    view.goTo({ match, folds: ["t1/tools"] }, "t1");
     expect(useView.getState().opened).toEqual({ "t1/tools": true });
   });
 });
@@ -194,12 +193,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: row.key, at: "name", nth: 0 }, folds: [] }, /x/gu, "t10");
+    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, "t10");
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: row.key, at: "name", nth: 0 }, folds: [] }, /x/gu, "t10");
+    view.goTo({ match: { key: row.key, at: "name", nth: 0, pattern: "/x/gu" }, folds: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();

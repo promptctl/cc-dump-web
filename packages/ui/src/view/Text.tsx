@@ -16,11 +16,15 @@ export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "
   const rendering = renderingOf(part);
   const where = useWhere(blockKey, at, rendering);
   const contents = useMemo(() => contentsOf(rendering.runs), [rendering]);
-  return (
-    <div>
-      {farApart(contents) && <ContentsView entries={contents} where={where} />}
-      {runViews(rendering.runs, where)}
-    </div>
+  // The same element while `where` is, so a step draws again only the texts it leaves and enters.
+  return useMemo(
+    () => (
+      <div>
+        {farApart(contents) && <ContentsView entries={contents} where={where} />}
+        {runViews(rendering.runs, where)}
+      </div>
+    ),
+    [contents, rendering, where],
   );
 }
 

@@ -5,7 +5,7 @@ import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type Re
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "./equal.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
-import { fieldValue, labelled, pickedPart, receivedParts, valuePart, type Field, type Part } from "./parts.ts";
+import { fieldValue, occurrences, pickedPart, valuePart, type Field, type PartBody } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
@@ -184,12 +184,13 @@ function growing<T>(cache: WeakMap<object, T>, side: RequestSide | ResponseSide,
 }
 
 // [LAW:single-enforcer] The one maker of a keyed block, and so the one place a block's parts are held to having a name
-// each (parts.ts, Part's `id`). [LAW:no-silent-failure] A block with two parts of one name shows its parts as made, as
-// JSON, with why, and keeps everything else it is, so the rest of the recording reads on.
+// each (parts.ts, Part's `id`). [LAW:no-silent-failure] Every id is the formatter's own, so two parts of one name are its
+// error, never the traffic's, and it throws.
 export function keyed(block: Block, key: string): KeyedBlock {
   const ids = block.parts.map(({ id }) => id);
   const twice = ids.find((id, index) => ids.indexOf(id) !== index);
-  return { ...block, key, ...(twice === undefined ? {} : { parts: receivedParts(`two of its parts are named ${JSON.stringify(twice)}`, { kind: "json", value: block.parts }) }) };
+  if (twice !== undefined) throw new Error(`The formatter made the block ${key} with two parts named ${JSON.stringify(twice)}`);
+  return { ...block, key };
 }
 
 // The blocks of one source, each keyed by it: a source of at most one block, or a list, whose blocks are keyed by their
@@ -261,9 +262,9 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied, "parameters")] };
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied)] };
       // Its line previews where they are.
-      const places: Part = { id: "breakpoints", kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
+      const places: PartBody = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
       const cache: BlockOrNone =
         breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ id: "breakpoints", kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
@@ -278,7 +279,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
         session: sessionOf(rest.metadata),
       };
     },
-    (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", text })]), sent: [], messages: 0, ...unsaid }),
+    (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
   );
 }
 
@@ -355,13 +356,9 @@ function toolBlocks(tools: unknown): KeyedBlock[] {
 
 // Each tool's key, its name's `%` and `/` escaped as a URI's are.
 function toolKeys(tools: unknown[]): string[] {
-  const seen = new Map<string, number>();
-  return tools.map((tool) => {
-    const name = toolName(tool);
-    const occurrence = seen.get(name) ?? 0;
-    seen.set(name, occurrence + 1);
-    return `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${occurrence}`;
-  });
+  const names = tools.map(toolName);
+  const counted = occurrences(names, (name) => name);
+  return names.map((name, index) => `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${counted[index]}`);
 }
 
 function toolBlock(tool: unknown, name: string): Block {
@@ -427,7 +424,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", text })])),
+    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", form: "verbatim", text })])),
   );
 }
 
@@ -452,13 +449,13 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
             {
               category: "usage",
               name: `stop reason: ${show(stopReason)}`,
-              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"], "stop")],
-              preview: [pickedPart(stop, ["stop_sequence"], "stop")],
+              parts: [{ id: "stop", ...pickedPart(stop, ["stop_reason", "stop_sequence"]) }],
+              preview: [pickedPart(stop, ["stop_sequence"])],
             },
           ]),
-          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted, "usage")] }]),
+          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"], "id")] })),
+          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
         ],
         message: {
           uncached: tokens(usage, "input_tokens"),
@@ -503,8 +500,8 @@ function ending(end: Of<"end"> | undefined): Ending {
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
-  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, ...labelled("trailers"), fields: trailers.headers }];
-  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { kind: "fields", ...labelled("headers"), fields: headers }, ...trailerParts] };
+  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ id: "trailers", label: "trailers", kind: "fields" as const, fields: trailers.headers }];
+  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { id: "headers", label: "headers", kind: "fields", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {

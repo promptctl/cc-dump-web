@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../format/blocks.ts";
-import { labelled } from "../format/parts.ts";
 import { blockDiff, blockText, type DiffLine, type LineFold } from "./change.ts";
 
 const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ id: "text", kind: "text", form: "markdown", text }] });
@@ -15,7 +14,7 @@ describe("blockText", () => {
         category: "tools",
         name: "tool_use: X",
         parts: [
-          { kind: "text", form: "verbatim", ...labelled("command"), text: "ls" },
+          { kind: "text", form: "verbatim", id: "command", label: "command", text: "ls" },
           { id: "input", kind: "json", value: { a: 1 } },
           { id: "fields", kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
           { id: "diff", kind: "diff", before: "old", after: "new" },

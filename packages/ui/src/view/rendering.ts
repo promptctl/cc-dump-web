@@ -1,5 +1,5 @@
 import MarkdownIt, { type StateBlock, type StateCore, type Token } from "markdown-it";
-import type { Form, Part } from "../format/parts.ts";
+import type { Form, PartBody } from "../format/parts.ts";
 import type { Range } from "./range.ts";
 import { LONG, segments, tagLine, type Segment } from "./regions.ts";
 import { linkOpening } from "./terminalLink.ts";
@@ -72,7 +72,7 @@ export type Folded = { text: string; passages: Range[]; folds: (Range & { line: 
 // section's, which are those under its heading, not the heading's own, outermost first.
 export type Rendering = Folded & { runs: Run[] };
 
-type TextPart = Extract<Part, { kind: "text" }>;
+type TextPart = Extract<PartBody, { kind: "text" }>;
 
 // [LAW:one-source-of-truth] One rendering of a text in a form, however many parts hold it: Claude Code resends the
 // prompt and every message with each request, and a streamed reply's parts are made again with each event, so a text is

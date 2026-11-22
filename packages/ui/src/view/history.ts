@@ -1,4 +1,4 @@
-import { unreadLabel, type Block, type Launch } from "../format/blocks.ts";
+import { unreadPart, type Block, type Launch } from "../format/blocks.ts";
 import { equal } from "../format/equal.ts";
 import type { Part } from "../format/parts.ts";
 import type { FormattedExchange, Group, KeyedBlock, Place } from "../format/format.ts";
@@ -503,4 +503,4 @@ function asResent(reply: Block, resent: Block): Block {
   };
 }
 
-const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.label === unreadLabel;
+const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.id === unreadPart.id;

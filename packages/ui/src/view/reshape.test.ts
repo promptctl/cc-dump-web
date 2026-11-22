@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { formatBlock, type Block } from "../format/blocks.ts";
 import { keyed } from "../format/format.ts";
 import { parseSettings } from "../settings.ts";
-import { readWith } from "../testing.ts";
+import { columnOf, standingIn } from "../testing.ts";
 import { viewLog } from "./decisions.ts";
-import { matchCleared, matchMove, type ColumnState } from "./moves.ts";
-import type { BlockRow, Keys, Row } from "./rows.ts";
-import { createSearch, keyAt, ordinal, patternOf, resolve, shownTexts, type Current, type Match } from "./search.ts";
+import { currentOf, judge, matchMove, waitingOf } from "./moves.ts";
+import type { BlockRow } from "./rows.ts";
+import { createSearch, keyAt, literal, ordinal, patternOf, resolve, shownTexts, type Current, type Match } from "./search.ts";
 import type { Folded } from "./rendering.ts";
 
 // A block's row as a step shows it, keyed `k`: the formatter's own block, made from a content block as sent, `content`,
@@ -17,18 +17,15 @@ const rowOf = (content: unknown): BlockRow => {
   const shown = keyed(block, "k");
   return { kind: "block", key: "k", change: "added", versions: [{ step: 1, block: shown, reply: true, rewrote: undefined, previous: undefined }], at: 0, set: undefined, depth: 0, dimmed: false };
 };
-const keysOf = (rows: Row[]): Keys => ({ at: (index) => rows[index]!.key, indexOf: (key) => (rows[0]!.key === key ? 0 : undefined) });
-// The column of that one row, as the view holds it, nothing left to read.
-const columnOf = (row: BlockRow): ColumnState => ({ rows: [row], keys: { ...keysOf([row]), measuredBy: keysOf([row]).at }, every: { rows: [row], keys: keysOf([row]) }, moment: readWith(() => undefined) });
 
 const { search: defaults } = parseSettings(undefined);
 const { pattern } = patternOf("needle", defaults);
 // The current match, as a step takes it: the `nth` match, counting from 0, of the text at `at` in the row.
-const taken = (match: Match, under = pattern): Current => ({ ...match, pattern: String(under) });
+const taken = (match: Match, under = pattern): Current => ({ ...match, pattern: literal(under) });
 // What a match names in a row as the row shows now: its text, the characters before it there, and its own.
 const named = (row: BlockRow, match: Match) => {
   const resolved = resolve(row, match, pattern);
-  if ("why" in resolved) throw new Error(`${JSON.stringify(match)} resolves to none: ${resolved.why}`);
+  if (!resolved.resolved) throw new Error(`${JSON.stringify(match)} resolves to none: ${resolved.why}`);
   const { text } = resolved.shown.searched;
   return { text, before: text.slice(0, resolved.range.start), match: text.slice(resolved.range.start, resolved.range.end) };
 };
@@ -54,10 +51,7 @@ describe("a match and an open section as a tool call's input streams and becomes
     expect(named(whole, current)).toMatchObject({ text: "toolu_needle", match: "needle" });
     // The input's own id is a text of its own.
     expect(addressOf(whole, "needle-7")).not.toBe(current.at);
-    for (const row of [soFar, whole]) {
-      expect(matchCleared(columnOf(row), taken(current), pattern)).toBeUndefined();
-      expect(ordinal(createSearch()([row], pattern), current, pattern)).toBe(2);
-    }
+    for (const row of [soFar, whole]) expect(ordinal(createSearch()([row], pattern), standingIn(columnOf([row]), taken(current), pattern), pattern)).toBe(2);
   });
 
   it("keeps what opens in a text of the block under the same key, by the text's address", () => {
@@ -66,13 +60,12 @@ describe("a match and an open section as a tool call's input streams and becomes
   });
 
   it("clears a current match in the input so far once it is whole, which shows no text there, and says where it was and why", () => {
-    const inSoFar: Match = { key: "k", at: addressOf(soFar, '{"file_path":"a.ts","id":"needle-7"'), nth: 0 };
-    const column = columnOf(whole);
-    const cleared = matchCleared(column, taken(inSoFar), pattern);
-    expect(cleared).toEqual({ ...inSoFar, why: "text_gone" });
+    const inSoFar = taken({ key: "k", at: addressOf(soFar, '{"file_path":"a.ts","id":"needle-7"'), nth: 0 });
+    const judged = judge(columnOf([whole]), inSoFar, pattern);
+    expect(judged).toEqual({ is: "cleared", cleared: { ...inSoFar, why: "text_gone", searching: literal(pattern) } });
     const { events, log } = eventsWritten();
-    viewLog(log).matchCleared(cleared!);
-    expect(events).toEqual([expect.objectContaining({ event: "match_cleared", key: "k", at: inSoFar.at, nth: 0, why: "text_gone" })]);
+    if (judged.is === "cleared") viewLog(log).matchCleared(judged.cleared);
+    expect(events).toEqual([expect.objectContaining({ event: "match_cleared", key: "k", at: inSoFar.at, nth: 0, why: "text_gone", pattern: literal(pattern), searching: literal(pattern) })]);
   });
 });
 
@@ -110,39 +103,41 @@ describe("a current match in a streaming Markdown text", () => {
     const stars = patternOf(String.raw`\*\*`, defaults).pattern;
     const before = textRow("**a");
     const after = textRow("**a**");
-    const current: Current = { key: "k", at: addressOf(before, "**a"), nth: 0, pattern: String(stars) };
-    expect(resolve(before, current, stars)).toMatchObject({ range: { start: 0, end: 2 } });
-    const column = columnOf(after);
-    const found = createSearch()([after], stars);
-    expect(matchCleared(column, current, stars)).toEqual({ key: "k", at: current.at, nth: 0, why: "text_changed" });
-    expect(ordinal(found, current, stars)).toBeUndefined();
-    expect(matchMove(column, found, current, { at: "start" }, "next", stars)).toEqual(matchMove(column, found, undefined, { at: "start" }, "next", stars));
+    const current = taken({ key: "k", at: addressOf(before, "**a"), nth: 0 }, stars);
+    expect(resolve(before, current, stars)).toMatchObject({ resolved: true, range: { start: 0, end: 2 } });
+    const judged = judge(columnOf([after]), current, stars);
+    expect(judged).toEqual({ is: "cleared", cleared: { ...current, why: "text_changed", searching: literal(stars) } });
+    expect(currentOf(judged)).toBeUndefined();
   });
 });
 
 describe("the current match under a change of how the query is read", () => {
   const row = rowOf({ type: "text", text: "a needle" });
+  const column = columnOf([row]);
   const current = taken({ key: "k", at: addressOf(row, "a needle"), nth: 0 });
 
   it("stands under the same query read the same way, however often it is read again", () => {
-    expect(matchCleared(columnOf(row), current, patternOf("needle", defaults).pattern)).toBeUndefined();
+    expect(judge(column, current, patternOf("needle", defaults).pattern)).toEqual({ is: "standing", match: current });
   });
 
-  it("is none under another query, or the query read another way, whichever tab changed it", () => {
+  it("is none under another query, or the query read another way, whichever tab changed it, for the counter, the steps and the line alike", () => {
+    const place = { at: "start" } as const;
     for (const now of [patternOf("needles", defaults), patternOf("needle", { ...defaults, wholeWord: true }), patternOf("needle", { ...defaults, caseSensitive: true }), patternOf("", defaults)]) {
-      expect(matchCleared(columnOf(row), current, now.pattern)).toMatchObject({ why: "pattern_changed" });
+      const judged = judge(column, current, now.pattern);
+      expect(judged).toMatchObject({ is: "cleared", cleared: { why: "pattern_changed", pattern: literal(pattern), searching: literal(now.pattern) } });
+      // What the view gives every reader of the current match: none, so each reads as with no current match.
+      const standing = currentOf(judged);
+      const found = createSearch()([row], now.pattern);
+      expect(ordinal(found, standing, now.pattern)).toBeUndefined();
+      expect(matchMove(column, found, standing, place, "next", now.pattern)).toEqual(matchMove(column, found, undefined, place, "next", now.pattern));
+      expect(waitingOf(column, place, standing)).toBeUndefined();
     }
   });
 });
 
 describe("a block with two parts of one name", () => {
-  it("shows its parts as made, as JSON, with why, and keeps everything else it is", () => {
-    const block: Block = { category: "tools", name: "tool_use: X", parts: [{ id: "a", kind: "text", form: "verbatim", text: "one" }, { id: "a", kind: "text", form: "verbatim", text: "two" }], call: { id: "t1", launches: undefined, waits: true } };
-    const shown = keyed(block, "k");
-    expect(shown).toMatchObject({ key: "k", category: "tools", name: "tool_use: X", call: { id: "t1", launches: undefined, waits: true } });
-    expect(shown.parts).toEqual([
-      expect.objectContaining({ id: "does not fit", text: 'two of its parts are named "a"' }),
-      { id: "received", kind: "json", value: block.parts },
-    ]);
+  it("is the formatter's error, which it throws, naming the block and the name", () => {
+    const block: Block = { category: "tools", name: "tool_use: X", parts: [{ id: "a", kind: "text", form: "verbatim", text: "one" }, { id: "a", kind: "text", form: "verbatim", text: "two" }] };
+    expect(() => keyed(block, "k")).toThrow('The formatter made the block k with two parts named "a"');
   });
 });

@@ -1,4 +1,4 @@
-import type { Part } from "./parts.ts";
+import type { PartBody } from "./parts.ts";
 
 // A diff of two texts: what a change kept, removed and added, line by line, or within a line word by word.
 
@@ -13,8 +13,8 @@ type Joined = { text: string; passages: { start: number; end: number }[] };
 
 // [LAW:one-source-of-truth] A diff part holds the two texts; its lines are derived from them, made once per part, and
 // only for a part that is shown or searched, so a session's Edits are not diffed again by every request that resends them.
-const diffs = new WeakMap<Extract<Part, { kind: "diff" }>, Diff>();
-export function diffOf(part: Extract<Part, { kind: "diff" }>): Diff {
+const diffs = new WeakMap<Extract<PartBody, { kind: "diff" }>, Diff>();
+export function diffOf(part: Extract<PartBody, { kind: "diff" }>): Diff {
   const made = diffs.get(part);
   if (made !== undefined) return made;
   const lines = lineDiff(part.before, part.after);

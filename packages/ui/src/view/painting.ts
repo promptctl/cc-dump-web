@@ -1,28 +1,31 @@
 import { createContext, useContext, useMemo } from "react";
 import type { Range } from "./range.ts";
 import { isOpen } from "./rows.ts";
-import { find, type Searched } from "./search.ts";
+import { find, type Searched, type Standing } from "./search.ts";
 import { useView, view } from "./state.ts";
 
 // How a text shown in the conversation paints the search's matches (docs/design/01-features.md, F6), and what a block, a
 // region, an entry of a text's contents or a sibling of a fork calls when clicked. The Conversation provides each.
 
-// The pattern the conversation's texts paint the matches of: the search's, so what is painted is what it counts.
-export const Painted = createContext<RegExp | undefined>(undefined);
+// What the conversation's texts paint: the search's pattern, so what is painted is what it counts, and the current
+// match as the column's judge found it standing (moves.ts `judge`), so what is painted current is what it counts from.
+export type Paint = { pattern: RegExp; current: Standing | undefined };
+export const Painted = createContext<Paint | undefined>(undefined);
 
 // Where a text is, `at` its address in the block `blockKey`, its matches, and where the current one starts if it is
 // in this text.
 export type Where = { blockKey: string; at: string; ranges: Range[]; current: number | undefined };
 
-// A text's matches, found again only when the text or the pattern changes; the current match among them by which of
-// them it is, so none is current in a text that no longer holds as many (search.ts `resolve`). A step renders again
-// only the texts the current match leaves and enters.
+// A text's matches, found again only when the text or the pattern changes, and the current match among them by which
+// of them it is: it stands, so a text at its address holds it. The same object while neither changes, so a text drawn
+// from it is drawn again only when a step leaves it or enters it.
 export function useWhere(blockKey: string, at: string, searched: Searched): Where {
-  const pattern = useContext(Painted);
-  if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
+  const paint = useContext(Painted);
+  if (paint === undefined) throw new Error("A text is shown outside a Conversation");
+  const { pattern, current } = paint;
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);
-  const nth = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.nth : undefined));
-  return { blockKey, at, ranges, current: nth === undefined ? undefined : ranges[nth]?.start };
+  const start = current !== undefined && current.key === blockKey && current.at === at ? ranges[current.nth]!.start : undefined;
+  return useMemo(() => ({ blockKey, at, ranges, current: start }), [blockKey, at, ranges, start]);
 }
 
 // What a block or region calls when clicked, before it shows the other way: the view holds where it is.

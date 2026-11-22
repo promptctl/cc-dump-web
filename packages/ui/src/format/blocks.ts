@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { fieldsParts, fieldValue, labelled, receivedParts, type Field, type Form, type Medium, type Part, type Received } from "./parts.ts";
+import { fieldsParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
@@ -23,7 +23,7 @@ export type Category = (typeof categories)[number];
 // its parts: `call`, a client tool's call; `result`, a client tool's result; `notice`, the harness's notification that an
 // agent stopped (format/wire.ts); `summary`, the summary an assistant's text ends with, as the reply to a compaction
 // does, which the thread that carries it on begins with.
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: PartBody[]; failed?: true } & Stated;
 export type Stated = { call?: Call; result?: Answer; notice?: Notice; summary?: string };
 
 // [LAW:types-are-the-program] A client tool's call: its `id`, which its result answers; what it `launches`, for a tool
@@ -54,9 +54,9 @@ const pieces: Record<Role, (text: string) => Piece[]> = {
   system: (text) => split(text, "harness"),
 };
 
-// The label of the part holding a block's fields no read asked for. [LAW:one-source-of-truth] The history reads a
-// reply's by it (view/history.ts).
-export const unreadLabel = "fields";
+// The part holding a block's fields no read asked for. [LAW:one-source-of-truth] The history reads a reply's by its id
+// (view/history.ts).
+export const unreadPart = { id: "unread", label: "fields" };
 
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
 export function raw(category: Category, name: string, reason: string, received: Received): Block {
@@ -69,7 +69,7 @@ export function formatError(fields: Fields): Block {
 }
 
 // The fields of an object no read asked for, as a part, when there are any.
-export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), unreadLabel);
+export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), unreadPart);
 
 // The fields of an object no read asked for, as a block of their own in `category`, when there are any.
 export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
@@ -112,8 +112,9 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
   parts: (fields) => {
     const input = fields.value("input");
-    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is.
-    const parts: Part[] = typeof input === "string" ? [{ kind: "text", form: "verbatim", ...labelled("input so far"), text: input }] : read(fields.string("name"), input);
+    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is:
+    // the input's deltas' `partial_json`, joined, another text than the input it becomes.
+    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(fields.string("name"), input);
     return [...parts, { id: "id", kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
@@ -175,16 +176,21 @@ const serverToolResult: Entry = {
   category: tools,
   failed: (block) => String(sentField(sentField(block, "content"), "type")).endsWith("_error"),
   parts: (fields) => [
-    { kind: "json", ...labelled("content"), value: fields.value("content") },
+    { id: "content", label: "content", kind: "json", value: fields.value("content") },
     { id: "tool_use_id", kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
   ],
 };
 const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), of, role) });
 
+// [LAW:one-source-of-truth] A text block's text as a part, the one name it has wherever it is made: in the text's block,
+// and in each piece of it and that piece's preview (`formatContent`).
+const textId = "text";
+const textPart = (text: string, form: Form): Part => ({ id: textId, kind: "text", form, text });
+
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
-  ["text", { category: byRole, parts: (fields, _, form) => [{ id: "text", kind: "text", form, text: fields.string("text") }], stated: summarized }],
+  ["text", { category: byRole, parts: (fields, _, form) => [textPart(fields.string("text"), form)], stated: summarized }],
   // A streamed thinking block has no signature until its signature delta, just before its stop.
   [
     "thinking",
@@ -255,16 +261,16 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
-  const [, ...fields] = formatted.parts;
+  const fields = formatted.parts.filter(({ id }) => id !== textId);
   const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
     const form = pieceForm[piece.kind];
     const last = index === textPieces.length - 1;
     const rest = last ? fields : [];
-    const parts: Part[] = [{ id: "text", kind: "text", form, text: piece.text }, ...rest];
+    const parts: Part[] = [textPart(piece.text, form), ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ id: "text", kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [textPart(piece.content, form), ...rest], ...(last ? stated : {}) };
   });
 }
 
@@ -322,8 +328,8 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
         return contentParts(fields.value("content"), role);
       // A source of a type not here: its other fields follow.
       default:
-        return [{ kind: "fields", ...labelled("source"), fields: [["type", type]] }];
+        return [{ id: "source", label: "source", kind: "fields", fields: [["type", type]] }];
     }
   })();
-  return [...parts, ...fieldsParts(fields.rest(), "source fields")];
+  return [...parts, ...fieldsParts(fields.rest(), { id: "source/unread", label: "source fields" })];
 }

@@ -1,6 +1,6 @@
 import { launchName, type Block, type Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
-import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
+import { fieldLines, fieldValue, jsonText, type Field, type Part, type PartBody } from "../format/parts.ts";
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
 import type { Reading } from "../reading.ts";
 import type { Visibility } from "../settings.ts";
@@ -657,7 +657,7 @@ const previewLength = 200;
 // A part's text, as its line reads it. A text reads as its rendering shows it (view/rendering.ts), so a Markdown text's
 // syntax is not read, each passage apart from the next. A JSON string, as a tool's input is while it streams, is its own
 // text; any other value reads as a field would show it (format/parts.ts).
-function partText(part: Part): string {
+function partText(part: PartBody): string {
   switch (part.kind) {
     case "text": {
       const { text, passages } = renderingOf(part);
