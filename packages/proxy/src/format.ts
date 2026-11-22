@@ -14,7 +14,8 @@ export type Header = [name: string, value: string];
 // [LAW:decomposition] It holds the wire, not an interpretation of it: headers in arrival order, case and
 // repetition, trailers too; body chunks as the bytes received, base64 (a gzip body stays gzip), so later parsing
 // applies to old recordings too. A message's trailers are recorded when its body is complete, none if it had
-// none, so a body cut short has no trailers event. An exchange ends with the ending its log event records.
+// none, so a body cut short has no trailers event. An exchange ends as its relayed response did (`Work.ended`),
+// whatever its status, which `response` records; how its request ended is judged from the two (`requestEnding`).
 export type Recorded =
   | { type: "request"; method: string; url: string; http_version: string; headers: Header[] }
   | { type: "request_body"; base64: string }

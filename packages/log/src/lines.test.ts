@@ -40,7 +40,7 @@ describe("processLog", () => {
       [1, "proxy", "second"],
     ]);
     expect(lines[0]!.id).toMatch(/^[0-9a-f]{16}:0$/);
-    expect(lines[0]!.line.event).toEqual({ service: "proxy", event: "first", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok", facts: { trace_id: "t" } });
+    expect(lines[0]!.line.event).toEqual({ service: "proxy", event: "first", trace_id: "t", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1.5, outcome: "ok", facts: {} });
   });
 
   it("keeps the last lines only, numbered as they were written, so a reader sees how many it was not sent", async () => {

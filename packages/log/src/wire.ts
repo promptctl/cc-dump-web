@@ -1,5 +1,6 @@
 import { DependencyFailed, Malformed } from "./failure.ts";
 import { fields, parseJson } from "./json.ts";
+import { statusText } from "./status.ts";
 
 // [LAW:one-source-of-truth] What both ends of a part's HTTP wire agree on: the answer a refused or failed request gets,
 // the Server-Sent Events a stream is written and read as, and the one way a client asks. Imports nothing that needs
@@ -17,7 +18,7 @@ export function parseFailure(json: string): Failure {
 // node's `STATUS_CODES` says the same, but is node's, and the UI imports this module.
 export const FAILED = { 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 500: "Internal Server Error", 502: "Bad Gateway" } as const;
 export type FailedStatus = keyof typeof FAILED;
-export const statusLine = (status: FailedStatus) => `${status} ${FAILED[status]}`;
+export const statusLine = (status: FailedStatus) => statusText({ status, reason: FAILED[status] });
 
 // [LAW:one-source-of-truth] The paths the parts answer, which each part's route table and every client of it name. A
 // segment with a colon is the route's parameter, one whole path segment.
@@ -27,9 +28,9 @@ export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name
 export const recordingPath = (name: string) => ROUTES.recording.replace(":name", () => encodeURIComponent(name));
 
 // [LAW:single-enforcer] The one way a client asks a part: its answer to one request, parsed. The part failing to answer
-// is the asker's `DependencyFailed`: an answer with an error status, in the part's own words, which are the user's to
-// read as they are, or, when its body is no `Failure` (a proxy's, node's own refusal of a malformed request), in the
-// request and the status line; a connection that failed, or an answer its parse finds `Malformed`, naming the request,
+// is the asker's `DependencyFailed`: an answer that is no success (2xx), the only answer parsed, in the part's own
+// words, which are the user's to read as they are, or, when its body is no `Failure` (a proxy's, node's own refusal of
+// a malformed request), in the request and the status line; a connection that failed, or an answer its parse finds `Malformed`, naming the request,
 // with the failure its `cause`. Any other error of the parse is the asker's own bug, and passes as it is.
 export async function ask<T>(url: string, init: RequestInit, parse: (text: string) => T): Promise<T> {
   const request = `${init.method ?? "GET"} ${url}`;

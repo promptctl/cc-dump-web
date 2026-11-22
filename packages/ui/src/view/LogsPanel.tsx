@@ -78,16 +78,18 @@ function PartState({ part, connection }: { part: Part; connection: LogConnection
 
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hourCycle: "h23" });
 
-// A line: when its work ended, its part, its level, its unit of work and what it says, the error first; opened, the
-// whole of its event, or, for a line not read, why and its text; first, when its part restarted since the line of it
-// listed before, that its last process's last lines, written once the panel's connection to it was cut, did not reach
-// the panel. A line is never changed once listed, so a row renders once, not again for each line after it.
-const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }: { listed: Listed; restarted: boolean }) {
+// A line: when its work ended, its part, its level, its unit of work and what it says: its error's first line, for one
+// that failed, at most half the row, so the facts after it, which tell one failed request from another, are seen too;
+// opened, the whole of its event, or, for a line not read, why and its text; first, when its part restarted since the
+// line of it listed before, that its last process's last lines, written once the panel's connection to it was cut, did
+// not reach the panel. A line is never changed once listed, so a row renders once, not again for each line after it.
+export const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }: { listed: Listed; restarted: boolean }) {
   const level = lineLevel(line);
-  const { service, event, said, error, opened } =
+  const { service, event, facts, error, opened } =
     "event" in line
-      ? { ...line.event, said: summary(line.event), opened: JSON.stringify({ started_at: line.event.started_at, duration_ms: line.event.duration_ms, outcome: line.event.outcome, ...line.event.facts }, null, 2) }
-      : { service: named[part], event: "unread", said: line.error, error: line.error, opened: line.unread };
+      ? shownOf(line.event)
+      : { service: named[part], event: "unread", facts: "", error: line.error, opened: line.unread };
+  const headline = error?.split("\n")[0];
   return (
     <li data-log-level={level}>
       {restarted ? <p className="my-1 border-t pt-1 text-foreground-muted">The {named[part]} restarted: what its last process wrote last, its shutdown's, did not reach the panel</p> : null}
@@ -97,7 +99,14 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }
           <span className="w-12 shrink-0 text-foreground-muted">{service}</span>
           <span className={`w-10 shrink-0 ${levelStyle[level]}`}>{level}</span>
           <span className="shrink-0">{event}</span>
-          <span className={`min-w-0 truncate ${level === "error" ? "text-error" : "text-foreground-muted"}`}>{said}</span>
+          <span className="flex min-w-0 flex-1 gap-2">
+            {headline === undefined ? null : (
+              <span data-log-error className={`max-w-[50%] shrink-0 truncate ${level === "error" ? "text-error" : "text-foreground-muted"}`} title={headline}>
+                {headline}
+              </span>
+            )}
+            <span data-log-facts className="min-w-0 truncate text-foreground-muted">{facts}</span>
+          </span>
         </summary>
         <div className="py-1 pl-4 *:break-all *:whitespace-pre-wrap">
           {/* The error as it was written, its stack on lines of their own; the rest of the event as JSON, or the line's text. */}
@@ -109,9 +118,11 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }
   );
 });
 
-// What an event says on its row: its error's first line, or its facts.
-function summary({ error, facts }: LoggedEvent): string {
-  return error === undefined ? Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ") : error.split("\n")[0]!;
+// An event as its row shows it: its facts on its line, each by its name, and, opened, every field the line has no
+// place of its own for, its facts among them.
+function shownOf({ service, event, error, facts, ...rest }: LoggedEvent) {
+  const said = Object.entries(facts).map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return { service, event, error, facts: said.join(" "), opened: JSON.stringify({ ...rest, ...facts }, null, 2) };
 }
 
 const levelStyle: Record<Level, string> = { error: "text-error font-semibold", warn: "font-semibold", info: "text-foreground-muted" };

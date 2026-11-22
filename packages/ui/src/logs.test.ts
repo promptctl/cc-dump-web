@@ -1,4 +1,5 @@
 import type { LogLine } from "@cc-dump/log/line";
+import { parseTraceId } from "@cc-dump/log/trace";
 import { describe, expect, it } from "vitest";
 import { logsChanged, noLogs, type Logs, type LogsChange } from "./logs.ts";
 
@@ -6,7 +7,7 @@ import { logsChanged, noLogs, type Logs, type LogsChange } from "./logs.ts";
 const line = (run: string, seq: number, at: number, ms = 0): LogLine => ({
   run,
   seq,
-  event: { service: "proxy", event: `${run}${seq}`, started_at: new Date(Date.UTC(2026, 10, 16, 9, 0, at)).toISOString(), duration_ms: ms, outcome: "ok", facts: {} },
+  event: { service: "proxy", event: `${run}${seq}`, trace_id: parseTraceId("t"), started_at: new Date(Date.UTC(2026, 10, 16, 9, 0, at)).toISOString(), duration_ms: ms, outcome: "ok", facts: {} },
 });
 
 const after = (...changes: LogsChange[]): Logs => changes.reduce(logsChanged, noLogs);

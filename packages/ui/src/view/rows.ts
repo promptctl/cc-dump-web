@@ -640,9 +640,8 @@ export function seconds(milliseconds: number): string {
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
-// [LAW:one-source-of-truth] The exchange line's facts that the turn strip's marks say too (view/strip.ts): an HTTP
-// status that is an error's, and the token counts, by label.
-export const statusFailed = (status: number | undefined): boolean => status !== undefined && status >= 400;
+// [LAW:one-source-of-truth] The exchange line's facts that the turn strip's marks say too (view/strip.ts): the token
+// counts, by label.
 export const countsOf = (facts: FormattedExchange["facts"]): [label: string, count: number | undefined][] => [
   ["in", inputOf(facts)],
   ["cache", facts.cacheRead],

@@ -1,4 +1,5 @@
 import { fieldOf } from "@cc-dump/log/json";
+import { statusText } from "@cc-dump/log/status";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
@@ -387,7 +388,7 @@ function responseShown(sides: Sides, side: ResponseSide): ResponseShown {
       ? latest(side) === undefined
         ? []
         : [notRecorded("response")]
-      : [httpBlock("HTTP response", `HTTP/${head.http_version} ${head.status} ${head.reason}`, head.headers, trailers)];
+      : [httpBlock("HTTP response", `HTTP/${head.http_version} ${statusText(head)}`, head.headers, trailers)];
   const { own, ...read } = responseBody(sides, side, body, whole);
   return { own: [...one("http", http), ...one("undecoded", undecoded(body)), ...own], ...read };
 }
