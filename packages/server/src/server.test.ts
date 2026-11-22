@@ -194,8 +194,8 @@ describe("the launch's answer", () => {
     [{ window_id: "@1x" }, /not a tmux window id/],
     [{ window_id: "@03" }, /not a tmux window id/],
     [{ session_id: "$9007199254740993" }, /not a tmux session id/],
-    [{ start_time: -1 }, /not a tmux server's start time: "-1"/],
-    [{ start_time: 1.5 }, /start_time is not an integer/],
+    [{ start_time: -1 }, /not a tmux server's start time: -1/],
+    [{ start_time: 1.5 }, /start_time: is not an integer/],
   ])("is refused with %j, which tmux would not write", (fields, error) => {
     expect(() => parseLaunched(launched(fields))).toThrow(error);
   });

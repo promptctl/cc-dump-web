@@ -1,8 +1,8 @@
 import { exchanges, memoryStorage, recordedAt } from "../testing.ts";
-import { createJSONStorage } from "zustand/middleware";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createFormatter, type KeyedBlock } from "../format/format.ts";
-import { defaultSettings, useSettings } from "../settings.ts";
+import { defaultSettings, settingsItem, useSettings } from "../settings.ts";
+import { stored } from "../stored.ts";
 import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
 import { readView, useView, view, viewItem } from "./state.ts";
@@ -94,7 +94,7 @@ describe("a launch", () => {
 describe("the search", () => {
   const match = { key: "t1/request/http", at: "text", nth: 0, pattern: "/x/giu" };
   beforeEach(() => {
-    useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
+    useSettings.persist.setOptions(stored(settingsItem(() => memoryStorage().storage)));
     useView.setState(useView.getInitialState(), true);
     useSettings.setState(defaultSettings);
   });
@@ -229,7 +229,7 @@ describe("a stored view", () => {
 
   it("is read back as the build before this one stored it, every field kept", async () => {
     const { storage, writes } = memoryStorage({ "cc-dump.view": JSON.stringify({ state: full, version: 7 }) });
-    useView.persist.setOptions(viewItem(() => storage));
+    useView.persist.setOptions(stored(viewItem(() => storage)));
     await useView.persist.rehydrate();
     expect(useView.getState()).toEqual(full);
     expect(writes).toEqual([]);
@@ -255,12 +255,16 @@ describe("a stored view", () => {
     expect(readView(full, version)).toEqual({
       value: { ...full, opened: {}, position: { at: "end" }, search: { query: "x", current: undefined } },
       dropped: [
-        { at: ["opened"], why },
+        { at: ["opened", "t1/request/http"], why },
+        { at: ["opened", "thread:t1/message.0/content.0"], why },
         { at: ["position"], why: `key: ${why}` },
         { at: ["search", "current"], why },
       ],
     });
-    // A place at the start or the end names no row.
-    expect(readView({ ...full, position: { at: "start" } }, version).value.position).toEqual({ at: "start" });
+    // A place at the start or the end, no folds and no current match name no row, so nothing is dropped.
+    expect(readView({ ...full, opened: {}, position: { at: "start" }, search: { query: "x" } }, version)).toEqual({
+      value: { ...full, opened: {}, position: { at: "start" }, search: { query: "x", current: undefined } },
+      dropped: [],
+    });
   });
 });

@@ -1,37 +1,72 @@
 import type { Event } from "@cc-dump/log/event";
-import { kept, kinds, value } from "@cc-dump/log/json";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { startTrace } from "@cc-dump/log/event";
+import { Malformed } from "@cc-dump/log/failure";
+import { kinds, tolerant, value, type Read } from "@cc-dump/log/json";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { reportStored, stored, storedLog, type StoredEvent } from "./stored.ts";
+import type { StoredEvent } from "./stored.ts";
 import { memoryStorage } from "./testing.ts";
 
-type Kept = { name: string; on: boolean };
-const first: Kept = { name: "none", on: false };
-const read = (state: unknown) => kept<Kept>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
+type Chosen = { name: string; on: boolean };
+const first: Chosen = { name: "none", on: false };
+const readChosen = (state: unknown): Read<Chosen> => tolerant<Chosen>({ name: value(kinds.string), on: value(kinds.boolean) }, first)(state, []);
 const name = "cc-dump.settings";
 const item = (state: unknown, version = 0) => JSON.stringify({ state, version });
 
-// A store kept in `storage` as the UI's are, read as it is made.
-const storeIn = (storage: Storage) => create<Kept>()(persist(() => first, stored({ name, version: 0, storage: () => storage, read })));
+// The storage module as a page loads it, its events going nowhere yet, and a store kept in `storage` through it as the
+// UI's are, read as it is made.
+async function loaded() {
+  vi.resetModules();
+  const module = await import("./stored.ts");
+  const storeIn = (storage: Storage, read = readChosen) =>
+    create<Chosen>()(persist(() => first, module.stored({ name, version: 0, storage: () => storage, initial: first, read })));
+  return { ...module, storeIn };
+}
 
-let events: StoredEvent[];
-beforeEach(() => {
-  events = [];
-  reportStored((event) => events.push(event));
+// The same, its events reported to `events` from the start.
+async function reported() {
+  const module = await loaded();
+  const events: StoredEvent[] = [];
+  module.reportStored((event) => events.push(event));
+  return { ...module, events };
+}
+
+// A storage whose reads fail while `blocked.reads` says so, and whose writes the storage refuses while `blocked.writes`
+// says so.
+function blockable(storage: Storage) {
+  const blocked = { reads: false, writes: false };
+  const refuse = (is: boolean, error: DOMException) => {
+    if (is) throw error;
+  };
+  return {
+    blocked,
+    storage: {
+      ...storage,
+      getItem: (key: string) => (refuse(blocked.reads, new DOMException("blocked", "SecurityError")), storage.getItem(key)),
+      setItem: (key: string, text: string) => (refuse(blocked.writes, new DOMException("full", "QuotaExceededError")), storage.setItem(key, text)),
+      removeItem: (key: string) => (refuse(blocked.writes, new DOMException("full", "QuotaExceededError")), storage.removeItem(key)),
+    },
+  };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("a stored item's read", () => {
-  it("reads nothing stored as the store's first state", () => {
+  it("reads nothing stored as the store's first state", async () => {
+    const { storeIn, events } = await reported();
     const store = storeIn(memoryStorage().storage);
     expect(store.getState()).toEqual(first);
-    expect(events).toEqual([{ store: name, is: "read", read: { stored: "none" } }]);
+    expect(events).toMatchObject([{ store: name, is: "read", read: { stored: "none" } }]);
   });
 
-  it("reads an item stored as persist stores it, naming what it dropped by its path in the item", () => {
+  it("reads an item stored as persist stores it, naming what it dropped by its path in the item", async () => {
+    const { storeIn, events } = await reported();
     const store = storeIn(memoryStorage({ [name]: JSON.stringify({ state: { name: "a", on: "yes" }, version: 0, by: "a later build" }) }).storage);
     expect(store.getState()).toEqual({ name: "a", on: false });
-    expect(events).toEqual([
+    expect(events).toMatchObject([
       {
         store: name,
         is: "read",
@@ -47,7 +82,8 @@ describe("a stored item's read", () => {
     ]);
   });
 
-  it.each([["{"], [JSON.stringify({ name: "a" })]])("says an item that is not one, %s, is unreadable, and replaces it at the next write", (text) => {
+  it.each([["{"], [JSON.stringify({ name: "a" })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
+    const { storeIn, events } = await reported();
     const { storage, held } = memoryStorage({ [name]: text });
     const store = storeIn(storage);
     expect(store.getState()).toEqual(first);
@@ -56,23 +92,57 @@ describe("a stored item's read", () => {
     expect(held.get(name)).toBe(item({ name: "b", on: false }));
   });
 
-  it("holds every write after the storage failed as it was read, so what it holds is not written over", () => {
+  it("reads an item that is not one as the store's first state again, as the store holds another", async () => {
+    const { storeIn } = await reported();
+    const { storage, held } = memoryStorage();
+    const store = storeIn(storage);
+    store.setState({ on: true });
+    held.set(name, "{");
+    await store.persist.rehydrate();
+    expect(store.getState()).toEqual(first);
+  });
+
+  it("writes nothing over what is stored after the storage failed as it was read, and counts each write lost until a read reaches it", async () => {
+    const { storeIn, events } = await reported();
     const { storage, writes } = memoryStorage({ [name]: item({ name: "a", on: true }) });
-    const store = storeIn({
-      ...storage,
-      getItem: () => {
-        throw new DOMException("blocked", "SecurityError");
-      },
+    const { blocked, storage: blocking } = blockable(storage);
+    blocked.reads = true;
+    const store = storeIn(blocking);
+    store.setState({ name: "b" });
+    store.setState({ name: "c" });
+    expect(store.getState()).toEqual({ name: "c", on: false });
+    expect(writes).toEqual([]);
+    blocked.reads = false;
+    await store.persist.rehydrate();
+    expect(store.getState()).toEqual({ name: "a", on: true });
+    store.setState({ on: false });
+    expect(writes).toEqual([[name, item({ name: "a", on: false })]]);
+    expect(events).toMatchObject([
+      { is: "read", read: { stored: "failed", error: { name: "SecurityError" } } },
+      { is: "read", read: { stored: "read" } },
+      { is: "writes_resumed", why: "unread", lost: 2 },
+    ]);
+    // The run's end is on the span its failed read began.
+    expect(events[2]!.span).toBe(events[0]!.span);
+  });
+
+  it("reports this build's own bug in a read, which persist would swallow, and writes nothing over what is stored", async () => {
+    const { storeIn, events } = await reported();
+    const { storage, writes } = memoryStorage({ [name]: item({ name: "a", on: true }) });
+    const bug = new TypeError("not a function");
+    const store = storeIn(storage, () => {
+      throw bug;
     });
     store.setState({ name: "b" });
     expect(store.getState()).toEqual({ name: "b", on: false });
     expect(writes).toEqual([]);
-    expect(events).toMatchObject([{ is: "read", read: { stored: "failed", error: { name: "SecurityError" } } }]);
+    expect(events).toMatchObject([{ is: "read", read: { stored: "threw", error: bug } }]);
   });
 });
 
 describe("a stored item's write", () => {
   it("writes the reader's changes, and a read again writes nothing", async () => {
+    const { storeIn } = await reported();
     const { storage, held, writes } = memoryStorage();
     const store = storeIn(storage);
     store.setState({ on: true });
@@ -83,26 +153,42 @@ describe("a stored item's write", () => {
     expect(writes).toHaveLength(1);
   });
 
-  it("never throws a write the storage refuses into the change, and reports a run of them once", () => {
-    const { storage } = memoryStorage();
-    let full = true;
-    const store = storeIn({
-      ...storage,
-      setItem: (key, text) => {
-        if (full) throw new DOMException("full", "QuotaExceededError");
-        storage.setItem(key, text);
-      },
-    });
+  it("never throws a write the storage refuses into the change, and reports a run of them as it begins and as it ends, with how many it lost", async () => {
+    const { storeIn, events } = await reported();
+    const { blocked, storage } = blockable(memoryStorage().storage);
+    const store = storeIn(storage);
+    blocked.writes = true;
     store.setState({ name: "a" });
     store.setState({ name: "b" });
-    full = false;
+    store.persist.clearStorage();
+    blocked.writes = false;
     store.setState({ name: "c" });
-    full = true;
+    blocked.writes = true;
     store.setState({ name: "d" });
-    expect(events.filter(({ is }) => is === "write_refused")).toHaveLength(2);
+    expect(events.slice(1)).toMatchObject([
+      { is: "write_refused", error: { name: "QuotaExceededError" } },
+      { is: "writes_resumed", why: "refused", lost: 3 },
+      { is: "write_refused" },
+    ]);
+    expect(events[2]!.span).toBe(events[1]!.span);
   });
 
-  it("passes a bug in what it writes as it is, not as the storage's refusal", () => {
+  it("reports a refusal after a read that failed and one that did not, as a run of its own", async () => {
+    const { storeIn, events } = await reported();
+    const { blocked, storage } = blockable(memoryStorage().storage);
+    const store = storeIn(storage);
+    blocked.writes = true;
+    store.setState({ name: "a" });
+    blocked.reads = true;
+    await store.persist.rehydrate();
+    blocked.reads = false;
+    await store.persist.rehydrate();
+    store.setState({ name: "b" });
+    expect(events.map(({ is }) => is)).toEqual(["read", "write_refused", "read", "read", "writes_resumed", "write_refused"]);
+  });
+
+  it("passes a bug in what it writes as it is, not as the storage's refusal", async () => {
+    const { storeIn, events } = await reported();
     const store = storeIn(memoryStorage().storage);
     const cycle: Record<string, unknown> = {};
     cycle.self = cycle;
@@ -112,29 +198,55 @@ describe("a stored item's write", () => {
 });
 
 describe("the storage's events", () => {
-  it("are held until the page says where they go, then handed over", async () => {
-    // A fresh module: its events have gone nowhere yet.
-    vi.resetModules();
-    const fresh = await import("./stored.ts");
-    const store = create<Kept>()(persist(() => first, fresh.stored({ name, version: 0, storage: () => memoryStorage().storage, read })));
-    expect(store.getState()).toEqual(first);
-    const handed: StoredEvent[] = [];
-    fresh.reportStored((event) => handed.push(event));
-    expect(handed).toEqual([{ store: name, is: "read", read: { stored: "none" } }]);
+  it("are held until the page says where they go, then handed over, each on the span begun as it happened", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-11-22T10:00:00.000Z") });
+    const { storeIn, reportStored, storedLog } = await loaded();
+    storeIn(memoryStorage().storage);
+    vi.setSystemTime(Date.parse("2026-11-22T10:00:05.000Z"));
+    const lines: Event[] = [];
+    reportStored(storedLog((line) => lines.push(line)));
+    expect(lines).toMatchObject([{ event: "stored_read", stored: "none", started_at: "2026-11-22T10:00:00.000Z" }]);
   });
 
-  it("are written to the page's log, a read as `stored_read` and a refusal as `stored_write_refused`", () => {
+  it("go to one report: a second is refused", async () => {
+    const { reportStored } = await reported();
+    expect(() => reportStored(() => {})).toThrow("already go to a report");
+  });
+
+  it("are written to the page's log, each read as `stored_read` saying how it was read", async () => {
+    const { storedLog } = await loaded();
     const lines: Event[] = [];
     const log = storedLog((event) => lines.push(event));
-    log({ store: name, is: "read", read: { stored: "none" } });
-    log({ store: "cc-dump.view", is: "read", read: { stored: "read", version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }] } });
-    log({ store: name, is: "read", read: { stored: "failed", error: new DOMException("blocked", "SecurityError") } });
-    log({ store: name, is: "write_refused", error: new DOMException("full", "QuotaExceededError") });
+    const span = startTrace();
+    log({ store: name, span, is: "read", read: { stored: "none" } });
+    log({ store: "cc-dump.view", span, is: "read", read: { stored: "read", version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }] } });
+    log({ store: name, span, is: "read", read: { stored: "unreadable", error: new Malformed("is not JSON") } });
+    log({ store: name, span, is: "read", read: { stored: "failed", error: new DOMException("blocked", "SecurityError") } });
+    log({ store: name, span, is: "read", read: { stored: "threw", error: new TypeError("not a function") } });
+    log({ store: name, span, is: "write_refused", error: new DOMException("full", "QuotaExceededError") });
+    log({ store: name, span, is: "writes_resumed", why: "refused", lost: 3 });
     expect(lines).toMatchObject([
-      { event: "stored_read", store: name, stored: false, dropped: [], outcome: "ok" },
-      { event: "stored_read", store: "cc-dump.view", stored: true, version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }], outcome: "ok" },
-      { event: "stored_read", store: name, writes: "held", outcome: "error" },
+      { event: "stored_read", store: name, stored: "none", dropped: [], outcome: "ok" },
+      { event: "stored_read", store: "cc-dump.view", stored: "read", version: 6, dropped: [{ at: ["state", "opened"], why: "names a row" }], outcome: "ok" },
+      { event: "stored_read", store: name, stored: "unreadable", outcome: "error" },
+      { event: "stored_read", store: name, stored: "failed", writes: "lost", outcome: "error" },
+      { event: "stored_read", store: name, stored: "threw", writes: "lost", outcome: "error" },
       { event: "stored_write_refused", store: name, outcome: "error" },
+      { event: "stored_writes_resumed", store: name, why: "refused", lost: 3, outcome: "ok" },
     ]);
+    expect(new Set(lines.map(({ trace_id }) => trace_id)).size).toBe(1);
+  });
+});
+
+describe("a change another tab made", () => {
+  it("is to an item when it is in the item's storage, at its name or clearing the storage", async () => {
+    const { changes } = await loaded();
+    const kept = memoryStorage().storage;
+    const other = memoryStorage().storage;
+    const settings = { name, version: 0, storage: () => kept, initial: first, read: readChosen } as const;
+    expect(changes(settings, { storageArea: kept, key: name })).toBe(true);
+    expect(changes(settings, { storageArea: kept, key: null })).toBe(true);
+    expect(changes(settings, { storageArea: kept, key: "cc-dump.view" })).toBe(false);
+    expect(changes(settings, { storageArea: other, key: null })).toBe(false);
   });
 });

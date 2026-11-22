@@ -1,9 +1,9 @@
-import { kept, kinds, value, type Read, type Readers } from "@cc-dump/log/json";
+import { kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/json";
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { categories, type Category } from "./format/blocks.ts";
-import { stored } from "./stored.ts";
+import { stored, type Item } from "./stored.ts";
 import { isThemeChoice, type ThemeChoice } from "./theme/theme.ts";
 
 // A category's level of detail (docs/design/01-features.md, F5): its blocks not listed, `hidden`; listed, each as its line,
@@ -51,8 +51,6 @@ export type Settings = {
   keys: boolean;
 };
 
-const name = "cc-dump.settings";
-
 // Each setting until the reader chooses: follow mode on, a query a regular expression in any case, the panels closed.
 export const defaultSettings: Settings = {
   follow: true,
@@ -73,12 +71,12 @@ const visibility = Object.fromEntries(categories.map((category) => [category, va
 // [LAW:parse-dont-validate] Settings as stored, read as this build reads them: each setting, and each category's level
 // and each way of reading a query, the one stored, or its default where none is stored or the one stored is not a value
 // this build has, which is named.
-const settingsReader = kept<Settings>(
+const settingsReader = tolerant<Settings>(
   {
     follow: boolean,
-    visibility: kept(visibility, defaultVisibility),
+    visibility: tolerant(visibility, defaultVisibility),
     theme: value({ fits: isThemeChoice, expected: "a theme this build has" }),
-    search: kept<SearchOptions>({ caseSensitive: boolean, wholeWord: boolean, regex: boolean }, defaultSettings.search),
+    search: tolerant<SearchOptions>({ caseSensitive: boolean, wholeWord: boolean, regex: boolean }, defaultSettings.search),
     info: boolean,
     logs: boolean,
     logLevel: value(kinds.among(levels)),
@@ -90,9 +88,10 @@ export const readSettings = (state: unknown): Read<Settings> => settingsReader(s
 
 // The settings as the browser keeps them, in localStorage, in `storage` for a test. Stored at persist's first version,
 // as every build has stored them, and read alike under any.
-export const settingsItem = (storage: () => Storage) => stored<Settings>({ name, version: 0, storage, read: readSettings });
+export const settingsItem = (storage: () => Storage): Item<Settings> => ({ name: "cc-dump.settings", version: 0, storage, initial: defaultSettings, read: readSettings });
+export const storedSettings = settingsItem(() => localStorage);
 
-export const useSettings = create<Settings>()(persist(() => defaultSettings, settingsItem(() => localStorage)));
+export const useSettings = create<Settings>()(persist(() => defaultSettings, stored(storedSettings)));
 
 export const settings = {
   setFollow: (follow: boolean) => useSettings.setState({ follow }),
@@ -104,10 +103,7 @@ export const settings = {
   setKeys: (keys: boolean) => useSettings.setState({ keys }),
   // [LAW:single-enforcer] A category moved to its next level, by a click on its chip or a press of its key.
   stepVisibility: (category: Category) => useSettings.setState((state) => ({ visibility: { ...state.visibility, [category]: levelAfter(state.visibility[category]) } })),
-  // Another tab changed what is stored under `key` (a storage event's key), or cleared the storage (no key): the
-  // settings are read again if it was them, so every tab holds the settings the reader chose last. The read writes
-  // nothing (stored.ts).
-  changedElsewhere: (key: string | null) => {
-    if (key === name || key === null) void useSettings.persist.rehydrate();
-  },
+  // Another tab changed the settings, or cleared their storage (stored.ts `changes`): they are read again, so every tab
+  // holds the settings the reader chose last. The read writes nothing (stored.ts).
+  changedElsewhere: () => void useSettings.persist.rehydrate(),
 };

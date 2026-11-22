@@ -1,6 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { fields, jsonObject, kinds, object, parseJson, value, type Reader } from "@cc-dump/log/json";
+import { jsonObject, kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -61,9 +61,13 @@ export function parseLaunch(json: string): Launch {
   return { session: sessionName(launch.session), command: commandLine(launch.command) };
 }
 
+const launcher = object<Launcher>({
+  settings: parsed(kinds.object, (settings) => parseSettings("launcher settings", launchSettingsTable, settings)),
+  sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))),
+});
+
 export function parseLauncher(json: string): Launcher {
-  const f = fields(parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, f.object("settings")), sessions: sessions(f.strings("sessions").map(sessionName)) };
+  return parse(launcher, parseJson(json, "launcher"), "launcher");
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
@@ -73,23 +77,18 @@ export function sessions(names: string[]): Sessions {
 }
 
 export function parseLaunched(json: string): Launched {
-  const f = fields(parseJson(json, "launched"), "launched");
-  return {
-    session: sessionName(f.string("session")),
-    pane_id: paneId(f.string("pane_id")),
-    recording: f.string("recording"),
-    start_time: startTime(String(f.integer("start_time"))),
-    session_id: sessionId(f.string("session_id")),
-    window_id: windowId(f.string("window_id")),
-  };
+  return parse(launched, parseJson(json, "launched"), "launched");
 }
 
-// [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no
-// leading zero, and exact as a JSON number. `@03` is no window's.
-function tmuxNumber(value: string, what: string): number {
-  const number = Number(value);
-  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
+// [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: a whole number, exact
+// as a JSON number, and in text decimal with no leading zero. `@03` is no window's.
+function tmuxNumber(number: number, what: string): number {
+  if (!(Number.isSafeInteger(number) && number >= 0)) throw new Malformed(`not ${what}: ${number}`);
   return number;
+}
+function tmuxText(value: string, what: string): number {
+  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
+  return tmuxNumber(Number(value), what);
 }
 
 // A session's id, `$1`, a window's, `@3`, or a pane's, `%7`, as tmux writes them. The library's own parsers are in the
@@ -98,7 +97,7 @@ const idKinds = { $: "session", "@": "window", "%": "pane" } as const;
 function tmuxId<P extends keyof typeof idKinds>(prefix: P, value: string): `${P}${number}` {
   const what = `a tmux ${idKinds[prefix]} id`;
   if (!value.startsWith(prefix)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
-  tmuxNumber(value.slice(1), what);
+  tmuxText(value.slice(1), what);
   return value as `${P}${number}`;
 }
 export type SessionId = `$${number}`;
@@ -107,12 +106,16 @@ export const windowId = (value: string): WindowId => tmuxId("@", value);
 export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
-export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
+const aStartTime = "a tmux server's start time";
+export const startTime = (value: string): number => tmuxText(value, aStartTime);
 
-// [LAW:single-enforcer] A window as a value keeps it (the UI's view keeps its agent's), read by the parsers a launch's
-// is read by.
-export const tmuxWindow: Reader<TmuxWindow> = object({
-  start_time: value(kinds.integer, (seconds) => startTime(String(seconds))),
-  session_id: value(kinds.string, sessionId),
-  window_id: value(kinds.string, windowId),
-});
+// [LAW:single-enforcer] A window as a value holds it, read alike in a launch's answer and in the UI's view, which
+// keeps its agent's.
+const windowReaders: Readers<TmuxWindow> = {
+  start_time: parsed(kinds.integer, (seconds) => tmuxNumber(seconds, aStartTime)),
+  session_id: parsed(kinds.string, sessionId),
+  window_id: parsed(kinds.string, windowId),
+};
+export const tmuxWindow: Reader<TmuxWindow> = object(windowReaders);
+
+const launched = object<Launched>({ session: parsed(kinds.string, sessionName), pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });

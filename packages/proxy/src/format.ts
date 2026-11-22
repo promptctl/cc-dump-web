@@ -1,6 +1,6 @@
-import { outcomes, type Ending } from "@cc-dump/log/ending";
+import { ending, type Ending } from "@cc-dump/log/ending";
 import { Malformed } from "@cc-dump/log/failure";
-import { fields as jsonFields, parseJson } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -120,67 +120,49 @@ export type ProxyInfo = { base_url: string; upstream: string; recordings: string
 export function parseListings(json: string): Listing[] {
   const listings = parseJson(json, "recordings list");
   if (!Array.isArray(listings)) throw new Malformed("recordings list: is not an array");
-  return listings.map((listing: unknown) => listingOf(listing, "recordings list entry"));
+  return listings.map((entry: unknown) => parse(listing, entry, "recordings list entry"));
 }
 
 export function parseListing(json: string): Listing {
-  return listingOf(parseJson(json, "recording"), "recording");
+  return parse(listing, parseJson(json, "recording"), "recording");
 }
 
-const listingOf = (listing: unknown, what: string): Listing => ({ name: fields(listing, what).string("name") });
-
 export function parseRecordingEnd(json: string): RecordingEnd {
-  return { unterminated_bytes: fields(parseJson(json, "recording end"), "recording end").integer("unterminated_bytes") };
+  return parse(object<RecordingEnd>({ unterminated_bytes: value(kinds.integer) }), parseJson(json, "recording end"), "recording end");
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {
-  const status = fields(parseJson(json, "proxy status"), "proxy status");
-  const source = fields(status.object("source"), "proxy status: source");
-  const traffic = fields(status.object("traffic"), "proxy status: traffic");
-  const state = source.oneOf("state", sourceStates);
-  return {
-    info: infoOf(status.object("info"), "proxy status: info"),
-    source: state === "watching" ? { state, changed_source: source.strings("changed_source") } : { state, message: source.string("message") },
-    traffic: { in_flight: traffic.integer("in_flight"), last_request: traffic.read("last_request", isTimeOrNull, `${aTime} or null`) },
-  };
+  return parse(proxyStatus, parseJson(json, "proxy status"), "proxy status");
 }
 
 export function parseProxyInfo(json: string): ProxyInfo {
-  return infoOf(parseJson(json, "proxy info"), "proxy info");
-}
-
-function infoOf(info: unknown, what: string): ProxyInfo {
-  const f = fields(info, what);
-  return { base_url: f.string("base_url"), upstream: f.string("upstream"), recordings: f.string("recordings") };
+  return parse(proxyInfo, parseJson(json, "proxy info"), "proxy info");
 }
 
 export function parseRecordedEvent(line: string): RecordedEvent {
   const json = parseJson(line, "recorded event");
-  const type = fields(json, "recorded event").oneOf("type", recordedTypes);
-  const trace_id = fields(json, `recorded ${type} event`).parsed("trace_id", parseTraceId);
+  const { type } = parse(recordedType, json, "recorded event");
+  const { trace_id } = parse(traceOf, json, `recorded ${type} event`);
   // Named as the fold names an event it refuses (ui/src/exchanges.ts), so either refusal names its trace and type.
-  const f = fields(json, `trace ${trace_id}'s ${type}`);
-  const event = { timestamp: f.read("timestamp", isTime, aTime), trace_id };
+  const what = `trace ${trace_id}'s ${type}`;
+  const event = { ...parse(timestamp, json, what), trace_id };
   switch (type) {
     case "request":
-      return { ...event, type, method: f.string("method"), url: f.string("url"), http_version: f.string("http_version"), headers: f.headers("headers") };
+      return { ...event, type, ...parse(request, json, what) };
     case "request_body":
     case "response_body":
-      return { ...event, type, base64: f.string("base64") };
+      return { ...event, type, ...parse(body, json, what) };
     case "request_trailers":
     case "response_trailers":
-      return { ...event, type, headers: f.headers("headers") };
+      return { ...event, type, ...parse(trailers, json, what) };
     case "response":
-      return { ...event, type, status: f.integer("status"), reason: f.string("reason"), http_version: f.string("http_version"), headers: f.headers("headers") };
-    case "end": {
-      const outcome = f.oneOf("outcome", outcomes);
-      return outcome === "error" ? { ...event, type, outcome, error: f.string("error") } : { ...event, type, outcome };
-    }
+      return { ...event, type, ...parse(response, json, what) };
+    case "end":
+      return { ...event, type, ...parse(ending, json, what) };
   }
 }
 
-// Keyed by the unions they list, so a type or an outcome added to the format is a compile error here until
-// the parse knows it.
+// Keyed by the unions they list, so a type added to the format is a compile error here until the parse knows it.
 const recordedTypes: Record<Recorded["type"], true> = {
   request: true,
   request_body: true,
@@ -190,17 +172,27 @@ const recordedTypes: Record<Recorded["type"], true> = {
   response_trailers: true,
   end: true,
 };
-const sourceStates: Record<SourceStatus["state"], true> = { watching: true, failed: true };
 // A time exactly as `toISOString` writes it, which is how the proxy writes every time it records or sends.
 const isTime = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString() === value;
-const aTime = "an ISO 8601 UTC time";
-const isTimeOrNull = (value: unknown): value is string | null => value === null || isTime(value);
-
-// The fields of `what`, with the recording format's headers beside the JSON types.
-function fields(json: unknown, what: string) {
-  const f = jsonFields(json, what);
-  return { ...f, headers: (name: string) => f.read(name, isHeaders, "a list of [name, value] string pairs") };
-}
-
+const time = value({ fits: isTime, expected: "an ISO 8601 UTC time" });
 const isHeaders = (value: unknown): value is Header[] =>
   Array.isArray(value) && value.every((header) => Array.isArray(header) && header.length === 2 && header.every((part) => typeof part === "string"));
+const headers = value({ fits: isHeaders, expected: "a list of [name, value] string pairs" });
+
+const listing = object<Listing>({ name: value(kinds.string) });
+const proxyInfo = object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) });
+const proxyStatus = object<ProxyStatus>({
+  source: tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } }),
+  traffic: object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) }),
+  info: proxyInfo,
+});
+
+// A recorded event's data, by its type.
+type Data<T extends Recorded["type"]> = Omit<Extract<Recorded, { type: T }>, "type">;
+const recordedType = object({ type: value(kinds.among(Object.keys(recordedTypes) as Recorded["type"][])) });
+const traceOf = object({ trace_id: parsed(kinds.string, parseTraceId) });
+const timestamp = object({ timestamp: time });
+const request = object<Data<"request">>({ method: value(kinds.string), url: value(kinds.string), http_version: value(kinds.string), headers });
+const body = object<Data<"request_body">>({ base64: value(kinds.string) });
+const trailers = object<Data<"request_trailers">>({ headers });
+const response = object<Data<"response">>({ status: value(kinds.integer), reason: value(kinds.string), http_version: value(kinds.string), headers });

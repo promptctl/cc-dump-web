@@ -1,23 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { Malformed } from "./failure.ts";
-import { entries, fields, kept, kinds, nullable, object, parseJson, tagged, value } from "./json.ts";
+import { entries, kinds, nullable, object, parse, parsed, parseJson, tagged, tolerant, value } from "./json.ts";
 import { parseTraceId } from "./trace.ts";
 
-describe("fields", () => {
+describe("parse", () => {
   const json = parseJson('{"trace_id":"a b","name":"x"}', "event");
 
-  it("fails with Malformed, naming the field, when a parser cannot take its value", () => {
-    expect(() => fields(json, "event").parsed("trace_id", parseTraceId)).toThrow(Malformed);
-    expect(() => fields(json, "event").parsed("trace_id", parseTraceId)).toThrow("event: trace_id");
+  it("fails with Malformed, naming the message and the field, when a parser cannot take its value", () => {
+    const read = object({ trace_id: parsed(kinds.string, parseTraceId) });
+    expect(() => parse(read, json, "event")).toThrow(Malformed);
+    expect(() => parse(read, json, "event")).toThrow('event: trace_id: "a b" is not a word');
+  });
+
+  it("passes over a field it does not read, as another build's", () => {
+    expect(parse(object({ name: value(kinds.string) }), json, "event")).toEqual({ name: "x" });
   });
 
   it("passes a parser's own bug as it is, so it is not taken for the sender's fault", () => {
     const bug = new TypeError("not a function");
-    expect(() =>
-      fields(json, "event").parsed("name", () => {
+    const buggy = object({
+      name: parsed(kinds.string, () => {
         throw bug;
       }),
-    ).toThrow(bug);
+    });
+    expect(() => parse(buggy, json, "event")).toThrow(bug);
   });
 
   it("fails with Malformed for text that is not JSON", () => {
@@ -25,15 +31,14 @@ describe("fields", () => {
   });
 });
 
-describe("a kept read", () => {
+describe("a tolerant read", () => {
   const match = object<{ key: string; nth: number }>({ key: value(kinds.string), nth: value(kinds.integer) });
   type Stored = { name: string; on: boolean; folds: Record<string, boolean>; current: { key: string; nth: number } | undefined };
   const fallback: Stored = { name: "none", on: false, folds: {}, current: undefined };
-  const read = kept<Stored>({ name: value(kinds.string), on: value(kinds.boolean), folds: entries(value(kinds.boolean)), current: match }, fallback);
+  const read = tolerant<Stored>({ name: value(kinds.string), on: value(kinds.boolean), folds: entries(value(kinds.boolean)), current: match }, fallback);
 
   it("keeps each field it reads, and takes one missing as the fallback's, naming nothing", () => {
     expect(read({ name: "a", folds: { x: true } }, [])).toEqual({ value: { ...fallback, name: "a", folds: { x: true } }, dropped: [] });
-    expect(read(undefined, [])).toEqual({ value: fallback, dropped: [] });
   });
 
   it("drops a field it refuses alone, by its path, with why, and keeps the rest", () => {
@@ -66,7 +71,7 @@ describe("a kept read", () => {
 
   it("passes a reader's own bug as it is", () => {
     const bug = new TypeError("not a function");
-    const buggy = kept<{ name: string }>(
+    const buggy = tolerant<{ name: string }>(
       {
         name: () => {
           throw bug;

@@ -1,6 +1,6 @@
 import { describe } from "@cc-dump/log/describe";
 import type { Ending } from "@cc-dump/log/ending";
-import { createLog, startTrace, unitsOf, type Facts, type Log, type Span } from "@cc-dump/log/event";
+import { createLog, unitsOf, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { keptLines } from "@cc-dump/log/kept";
 import { lineAt, type LogLine } from "@cc-dump/log/line";
 
@@ -8,9 +8,8 @@ import { lineAt, type LogLine } from "@cc-dump/log/line";
 export const { failed, unitOfWork } = unitsOf(describe);
 
 // [LAW:single-enforcer] A decision the UI took about the reader's view or what it keeps: a unit of work that ends as it
-// is taken, as `ending` says.
-export const decided = (log: Log, event: string, facts: Facts, ending: Ending = { outcome: "ok" }, span: Span = startTrace()) =>
-  unitOfWork(log, event, facts, span).end(ending);
+// is taken, on `span`, as `ending` says.
+export const decided = (log: Log, event: string, facts: Facts, ending: Ending, span: Span) => unitOfWork(log, event, facts, span).end(ending);
 
 // What a reader of a log is handed: each line kept, then each one written, until `signal` aborts. A signal already
 // aborted throws its reason, as the connection's reads do.

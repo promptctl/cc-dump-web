@@ -1,11 +1,11 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { entries, kept, kinds, nullable, object, tagged, value, type Read, type Reader } from "@cc-dump/log/json";
+import { entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
 import { tmuxWindow, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { OpenRecording } from "../reading.ts";
 import { settings, type SearchOptions } from "../settings.ts";
-import { stored } from "../stored.ts";
+import { stored, type Item } from "../stored.ts";
 import { recording } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
@@ -42,8 +42,8 @@ export type Search = { query: string; current: Current | undefined };
 const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
 // [LAW:one-source-of-truth] The stored view's version: the scheme of the row keys it holds, as rows.ts, history.ts,
-// format/format.ts, search.ts, regions.ts and contents.ts make them. rowKeys.test.ts pins a key of each kind to it, so
-// a key made another way fails there until this is the next scheme's.
+// format/format.ts, search.ts, regions.ts and contents.ts make them. rowKeys.test.ts pins a key of each kind beside it,
+// so a key made another way fails there, where the version it is stored under is changed with it.
 export const viewVersion = 7;
 
 const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } });
@@ -52,9 +52,9 @@ const current = object<Current>({ key: value(kinds.string), at: value(kinds.stri
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
 // and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
 // field is a choice of its own, so one dropped leaves the rest.
-// [LAW:dataflow-not-control-flow] Under another scheme, what names a row (a fold, a place at a row, the current match)
-// is read by a reader that refuses it, so it is dropped and named like any value this build cannot take; a place at the
-// start or the end, and all else, is kept.
+// A row key of another scheme names another row or none, so under another version each value that names a row (each
+// fold, a place at a row, the current match) is refused as it is read, and dropped and named alone; a place at the start
+// or the end, and all else, is kept.
 export function readView(state: unknown, version: number): Read<View> {
   const rows = <T,>(reader: Reader<T>): Reader<T> =>
     version === viewVersion
@@ -62,23 +62,23 @@ export function readView(state: unknown, version: number): Read<View> {
       : () => {
           throw new Malformed(`names a row as row-key scheme ${version} does; this build's is ${viewVersion}`);
         };
-  return kept<View>(
+  return tolerant<View>(
     {
       open: nullable(value(kinds.string)),
       terminal: nullable(object<Terminal>({ window: tmuxWindow, shown: value(kinds.boolean) })),
-      opened: rows(entries(value(kinds.boolean))),
+      opened: entries(rows(value(kinds.boolean))),
       position: tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } }),
       moment,
-      search: kept<Search>({ query: value(kinds.string), current: rows(current) }, initial.search),
+      search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search),
     },
     initial,
   )(state, []);
 }
 
 // The view as the tab keeps it, in sessionStorage, in `storage` for a test.
-export const viewItem = (storage: () => Storage) => stored<View>({ name: "cc-dump.view", version: viewVersion, storage, read: readView });
+export const viewItem = (storage: () => Storage): Item<View> => ({ name: "cc-dump.view", version: viewVersion, storage, initial, read: readView });
 
-export const useView = create<View>()(persist((): View => initial, viewItem(() => sessionStorage)));
+export const useView = create<View>()(persist((): View => initial, stored(viewItem(() => sessionStorage))));
 
 export const view = {
   // A recording opened is shown as a tab opens, from the end, with no current match: the one there was is the last

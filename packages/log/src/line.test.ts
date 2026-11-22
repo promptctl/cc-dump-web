@@ -13,8 +13,8 @@ describe("parseLogLine", () => {
   });
 
   it("keeps a line whose event does not parse in its place, unread, saying why", () => {
-    expect(parseLogLine(event({ outcome: "fine" }), "ab12:4")).toEqual({ run: "ab12", seq: 4, unread: event({ outcome: "fine" }), error: "log line: outcome is not one of ok, aborted, stopped, error" });
-    expect(parseLogLine(event({ outcome: "error" }), "ab12:5")).toMatchObject({ seq: 5, error: "log line: error is not a string" });
+    expect(parseLogLine(event({ outcome: "fine" }), "ab12:4")).toEqual({ run: "ab12", seq: 4, unread: event({ outcome: "fine" }), error: "log line: outcome: is not one of ok, aborted, stopped, error" });
+    expect(parseLogLine(event({ outcome: "error" }), "ab12:5")).toMatchObject({ seq: 5, error: "log line: error: is missing" });
     expect(parseLogLine(event({ outcome: "ok", trace_id: undefined }), "ab12:6")).toMatchObject({ seq: 6, error: expect.stringContaining("log line: trace_id") });
     expect(lineLevel(parseLogLine("{", "ab12:7"))).toBe("error");
   });

@@ -147,7 +147,7 @@ describe("the browser connection", () => {
           message: `GET http://${LOOPBACK}:${proxy.readerPort}/recordings/${name}`,
           cause: expect.objectContaining({
             message: `the event ending at byte ${Buffer.byteLength(`${request}\n${footer}\n`)}`,
-            cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type is not one of") }),
+            cause: expect.objectContaining({ message: expect.stringContaining("recorded event: type: is not one of") }),
           }),
         }),
       },
@@ -262,7 +262,7 @@ describe("the browser connection", () => {
       res.write(`data: {"info":1}\n\ndata: ${JSON.stringify(watching())}\n\n`);
     });
     const status = statusing(createBrowserConnection({ readerPort: reader.port }));
-    expect(await status.next()).toEqual({ unreadable: expect.objectContaining({ message: `GET http://${LOOPBACK}:${reader.port}/status`, cause: expect.objectContaining({ message: "proxy status: source: is not an object" }) }) });
+    expect(await status.next()).toEqual({ unreadable: expect.objectContaining({ message: `GET http://${LOOPBACK}:${reader.port}/status`, cause: expect.objectContaining({ message: "proxy status: source: is missing" }) }) });
     expect(await status.next()).toEqual({ status: watching() });
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.OPEN]);
   });
@@ -363,7 +363,7 @@ describe("a part's log", () => {
       res.write(`id: ab:0\ndata: {}\n\nid: ab:1\ndata: ${JSON.stringify({ service: "proxy", ...event("next") })}\n\n`);
     });
     const logged = logging(createBrowserConnection({ readerPort: reader.port }), "proxy");
-    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "unread: log line: service is not a string" }, { line: "next" }]);
+    expect([await logged.next(), await logged.next(), await logged.next()]).toEqual(["opened", { line: "unread: log line: service: is missing" }, { line: "next" }]);
   });
 
   it("ends a log whose message has no line's position, reporting it as failed", async () => {

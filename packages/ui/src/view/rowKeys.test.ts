@@ -1,5 +1,6 @@
+import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
-import { reply, request, text, user } from "../../test/fixtures.ts";
+import { assistant, reply, request, text, user } from "../../test/fixtures.ts";
 import { categories, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Visibility } from "../settings.ts";
@@ -16,8 +17,8 @@ const expanded = Object.fromEntries(categories.map((category) => [category, "exp
 
 describe("the row-key scheme", () => {
   // [LAW:one-source-of-truth] A stored view names rows by these keys under its version (state.ts `viewVersion`). A key
-  // made another way is a key a view stored before does not hold, so it is pinned here with the version: changing one
-  // without the other fails, and changing both is the next scheme.
+  // made another way is a key a view stored before does not hold, so a key of each kind is pinned here beside the
+  // version: a key changed fails here, where the version is changed with it to the next scheme.
   it("is the stored view's version", () => {
     const main = { model: "m", system: [text("Be brief.")], tools: [{ name: "Read" }] };
     const hi = user(text("Hi."));
@@ -27,10 +28,23 @@ describe("the row-key scheme", () => {
       ...request("t2", { ...main, messages: [hi, { role: "assistant", content: [text("Hello.")] }, user(text("More."))] }),
       ...request("aside", { ...main, messages: [hi, { role: "assistant", content: [text("Hello.")] }, user(text("Aside?"))] }),
     ];
-    const layout = createLayout(expanded)(createHistory()(createFormatter()(exchanges(events))), 3, undefined, {});
+    // A compaction, whose summary's thread is a row of its own.
+    const summary = "<analysis>\nThought.\n</analysis>\n\n<summary>\n1. Said hello.\n</summary>\n";
+    const compacted = [
+      ...request("t1", { ...main, messages: [hi] }),
+      ...reply("t1", [text("Hello.")]),
+      ...request("compact", { ...main, messages: [hi, assistant(text("Hello.")), user(text("More."), text("Summarize."))] }),
+      ...reply("compact", [text(summary)]),
+      ...request("c1", { ...main, messages: [user(text("This session is being continued.\nSummary:\n1. Said hello.\nGo on."))] }),
+    ];
+    const layoutOf = (events: RecordedEvent[], step: number) => createLayout(expanded)(createHistory()(createFormatter()(exchanges(events))), step, undefined, {});
+    const layout = layoutOf(events, 3);
     const block = "thread:t1/message.0/content.0";
     const keys = {
       rows: layout.every.rows.map(({ key }) => key),
+      threads: layoutOf(compacted, 3)
+        .every.rows.filter(({ kind }) => kind === "thread")
+        .map(({ key }) => key),
       made: [pastKey(block), nestKey({ kind: "main" }), partKey(block, address.name), regionKey(partKey(block, address.name), 2), contentsKey(partKey(block, address.name))],
     };
     expect({ version: viewVersion, keys }).toEqual({
@@ -58,6 +72,7 @@ describe("the row-key scheme", () => {
           "aside/message.2",
           "thread:aside/message.2/content.0",
         ],
+        threads: ["thread:compact/message.3/content.0/thread"],
         made: [
           "past:thread:t1/message.0/content.0",
           "nest:main",

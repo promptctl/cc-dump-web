@@ -25,15 +25,16 @@ export type StepTaken = { cause: Cause; offset: number; end: number; kept: Kept;
 //   from it, with how the read it waited on stood last, as it no longer does: freed (`ok`), or left with the view
 //   (`aborted`, `close`). Told what holds them however often, each is written once for each hold.
 export function viewLog(log: Log) {
-  // Every decision here ends as taken.
-  const decided = (event: string, facts: Facts, span?: Span) => decide(log, event, facts, { outcome: "ok" }, span);
+  // A decision is a unit of work that ends as it is taken.
+  const taken: Ending = { outcome: "ok" };
+  const decided = (event: string, facts: Facts) => decide(log, event, facts, taken, startTrace());
   // [LAW:no-ambient-temporal-coupling] The hold in force, whose one owner this is: it begins it, and ends it as what
   // holds the moves changes or the view goes, on its own span.
   type Hold = { waiting: NonNullable<Waiting>; span: Span };
   let hold: Hold | undefined;
   const begun = (waiting: NonNullable<Waiting>): Hold => {
     const span = startTrace();
-    decided("moves_held", waiting, span);
+    decide(log, "moves_held", waiting, taken, span);
     return { waiting, span };
   };
   const free = (ending: Ending) => {

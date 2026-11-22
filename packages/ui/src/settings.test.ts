@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultSettings, levelAfter, readSettings, settings, settingsItem, useSettings, visibilities } from "./settings.ts";
+import { stored } from "./stored.ts";
 import { memoryStorage } from "./testing.ts";
 
 describe("settings", () => {
@@ -13,10 +14,6 @@ describe("settings", () => {
     logLevel: "warn",
     keys: true,
   } as const;
-
-  it("reads nothing stored as every setting's default", () => {
-    expect(readSettings(undefined)).toEqual({ value: defaultSettings, dropped: [] });
-  });
 
   it("keeps each setting stored, and reads one not a value this build has as its default, named", () => {
     // A level the last build stored, "shown", is not one this build has.
@@ -42,7 +39,7 @@ describe("settings", () => {
 
   it("reads the settings the build before this one stored, every choice kept", async () => {
     const { storage, writes } = memoryStorage({ "cc-dump.settings": JSON.stringify({ state: chosen, version: 0 }) });
-    useSettings.persist.setOptions(settingsItem(() => storage));
+    useSettings.persist.setOptions(stored(settingsItem(() => storage)));
     await useSettings.persist.rehydrate();
     expect(useSettings.getState()).toEqual(chosen);
     expect(writes).toEqual([]);
@@ -50,17 +47,13 @@ describe("settings", () => {
 
   it("reads the settings again as another tab changes or clears them, and writes nothing back", async () => {
     const { storage, held, writes } = memoryStorage();
-    useSettings.persist.setOptions(settingsItem(() => storage));
+    useSettings.persist.setOptions(stored(settingsItem(() => storage)));
     await useSettings.persist.rehydrate();
     held.set("cc-dump.settings", JSON.stringify({ state: chosen, version: 0 }));
-    settings.changedElsewhere("cc-dump.settings");
+    settings.changedElsewhere();
     expect(useSettings.getState()).toEqual(chosen);
     held.clear();
-    settings.changedElsewhere(null);
-    expect(useSettings.getState()).toEqual(defaultSettings);
-    // A change of another item is not the settings'.
-    held.set("cc-dump.settings", JSON.stringify({ state: chosen, version: 0 }));
-    settings.changedElsewhere("cc-dump.view");
+    settings.changedElsewhere();
     expect(useSettings.getState()).toEqual(defaultSettings);
     expect(writes).toEqual([]);
   });
