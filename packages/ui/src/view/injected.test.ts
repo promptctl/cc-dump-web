@@ -28,6 +28,8 @@ const rows = [block("a", false), block("b", true), block("c", false), block("d",
 const from = (at: At, direction: "next" | "previous", listed = rows) => injectedFrom(listed, at, direction);
 // A place at the row at `index`, `offset` into it.
 const row = (index: number, offset = 0): At => ({ at: "row", index, offset });
+// A place past the row at `index`, at the end of the row standing in for its own.
+const past = (index: number): At => ({ at: "past", index });
 
 describe("the injected blocks", () => {
   it("goes to the first one listed after the place's row, and the last before it", () => {
@@ -49,8 +51,8 @@ describe("the injected blocks", () => {
   });
 
   it("counts a place at the end of a row standing in for its own from that row's end", () => {
-    expect(from(row(3, Infinity), "previous")).toBe("d");
-    expect(from(row(3, Infinity), "next")).toBe("e");
+    expect(from(past(3), "previous")).toBe("d");
+    expect(from(past(3), "next")).toBe("e");
   });
 
   it("goes around the ends", () => {

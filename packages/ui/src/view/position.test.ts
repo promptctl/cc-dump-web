@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, presence, rankOf, resolve, type At, type Placed, type Position } from "./position.ts";
+import { positionAt, presence, rankBefore, rankOf, resolve, type At, type Placed, type Position } from "./position.ts";
 import type { Keys, Pending } from "./rows.ts";
 
 // Three rows of 100, 50 and 300 pixels.
@@ -24,7 +24,7 @@ const everyIndexOf = (key: string) => {
 };
 const at = (key: string, offset = 0): Position => ({ at: "row", key, offset });
 // Where `position` stands among the listed rows, with `pending` saying what can still bring a key.
-const judged = (position: Position, pending: (key: string) => Pending | undefined = () => undefined) => presence(position, listed, everyIndexOf, pending);
+const judged = (position: Position, pending: (key: string) => Pending | undefined = () => undefined) => presence(position, listed, everyIndexOf, pending, undefined);
 
 describe("where a position stands", () => {
   it("is the start or the end as it is", () => {
@@ -36,17 +36,17 @@ describe("where a position stands", () => {
   });
 
   it("is the row listed before a hidden one, standing in for it, and the start for one hidden before them all", () => {
-    expect(judged(at("b/hidden", 30))).toEqual({ at: "row", index: 1, offset: Infinity });
+    expect(judged(at("b/hidden", 30))).toEqual({ at: "past", index: 1 });
     expect(judged(at("hidden/first"))).toEqual({ at: "start" });
   });
 
   it("is the nearest row a key is inside, the longest of its prefixes cut at a slash, as a block the formatter replaced stands at its group", () => {
-    expect(judged(at("c/body"))).toEqual({ at: "row", index: 2, offset: Infinity });
-    expect(judged(at("b/hidden/so-far"))).toEqual({ at: "row", index: 1, offset: Infinity });
+    expect(judged(at("c/body"))).toEqual({ at: "past", index: 2 });
+    expect(judged(at("b/hidden/so-far"))).toEqual({ at: "past", index: 1 });
   });
 
   it("stands at the row a key is inside before asking whether the read can bring it, so a body replaced while its exchange runs is not waited for", () => {
-    expect(judged(at("c/body"), () => "reading")).toEqual({ at: "row", index: 2, offset: Infinity });
+    expect(judged(at("c/body"), () => "reading")).toEqual({ at: "past", index: 2 });
   });
 
   it("is pending, inside no row, by what can still bring it, and gone when nothing will", () => {
@@ -55,10 +55,17 @@ describe("where a position stands", () => {
     expect(judged(at("d/body"), () => undefined)).toEqual({ at: "gone" });
   });
 
+  it("is pending wherever it is while the moment's step is not read, by what can still bring it: the column shown is another's", () => {
+    for (const position of [at("c", 20), { at: "end" } as const, { at: "start" } as const]) {
+      expect(presence(position, listed, everyIndexOf, () => undefined, "reading")).toEqual({ at: "pending", read: "reading" });
+    }
+    expect(presence(at("c"), listed, everyIndexOf, () => undefined, "failed")).toEqual({ at: "pending", read: "failed" });
+  });
+
   it("ends on every key, one starting with a slash among them, and a prefix needs its slash: `ab` is not inside `a`", () => {
     for (const key of ["//", "/request/http", "", "ab/c", "a//"]) expect(judged(at(key)).at).not.toBe("pending");
     expect(judged(at("ab/c"))).toEqual({ at: "gone" });
-    expect(judged(at("a//"))).toEqual({ at: "row", index: 0, offset: Infinity });
+    expect(judged(at("a//"))).toEqual({ at: "past", index: 0 });
   });
 });
 
@@ -91,10 +98,13 @@ describe("the offset a position is at", () => {
 });
 
 describe("where a place ranks among the rows", () => {
-  it("is before them all at the start, after them all at the end, a row's index at its start, and behind the row past it", () => {
-    expect([rankOf({ at: "start" }), rankOf({ at: "end" })]).toEqual([-Infinity, Infinity]);
-    const row = (offset: number): At => ({ at: "row", index: 2, offset });
-    // A row standing in for a place's own puts it at that row's end (presence).
-    expect([row(0), row(20), row(Infinity)].map(rankOf)).toEqual([2, 2.5, 2.5]);
+  const places: At[] = [{ at: "start" }, { at: "row", index: 2, offset: 0 }, { at: "row", index: 2, offset: 20 }, { at: "past", index: 2 }, { at: "end" }];
+
+  it("against where the rows start: before them all, at a row's index at its very start, behind the row some way into it or past it, after them all", () => {
+    expect(places.map(rankOf)).toEqual([-Infinity, 2, 2.5, 2.5, Infinity]);
+  });
+
+  it("against what the rows hold: just before a row the place is at, however far into it, so all of the row is ahead", () => {
+    expect(places.map(rankBefore)).toEqual([-Infinity, 1.5, 1.5, 2.5, Infinity]);
   });
 });

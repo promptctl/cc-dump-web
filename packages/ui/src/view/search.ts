@@ -2,7 +2,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
-import { rankOf, type At } from "./position.ts";
+import { rankBefore, rankOf, type At } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
@@ -195,9 +195,9 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(found, own, past);
   }
-  // Where the step starts among the rows (position.ts): a reader's place at its own row stands before it, so that row's
-  // matches are ahead.
-  const place = from.match === undefined && from.at.at === "row" && from.at.offset !== Infinity ? from.at.index - 0.5 : rankOf(from.at);
+  // Where the step starts among the rows (position.ts): after the current match's place, or before the reader's, so the
+  // matches of the row at the view's top are ahead.
+  const place = from.match === undefined ? rankBefore(from.at) : rankOf(from.at);
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);

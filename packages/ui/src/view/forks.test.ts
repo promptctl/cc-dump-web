@@ -20,6 +20,8 @@ const rows = [line("a"), fork("b/fork"), line("c"), line("d"), fork("e/fork"), l
 const above = (at: At, listed: readonly Row[] = rows) => forkAbove(listed, at)?.key;
 // A place at the row at `index`, `offset` into it.
 const row = (index: number, offset = 0): At => ({ at: "row", index, offset });
+// A place past the row at `index`, at the end of the row standing in for its own.
+const past = (index: number): At => ({ at: "past", index });
 
 describe("the fork above the reader's place", () => {
   it("is the last whose line is listed at or before the row the place is at", () => {
@@ -39,7 +41,7 @@ describe("the fork above the reader's place", () => {
   });
 
   it("counts a place at the end of a row standing in for its own from that row", () => {
-    expect(above(row(3, Infinity))).toBe("b/fork");
+    expect(above(past(3))).toBe("b/fork");
   });
 
   it("is none where the column lists no fork", () => {

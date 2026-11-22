@@ -10,11 +10,11 @@ export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: strin
 export type Placed = { key: string; start: number; size: number };
 
 // Where a position stands among a column's rows, in the order of the `Keys` it was judged in: before them all, after
-// them all, or at the row at `index`, `offset` pixels into it. A row standing in for the position's own puts it at that
-// row's end, past every offset into it. `pending`: its row is not among them, and the read (`read`) can still bring
-// it. `gone`: it is not, and nothing will bring it.
+// them all, at the row at `index`, `offset` pixels into it, or `past` it, at the end of the row standing in for the
+// position's own. `pending`: its row is not among them, and the read (`read`) can still bring it. `gone`: it is not,
+// and nothing will bring it.
 // [LAW:types-are-the-program] A move counts from an `At` alone, so no move reads a place that is not among the rows.
-export type At = { at: "start" } | { at: "end" } | { at: "row"; index: number; offset: number };
+export type At = { at: "start" } | { at: "end" } | { at: "row"; index: number; offset: number } | { at: "past"; index: number };
 export type Presence = At | { at: "pending"; read: Pending } | { at: "gone" };
 
 // [LAW:single-enforcer] The one judgement of where a position stands among the rows `keys` order, which every move, the
@@ -23,8 +23,11 @@ export type Presence = At | { at: "pending"; read: Pending } | { at: "gone" };
 // the row listed before it (Keys), or before them all when none is. Otherwise it stands where the nearest row it is
 // inside does: `a/b/c` is inside `a/b`, which is inside `a`, so a block the formatter replaced, as it replaces a request
 // body so far, stands at its group, and a fork's line still to come at the row it will follow. Inside none, it is
-// pending while the read can still bring it (`pending`, rows.ts), and gone otherwise.
-export function presence(position: Position, keys: Keys, every: Keys["indexOf"], pending: (key: string) => Pending | undefined): Presence {
+// pending while the read can still bring it (`pending`, rows.ts), and gone otherwise. A reader's place is a moment and
+// a place in its column, so while the moment's step is not read, by what can still bring it (`moment`), the column
+// shown is another's, and every position is pending.
+export function presence(position: Position, keys: Keys, every: Keys["indexOf"], pending: (key: string) => Pending | undefined, moment: Pending | undefined): Presence {
+  if (moment !== undefined) return { at: "pending", read: moment };
   if (position.at !== "row") return position;
   const { key, offset } = position;
   const inside = insideOf(key, every);
@@ -33,7 +36,7 @@ export function presence(position: Position, keys: Keys, every: Keys["indexOf"],
     return read === undefined ? { at: "gone" } : { at: "pending", read };
   }
   const index = keys.indexOf(inside);
-  return index === undefined ? { at: "start" } : { at: "row", index, offset: keys.at(index) === key ? offset : Infinity };
+  return index === undefined ? { at: "start" } : keys.at(index) === key ? { at: "row", index, offset } : { at: "past", index };
 }
 
 // The key itself, or the longest of its prefixes cut at a slash, that is among the rows; undefined when none is. The
@@ -45,24 +48,28 @@ function insideOf(key: string, indexOf: Keys["indexOf"]): string | undefined {
   }
 }
 
-// [LAW:one-source-of-truth] Where a place stands in the order of the rows it was judged in, as a number the rows'
-// indexes compare with: before them all, after them all, a row's index at the row's very start, and half a row on
-// some way into it, so the row counts as behind it.
-export const rankOf = (at: At): number => (at.at === "start" ? -Infinity : at.at === "end" ? Infinity : at.offset > 0 ? at.index + 0.5 : at.index);
+// [LAW:one-source-of-truth] Where a place stands in the order of the rows it was judged in, as a number their indexes
+// compare with. `rankOf`, against where the rows start: before them all, after them all, a row's index at its very
+// start, and half a row on some way into it or past it, so the row's start is behind it. `rankBefore`, against what
+// the rows hold: a place at a row, however far into it, is just before it, so all the row holds is ahead, as the search
+// counts the matches of the row at the view's top.
+export const rankOf = (at: At): number => (at.at === "start" ? -Infinity : at.at === "end" ? Infinity : at.at === "row" && at.offset === 0 ? at.index : at.index + 0.5);
+export const rankBefore = (at: At): number => (at.at === "row" ? at.index - 0.5 : rankOf(at));
 
 // The scroll offset a position is at, given where the rows are: undefined while it is not among them, or its row is not
-// placed yet. A row shorter than the offset into it, as a block just collapsed is, or standing in for the position's
-// own, puts the view at its end. The end is past every offset: the largest one the scroller has is where the view shows
-// it.
+// placed yet. A row shorter than the offset into it, as a block just collapsed is, puts the view at its end, as a place
+// past the row standing in for it does. The end is past every offset: the largest one the scroller has is where the
+// view shows it.
 export function resolve(at: Presence, placed: (index: number) => Placed | undefined): number | undefined {
   switch (at.at) {
     case "end":
       return Infinity;
     case "start":
       return 0;
-    case "row": {
+    case "row":
+    case "past": {
       const row = placed(at.index);
-      return row === undefined ? undefined : row.start + Math.min(at.offset, row.size);
+      return row === undefined ? undefined : row.start + (at.at === "row" ? Math.min(at.offset, row.size) : row.size);
     }
     case "pending":
     case "gone":

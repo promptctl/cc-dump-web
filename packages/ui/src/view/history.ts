@@ -104,7 +104,8 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 // recording's forks (forksOf), derived once per history for the column and the strip alike.
 // [LAW:parse-dont-validate] exception: `stepOf` takes any string, since a view's moment names its trace as stored, and
 // the stored view is not parsed as it is loaded yet (dump-design-ajl.6nq); until then a trace it does not hold is a
-// miss, which the conversation shows as its latest step (Conversation.tsx).
+// miss, which the conversation shows as its latest step while the read can still bring it, and replaces with now
+// once nothing can (Conversation.tsx).
 export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; forks: ReadonlyMap<string, number[]> };
 
 // A thread: its level, the first message every request of it sends, what that message says, and the tree of the paths

@@ -336,9 +336,10 @@ export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
 
 // How the read of a recording open stands (reading.ts), as the conversation shown is read: reading, ended or failed.
 export type Read = Exclude<Reading["state"], "none">;
-// What can still bring a row not among the rows: the read as it goes on, or, failed, the read begun when the recording
-// is opened again.
+// What can still bring a step not read yet: the read as it goes on, or, after it failed, a new read of the recording,
+// as a reload begins; nothing once it ended.
 export type Pending = Exclude<Read, "ended">;
+export const bringerOf = (read: Read): Pending | undefined => (read === "ended" ? undefined : read);
 
 // [LAW:one-source-of-truth] Each nested level's step that opens it (view/history.ts, StepWire), by the level's key,
 // with its level and what the step says of it, of the steps `segments`.
@@ -353,26 +354,21 @@ function openingsOf(segments: readonly Segment[]) {
 // Whether a step's exchange is still running: no end has been read of it.
 const running = ({ formatted }: Segment) => formatted.exchange.end === undefined;
 
-// What can still bring a row not among the rows and inside none of them (position.ts), by its key, or none: a read that
-// ended brings nothing more, and one that failed shows no row absent until it is begun again. One reading brings it
-// while the moment's step is not read (`momentPending`), so the column shows another, or while the step the key stands
-// with is not read or still running. That step is, for a nest's line, the one that opens its level, and for every other
-// row the step whose trace the key starts with. A key names the step it stands with, not the one that brings it: a
-// fork's line comes with a later sibling, and a thread's line with the step that carries the thread on.
-export function pendingOf({ segments, stepOf }: History, read: Read, momentPending: boolean): (key: string) => Pending | undefined {
-  switch (read) {
-    case "ended":
-      return () => undefined;
-    case "failed":
-      return () => "failed";
-    case "reading": {
-      const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
-      return (key) => {
-        const step = opening.get(key) ?? stepOf(traceOf(key));
-        return momentPending || step === undefined || running(segments[step - 1]!) ? "reading" : undefined;
-      };
-    }
-  }
+// What can still bring a row not among the rows of a moment's column and inside none of them (position.ts), by its key
+// (bringerOf), or none, so it is gone. The column holds the steps up to `reach`: the moment's, or, for now, every step
+// to come. The step the key stands with may still bring it while that step is among them and its exchange still
+// running, and one not read yet, which comes after every step read, only into now's column. That step is, for a nest's
+// line, the one that opens its level, and for every other row the step whose trace the key starts with. A key names
+// the step it stands with, not the one that brings it: a fork's line comes with a later sibling, and a thread's line
+// with the step that carries the thread on.
+export function pendingOf({ segments, stepOf }: History, read: Read, reach: number): (key: string) => Pending | undefined {
+  const by = bringerOf(read);
+  const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
+  return (key) => {
+    const step = opening.get(key) ?? stepOf(traceOf(key));
+    const comes = step === undefined ? reach === Infinity : step <= reach && running(segments[step - 1]!);
+    return comes ? by : undefined;
+  };
 }
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;

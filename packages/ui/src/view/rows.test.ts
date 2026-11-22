@@ -317,7 +317,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = matchMove({ ...layout, pending: () => undefined }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
+      const to = matchMove({ ...layout, pending: () => undefined, moment: undefined }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -824,26 +824,28 @@ describe("the column", () => {
     for (const events of [parted, nested]) {
       const history = createHistory()(createFormatter()(exchanges(events)));
       const { every } = layouts(events)(history.segments.length, undefined, { [outer]: true, [inner]: true });
-      const pending = pendingOf(history, "reading", false);
+      const pending = pendingOf(history, "reading", Infinity);
       const running = new Set<string>(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
       const keys = every.rows.map(({ key }) => key);
       expect(keys.filter((key) => pending(key) !== undefined)).toEqual(keys.filter((key) => running.has(traceOf(key))));
     }
     // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));
-    expect([outer, inner, "nest:agent:z"].map(pendingOf(nests, "reading", false))).toEqual([undefined, undefined, "reading"]);
+    expect([outer, inner, "nest:agent:z"].map(pendingOf(nests, "reading", Infinity))).toEqual([undefined, undefined, "reading"]);
   });
 
-  it("says what can still bring a row: the read while the row's step is not read or still running, or the moment's step is not read; the read begun again after it failed; nothing after it ended", () => {
+  it("says what can still bring a row into the column, by key: its step while among the column's steps and still running, a step not read only into now's; the read, or after it failed a new read; nothing once it ended", () => {
     const events = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")]), ...request("t2", { ...main, messages: more }), ...streaming("t2", [text("More")])];
     const history = createHistory()(createFormatter()(exchanges(events)));
     // A row of the step that ended, of the step still running, of an agent with no step read, and of an exchange not read.
     const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x"];
-    const can = (read: Read, momentPending = false) => keys.map(pendingOf(history, read, momentPending));
+    const can = (read: Read, reach = Infinity) => keys.map(pendingOf(history, read, reach));
     expect(can("reading")).toEqual([undefined, "reading", "reading", "reading"]);
-    // The moment's step is not read yet, so the column shows another: any of its rows may still come.
-    expect(can("reading", true)).toEqual(keys.map(() => "reading"));
-    expect(can("failed")).toEqual(keys.map(() => "failed"));
+    // A row of a step that ended is gone after a failed read as after one that goes on.
+    expect(can("failed")).toEqual([undefined, "failed", "failed", "failed"]);
     expect(can("ended")).toEqual(keys.map(() => undefined));
+    // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet.
+    expect(can("reading", 1)).toEqual(keys.map(() => undefined));
+    expect(can("reading", 2)).toEqual([undefined, "reading", undefined, undefined]);
   });
 });

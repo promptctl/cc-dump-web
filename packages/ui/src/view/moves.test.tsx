@@ -38,7 +38,7 @@ const keys: Keys = {
 };
 // The column, every row listed, in which a key starting `later` is one the read can still bring, and any other not
 // among the rows one nothing will; and the same column after the read failed.
-const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, pending: (key) => (key.startsWith("later") ? "reading" : undefined) };
+const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, pending: (key) => (key.startsWith("later") ? "reading" : undefined), moment: undefined };
 const failed: ColumnState = { ...column, pending: (key) => (key.startsWith("later") ? "failed" : undefined) };
 const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
@@ -58,6 +58,12 @@ describe("a move from the reader's place", () => {
     expect([forkMove(column, pending), injectedMove(column, pending, "next"), matchMove(column, found, undefined, pending, "next", pattern)]).toEqual([undefined, undefined, undefined]);
     expect(waitingOf(column, pending, undefined)).toEqual({ held: "place", read: "reading" });
     expect(waitingOf(failed, pending, undefined)).toEqual({ held: "place", read: "failed" });
+  });
+
+  it("is none from any place while the moment's step is not read, since the column shown is another's", () => {
+    const held: ColumnState = { ...column, moment: "reading" };
+    expect([forkMove(held, listed), injectedMove(held, listed, "next"), matchMove(held, found, undefined, listed, "next", pattern), matchMove(held, found, match("a/said"), listed, "next", pattern)]).toEqual([undefined, undefined, undefined, undefined]);
+    expect(waitingOf(held, listed, undefined)).toEqual({ held: "place", read: "reading" });
   });
 
   it("steps the search from a current match among the rows, though the place is not read yet", () => {
@@ -95,9 +101,13 @@ describe("the line under the rows", () => {
     expect(says(listed, match("later/said"))).toMatch(/>The current match is not read yet</);
   });
 
-  it("says, after the read failed, that the row was not read before it failed and how to read on", () => {
-    expect(says(pending, undefined, failed)).toMatch(/>Your place was not read before the read failed: open the recording again to read on</);
-    expect(says(listed, match("later/said"), failed)).toMatch(/>The current match was not read before the read failed: open the recording again to read on</);
+  it("says, after the read failed, that it failed before the row", () => {
+    expect(says(pending, undefined, failed)).toMatch(/>The read failed before your place</);
+    expect(says(listed, match("later/said"), failed)).toMatch(/>The read failed before the current match</);
+  });
+
+  it("says the place is not read yet while the moment's step is not, wherever the place is", () => {
+    expect(says(listed, undefined, { ...column, moment: "reading" })).toMatch(/>Your place is not read yet</);
   });
 
   it("is empty while nothing holds the moves, and for a place nothing will bring", () => {

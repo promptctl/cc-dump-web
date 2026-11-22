@@ -150,7 +150,7 @@ describe("history", () => {
     // Inside none of the exchange's rows, a thread's item not among them stands nowhere: with nothing more to read, gone.
     for (const { groups } of history(process).segments) {
       for (const { key } of groups.flatMap(({ items }) => items).filter(({ key }) => key.startsWith("thread:"))) {
-        expect(presence({ at: "row", key, offset: 0 }, keys, indexOf, () => undefined)).toEqual({ at: "gone" });
+        expect(presence({ at: "row", key, offset: 0 }, keys, indexOf, () => undefined, undefined)).toEqual({ at: "gone" });
       }
     }
   });
