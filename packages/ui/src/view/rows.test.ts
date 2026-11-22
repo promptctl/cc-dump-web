@@ -856,9 +856,10 @@ describe("the column", () => {
     expect(can("failed")).toEqual(["step_ended", "failed", "failed", "failed"]);
     // Once the read ended, a row its step's end did not already rule out is gone for that.
     expect(can("ended")).toEqual(["step_ended", "read_ended", "read_ended", "read_ended"]);
-    // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet.
-    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(["step_ended", "step_unlisted", "step_unlisted", "step_unlisted"]);
-    expect(can("reading", { at: "held", step: 2 })).toEqual(["step_ended", "reading", "step_unlisted", "step_unlisted"]);
+    // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet, each said
+    // by its own judgement.
+    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(["step_ended", "step_unlisted", "step_unread", "step_unread"]);
+    expect(can("reading", { at: "held", step: 2 })).toEqual(["step_ended", "reading", "step_unread", "step_unread"]);
     // Nor can now's column hold the rows of a running step it does not list, as a fork's sibling not chosen.
     expect(can("reading", now, new Set([1]))).toEqual(["step_ended", "step_unlisted", "reading", "reading"]);
   });

@@ -134,10 +134,27 @@ describe("readRecording", () => {
     expect(started(null).events).toEqual([]);
   });
 
-  it("throws the reason of a signal aborted before it begins, as the connection's read does", () => {
+  it("throws the reason of a signal aborted before it begins, as the connection's read does, showing and writing no read", () => {
     const abort = new AbortController();
     abort.abort(new Error("gone"));
-    expect(() => readRecording(fakeConnection().connection, eventsWritten().log, agent, () => {}, handFrames().frames, abort.signal, () => {})).toThrow("gone");
+    const { events, log } = eventsWritten();
+    const told: unknown[] = [];
+    expect(() => readRecording(fakeConnection().connection, log, agent, (shown) => told.push(shown), handFrames().frames, abort.signal, (reading) => told.push(reading))).toThrow("gone");
+    expect(told).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it("fails, and says so in its event, when the connection's read throws as it begins", () => {
+    const { events, log } = eventsWritten();
+    const states: Reading[] = [];
+    const throwing = {
+      read: () => {
+        throw new Error("no stream");
+      },
+    };
+    readRecording(throwing, log, agent, () => {}, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    expect(states.map((reading) => (reading.state === "failed" ? said(reading.error) : reading))).toEqual([{ state: "reading", name: agent }, expect.stringContaining("no stream")]);
+    expect(events).toEqual([expect.objectContaining({ event: "recording_read", name: agent, outcome: "error", error: expect.stringContaining("no stream"), exchanges: 0 })]);
   });
 
   it("leaves a frame's exchanges as they were when later events change the exchange", () => {

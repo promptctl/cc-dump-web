@@ -60,6 +60,8 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // since the throw comes from a frame or from the step that ends the read, which no caller catches.
 // [LAW:nothing-unseen] A read is a unit of work of the UI's, written to `log` as `recording_read` as it ends: ended,
 // with the end the proxy gave, failed, with its failure, or left by its reader (aborted), with the exchanges it read.
+// A signal already aborted throws its reason, as the connection's read does, before the read begins, so no read is
+// shown or written; a connection whose read throws as it begins fails the read.
 export function readRecording(
   connection: Pick<Connection, "read">,
   log: Log,
@@ -69,6 +71,7 @@ export function readRecording(
   signal: AbortSignal,
   changed: (reading: Reading) => void,
 ) {
+  signal.throwIfAborted();
   sink([]);
   // Reported as the read begins, so an end or a failure the read reports as it begins is the last state.
   changed(begun(open));
@@ -128,19 +131,23 @@ export function readRecording(
     const failure = show();
     if (failure !== undefined) finish({ state: "failed", error: failure });
   };
-  connection.read(
-    open,
-    {
-      event: (event, offset) => {
-        const placed = add(byTrace, event);
-        if (typeof placed === "string") return end({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
-        frame ??= frames(shownAtFrame);
+  try {
+    connection.read(
+      open,
+      {
+        event: (event, offset) => {
+          const placed = add(byTrace, event);
+          if (typeof placed === "string") return end({ state: "failed", error: new Error(open, { cause: refusedAt(offset, placed) }) });
+          frame ??= frames(shownAtFrame);
+        },
+        end: (outcome) => end({ state: "ended", name: open, end: outcome }),
+        failed: (error) => end({ state: "failed", error }),
       },
-      end: (outcome) => end({ state: "ended", name: open, end: outcome }),
-      failed: (error) => end({ state: "failed", error }),
-    },
-    reading,
-  );
+      reading,
+    );
+  } catch (error) {
+    end({ state: "failed", error: asError(error) });
+  }
 }
 
 // The recording on screen, by its name: the one being read or read to its end. None while none is open, or the read

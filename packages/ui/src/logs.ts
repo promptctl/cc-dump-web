@@ -4,11 +4,11 @@ import { parts, type Connection, type Part } from "./connection/connection.ts";
 import type { ReadLog } from "./log.ts";
 
 // The parts whose logs the panel lists: those the connection reaches, and the UI, whose log is the page's own (log.ts).
-export const logParts = [...parts, "ui"] as const;
-export type LogPart = (typeof logParts)[number];
+export type LogPart = Part | "ui";
 
 // [LAW:types-are-the-program] Where the UI's connection to a part's log stands: being made, made, lost or not made and
-// being tried again, or ended, not served or sending what is no log's. The UI's own is made as the page is.
+// being tried again, or ended, not served or sending what is no log's. The connection says it is made each time it is
+// (`opened`). The UI's own log is the page's, reached by no connection.
 export type LogConnection = { state: "connecting" } | { state: "connected" } | { state: "dropped" } | { state: "failed"; error: Error };
 
 // A line as the panel lists it: its part, the line, and when its work ended, which orders it among the other parts'.
@@ -19,14 +19,14 @@ export type Listed = { part: LogPart; line: LogLine; ended: number };
 // numbers of a process's lines, and the lines let go here. `last`: the last line read of each part's process.
 export type Logs = {
   lines: Listed[];
-  connections: Record<LogPart, LogConnection>;
+  connections: Record<Part, LogConnection>;
   notKept: number;
   last: Partial<Record<LogPart, Pick<LogLine, "run" | "seq">>>;
 };
 
 export type LogsChange = { part: LogPart; line: LogLine } | { part: Part; connection: LogConnection };
 
-export const noLogs: Logs = { lines: [], connections: { proxy: { state: "connecting" }, server: { state: "connecting" }, ui: { state: "connected" } }, notKept: 0, last: {} };
+export const noLogs: Logs = { lines: [], connections: { proxy: { state: "connecting" }, server: { state: "connecting" } }, notKept: 0, last: {} };
 
 // How many lines the panel holds: more than either part keeps (processLog's 1000), so a restart's lines stay beside the
 // ones before it, and few enough to list without a virtualizer.
@@ -52,8 +52,8 @@ export function logsChanged(logs: Logs, change: LogsChange): Logs {
   const lines = [...logs.lines.slice(0, at), listed, ...logs.lines.slice(at)];
   const letGo = Math.max(0, lines.length - kept);
   return {
+    ...logs,
     lines: lines.slice(letGo),
-    connections: { ...logs.connections, [part]: { state: "connected" } },
     notKept: logs.notKept + (line.seq - expected) + letGo,
     last: { ...logs.last, [part]: { run: line.run, seq: line.seq } },
   };

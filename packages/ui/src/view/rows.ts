@@ -359,9 +359,10 @@ const running = ({ formatted }: Segment) => formatted.exchange.end === undefined
 export type MomentStep = { at: "now" } | { at: "held"; step: number | undefined };
 
 // [LAW:types-are-the-program] A row, or a moment, nothing will bring, by the judgement that says so: the read ended
-// (`read_ended`); the step it stands with is not one the moment's column lists, being another history's, or not read
-// while the moment is a held one (`step_unlisted`); or its step is listed and was read whole without it (`step_ended`).
-export type Gone = { at: "gone"; why: "read_ended" | "step_unlisted" | "step_ended" };
+// (`read_ended`), which is the only one a moment is gone by; the step it stands with is not read, while the moment is a
+// held one, whose column lists no step read after it (`step_unread`); its step is read and not one the moment's column
+// lists, being another history's (`step_unlisted`); or its step is listed and was read whole without it (`step_ended`).
+export type Gone<Why extends string = "read_ended" | "step_unread" | "step_unlisted" | "step_ended"> = { at: "gone"; why: Why };
 // What can still bring a row not among a column's rows: the read, as `read` says, or nothing.
 export type Unread = { at: "pending"; read: Pending } | Gone;
 
@@ -369,7 +370,7 @@ export type Unread = { at: "pending"; read: Pending } | Gone;
 // says by key what can still bring a row not among its rows; its step not read yet, by what can still bring it
 // (`read`), while the column shown is another's, so every place waits on it; or gone, as a moment the read ended
 // without is, with every place in it.
-export type MomentStanding = { at: "read"; pending: (key: string) => Unread } | { at: "pending"; read: Pending } | Gone;
+export type MomentStanding = { at: "read"; pending: (key: string) => Unread } | { at: "pending"; read: Pending } | Gone<"read_ended">;
 
 // The standing of a moment, `moment`, whose column lists the steps `steps` (Layout), as the read stands. A row not
 // among the column's rows can still come while the step it stands with is listed and its exchange still running, and a
@@ -380,13 +381,15 @@ export type MomentStanding = { at: "read"; pending: (key: string) => Unread } | 
 // [LAW:nothing-unseen] Each judgement that a row will not come is named, so the view's event says which it was.
 export function standingOf({ segments, stepOf }: History, read: Read, moment: MomentStep, steps: ReadonlySet<number>): MomentStanding {
   const by = bringerOf(read);
-  const comes = (gone: Gone["why"] | undefined): Unread => (gone !== undefined ? { at: "gone", why: gone } : by === undefined ? { at: "gone", why: "read_ended" } : { at: "pending", read: by });
-  if (moment.at === "held" && moment.step === undefined) return comes(undefined);
+  // What the read can still bring, or that it ended.
+  const comes: { at: "pending"; read: Pending } | Gone<"read_ended"> = by === undefined ? { at: "gone", why: "read_ended" } : { at: "pending", read: by };
+  if (moment.at === "held" && moment.step === undefined) return comes;
   const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
-  const pending = (key: string) => {
+  const pending = (key: string): Unread => {
     const step = opening.get(key) ?? stepOf(traceOf(key));
-    if (step === undefined) return comes(moment.at === "now" ? undefined : "step_unlisted");
-    return comes(!steps.has(step) ? "step_unlisted" : running(segments[step - 1]!) ? undefined : "step_ended");
+    if (step === undefined) return moment.at === "now" ? comes : { at: "gone", why: "step_unread" };
+    if (!steps.has(step)) return { at: "gone", why: "step_unlisted" };
+    return running(segments[step - 1]!) ? comes : { at: "gone", why: "step_ended" };
   };
   return { at: "read", pending };
 }

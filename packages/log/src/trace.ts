@@ -15,5 +15,10 @@ export function parseTraceId(value: unknown): TraceId {
 
 // A new trace's id, W3C Trace Context's: 16 random bytes as lowercase hex.
 export function mintTraceId(): TraceId {
-  return parseTraceId(Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""));
+  return parseTraceId(randomHex(16));
+}
+
+// `bytes` random bytes as lowercase hex, the encoding of every id the parts mint.
+export function randomHex(bytes: number): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

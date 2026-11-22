@@ -33,16 +33,21 @@ export function watchable<T>(initial: T): Watched<T> & { become: (next: T) => vo
 // persistent: they never hold the process open past its shutdown. A watch fails once and stays failed, its
 // watchers closed: watching again takes a restart of the proxy.
 // [LAW:nothing-unseen] Starting the watch is a `watch_source` event, each check a `source_check` event, and a
-// watcher's error a `source_watch` event: the failed state carries the error's message, and its event the whole error.
+// watcher's life a `source_watch` event: the failed state carries the error's message, and its event the whole error.
 export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   const { become, ...watched } = watchable<SourceStatus>({ state: "watching", changed_source: [] });
-  const watchers: FSWatcher[] = [];
+  // Each watcher with its unit of work, which a failure of the watch ends as stopped, as it closes the watcher, unless the
+  // watcher's own error ended it first.
+  const watchers: { watcher: FSWatcher; watching: ReturnType<typeof unitOfWork> }[] = [];
   const failWith = (error: unknown) => {
-    for (const watcher of watchers) watcher.close();
+    for (const { watcher, watching } of watchers) {
+      watcher.close();
+      watching.end({ outcome: "stopped" });
+    }
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
-  // A check is its reading of the files, and only a failure of that fails the watch: the event's write and the state's
-  // listeners are not the check's, so one that throws throws as itself, and the check has written at most its one event.
+  // A check is its reading of the files, and only a failure of that fails the watch: the state's listeners are not the
+  // check's, so one that throws throws as itself, and the check has written its one event.
   const check = () => {
     const checking = unitOfWork(log, "source_check", { files_checked: source.size }, startTrace());
     let changed: string[];
@@ -61,14 +66,14 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
   const starting = unitOfWork(log, "watch_source", { files: source.size, directories: directories.size }, startTrace());
   try {
     for (const directory of directories) {
-      // The watcher's event spans its life, up to its error.
-      const watching = unitOfWork(log, "source_watch", { directory }, startTrace());
+      // The watcher's event spans its life, up to its error or the watch's failure.
       const watcher = watch(directory, { persistent: false }, check);
+      const watching = unitOfWork(log, "source_watch", { directory }, startTrace());
       watcher.on("error", (error) => {
         watching.end(failed(error));
         failWith(error);
       });
-      watchers.push(watcher);
+      watchers.push({ watcher, watching });
     }
   } catch (error) {
     starting.end(failed(error));
@@ -76,14 +81,8 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     return watched;
   }
   starting.end({ outcome: "ok" });
-  // The text on disk may have changed between its load and the watch. A first check that throws, as its event's write
-  // can, throws out of the watch before anyone holds it, so it leaves none of its watchers running.
-  try {
-    check();
-  } catch (error) {
-    for (const watcher of watchers) watcher.close();
-    throw error;
-  }
+  // The text on disk may have changed between its load and the watch.
+  check();
 
   return watched;
 }

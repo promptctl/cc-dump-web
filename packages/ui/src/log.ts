@@ -4,9 +4,10 @@ import { keptLines } from "@cc-dump/log/kept";
 import { parseLogLine, type LogLine } from "@cc-dump/log/line";
 
 // The UI's units of work, written by the parts' one writer, each error in the words a person is shown.
-export const { failed, unitOfWork, loggedAfter } = unitsOf(describe);
+export const { failed, unitOfWork } = unitsOf(describe);
 
-// What a reader of a log is handed: each line kept, then each one written, until `signal` aborts.
+// What a reader of a log is handed: each line kept, then each one written, until `signal` aborts. A signal already
+// aborted throws its reason, as the connection's reads do.
 export type ReadLog = (line: (line: LogLine) => void, signal: AbortSignal) => void;
 
 // [LAW:single-enforcer] [LAW:nothing-unseen] The page's log, the one the UI writes as `ui`: its events in the parts'
@@ -16,9 +17,10 @@ export type ReadLog = (line: (line: LogLine) => void, signal: AbortSignal) => vo
 export function pageLog(keep = 1000): { log: Log; read: ReadLog } {
   const lines = keptLines(keep);
   const read: ReadLog = (line, signal) => {
-    let next = lines.first();
+    signal.throwIfAborted();
+    const next = lines.from(0);
     const send = () => {
-      for (next = Math.max(next, lines.first()); next < lines.written(); next++) line(parseLogLine(lines.line(next).trimEnd(), `${lines.run}:${next}`));
+      for (let kept; (kept = next()); ) line(parseLogLine(kept.line, kept.id));
     };
     send();
     signal.addEventListener("abort", lines.watch(send), { once: true });

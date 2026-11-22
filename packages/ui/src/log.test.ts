@@ -1,9 +1,7 @@
-import { parseTraceId } from "@cc-dump/log/trace";
 import type { LogLine } from "@cc-dump/log/line";
+import { workEvent as event } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
 import { pageLog } from "./log.ts";
-
-const event = (name: string) => ({ event: name, trace_id: parseTraceId("t"), started_at: "2026-11-21T09:00:00.000Z", duration_ms: 0, outcome: "ok" as const });
 
 describe("the page's log", () => {
   it("hands a reader the lines it kept, then each one written, as the UI's lines in the parts' shape, until the reader leaves", () => {
@@ -33,5 +31,16 @@ describe("the page's log", () => {
       return run;
     };
     expect(runOf()).not.toBe(runOf());
+  });
+
+  it("throws the reason of a signal aborted before the read begins, and hands that reader nothing", () => {
+    const { log, read } = pageLog();
+    log(event("one"));
+    const left = new AbortController();
+    left.abort(new Error("gone"));
+    const lines: LogLine[] = [];
+    expect(() => read((line) => lines.push(line), left.signal)).toThrow("gone");
+    log(event("two"));
+    expect(lines).toEqual([]);
   });
 });

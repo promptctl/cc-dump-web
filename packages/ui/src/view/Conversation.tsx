@@ -19,7 +19,7 @@ import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, type Placed, type Position } from "./position.ts";
 import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, standingOf, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type MomentStep, type NestRow, type Parent, type Read, type Row, type SetRow, type Stands } from "./rows.ts";
-import { readAt, step, type Cause } from "./scroll.ts";
+import { readAt, step, type Cause, type Kept } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
@@ -39,7 +39,7 @@ import { WaitingLine } from "./WaitingLine.tsx";
 // `log`: the page's log, which the view's decisions are written to (decisions.ts).
 export function Conversation({ formatted, read, theme, log }: { formatted: FormattedExchange[]; read: Read; theme: Theme; log: Log }) {
   const reading = read === "reading";
-  const [decisions] = useState(() => viewLog(log, () => performance.now()));
+  const [decisions] = useState(() => viewLog(log));
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
   const conversation = useMemo(() => history(formatted), [history, formatted]);
@@ -106,36 +106,38 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   // What holds the moves, which the line under the rows says.
   const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
 
-  const written = useRef(0);
+  // What the view keeps between steps beside the position, which is the store's (scroll.ts `Kept`).
+  const scrolled = useRef<Omit<Kept, "position">>({ written: 0, by: "view" });
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, against
   // the rows of the render last committed, and carries it out.
   const sync = (cause: Cause) => {
     const element = scroller.current!;
-    const { position, moment } = useView.getState();
+    const live = useView.getState();
     const rowsNow = {
       judge: (position: Position) => inListed(column, position),
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
       rowAt,
     };
-    const kept = { position, written: written.current };
+    const kept = { ...scrolled.current, position: live.position };
     const [offset, end] = [element.scrollTop, largest(element)];
-    const next = step(cause, offset, end, kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
-    written.current = next.written;
+    const next = step(cause, offset, end, kept, useSettings.getState().follow, live.moment.at !== "chosen", rowsNow);
+    scrolled.current = { written: next.written, by: next.by };
     decisions.stepped({ cause, offset, end, kept, next });
-    if (next.position !== position) view.place(next.position, next.by, now);
+    if (next.position !== kept.position) view.place(next.position, next.by, now);
     const cleared = matchGone(column, useView.getState().search.current);
     if (cleared !== undefined) {
       decisions.matchCleared(cleared);
       view.matchGone();
     }
+    // The moment replaced is the one the column judged gone, this render's.
     if (column.moment.at === "gone") {
-      decisions.momentReplaced(useView.getState().moment, column.moment);
+      decisions.momentReplaced(moment, column.moment);
       view.moveInTime({ at: "now" }, useView.getState().position);
     }
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
-    written.current = element.scrollTop;
+    scrolled.current = { ...scrolled.current, written: element.scrollTop };
   };
   const latest = useRef(sync);
   // A step runs whenever what it reads changes: after a render, on a scroll event, and when the scroller is resized.
@@ -147,6 +149,8 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     sync("change");
     decisions.held(waiting);
   });
+  // A hold of the moves in force as the view goes ends with it.
+  useLayoutEffect(() => decisions.close, [decisions]);
   useLayoutEffect(() => {
     const element = scroller.current!;
     const onScroll = () => latest.current("scroll");

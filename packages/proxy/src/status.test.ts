@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Ending, Event } from "@cc-dump/log";
+import type { Ending } from "@cc-dump/log";
 import { routes } from "@cc-dump/log/answer";
 import { arrivals, eventLog, eventsWritten, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -72,20 +72,8 @@ describe("watchSource", () => {
     const watch = watchSource(log, new Map([...source, [unreadable, "0"]]));
     expect(watch.state()).toEqual({ state: "failed", message: expect.stringContaining("EISDIR") });
     expect(events.filter(({ event }) => event === "source_check")).toMatchObject([{ outcome: "error", error: expect.stringContaining("EISDIR") }]);
-  });
-
-  it("lets a check's event write that throws surface as itself, written once and not the check's failure", () => {
-    const { source } = sourceFiles();
-    const { events, log } = eventsWritten();
-    const writing = (event: Event) => {
-      log(event);
-      if (event.event === "source_check") throw new Error("sink gone");
-    };
-    expect(() => watchSource(writing, source)).toThrow("sink gone");
-    expect(events).toMatchObject([
-      { event: "watch_source", outcome: "ok" },
-      { event: "source_check", outcome: "ok", changed_source: [] },
-    ]);
+    // The watchers the failure closed are stopped, each said by its own event.
+    expect(events.filter(({ event }) => event === "source_watch")).toMatchObject([{ directory: dir, outcome: "stopped" }]);
   });
 });
 

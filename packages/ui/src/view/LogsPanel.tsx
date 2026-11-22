@@ -1,9 +1,9 @@
 import { describe } from "@cc-dump/log/describe";
 import { lineLevel, levels, type Level, type LoggedEvent } from "@cc-dump/log/line";
 import { memo, useLayoutEffect, useRef } from "react";
-import type { Connection } from "../connection/connection.ts";
+import { parts, type Connection, type Part } from "../connection/connection.ts";
 import type { ReadLog } from "../log.ts";
-import { logParts, useLogs, type Listed, type LogConnection, type LogPart } from "../logs.ts";
+import { useLogs, type Listed, type LogConnection, type LogPart } from "../logs.ts";
 import { settings, useSettings } from "../settings.ts";
 
 const named: Record<LogPart, string> = { proxy: "proxy", server: "app server", ui: "UI" };
@@ -36,7 +36,7 @@ export function LogsPanel({ connection, page }: { connection: Pick<Connection, "
           </select>
         </label>
       </div>
-      {logParts.map((part) => (
+      {parts.map((part) => (
         <PartState key={part} part={part} connection={logs.connections[part]} />
       ))}
       {logs.notKept > 0 ? <p className="px-3 pt-2 text-foreground-muted">{logs.notKept === 1 ? "1 line" : `${logs.notKept} lines`} not kept</p> : null}
@@ -56,7 +56,7 @@ export function LogsPanel({ connection, page }: { connection: Pick<Connection, "
 }
 
 // A part whose log the panel does not reach, and why; nothing once it does.
-function PartState({ part, connection }: { part: LogPart; connection: LogConnection }) {
+function PartState({ part, connection }: { part: Part; connection: LogConnection }) {
   switch (connection.state) {
     case "connected":
       return null;

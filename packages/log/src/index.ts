@@ -182,7 +182,8 @@ function withUpgradeEvent(log: Log, upgrade: Upgrade, server: Server, upgraded: 
   };
 }
 
-// [LAW:single-enforcer] Every error an event carries is rendered here. An llhttp parse error carries
+// [LAW:single-enforcer] Every error a node part's event carries is rendered here, by the units this module makes
+// (unitsOf); the UI's are rendered by its own (ui/src/log.ts), in node too. An llhttp parse error carries
 // the raw bytes of the message it was parsing as `rawPacket`: a request's (x-api-key included) on a
 // server's socket, an upstream response's (set-cookie included) on a client's. The event records what
 // node said about the bytes, never the bytes.

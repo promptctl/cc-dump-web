@@ -17,9 +17,28 @@ export type Event = {
 } & Ending;
 export type Log = (event: Event) => void;
 
-// The export edge: one JSON line per event, written wherever the entry point's `write` sends it.
+// [LAW:single-enforcer] [LAW:nothing-unseen] The export edge, the one checkpoint every event leaves by: one JSON line per
+// event, written wherever the entry point's `write` sends it. A telemetry failure is itself telemetry, and never the
+// work's: writing an event throws nothing into the work it records. An event whose facts do not encode is written with
+// the floor's fields and `sink_error`, which says why; a line `write` refuses is counted, and each line written after
+// it carries the count so far, `sink_unwritten`.
 export function createLog(service: string, write: (line: string) => void): Log {
-  return (event) => write(`${JSON.stringify({ service, ...event })}\n`);
+  let unwritten = 0;
+  return (event) => {
+    const counted = unwritten === 0 ? {} : { sink_unwritten: unwritten };
+    let line: string;
+    try {
+      line = JSON.stringify({ service, ...event, ...counted });
+    } catch (error) {
+      const { event: name, trace_id, started_at, duration_ms, unit, outcome, error: failure } = event;
+      line = JSON.stringify({ service, event: name, trace_id, started_at, duration_ms, unit, outcome, error: failure, ...counted, sink_error: String(error) });
+    }
+    try {
+      write(`${line}\n`);
+    } catch {
+      unwritten++;
+    }
+  };
 }
 
 // A part's facts about a unit of work: any name but the floor's, read off `Event`.

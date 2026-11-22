@@ -30,10 +30,10 @@ export function processLog(service: string, out: Writable = process.stdout, keep
   // reading holds none of them; a line let go before it is sent is not sent, and the reader sees the gap in the numbers.
   const logs: Route = (req) =>
     stream((res) => {
-      let next = resumedAfter(req.headers["last-event-id"], lines.run) + 1;
+      const next = lines.from(resumedAfter(req.headers["last-event-id"], lines.run) + 1);
       let full = false;
       const send = () => {
-        for (next = Math.max(next, lines.first()); !full && next < lines.written(); next++) full = !res.write(frame({ id: `${lines.run}:${next}`, data: lines.line(next).trimEnd() }));
+        for (let kept; !full && (kept = next()); ) full = !res.write(frame({ id: kept.id, data: kept.line }));
       };
       send();
       const unwatch = lines.watch(send);
