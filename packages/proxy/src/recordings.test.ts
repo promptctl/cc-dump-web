@@ -1,7 +1,8 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Event, Log } from "@cc-dump/log";
+import type { Log } from "@cc-dump/log";
+import { eventsWritten } from "@cc-dump/log/testing";
 import { parseTraceId } from "@cc-dump/log/trace";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { recordingName } from "./format.ts";
@@ -20,15 +21,30 @@ function recordings(now = moment, log: Log = () => {}) {
 
 describe("record", () => {
   it("fails loudly, and does not make the file again, when a recording `create` made is gone before its first event", () => {
-    const logged: Event[] = [];
-    const { dir, create, record } = recordings(moment, (event) => void logged.push(event));
+    const { events, log } = eventsWritten();
+    const { dir, create, record } = recordings(moment, log);
     const name = create();
     rmSync(join(dir, name));
 
     record(name, trace_id)({ type: "end", outcome: "ok" });
 
     expect(readdirSync(dir)).toEqual([]);
-    expect(logged).toMatchObject([{ event: "record", outcome: "error", error: expect.stringContaining("ENOENT") }]);
+    expect(events).toMatchObject([{ event: "record", outcome: "error", error: expect.stringContaining("ENOENT") }]);
+  });
+
+  it("tells its listeners of an event written after the recording's event, and a listener that throws is no failed write", () => {
+    const { events, log } = eventsWritten();
+    const { create, record, onWritten } = recordings(moment, log);
+    const name = create();
+    const told: number[] = [];
+    onWritten(() => {
+      told.push(events.length);
+      throw new Error("reader bug");
+    });
+
+    expect(() => record(name, trace_id)({ type: "end", outcome: "ok" })).toThrow("reader bug");
+    expect(told).toEqual([1]);
+    expect(events).toMatchObject([{ event: "record", outcome: "ok", counts: { events_written: 1, events_failed: 0 } }]);
   });
 });
 

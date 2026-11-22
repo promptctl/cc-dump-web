@@ -1,6 +1,6 @@
 import { closeSync, constants, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { firstFailure, startSpan, unitEvent, type Log } from "@cc-dump/log";
+import { startSpan, unitOfWork, type Log } from "@cc-dump/log";
 import { recordingName } from "./format.ts";
 import { createWriter, eventLine, type Recorder, type Writer } from "./recording.ts";
 
@@ -58,8 +58,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     }
   };
   const record: Recorder = (name, trace_id) => {
-    const end = unitEvent(log, "record", { path: join(dir, name) }, startSpan(trace_id));
-    const { fail, or } = firstFailure();
+    const recording = unitOfWork(log, "record", { path: join(dir, name) }, startSpan(trace_id));
     const counts = { events_written: 0, bytes_written: 0, events_failed: 0 };
     // Whether the line was appended: a write's failure is counted, and is the recording's first failure if none came before.
     const appended = (line: Buffer) => {
@@ -67,7 +66,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
         writerOf(name).append(line);
       } catch (error) {
         counts.events_failed++;
-        fail(error);
+        recording.fail(error);
         return false;
       }
       counts.events_written++;
@@ -76,7 +75,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     };
     return (seen) => {
       const told = appended(eventLine(trace_id, seen)) ? listeners : [];
-      if (seen.type === "end") end(or({ outcome: "ok" }), () => ({ counts }));
+      if (seen.type === "end") recording.end({ outcome: "ok" }, () => ({ counts }));
       // The listeners are told after the event is written, so one that throws neither counts as a failed write nor
       // loses the recording's event.
       for (const listener of told) listener(name);

@@ -21,6 +21,12 @@ export function arrivals<T>() {
   };
 }
 
+// A log whose events the test reads as written, synchronously: `events`, in order.
+export function eventsWritten() {
+  const events: Event[] = [];
+  return { events, log: (event: Event) => void events.push(event) };
+}
+
 // A log the test can wait on: `next()` resolves with the next event written.
 export function eventLog() {
   const { arrive, next } = arrivals<Event>();
@@ -54,7 +60,7 @@ export async function serving(handler: Handler, upgrade?: Upgrade) {
   const { log, next } = eventLog();
   const { port, close } = await serve(log, handler, 0, upgrade);
   onTestFinished(close);
-  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, port });
+  expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, port: 0, bound_port: port });
   return { port, url: `http://${LOOPBACK}:${port}`, next };
 }
 

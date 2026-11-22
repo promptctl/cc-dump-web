@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
-import { failed, logged, startTrace, unitEvent, type Handler, type Log } from "@cc-dump/log";
+import { failed, startTrace, unitOfWork, type Handler, type Log } from "@cc-dump/log";
 import { stream, type Route } from "@cc-dump/log/answer";
 import { frame } from "@cc-dump/log/wire";
 import type { ProxyInfo, ProxyStatus, SourceStatus, Traffic } from "./format.ts";
@@ -41,40 +41,41 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     for (const watcher of watchers) watcher.close();
     become({ state: "failed", message: error instanceof Error ? error.message : String(error) });
   };
-  // A check is its reading of the files: what the state then tells its listeners is not the check's, so a listener that
-  // throws throws out of the watcher's callback as itself, and the check has written its one event.
+  // A check is its reading of the files, and only a failure of that fails the watch: the event's write and the state's
+  // listeners are not the check's, so one that throws throws as itself, and the check has written at most its one event.
   const check = () => {
+    const checking = unitOfWork(log, "source_check", { files_checked: source.size }, startTrace());
     let changed: string[];
     try {
-      changed = logged(
-        log,
-        "source_check",
-        { files_checked: source.size },
-        () => [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path),
-        (changed) => ({ changed_source: changed }),
-      );
+      changed = [...source].filter(([path, hash]) => onDisk(path) !== hash).map(([path]) => path);
     } catch (error) {
+      checking.end(failed(error));
       return failWith(error);
     }
+    checking.end({ outcome: "ok" }, () => ({ changed_source: changed }));
     become({ state: "watching", changed_source: changed });
   };
 
+  // Starting the watch fails it only by a watcher that cannot start, as a check fails it only by a file it cannot read.
   const directories = new Set([...source.keys()].map(dirname));
+  const starting = unitOfWork(log, "watch_source", { files: source.size, directories: directories.size }, startTrace());
   try {
-    logged(log, "watch_source", { files: source.size, directories: directories.size }, () => {
-      for (const directory of directories) {
-        const watcher = watch(directory, { persistent: false }, check);
-        watcher.on("error", (error) => {
-          unitEvent(log, "source_watch", { directory }, startTrace())(failed(error));
-          failWith(error);
-        });
-        watchers.push(watcher);
-      }
-    });
+    for (const directory of directories) {
+      // The watcher's event spans its life, up to its error.
+      const watching = unitOfWork(log, "source_watch", { directory }, startTrace());
+      const watcher = watch(directory, { persistent: false }, check);
+      watcher.on("error", (error) => {
+        watching.end(failed(error));
+        failWith(error);
+      });
+      watchers.push(watcher);
+    }
   } catch (error) {
+    starting.end(failed(error));
     failWith(error);
     return watched;
   }
+  starting.end({ outcome: "ok" });
   // The text on disk may have changed between its load and the watch.
   check();
 

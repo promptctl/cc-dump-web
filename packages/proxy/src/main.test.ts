@@ -55,5 +55,5 @@ it("listens for agents on the port its settings file sets", async () => {
     port,
     upstream: "http://127.0.0.1:9/gateway",
   });
-  expect(events.at(-1)).toMatchObject({ event: "listen", outcome: "ok", port });
+  expect(events.at(-1)).toMatchObject({ event: "listen", outcome: "ok", port, bound_port: port });
 });

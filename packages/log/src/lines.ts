@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Writable } from "node:stream";
 import { stream, type Route } from "./answer.ts";
-import { createLog, failed, startTrace, unitEvent, type Log } from "./index.ts";
+import { createLog, failed, startTrace, unitOfWork, type Log } from "./index.ts";
 import { positionOf } from "./line.ts";
 import { frame } from "./wire.ts";
 
@@ -26,11 +26,11 @@ export function processLog(service: string, out: Writable = process.stdout, keep
     kept[written++ % keep] = line;
     for (const send of readers) send();
   });
-  const stdout = unitEvent(log, "stdout", {}, startTrace());
+  const stdout = unitOfWork(log, "stdout", {}, startTrace());
   // `out` is let go first, so the event's own line goes only to the lines kept.
   out.on("error", (error) => {
     writing = false;
-    stdout(failed(error));
+    stdout.end(failed(error));
   });
 
   // `GET /logs`: Server-Sent Events, each line kept and then each one written, until the reader leaves or the server

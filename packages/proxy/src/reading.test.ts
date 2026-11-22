@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
-import { serve, type Event, type Log } from "@cc-dump/log";
+import { serve, type Log } from "@cc-dump/log";
 import { routes } from "@cc-dump/log/answer";
-import { eventLog, send, serving } from "@cc-dump/log/testing";
+import { eventLog, eventsWritten, send, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { createProxy, parseUpstream } from "./proxy.ts";
 import { createReader } from "./reading.ts";
@@ -329,8 +329,7 @@ describe("createReader", () => {
     const { promise: listed, resolve: list } = Promise.withResolvers<void>();
     // The reader asks whether the recording is followed once the directory is listed.
     const watched = Object.defineProperty({ ...recordings }, "follows", { get: () => (list(), recordings.follows) });
-    const logged: Event[] = [];
-    const log = (event: Event) => void logged.push(event);
+    const { events: logged, log } = eventsWritten();
     const handle = readerOver(log, watched);
     let closed: Promise<void> | undefined;
     const reader = await serve(
