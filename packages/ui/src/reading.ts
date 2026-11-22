@@ -1,9 +1,11 @@
 import { asError, describe } from "@cc-dump/log/describe";
+import { startTrace, type Log } from "@cc-dump/log/event";
 import type { RecordingEnd } from "@cc-dump/proxy/format";
 import { useEffect, useState } from "react";
 import { refusedAt, type Connection } from "./connection/connection.ts";
 import { add, type ByTrace, type Settled } from "./exchanges.ts";
 import { createFormatter, type FormattedExchange } from "./format/format.ts";
+import { failed, unitOfWork } from "./log.ts";
 import { recording, useExchanges } from "./store.ts";
 
 // The recording open (docs/design/01-features.md, F7), by its name, or none: a tab that has launched no agent and opened no
@@ -20,6 +22,8 @@ export type Reading =
   | { state: "reading"; name: string }
   | { state: "ended"; name: string; end: RecordingEnd }
   | { state: "failed"; error: Error };
+// Where a read stands once it has ended.
+type Finished = Extract<Reading, { state: "ended" | "failed" }>;
 
 // Where a read shows what it has read: its exchanges formatted, in the order they began, each time they change.
 export type Sink = (formatted: FormattedExchange[]) => void;
@@ -54,12 +58,28 @@ const begun = (open: OpenRecording): Reading => (open === null ? { state: "none"
 // of the read comes after its end.
 // [LAW:no-silent-failure] A formatter that throws on what it was given ends the read as failed, with what it threw,
 // since the throw comes from a frame or from the step that ends the read, which no caller catches.
-export function readRecording(connection: Pick<Connection, "read">, open: OpenRecording, sink: Sink, frames: Frames, signal: AbortSignal, changed: (reading: Reading) => void) {
+// [LAW:nothing-unseen] A read is a unit of work of the UI's, written to `log` as `recording_read` as it ends: ended,
+// with the end the proxy gave, failed, with its failure, or left by its reader (aborted), with the exchanges it read.
+// A signal already aborted throws its reason, as the connection's read does, before the read begins, so no read is
+// shown or written: that is the one throw the connection's read has, so a read begun reaches one of its endings.
+export function readRecording(
+  connection: Pick<Connection, "read">,
+  log: Log,
+  open: OpenRecording,
+  sink: Sink,
+  frames: Frames,
+  signal: AbortSignal,
+  changed: (reading: Reading) => void,
+) {
+  signal.throwIfAborted();
   sink([]);
   // Reported as the read begins, so an end or a failure the read reports as it begins is the last state.
   changed(begun(open));
   if (open === null) return;
   const byTrace: ByTrace<Shown> = new Map();
+  const read = unitOfWork(log, "recording_read", { name: open }, startTrace());
+  const exchanges = () => ({ exchanges: byTrace.size });
+  signal.addEventListener("abort", () => read.end({ outcome: "aborted" }, exchanges), { once: true });
   const format = createFormatter();
   const flush = () => {
     const frame: FormattedExchange[] = [];
@@ -92,14 +112,16 @@ export function readRecording(connection: Pick<Connection, "read">, open: OpenRe
       return asError(error);
     }
   };
-  const finish = (outcome: Reading) => {
+  const finish = (outcome: Finished) => {
+    if (outcome.state === "ended") read.end({ outcome: "ok" }, () => ({ ...exchanges(), ...outcome.end }));
+    else read.end(failed(outcome.error), exchanges);
     ended.abort();
     changed(outcome);
   };
   // [LAW:no-silent-failure] Ends the read in `outcome` once it has shown what is pending. When showing it throws too, the
   // read failed in what showed it: the failed outcome heads the message, its whole chain said there, and the failure of
   // showing is the `cause`, so neither replaces the other.
-  const end = (outcome: Reading) => {
+  const end = (outcome: Finished) => {
     const failure = show();
     if (failure === undefined) return finish(outcome);
     finish({ state: "failed", error: outcome.state === "failed" ? new Error(`${describe(outcome.error)}, and showing what it read failed`, { cause: failure }) : failure });
@@ -140,13 +162,13 @@ const animationFrames: Frames = (callback) => {
 // [LAW:one-source-of-truth] A recording is opened again by its own name, which changes nothing in `open`: the store's
 // `read` is what changes on every open, so it is what a read depends on. The read empties the exchanges with `show`,
 // which leaves `read` as it was; were it `open`, the read would change its own dependency.
-export function useRecording(connection: Connection, open: OpenRecording): Reading {
+export function useRecording(connection: Connection, log: Log, open: OpenRecording): Reading {
   const [reading, setReading] = useState<Reading>(() => begun(open));
   const read = useExchanges((store) => store.read);
   useEffect(() => {
     const abort = new AbortController();
-    readRecording(connection, open, recording.show, animationFrames, abort.signal, setReading);
+    readRecording(connection, log, open, recording.show, animationFrames, abort.signal, setReading);
     return () => abort.abort();
-  }, [connection, open, read]);
+  }, [connection, log, open, read]);
   return reading;
 }

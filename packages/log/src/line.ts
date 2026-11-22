@@ -41,6 +41,9 @@ export function lineLevel(line: LogLine): Level {
   return "event" in line ? levelOf(line.event.outcome) : "error";
 }
 
+// [LAW:one-source-of-truth] A line's Server-Sent Events id, `run:seq`, written here and read here.
+export const lineId = ({ run, seq }: LinePosition): string => `${run}:${seq}`;
+
 // The position a line's Server-Sent Events id, `run:seq`, names; undefined for an id that names none.
 export function positionOf(id: string): LinePosition | undefined {
   const [, run, seq] = /^([0-9a-f]+):(\d+)$/.exec(id) ?? [];
@@ -48,10 +51,16 @@ export function positionOf(id: string): LinePosition | undefined {
 }
 
 // [LAW:parse-dont-validate] The line whose event is `data` and whose id is `id`. An id that names no line is no log's,
-// and throws; an event that does not parse taints no other line, so it is this one's, unread, in its place among them.
+// and throws.
 export function parseLogLine(data: string, id: string): LogLine {
   const position = positionOf(id);
   if (position === undefined) throw new Malformed(`log line: id ${JSON.stringify(id)} is not run:seq`);
+  return lineAt(position, data);
+}
+
+// The line at `position` whose event is `data`. An event that does not parse taints no other line, so it is this
+// one's, unread, in its place among them.
+export function lineAt(position: LinePosition, data: string): LogLine {
   try {
     return { ...position, event: parseLoggedEvent(data) };
   } catch (error) {

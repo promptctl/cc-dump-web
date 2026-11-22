@@ -80,7 +80,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - **Info panel:** the proxy address, the `ANTHROPIC_BASE_URL=…` line to copy, which gives the agent started with it a recording of its own, the upstream address, the path of the current recording, the agent's session ID when a request's `metadata.user_id` is the JSON text of an object holding `session_id`, the tmux session used for launching, and the app version. Every value can be copied with one click.
 
 ### F9. Logs panel
-- A panel shows the log lines of the proxy and the app server as they are written, and can be filtered by level.
+- A panel shows the log lines of the proxy, the app server and the browser UI as they are written, and can be filtered by level. The UI's are its own decisions about the reader's view and its reads of a recording, each with the facts that decided it: a place that moved after a reload says what moved it.
 
 ### F10. Themes
 - The app ships with more than one theme, including a light one and a dark one. Switching takes effect immediately.
@@ -111,7 +111,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 |---|---|---|
 | Proxy process | Never | Forwards requests, removes secret headers from what it keeps, appends what it saw to its process's recording, every event as it arrived, lists the recordings, and serves a recording to readers from any position: one the proxy run is writing to its end and then live, any other to its end. Reads its port and upstream from its settings file at its start. |
 | App server | Restarts on change | Launches agents through tmux, stores the settings it launches with, serves its log lines to the logs panel, as the proxy serves its own on its reader port (F9). |
-| Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. |
+| Browser UI | Hot module reload | Reassembles streamed responses into messages, formats them into blocks, filters, searches, displays. Keeps its own log lines for the logs panel, in the shape the proxy and the app server write theirs (F9). |
 
 **The proxy knows nothing about messages, blocks or streaming events.** Everything that understands the Anthropic API lives in the parts that reload.
 

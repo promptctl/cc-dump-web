@@ -3,6 +3,9 @@
 // the formats a part shares with the UI use it too.
 import { Malformed } from "./failure.ts";
 
+// What JSON text can say: what `JSON.stringify` encodes, and `JSON.parse` gives back, as it was.
+export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
+
 export function parseJson(text: string, what: string): unknown {
   try {
     return JSON.parse(text);

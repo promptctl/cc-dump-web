@@ -2,15 +2,16 @@ import { describe } from "@cc-dump/log/describe";
 import { lineLevel, levels, type Level, type LoggedEvent } from "@cc-dump/log/line";
 import { memo, useLayoutEffect, useRef } from "react";
 import { parts, type Connection, type Part } from "../connection/connection.ts";
-import { useLogs, type Listed, type LogConnection } from "../logs.ts";
+import type { ReadLog } from "../log.ts";
+import { useLogs, type Listed, type LogConnection, type LogPart } from "../logs.ts";
 import { settings, useSettings } from "../settings.ts";
 
-const named: Record<Part, string> = { proxy: "proxy", server: "app server" };
+const named: Record<LogPart, string> = { proxy: "proxy", server: "app server", ui: "UI" };
 
-// The logs panel (docs/design/01-features.md, F9): the proxy's and the app server's log lines as they are written, the
-// latest at the bottom, those asking at least the level chosen. Each line opens to the whole of its event.
-export function LogsPanel({ connection }: { connection: Pick<Connection, "logs"> }) {
-  const logs = useLogs(connection);
+// The logs panel (docs/design/01-features.md, F9): the proxy's, the app server's and the UI's log lines as they are
+// written, the latest at the bottom, those asking at least the level chosen. Each line opens to the whole of its event.
+export function LogsPanel({ connection, page }: { connection: Pick<Connection, "logs">; page: ReadLog }) {
+  const logs = useLogs(connection, page);
   const least = useSettings((state) => state.logLevel);
   const shown = logs.lines.filter(({ line }) => levels.indexOf(lineLevel(line)) <= levels.indexOf(least));
   // The list follows the latest line while it is scrolled to the bottom, and stays where the reader put it otherwise.
@@ -21,7 +22,7 @@ export function LogsPanel({ connection }: { connection: Pick<Connection, "logs">
     if (atBottom.current && list.current) list.current.scrollTop = list.current.scrollHeight;
   });
   // The run of each part's line listed last, so a line of another run says its part restarted between them.
-  const runs = new Map<Part, string>();
+  const runs = new Map<LogPart, string>();
   return (
     <aside aria-label="Logs" data-logs className="flex w-[32rem] shrink-0 flex-col border-l bg-surface text-xs">
       <div className="flex items-center gap-3 border-b p-3">

@@ -14,7 +14,7 @@ const after = (...changes: LogsChange[]): Logs => changes.reduce(logsChanged, no
 const names = (logs: Logs) => logs.lines.map(({ line }) => ("event" in line ? line.event.event : "unread"));
 
 describe("logsChanged", () => {
-  it("lists both parts' lines in the order their work ended, and says each part's log is reached", () => {
+  it("lists both parts' lines in the order their work ended", () => {
     const logs = after(
       { part: "proxy", line: line("p", 0, 1) },
       { part: "proxy", line: line("p", 1, 5) },
@@ -22,7 +22,6 @@ describe("logsChanged", () => {
       { part: "server", line: line("s", 0, 2, 1000) },
     );
     expect(names(logs)).toEqual(["p0", "s0", "p1"]);
-    expect(logs.connections).toEqual({ proxy: { state: "connected" }, server: { state: "connected" } });
   });
 
   it("counts the lines a part did not keep: before the first one sent, and between two of the same process", () => {
@@ -40,6 +39,14 @@ describe("logsChanged", () => {
     expect([names(logs), logs.notKept]).toEqual([["p0", "p1", "p2"], 0]);
   });
 
+  it("lists the UI's own lines among the parts', by when their work ended", () => {
+    const logs = after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 5) }, { part: "ui", line: line("u", 0, 3) });
+    expect([names(logs), logs.lines.map(({ part }) => part)]).toEqual([
+      ["p0", "u0", "p1"],
+      ["proxy", "ui", "proxy"],
+    ]);
+  });
+
   it("lists a part's lines in the order its process wrote them, whatever their times say", () => {
     // p1's work ended a fraction of a millisecond after p0's, but its start was written to the millisecond.
     const logs = after({ part: "proxy", line: line("p", 0, 1, 2) }, { part: "proxy", line: line("p", 1, 1, 1) }, { part: "server", line: line("s", 0, 1, 0) });
@@ -49,7 +56,7 @@ describe("logsChanged", () => {
   it("lists a line it could not read where it arrived, in its place in its process's numbers", () => {
     const unread = { run: "p", seq: 1, unread: "{", error: "log line: is not JSON" };
     const logs = after({ part: "proxy", line: line("p", 0, 5) }, { part: "proxy", line: unread }, { part: "proxy", line: line("p", 2, 6) });
-    expect([logs.lines.map(({ line }) => line.seq), logs.notKept, logs.connections.proxy]).toEqual([[0, 1, 2], 0, { state: "connected" }]);
+    expect([logs.lines.map(({ line }) => line.seq), logs.notKept]).toEqual([[0, 1, 2], 0]);
   });
 
   it("holds the last 2000 lines, counting the ones it let go", () => {
@@ -58,8 +65,11 @@ describe("logsChanged", () => {
     expect([logs.lines.length, logs.lines[0]!.line.seq, logs.notKept]).toEqual([2000, 3, 3]);
   });
 
-  it("says a part's log is lost while it is tried again, and why one failed", () => {
+  it("says a part's log is reached each time it is, lost while it is tried again, and why one failed", () => {
     const error = new Error("GET http://127.0.0.1:3346/logs: not served");
+    // Lines alone say nothing of the connection: it says each time it is made.
+    expect(after({ part: "proxy", line: line("p", 0, 1) }).connections.proxy).toEqual({ state: "connecting" });
+    expect(after({ part: "proxy", connection: { state: "dropped" } }, { part: "proxy", connection: { state: "connected" } }).connections.proxy).toEqual({ state: "connected" });
     expect(after({ part: "proxy", connection: { state: "dropped" } }).connections.proxy).toEqual({ state: "dropped" });
     expect(after({ part: "server", connection: { state: "failed", error } }).connections).toEqual({ proxy: { state: "connecting" }, server: { state: "failed", error } });
   });

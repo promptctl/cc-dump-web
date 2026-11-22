@@ -1,7 +1,7 @@
 import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
-import type { ForkRow, Layout, MomentStanding, Pending } from "./rows.ts";
+import type { ForkRow, Gone, Layout, MomentStanding, Pending } from "./rows.ts";
 import { adjacent, type Direction, type Found, type Match, type Step } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
@@ -52,5 +52,10 @@ export function waitingOf(column: ColumnState, position: Position, current: Matc
   return match?.at === "pending" ? { held: "match", read: match.read } : undefined;
 }
 
-// Whether the current match is one nothing will bring, which the view then no longer holds as current.
-export const matchGone = (column: ColumnState, current: Match | undefined): boolean => current !== undefined && matchAt(column, current).at === "gone";
+// The current match nothing will bring, by its block's key, with the judgement that says so, which the view then no
+// longer holds as current; none while it can still come, or none is current.
+export function matchGone(column: ColumnState, current: Match | undefined): (Gone & { key: string }) | undefined {
+  if (current === undefined) return undefined;
+  const at = matchAt(column, current);
+  return at.at === "gone" ? { ...at, key: current.key } : undefined;
+}

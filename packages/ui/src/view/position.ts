@@ -1,4 +1,4 @@
-import type { Keys, MomentStanding, Pending } from "./rows.ts";
+import type { Absent, Keys, MomentStanding } from "./rows.ts";
 
 // Where the reader is in the conversation: at its end, wherever the end now is; at its start; or at a row, `offset`
 // pixels into it at the top of the view.
@@ -15,7 +15,7 @@ export type Placed = { key: string; start: number; size: number };
 // and nothing will bring it.
 // [LAW:types-are-the-program] A move counts from an `At` alone, so no move reads a place that is not among the rows.
 export type At = { at: "start" } | { at: "end" } | { at: "row"; index: number; offset: number } | { at: "past"; index: number };
-export type Presence = At | { at: "pending"; read: Pending } | { at: "gone" };
+export type Presence = At | Absent;
 
 // [LAW:single-enforcer] The one judgement of where a position stands among the rows `keys` order, which every move, the
 // scroll step and the line that says a place is not read yet ask. A row's key stands where its row does, if the row is
@@ -30,10 +30,7 @@ export function presence(position: Position, keys: Keys, every: Keys["indexOf"],
   if (position.at !== "row") return position;
   const { key, offset } = position;
   const inside = insideOf(key, every);
-  if (inside === undefined) {
-    const read = moment.pending(key);
-    return read === undefined ? { at: "gone" } : { at: "pending", read };
-  }
+  if (inside === undefined) return moment.pending(key);
   const index = keys.indexOf(inside);
   return index === undefined ? { at: "start" } : keys.at(index) === key ? { at: "row", index, offset } : { at: "past", index };
 }

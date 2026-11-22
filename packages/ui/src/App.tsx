@@ -2,6 +2,7 @@ import type { SourceStatus } from "@cc-dump/proxy/format";
 import { useMemo } from "react";
 import type { Connection } from "./connection/connection.ts";
 import { describe } from "@cc-dump/log/describe";
+import type { PageLog } from "./log.ts";
 import { useRecording, type Reading } from "./reading.ts";
 import { settings, useSettings } from "./settings.ts";
 import { ago, useNow, useProxyStatus, type StatusReading } from "./status.ts";
@@ -19,11 +20,11 @@ import { useView, view } from "./view/state.ts";
 import { ThemePicker } from "./view/ThemePicker.tsx";
 import { Toggle } from "./view/Toggle.tsx";
 
-export function App({ connection }: { connection: Connection }) {
+export function App({ connection, page }: { connection: Connection; page: PageLog }) {
   const theme = useTheme();
   const open = useView((state) => state.open);
   const terminal = useView((state) => state.terminal);
-  const reading = useRecording(connection, open);
+  const reading = useRecording(connection, page.log, open);
   const status = useProxyStatus(connection);
   const shown = useExchanges((store) => store.exchanges);
   const read = useExchanges((store) => store.read);
@@ -72,13 +73,13 @@ export function App({ connection }: { connection: Connection }) {
           {reading.state === "none" ? (
             <p className="p-4 text-foreground-muted">Launch an agent, or open a recording.</p>
           ) : (
-            <Conversation key={read} formatted={shown} read={reading.state} theme={theme} />
+            <Conversation key={read} formatted={shown} read={reading.state} theme={theme} log={page.log} />
           )}
         </div>
         {terminal?.shown ? <Terminal key={`${terminal.window.start_time} ${terminal.window.session_id} ${terminal.window.window_id}`} connection={connection} window={terminal.window} theme={theme} /> : null}
         {/* The panels open at the right (docs/design/02-design.md, "Layout"). */}
         {info ? <InfoPanel connection={connection} status={status} open={open} session={session} /> : null}
-        {logs ? <LogsPanel connection={connection} /> : null}
+        {logs ? <LogsPanel connection={connection} page={page.read} /> : null}
         {keys ? <KeysPanel /> : null}
       </div>
     </div>

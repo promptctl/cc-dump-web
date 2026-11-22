@@ -1,7 +1,8 @@
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
+import type { Log } from "@cc-dump/log/event";
 import { isErrorStatus } from "@cc-dump/log/status";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
@@ -9,6 +10,7 @@ import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
+import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
 import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
@@ -17,7 +19,7 @@ import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, type Placed, type Position } from "./position.ts";
 import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, standingOf, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type MomentStep, type NestRow, type Parent, type Read, type Row, type SetRow, type Stands } from "./rows.ts";
-import { readAt, step, type Cause } from "./scroll.ts";
+import { readAt, step, type Cause, type Kept } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
 import { currentMatch } from "./highlights.ts";
@@ -34,8 +36,10 @@ import { WaitingLine } from "./WaitingLine.tsx";
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
 // and near the view are mounted. `read`: how the read of the recording stands (reading.ts), which says whether it can
 // still bring an exchange its end, or a row the view's place names. `theme`: what the minimap's canvas is painted in.
-export function Conversation({ formatted, read, theme }: { formatted: FormattedExchange[]; read: Read; theme: Theme }) {
+// `log`: the page's log, which the view's decisions are written to (decisions.ts).
+export function Conversation({ formatted, read, theme, log }: { formatted: FormattedExchange[]; read: Read; theme: Theme; log: Log }) {
   const reading = read === "reading";
+  const [decisions] = useState(() => viewLog(log));
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
   const conversation = useMemo(() => history(formatted), [history, formatted]);
@@ -102,27 +106,38 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   // What holds the moves, which the line under the rows says.
   const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
 
-  const written = useRef(0);
+  // What the view keeps between steps that is the scroller's, made with it; the position is the store's (scroll.ts `Kept`).
+  const scrollerKept = useRef<Omit<Kept, "position">>({ written: 0, scrolled: false });
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, against
   // the rows of the render last committed, and carries it out.
   const sync = (cause: Cause) => {
     const element = scroller.current!;
-    const { position, moment } = useView.getState();
+    const live = useView.getState();
     const rowsNow = {
       judge: (position: Position) => inListed(column, position),
       placed: (index: number) => placedAt(virtualizer.measurementsCache[index]),
       rowAt,
     };
-    const kept = { position, written: written.current };
-    const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
-    written.current = next.written;
-    if (next.position !== position) view.place(next.position, next.by, now);
-    if (matchGone(column, useView.getState().search.current)) view.matchGone();
-    if (column.moment.at === "gone") view.moveInTime({ at: "now" }, useView.getState().position);
+    const kept = { ...scrollerKept.current, position: live.position };
+    const [offset, end] = [element.scrollTop, largest(element)];
+    const next = step(cause, offset, end, kept, useSettings.getState().follow, live.moment.at !== "chosen", rowsNow);
+    scrollerKept.current = { written: next.written, scrolled: next.scrolled };
+    decisions.stepped({ cause, offset, end, kept, next });
+    if (next.position !== kept.position) view.place(next.position, next.by, now);
+    const cleared = matchGone(column, useView.getState().search.current);
+    if (cleared !== undefined) {
+      decisions.matchCleared(cleared);
+      view.matchGone();
+    }
+    // The moment replaced is the one the column judged gone, this render's.
+    if (column.moment.at === "gone") {
+      decisions.momentReplaced(moment, column.moment);
+      view.moveInTime({ at: "now" }, useView.getState().position);
+    }
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
-    written.current = element.scrollTop;
+    scrollerKept.current = { ...scrollerKept.current, written: element.scrollTop };
   };
   const latest = useRef(sync);
   // A step runs whenever what it reads changes: after a render, on a scroll event, and when the scroller is resized.
@@ -132,7 +147,10 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   useLayoutEffect(() => {
     latest.current = sync;
     sync("change");
+    decisions.held(waiting);
   });
+  // A hold of the moves in force as the view goes ends with it.
+  useLayoutEffect(() => decisions.close, [decisions]);
   useLayoutEffect(() => {
     const element = scroller.current!;
     const onScroll = () => latest.current("scroll");

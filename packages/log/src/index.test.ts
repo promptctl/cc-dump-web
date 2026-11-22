@@ -16,6 +16,10 @@ const ended: Event = { event: "e", trace_id: parseTraceId("t"), started_at: "s",
 const contradictory: Event = { ...ended, error: "boom" };
 void contradictory;
 
+// @ts-expect-error A fact is what JSON says, so every event encodes: a value JSON cannot say is no fact.
+const unencodable: Event = { ...ended, count: 1n };
+void unencodable;
+
 // @ts-expect-error A part hands serve its handler, never a server it made itself.
 const unlogged = () => serve(() => {}, createHttpServer(), 0);
 void unlogged;
