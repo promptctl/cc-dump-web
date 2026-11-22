@@ -192,6 +192,9 @@ describe("history", () => {
         reply: ["a/reply/content.0"],
       },
     ]);
+    // What its reply waits on and did is recorded all the same.
+    const [step] = history([...request("a", { ...main, messages: "Hi." }), ...reply("a", [agentCall("toolu_1", "Look.")], "tool_use")]).segments;
+    expect([step!.wire.waits, step!.wire.did?.name]).toEqual([["toolu_1"], "tool_use: Agent"]);
   });
 
   it("says two objects say the same when they have the same fields with the same values, a field that holds undefined not standing for one the other lacks", () => {

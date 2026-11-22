@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createReassembly } from "./stream.ts";
+import { contentOf } from "./blocks.ts";
+import { soFar, type ReplyBlock } from "./reply.ts";
+import { createReassembly, type Stream } from "./stream.ts";
 
 // A stream's text reassembled all at once.
 const reassemble = (text: string, complete: boolean) => createReassembly().reassemble(text, complete);
 
-const event = (data: object, eol = "\n") => `event: ${(data as { type: string }).type}${eol}data: ${JSON.stringify(data)}${eol}${eol}`;
+const event = (data: object, eol = "\n", name = (data as { type: string }).type) => `event: ${name}${eol}data: ${JSON.stringify(data)}${eol}${eol}`;
 const messageStart = { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", content: [], stop_reason: null, usage: { input_tokens: 2 } } };
 
 // A stream as Anthropic sends one: a text block, a tool whose input streams in pieces, an error, a ping.
@@ -27,6 +29,8 @@ const stream = (eol: string) =>
     .map((data) => event(data, eol))
     .join("");
 
+const blocksOf = (stream: Stream): readonly ReplyBlock[] => (stream.reply.at === "before" ? [] : stream.reply.reply.blocks);
+
 describe("createReassembly", () => {
   it.each([
     ["LF", "\n"],
@@ -36,10 +40,12 @@ describe("createReassembly", () => {
     const text = stream(eol);
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
-    expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
-      tail: "",
-    });
+    expect(whole.reply).toMatchObject({ at: "stopped", reply: { stop: { reason: "tool_use" }, events: [{ at: ["message_stop", "metrics"], value: { ms: 1 } }] } });
+    expect(blocksOf(whole).map((block) => block.is === "whole" && block.block)).toEqual([
+      contentOf({ type: "text", text: "Hello, world." }),
+      contentOf({ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }),
+    ]);
+    expect(whole).toMatchObject({ errors: [{ name: "error" }], blocks: [], tail: "" });
     for (let at = 0; at <= text.length; at++) {
       const reassembly = createReassembly();
       expect(reassembly.reassemble(text.slice(0, at), false), `split at ${at}`).toEqual(reassemble(text.slice(0, at), false));
@@ -47,20 +53,37 @@ describe("createReassembly", () => {
     }
   });
 
-  it("returns a stream of its own each time, which later events do not change", () => {
+  it("returns lists of its own each time, which later events do not change", () => {
     const reassembly = createReassembly();
     const text = stream("\n");
-    const at = text.indexOf("world");
-    const early = reassembly.reassemble(text.slice(0, at), false);
+    const early = reassembly.reassemble(text.slice(0, text.indexOf('"error"')), false);
     const copy = structuredClone(early);
     reassembly.reassemble(text, true);
     expect(early).toEqual(copy);
   });
 
-  it("shows a tool's input as its text until its block stops", () => {
+  it("holds a tool's input as its text until its block stops", () => {
     const text = stream("\n");
-    const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: '{"command": "ls"}' });
+    const sofar = blocksOf(reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false))[1]!;
+    expect(sofar.is === "arriving" && soFar(sofar)).toMatchObject({ input: '{"command": "ls"}' });
+  });
+
+  it("applies no event named otherwise than its type, or not named, which the Messages API never sends", () => {
+    const named = reassemble(event(messageStart, "\n", "content_block_start") + `data: ${JSON.stringify(messageStart)}\n\n`, true);
+    expect(named.reply).toEqual({ at: "before" });
+    expect(named.blocks.map(({ name, parts }) => [name, parts[0]])).toEqual([
+      ["content_block_start event", { id: "misfit", label: "not applied", kind: "text", form: "verbatim", text: "its type message_start is not its event's name" }],
+      ["message event", { id: "misfit", label: "not applied", kind: "text", form: "verbatim", text: "its type message_start is not its event's name" }],
+    ]);
+  });
+
+  it("shows a ping's fields and an event it cannot apply on their own, with why", () => {
+    const shown = reassemble(event({ type: "ping", at: 1 }) + event({ type: "content_block_stop", index: 0 }) + event({ type: "sparkle" }), true);
+    expect(shown.blocks.map(({ name, parts }) => [name, parts[0]])).toEqual([
+      ["ping event", { kind: "rest", id: "unread", label: "fields", fields: [["at", "1"]] }],
+      ["content_block_stop event", { id: "misfit", label: "not applied", kind: "text", form: "verbatim", text: "content_block_stop before message_start" }],
+      ["sparkle event", expect.objectContaining({ id: "misfit", text: expect.stringMatching(/^type: is not one of /) })],
+    ]);
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

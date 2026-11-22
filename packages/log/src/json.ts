@@ -25,12 +25,6 @@ const objectOf = (json: unknown): Readonly<Record<string, unknown>> => {
   return json;
 };
 
-// A field of a JSON value read leniently: the value at `name` when `json` is an object, and none otherwise, for a read
-// in which a value of any other shape simply holds no such field. `object` is the strict read.
-export function fieldOf(json: unknown, name: string): unknown {
-  return isObject(json) ? json[name] : undefined;
-}
-
 // A JSON type a value must have: its test, and its name in an error.
 export type Kind<T> = { fits: (value: unknown) => value is T; expected: string };
 

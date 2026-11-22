@@ -1,8 +1,7 @@
 import { fields, held, kinds, list, nullable, optional, raw as asIs, readShown, refusalOf, union, value, whole, type Fields, type Other, type Reader, type Readers, type Shown, type Tagged, type Unread, type Variants } from "@cc-dump/log/json";
 import { Malformed } from "@cc-dump/log/failure";
 import { split, type Piece } from "./injected.ts";
-import { fieldValue, receivedParts, restParts, unreadParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
-import type { Fields as ReadFields } from "./read.ts";
+import { fieldValue, receivedParts, unreadParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
 import { called, calledAsJson, type Called } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
 
@@ -71,17 +70,10 @@ export function raw(category: Category, name: string, reason: string, received: 
   return { category, name, parts: receivedParts(reason, received) };
 }
 
-// An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
-export function formatError(fields: ReadFields): Block {
-  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: fields.value("error") }, ...restOf(fields)] };
-}
-
-const restOf = (fields: ReadFields) => restParts(fields.rest(), unreadPart);
-
-// The fields of an object no read asked for, as a block of their own in `category`, when there are any.
-export function restBlock(fields: ReadFields, category: Category, name: string): BlockOrNone {
-  const parts = restOf(fields);
-  return parts.length === 0 ? [] : [{ category, name, parts }];
+// An error the API returned, as the body of an HTTP error or an event of a stream, and the fields beside it no
+// declaration names: it stands where the reply would have.
+export function formatError(error: unknown, unread: readonly Unread[]): Block {
+  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: error }, ...unreadParts(unread, [], unreadPart)] };
 }
 
 // [LAW:one-source-of-truth] A cache breakpoint is the request's, not the block it is set on: the cache's prefix is built

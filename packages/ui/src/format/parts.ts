@@ -1,4 +1,4 @@
-import { fieldOf, type Path, type Unread } from "@cc-dump/log/json";
+import type { Path, Unread } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -94,17 +94,14 @@ export function valuePart(value: unknown, id: string): Part {
   return typeof shown === "string" ? { id, kind: "text", form: "verbatim", text: shown } : { id, kind: "fields", fields: shown };
 }
 
-// The fields of `value` at each of `paths`, a path its field names joined by dots, named by it, those it holds: what a
-// block's line previews of a value that holds more than a line would.
-export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, { kind: "fields" }> {
-  const held = paths.map((path): [string, unknown] => [path, path.split(".").reduce(fieldOf, value)]);
-  return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
-}
+// The member `name` of a value as sent, its own: none of a value that is not an object or does not hold it.
+const memberOf = (value: unknown, name: string): unknown => (typeof value === "object" && value !== null ? Object.getOwnPropertyDescriptor(value, name)?.value : undefined);
 
-// The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
-export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
-  const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
-  return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
+// The fields of `value` at each of `paths`, named by the path's names joined by dots, those it holds: what a block's
+// line previews of a value as sent that holds more than a line would.
+export function pickedPart(value: unknown, paths: readonly Path[]): Extract<PartBody, { kind: "fields" }> {
+  const held = paths.map((path): [string, unknown] => [path.join("."), path.reduce(memberOf, value)]);
+  return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
 // The fields no declaration names, `unread`, of the object at `at`, as the part `named`, each by its path from that

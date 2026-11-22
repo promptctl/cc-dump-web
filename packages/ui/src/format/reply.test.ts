@@ -119,10 +119,10 @@ describe("a reply", () => {
     expect(() => read({ type: "sparkle" })).toThrow("type: is not one of message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop, ping, error");
   });
 
-  it("refuses at its stop a block whose input is not JSON, as its start, so the message can still stop", () => {
+  it("refuses at its stop a block whose input is not JSON, as far as it arrived, so the message can still stop", () => {
     const state = played([start, blockStart(0, { type: "tool_use", id: "t", name: "Bash", input: {} }), delta(0, { type: "input_json_delta", partial_json: '{"command": "l' }), stop(0), { type: "message_stop" }]);
     expect(replyOf(state)!.blocks).toEqual([
-      { index: 0, events: [], is: "refused", why: expect.stringMatching(/^input: is not JSON: /), block: contentOf({ type: "tool_use", id: "t", name: "Bash", input: {} }) },
+      { index: 0, events: [], is: "refused", why: expect.stringMatching(/^input: is not JSON: /), block: contentOf({ type: "tool_use", id: "t", name: "Bash", input: '{"command": "l' }) },
     ]);
   });
 

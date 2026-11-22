@@ -197,12 +197,12 @@ function joined(start: Readonly<Record<string, unknown>>, grown: Grown, input: (
 export const soFar = (block: Extract<ReplyBlock, { is: "arriving" }>): Record<string, unknown> => joined(block.start, block.grown, (json) => json);
 
 // A block at its stop: its input whole, read as the block it makes. An input that is not JSON makes the block refused,
-// shown as its start, so the message can still stop.
+// shown as far as it arrived, its input the text that streamed, so the message can still stop.
 const json = fromJsonText(raw);
 function stopped(block: Extract<ReplyBlock, { is: "arriving" }>, events: readonly EventField[]): ReplyBlock {
   const { index, start, grown } = block;
   const input = grown.by === "input" && grown.json !== "" ? readShown(json, grown.json) : undefined;
-  if (input?.is === "refused") return { index, events, is: "refused", why: `input: ${input.why}`, block: contentOf(start) };
+  if (input?.is === "refused") return { index, events, is: "refused", why: `input: ${input.why}`, block: contentOf(soFar(block)) };
   return { index, events, is: "whole", block: contentOf(joined(start, grown, () => input?.read.value)) };
 }
 
