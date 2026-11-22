@@ -13,7 +13,7 @@ import type { Folded } from "./rendering.ts";
 // A block's row as a step shows it, keyed `k`: the formatter's own block, made from a content block as sent, `content`,
 // in a message of the assistant's.
 const rowOf = (content: unknown): BlockRow => {
-  const block: Block = formatBlock(content, "assistant", "markdown");
+  const block: Block = formatBlock(content, "assistant", "markdown", []);
   const shown = keyed(block, "k");
   return { kind: "block", key: "k", change: "added", versions: [{ step: 1, block: shown, reply: true, rewrote: undefined, previous: undefined }], at: 0, set: undefined, depth: 0, dimmed: false };
 };

@@ -1,4 +1,5 @@
-import { launchName, type Block, type Category } from "../format/blocks.ts";
+import type { Block, Category } from "../format/blocks.ts";
+import { launchName } from "../format/tools.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part, type PartBody } from "../format/parts.ts";
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";

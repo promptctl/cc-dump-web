@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { encoded, fieldOf, held, refusalText, type Path, type Refusal, type Unknown } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -66,6 +66,10 @@ export function fieldLines(fields: Field[], holding: FieldPath = []): FieldLine[
 // How deep a field's line stands among the fields holding it: 0 for a part's own field.
 export const depthOf = ({ path }: FieldLine): number => path.length - 1;
 
+// [LAW:one-source-of-truth] What a value that was not sent shows as, wherever it is shown: a field the reader looked for
+// and the sender left out, never the text `undefined`, which no JSON holds.
+export const notSent = "not sent";
+
 // What a field shows a value as: an object or a list with members, or a string that is the JSON of one to the byte, as
 // metadata.user_id is, as its members' fields, a list's named by index; any other value as its JSON, so a string reads
 // quoted and no value reads as one of another type.
@@ -73,19 +77,15 @@ export function fieldValue(value: unknown): string | Field[] {
   const held = typeof value === "string" ? heldJson(value) : value;
   return typeof held === "object" && held !== null && Object.keys(held).length > 0
     ? Object.entries(held).map(([name, member]): Field => [name, fieldValue(member)])
-    : (JSON.stringify(value) ?? "undefined");
+    : (JSON.stringify(value) ?? notSent);
 }
 
 // The value a string is the JSON of, when showing that value shows every byte of the string; otherwise the string. Only
 // an object's or a list's JSON shows as fields, and it begins with its bracket, so no other string is parsed.
 function heldJson(text: string): unknown {
   if (!/^[[{]/.test(text)) return text;
-  try {
-    const value: unknown = JSON.parse(text);
-    return JSON.stringify(value) === text ? value : text;
-  } catch {
-    return text;
-  }
+  const read = held(encoded)(text, []).value;
+  return read.is === "read" && JSON.stringify(read.value) === text ? read.value : text;
 }
 
 // A value as the part `id` showing it: its fields when it holds any, else the JSON text a field would show it as.
@@ -101,20 +101,22 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
-// The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
-export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
-  const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
+// The fields of a value read at `at` that no declaration names, `unknown`, as the part `named`, its id and its label,
+// when there are any: each named by its path from the value, its keys as they were sent.
+export function unknownParts(unknown: readonly Unknown[], at: Path, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
+  const fields = unknown.map(({ at: path, value }): Field => [path.slice(at.length).join("."), fieldValue(value)]);
   return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
 }
 
-// Why a value is not shown as what it was read as, set before the value as it was received.
-export const doesNotFit = (reason: string): Part => ({ id: "misfit", label: "does not fit", kind: "text", form: "verbatim", text: reason });
+// Why a value is not shown as what it was read as, its refusal in the reader family's words, set before the value as
+// it was received.
+export const doesNotFit = (refusals: readonly Refusal[]): Part => ({ id: "misfit", label: "does not fit", kind: "text", form: "verbatim", text: refusalText(refusals) });
 
 // [LAW:one-source-of-truth] What a value not shown as what it was read as shows instead: why, then the value as it was
 // received, its JSON or its text.
 export type Received = Extract<PartBody, { kind: "json" | "text" }>;
-export function receivedParts(reason: string, received: Received): Part[] {
-  return [doesNotFit(reason), { id: "received", ...received }];
+export function receivedParts(refusals: readonly Refusal[], received: Received): Part[] {
+  return [doesNotFit(refusals), { id: "received", ...received }];
 }
 
 // The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
@@ -122,7 +124,7 @@ export function receivedParts(reason: string, received: Received): Part[] {
 // function's own.
 const jsonTexts = new WeakMap<Extract<PartBody, { kind: "json" }>, string>();
 export function jsonText(part: Extract<PartBody, { kind: "json" }>): string {
-  const text = jsonTexts.get(part) ?? JSON.stringify(part.value, null, 2) ?? "undefined";
+  const text = jsonTexts.get(part) ?? JSON.stringify(part.value, null, 2) ?? notSent;
   jsonTexts.set(part, text);
   return text;
 }

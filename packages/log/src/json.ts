@@ -9,15 +9,6 @@ import { Malformed } from "./failure.ts";
 // What JSON text can say: what `JSON.stringify` encodes, and `JSON.parse` gives back, as it was.
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 
-// [LAW:single-enforcer] The one `JSON.parse` of the app's own code.
-export function parseJson(text: string, what: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Malformed(`${what}: is not JSON`, { cause: error });
-  }
-}
-
 const isObject = (json: unknown): json is Record<string, unknown> => typeof json === "object" && json !== null && !Array.isArray(json);
 
 // A field of a JSON value read leniently: the value at `name` when `json` is an object holding it, and none otherwise,
@@ -39,6 +30,8 @@ export const kinds = {
   strings: { fits: (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"), expected: "a list of strings" } as Kind<string[]>,
   object: { fits: isObject, expected: "an object" } as Kind<Record<string, unknown>>,
   list: { fits: Array.isArray as (value: unknown) => value is unknown[], expected: "a list" } as Kind<unknown[]>,
+  // Any value at all: what a field is that only has to be sent.
+  sent: { fits: (value): value is unknown => value !== undefined, expected: "sent" } as Kind<unknown>,
   among: <T extends string>(values: readonly T[]): Kind<T> => ({
     fits: (value): value is T => typeof value === "string" && (values as readonly string[]).includes(value),
     expected: `one of ${values.join(", ")}`,
@@ -227,3 +220,15 @@ export const parse = <T>(reader: Reader<T>, json: unknown, what: string): T => r
 
 // The object `what` is, or `Malformed` naming it.
 export const jsonObject = (json: unknown, what: string): Record<string, unknown> => parse(fieldsOf, json, what);
+
+// [LAW:single-enforcer] The one `JSON.parse` of the app's own code: a string read as the JSON value its text encodes.
+export const encoded: Reader<unknown> = parsed(kinds.string, (text) => {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new Malformed("is not JSON", { cause: error });
+  }
+});
+
+// The document `what`, JSON text, as the value it encodes, or `Malformed` naming it.
+export const parseJson = (text: string, what: string): unknown => parse(encoded, text, what);
