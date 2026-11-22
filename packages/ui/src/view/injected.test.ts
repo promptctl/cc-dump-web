@@ -70,9 +70,12 @@ describe("the injected blocks", () => {
     expect(from({ at: "end" }, "next")).toBe("b");
   });
 
-  it("counts from the row a position inside it is nearest, and from before every row while that has not arrived", () => {
+  it("counts from the row a position inside it is nearest", () => {
     expect(from(at("c/body"), "next")).toBe("d");
-    expect(from(at("z"), "next")).toBe("b");
+  });
+
+  it("is not taken from either end in place of a position whose row has not arrived, as after a reload", () => {
+    expect([from(at("z"), "next"), from(at("z/body", 40), "previous")]).toEqual([{ unread: "z" }, { unread: "z/body" }]);
   });
 
   it("goes nowhere when no injected block is listed", () => {

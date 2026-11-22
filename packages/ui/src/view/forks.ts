@@ -1,13 +1,13 @@
-import { rowIndex, type Position } from "./position.ts";
+import { indexAt, type Position, type Unread } from "./position.ts";
 import type { ForkRow, Keys, Row } from "./rows.ts";
 import type { Direction } from "./search.ts";
 
 // The fork a press of [ or ] switches at (docs/design/02-design.md, "Keys"): the nearest above the view, the last
 // whose line is listed at or before the row at the view's top, `top`, or, with none there, the first listed.
-// Undefined where the column lists no fork. `rows`: the rows listed, each at the place `indexOf` gives its key. A top
-// whose row has not arrived, as after a reload, is before them all.
-export function forkAbove(rows: readonly Row[], indexOf: Keys["indexOf"], top: Exclude<Position, { at: "end" }>): ForkRow | undefined {
-  const at = top.at === "start" ? -1 : (rowIndex(top.key, indexOf) ?? -1);
+// Undefined where the column lists no fork. `rows`: the rows listed, each at the place `indexOf` gives its key.
+export function forkAbove(rows: readonly Row[], indexOf: Keys["indexOf"], top: Exclude<Position, { at: "end" }>): ForkRow | Unread | undefined {
+  const at = indexAt(top, indexOf, rows.length);
+  if (typeof at !== "number") return at;
   const forks = rows.flatMap((row, index) => (row.kind === "fork" ? [{ row, index }] : []));
   return (forks.findLast(({ index }) => index <= at) ?? forks[0])?.row;
 }

@@ -4,6 +4,11 @@
 // are measured. The end is not a place: while follow is on, being at the end is following (docs/design/01-features.md, F4).
 export type Position = { at: "end" } | { at: "start" } | { at: "row"; key: string; offset: number };
 
+// [LAW:types-are-the-program] A move's answer when the row it starts from, `unread`, is not among the rows, as after
+// a reload before its exchange is read: the reader is there, so the move is not taken from the start or the end in its
+// stead, and the view says the place is not read.
+export type Unread = { unread: string };
+
 // A placed row: its key, where it starts, in pixels from the top of the conversation, and its height.
 export type Placed = { key: string; start: number; size: number };
 
@@ -34,6 +39,19 @@ export function rowIndex(key: string, indexOf: (key: string) => number | undefin
   if (index !== undefined) return index;
   const cut = key.lastIndexOf("/");
   return cut === -1 ? undefined : rowIndex(key.slice(0, cut), indexOf);
+}
+
+// The index of the row a position is at, among `count` rows listed: before them all at the start, after them all at
+// the end, and otherwise its row's (rowIndex), or Unread while that is not among them.
+export function indexAt(position: Position, indexOf: (key: string) => number | undefined, count: number): number | Unread {
+  switch (position.at) {
+    case "end":
+      return count;
+    case "start":
+      return -1;
+    case "row":
+      return rowIndex(position.key, indexOf) ?? { unread: position.key };
+  }
 }
 
 // The place a scroll offset is at: the row at the top of the view and how far into it, or the start.

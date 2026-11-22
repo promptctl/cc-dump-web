@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { positionAt, resolve, rowIndex, type Placed } from "./position.ts";
+import { indexAt, positionAt, resolve, rowIndex, type Placed } from "./position.ts";
 
 // Three rows of 100, 50 and 300 pixels.
 const rows: Placed[] = [
@@ -23,6 +23,11 @@ describe("position", () => {
 
   it("does not resolve a row that is not among the rows, as one not read yet after a reload", () => {
     expect(resolve({ at: "row", key: "d", offset: 20 }, indexOf, placed)).toBeUndefined();
+  });
+
+  it("is at the index of its row, before every row at the start and after them all at the end, and unread while its row is not among them", () => {
+    expect([indexAt({ at: "start" }, indexOf, 3), indexAt({ at: "end" }, indexOf, 3), indexAt({ at: "row", key: "c/body", offset: 9 }, indexOf, 3)]).toEqual([-1, 3, 2]);
+    expect(indexAt({ at: "row", key: "d/body", offset: 9 }, indexOf, 3)).toEqual({ unread: "d/body" });
   });
 
   it("resolves a row that is gone from among the rows to the end of the nearest row it was inside", () => {

@@ -317,7 +317,7 @@ describe("a set", () => {
     const step = () => {
       const layout = layouts(events)(1);
       const to = adjacent(createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern, layout.every.keys);
-      if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
+      if (to === undefined || "unread" in to) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
     const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));

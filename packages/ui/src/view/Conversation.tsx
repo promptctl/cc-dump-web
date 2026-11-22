@@ -89,6 +89,14 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   const chosen = useView((state) => state.moment.at === "chosen");
   const following = !follow ? "off" : atEnd ? "on" : chosen ? "chosen" : "paused";
   const control = followStates[following];
+  // [LAW:no-silent-failure] What a move from the reader's place waits on, as after a reload: the place's row, or the
+  // current match's, not yet among the rows (Unread). Said under the rows while it lasts; a scroll is a new place.
+  const unread =
+    anchorKey !== undefined && rowIndex(anchorKey, keys.indexOf) === undefined
+      ? "Your place is not read yet"
+      : current !== undefined && rowIndex(current.key, every.keys.indexOf) === undefined
+        ? "The match you were at is not read yet"
+        : undefined;
 
   const written = useRef(0);
   // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
@@ -163,7 +171,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // put at the match's line.
   const stepTo = (direction: Direction) => {
     const next = adjacent(found, current, useView.getState().position, direction, pattern, every.keys);
-    if (next === undefined) return;
+    // A step from a place not read yet is not taken: the line under the rows says so.
+    if (next === undefined || "unread" in next) return;
     flushSync(() => view.goTo(next, now));
     const match = currentMatch();
     // [LAW:no-silent-failure] The step opens every fold its match needs listed and drawn (search.ts), so the match is
@@ -231,10 +240,13 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // The reader choosing another history at `fork`: the one before or after the one the view is at (forks.ts), by a move
   // to its first step.
   const switchAt = (fork: ForkRow, direction: Direction) => go(siblingFrom(fork, aimed.current, direction), fork.key);
-  // A switch at the nearest fork above the view; nothing where the column lists no fork.
+  // A switch at the nearest fork above the reader's place; nothing where the column lists no fork, or while the place
+  // is not read yet, as the line under the rows says. The end names no row, so there the place is the row at the view's
+  // top.
   const sibling = (direction: Direction) => {
-    const fork = forkAbove(rows, keys.indexOf, positionAt(scroller.current!.scrollTop, rowAt));
-    if (fork !== undefined) switchAt(fork, direction);
+    const { position } = useView.getState();
+    const fork = forkAbove(rows, keys.indexOf, position.at === "end" ? positionAt(scroller.current!.scrollTop, rowAt) : position);
+    if (fork !== undefined && !("unread" in fork)) switchAt(fork, direction);
   };
   // The moves and the hold, through the render last committed, so the strip's marks and the rows, memoized, render only
   // as what they show changes.
@@ -257,7 +269,8 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
   // block's row is mounted, as the position's is.
   const toInjected = (direction: Direction) => {
     const key = injectedFrom(rows, keys.indexOf, useView.getState().position, direction);
-    if (key === undefined) return;
+    // A move from a place not read yet is not taken: the line under the rows says so.
+    if (typeof key !== "string") return;
     flushSync(() => choose({ at: "row", key, offset: 0 }));
     const line = scroller.current!.querySelector<HTMLElement>(`[data-index="${keys.indexOf(key)}"] [data-line]`);
     // [LAW:no-silent-failure] The block's row is the position's, which the commit keeps mounted, so its line is drawn
@@ -319,7 +332,12 @@ export function Conversation({ formatted, reading, theme }: { formatted: Formatt
           )}
           {/* A sticky child of the scroller, held at its bottom, and after the rows, so at the end it is below the last row
               rather than over it. */}
-          <div className="pointer-events-none sticky bottom-0 mt-auto flex justify-end px-4 pt-1 pb-3">
+          <div className="pointer-events-none sticky bottom-0 mt-auto flex items-center justify-end gap-3 px-4 pt-1 pb-3">
+            {unread === undefined ? null : (
+              <p role="status" data-unread className="rounded-full bg-panel px-3 py-1 text-xs text-foreground-muted">
+                {unread}
+              </p>
+            )}
             <Toggle
               data-follow={following}
               pressed={control.pressed}

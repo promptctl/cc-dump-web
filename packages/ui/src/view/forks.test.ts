@@ -20,7 +20,10 @@ const indexOf = (listed: readonly Row[]) => (key: string) => {
   const index = listed.findIndex((row) => row.key === key);
   return index === -1 ? undefined : index;
 };
-const above = (top: Exclude<Position, { at: "end" }>, listed: readonly Row[] = rows) => forkAbove(listed, indexOf(listed), top)?.key;
+const above = (top: Exclude<Position, { at: "end" }>, listed: readonly Row[] = rows) => {
+  const fork = forkAbove(listed, indexOf(listed), top);
+  return fork === undefined || "unread" in fork ? fork : fork.key;
+};
 const at = (key: string, offset = 0): Position & { at: "row" } => ({ at: "row", key, offset });
 
 describe("the fork above the view", () => {
@@ -32,8 +35,12 @@ describe("the fork above the view", () => {
     expect([above(at("b/fork")), above(at("e/fork", 4))]).toEqual(["b/fork", "e/fork"]);
   });
 
-  it("is the first listed where none is above: at the start, in a row before them all, and before a top's row arrives", () => {
-    expect([above({ at: "start" }), above(at("a")), above(at("z"))]).toEqual(["b/fork", "b/fork", "b/fork"]);
+  it("is the first listed where none is above: at the start, and in a row before them all", () => {
+    expect([above({ at: "start" }), above(at("a"))]).toEqual(["b/fork", "b/fork"]);
+  });
+
+  it("is not taken from the start in place of a top whose row has not arrived, as after a reload", () => {
+    expect([above(at("z")), above(at("z/body", 40))]).toEqual([{ unread: "z" }, { unread: "z/body" }]);
   });
 
   it("counts a top in a row not listed from the row listed before it", () => {
