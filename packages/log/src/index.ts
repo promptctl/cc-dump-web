@@ -6,6 +6,7 @@ import { inspect } from "node:util";
 import { LOOPBACK } from "./address.ts";
 import type { Ending } from "./ending.ts";
 import { mintTraceId, type TraceId } from "./trace.ts";
+import { isErrorStatus } from "./wire.ts";
 
 export type { Ending, TraceId };
 
@@ -85,8 +86,9 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
 
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
 // what the client is sent when that happens is the handler's decision, made before or after `fail`.
-// `ended` resolves when the response closes, with how the work ended: the ending the event records, unless a request's
-// event records its answer's error status in its place (`answered`).
+// `ended` resolves when the response closes, with how its response ended: sent in full, cut, or failed as the handler
+// reported. That is not always how the request ended, which its event records: a response sent in full with an error
+// status ended ok, and failed its request (`answered`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
 export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
@@ -204,8 +206,9 @@ function clientOf(socket: Socket) {
 // The event is written once, when the response closes: an error reported before then is its
 // outcome, the first one if there were several. A response cut short was stopped if its server had stopped
 // listening by then, which only `close` does, and was left by its client otherwise.
-// [LAW:one-source-of-truth] This is the one place that decides why a request ended; the handler reads it
-// from `ended`. The request is in flight, for `close` to wait on, until it is decided.
+// [LAW:one-source-of-truth] This is the one place that decides how a request's response ended, which the handler reads
+// from `ended`, and how the request ended, which its event records. The request is in flight, for `close` to wait on,
+// until they are decided.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
   return (req, res) => {
     const span = startTrace();
@@ -241,13 +244,13 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
   };
 }
 
-// [LAW:single-enforcer] The one place a request's answer is judged: a request answered in full with a 4xx or 5xx
-// status (RFC 9110's client and server errors) failed, and its event says so by the answer's status line, whoever wrote
-// it, the part or an upstream the part relays. A failure the part reported is already the ending's error and stands.
-// A cut response is aborted or stopped whatever its status, as `ended` says. `ended` itself is not judged: it is also
-// what the proxy records as an exchange's end, where an upstream's error status is the response's, not the exchange's.
-function answered(ending: Ending, res: ServerResponse): Ending {
-  return ending.outcome === "ok" && res.statusCode >= 400 ? { outcome: "error", error: `${res.statusCode} ${res.statusMessage}` } : ending;
+// [LAW:single-enforcer] The one place a request's status is judged: how a request ended, from how its response did. A
+// response sent in full with an error status failed its request, by the status line it was sent with, whoever wrote it,
+// the part or an upstream the part relays. A failure the part reported is already the response's ending and stands, and
+// a cut response is aborted or stopped whatever its status. The response's ending is not judged: it is also what the
+// proxy records as an exchange's end, where an upstream's error status is the response's, not the exchange's.
+function answered(response: Ending, res: ServerResponse): Ending {
+  return response.outcome === "ok" && isErrorStatus(res.statusCode) ? { outcome: "error", error: `${res.statusCode} ${res.statusMessage}` } : response;
 }
 
 // The upgrade's event is written once, when its socket closes: an error the part reported is its outcome; otherwise a

@@ -19,6 +19,10 @@ export const FAILED = { 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 
 export type FailedStatus = keyof typeof FAILED;
 export const statusLine = (status: FailedStatus) => `${status} ${FAILED[status]}`;
 
+// [LAW:single-enforcer] The one rule for a status that says its request failed, whoever answered it (a part, or an
+// upstream a part relays): RFC 9110's client error (4xx) and server error (5xx) classes.
+export const isErrorStatus = (status: number): boolean => status >= 400 && status <= 599;
+
 // [LAW:one-source-of-truth] The paths the parts answer, which each part's route table and every client of it name. A
 // segment with a colon is the route's parameter, one whole path segment.
 export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name", status: "/status", info: "/info", logs: "/logs", launch: "/launch" } as const;

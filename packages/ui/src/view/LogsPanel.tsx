@@ -1,8 +1,8 @@
 import { describe } from "@cc-dump/log/describe";
-import { lineLevel, levels, type Level, type LoggedEvent } from "@cc-dump/log/line";
+import { lineLevel, levels, type Level } from "@cc-dump/log/line";
 import { memo, useLayoutEffect, useRef } from "react";
 import { parts, type Connection, type Part } from "../connection/connection.ts";
-import { useLogs, type Listed, type LogConnection } from "../logs.ts";
+import { summary, useLogs, type Listed, type LogConnection } from "../logs.ts";
 import { settings, useSettings } from "../settings.ts";
 
 const named: Record<Part, string> = { proxy: "proxy", server: "app server" };
@@ -109,9 +109,5 @@ const LogRow = memo(function LogRow({ listed: { part, line, ended }, restarted }
   );
 });
 
-// What an event says on its row: its error's first line, or its facts.
-function summary({ error, facts }: LoggedEvent): string {
-  return error === undefined ? Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ") : error.split("\n")[0]!;
-}
 
 const levelStyle: Record<Level, string> = { error: "text-error font-semibold", warn: "font-semibold", info: "text-foreground-muted" };

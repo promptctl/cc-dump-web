@@ -5,8 +5,9 @@ import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "
 // The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's stack and what it
 // says on hover, pure.
 
-// What went wrong at a step: its exchange failed (an error, or an HTTP error status), or what it brought into the
-// conversation, an item or an item's next version, holds a tool's result that says its tool failed.
+// What went wrong at a step: its exchange failed (its recording ended in error, or its response has an HTTP error
+// status, the API's answer whether or not it was relayed in full, which is not what the proxy's log judges by), or what
+// it brought into the conversation, an item or an item's next version, holds a tool's result that says its tool failed.
 export type Failure = { exchange: boolean; tool: boolean };
 
 // Each step's failure, in the order of the steps: one walk over every item's versions, each of them brought by its step.

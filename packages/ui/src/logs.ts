@@ -1,4 +1,4 @@
-import type { LogLine } from "@cc-dump/log/line";
+import type { LoggedEvent, LogLine } from "@cc-dump/log/line";
 import { useEffect, useReducer } from "react";
 import { parts, type Connection, type Part } from "./connection/connection.ts";
 
@@ -75,4 +75,11 @@ export function useLogs(connection: Pick<Connection, "logs">): Logs {
     return () => abort.abort();
   }, [connection]);
   return logs;
+}
+
+// What an event says on its row: its error's first line if it failed, then its facts, which tell one failed request
+// from another.
+export function summary({ error, facts }: LoggedEvent): string {
+  const said = Object.entries(facts).filter(([name]) => name !== "trace_id").map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return [...(error === undefined ? [] : [error.split("\n")[0]!]), ...said].join(" ");
 }

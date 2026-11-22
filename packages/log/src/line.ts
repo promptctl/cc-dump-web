@@ -11,7 +11,8 @@ import { fields, jsonObject, parseJson } from "./json.ts";
 export const levels = ["error", "warn", "info"] as const;
 export type Level = (typeof levels)[number];
 
-// [LAW:one-source-of-truth] Every event carries how its work ended, so its level is read off that, never written beside it.
+// [LAW:one-source-of-truth] Every event carries how its unit of work ended, a request's judged by its status too
+// (`answered`), so its level is read off that, never written beside it.
 export function levelOf(outcome: Ending["outcome"]): Level {
   switch (outcome) {
     case "error":

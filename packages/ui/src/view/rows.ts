@@ -1,3 +1,4 @@
+import { isErrorStatus } from "@cc-dump/log/wire";
 import { launchName, type Block, type Category } from "../format/blocks.ts";
 import { diffOf } from "../format/diff.ts";
 import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../format/parts.ts";
@@ -642,7 +643,7 @@ export function seconds(milliseconds: number): string {
 
 // [LAW:one-source-of-truth] The exchange line's facts that the turn strip's marks say too (view/strip.ts): an HTTP
 // status that is an error's, and the token counts, by label.
-export const statusFailed = (status: number | undefined): boolean => status !== undefined && status >= 400;
+export const statusFailed = (status: number | undefined): boolean => status !== undefined && isErrorStatus(status);
 export const countsOf = (facts: FormattedExchange["facts"]): [label: string, count: number | undefined][] => [
   ["in", inputOf(facts)],
   ["cache", facts.cacheRead],
