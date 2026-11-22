@@ -1,13 +1,11 @@
-import { readdir, open, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { failed, startSpan, unitOfWork, type Ending, type Log, type TraceId } from "@cc-dump/log";
 import { json, Refused, stream, type Route } from "@cc-dump/log/answer";
 import { describe } from "@cc-dump/log/describe";
 import { frame, READ_ENDED, READ_FAILED, type Failure } from "@cc-dump/log/wire";
 import { offsetOf, type Listing, type RecordingEnd } from "./format.ts";
-import { recordedLength, splitLines } from "./recording.ts";
-import type { Recordings } from "./recordings.ts";
+import { splitLines } from "./recording.ts";
+import type { ReadableName, Recordings } from "./recordings.ts";
 
 // [LAW:decomposition] The recordings' read side, and the one path traffic takes to the screen
 // (docs/design/01-features.md): live viewing, reopening, refresh and reload are all one read from a position.
@@ -20,11 +18,10 @@ import type { Recordings } from "./recordings.ts";
 // EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 // A reader never creates a recording: only a name with a file, or one the run is writing, is read, and any other is 404.
 export function createReader(log: Log, recordings: Recordings): { list: Route; read: Route } {
-  const { dir } = recordings;
   return {
-    list: async () => json((await nonEmpty(dir, await files(dir))).map((name): Listing => ({ name }))),
+    list: async () => json((await recordings.listed()).map((name): Listing => ({ name }))),
     read: async (req, { trace_id, fail, ended }, { params, query }) => {
-      const name = await readableName(recordings, params.name);
+      const name = params.name === undefined ? undefined : await recordings.named(params.name);
       if (!name) throw new Refused(404, `${params.name} is no recording this proxy lists or follows`);
       const reading = readingOf(log, recordings, trace_id, ended, name);
       const position = positionOf(req.headers["last-event-id"], query);
@@ -36,31 +33,6 @@ export function createReader(log: Log, recordings: Recordings): { list: Route; r
     },
   };
 }
-
-// The recordings: the `.jsonl` files in the directory.
-async function files(dir: string) {
-  return (await readdir(dir)).filter((name) => name.endsWith(".jsonl"));
-}
-
-// Those of `names` whose file holds bytes. One that went between the listing and the look is not listed.
-async function nonEmpty(dir: string, names: string[]) {
-  const sizes = await Promise.all(names.map((name) => stat(join(dir, name)).then(({ size }) => size, (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? 0 : Promise.reject(error)))));
-  return names.filter((_, index) => sizes[index]! > 0);
-}
-
-// [LAW:parse-dont-validate] [LAW:single-enforcer] The name that may be read, or none: a file the directory lists,
-// spelled as it lists it, or a recording the run holds a writer for, by the name it was given. Nothing else in the URL
-// reaches the filesystem, and a case-insensitive filesystem cannot open the run's recording by another spelling and
-// serve it as finished. The run's own is known in memory, so the directory is listed only for a name it does not hold.
-// A name that is neither, a typo or one nothing made, is not waited on.
-async function readableName(recordings: Recordings, asked: string | undefined): Promise<ReadableName | undefined> {
-  if (asked === undefined) return undefined;
-  return recordings.follows(asked) || (await files(recordings.dir)).includes(asked) ? (asked as ReadableName) : undefined;
-}
-
-declare const listedOrFollowed: unique symbol;
-// [LAW:types-are-the-program] A name `readableName` let through, the only name a read joins to the recordings directory.
-type ReadableName = string & { readonly [listedOrFollowed]: true };
 
 // [LAW:parse-dont-validate] The position read from: `Last-Event-ID` when an EventSource reconnects (it keeps
 // the URL it first opened), else `?from=`, else the start. Anything but a decimal offset a file can have is
@@ -79,7 +51,6 @@ type Reading = {
   trace_id: TraceId;
   ended: Promise<Ending>;
   name: ReadableName;
-  path: string;
   followed: boolean;
   recordings: Recordings;
   limit: () => number;
@@ -87,22 +58,20 @@ type Reading = {
 };
 
 function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
-  const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   // [LAW:no-silent-failure] A finished recording is listed by its file, so a file that is gone fails the read, not ends it
   // empty; the run's own, followed, has none until its first write, and nothing of it is cut.
-  let finished: NonNullable<ReturnType<typeof recordedLength>> | undefined;
-  const measured = () => (finished ??= recordedLength(path) ?? gone(name));
+  let finished: NonNullable<ReturnType<Recordings["measure"]>> | undefined;
+  const measured = () => (finished ??= recordings.measure(name) ?? gone(name));
   return {
     log,
     trace_id,
     ended,
     name,
-    path,
     followed,
     recordings,
     limit: followed ? () => recordings.readable(name) : () => measured().terminated,
-    unterminated: followed ? () => recordedLength(path)?.unterminated ?? 0 : () => measured().unterminated,
+    unterminated: followed ? () => recordings.measure(name)?.unterminated ?? 0 : () => measured().unterminated,
   };
 }
 
@@ -116,14 +85,11 @@ async function atLineStart(reading: Reading, position: number) {
 }
 
 // Up to `length` bytes of the recording from `position`, of the first `limit` bytes, which are whole events; with none
-// there may be no file. Each read opens the file and closes it before it returns, so a
-// reader that leaves mid-read holds nothing open.
-async function bytesAt({ path }: Reading, position: number, length: number, limit: number) {
+// there may be no file.
+async function bytesAt({ recordings, name }: Reading, position: number, length: number, limit: number) {
   const readable = Math.max(0, Math.min(length, limit - position));
   if (readable === 0) return Buffer.alloc(0);
-  await using file = await open(path);
-  const { bytesRead, buffer } = await file.read(Buffer.alloc(readable), 0, readable, position);
-  return buffer.subarray(0, bytesRead);
+  return recordings.read(name, position, readable);
 }
 
 // [LAW:no-ambient-temporal-coupling] The read is a stream piped into the response, so node owns backpressure
@@ -196,10 +162,10 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         void fill();
       });
     } catch (error) {
-      if (readable.destroyed) return;
       catchUp.end(failed(error), read);
-      // The request's failure, on its event, written at the close the stream's end brings.
       fail(error);
+      // A reader that left while the read was under way is told nothing.
+      if (readable.destroyed) return;
       // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has
       // with its stack.
       const failure: Failure = { error: describe(error) };

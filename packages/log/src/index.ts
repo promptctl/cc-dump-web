@@ -10,13 +10,15 @@ import { mintTraceId, type TraceId } from "./trace.ts";
 export type { Ending, TraceId };
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
-// fields. Parts add facts beside them and never rename them; `service` is added by the sink.
+// fields. Parts add facts beside them and never rename them; `service` is added by the sink, and `unit` names the unit
+// of work a `failure` is of (`unitOfWork`).
 export type Event = {
   event: string;
   trace_id: TraceId;
   started_at: string;
   duration_ms: number;
   service?: never;
+  unit?: string;
   [fact: string]: unknown;
 } & Ending;
 export type Log = (event: Event) => void;
@@ -77,14 +79,21 @@ export function failed(error: unknown): Ending {
   return { outcome: "error", error: describeError(error) };
 }
 
-// [LAW:single-enforcer] A unit of work's one owner of how it ended, and so the one writer of its event. It keeps the
-// first failure reported while the work runs (a request's, an upgrade's, a recording's); `end` says how the work itself
-// reached its end, and a failure kept stands over that. A unit ends once: where several paths race to end one (a read
-// caught up, failed, or cut by its request), the first is its ending and a later one changes nothing.
+// [LAW:single-enforcer] A unit of work's one owner of how it ended, and so the one writer of its events. `end` says how
+// the work itself reached its end; the first failure reported while the work runs (a request's, an upgrade's, a
+// recording's) stands over that. A unit ends once: where several paths race to end one (a read caught up, failed, or
+// cut by its request), the first is its ending and a later one changes nothing.
+// [LAW:nothing-unseen] A unit's first reported failure is always written, and a later one never: work that counts its
+// failures (a recording's writes) counts them on its event. Reported after the end, by work that goes on once its unit
+// has ended (a route still running when its client left, a file read under way as its reader leaves), the first is a
+// `failure` event of its own. Nothing waits on that work: its end has no bound, and `close` waits on `ended`. The
+// `failure` carries the unit's facts and names the `unit` it is of, in its trace, timed from that unit's start; the
+// unit's own event stands as written.
 // [LAW:no-ambient-temporal-coupling] `end` measures all the event carries (the span, the facts `found` reads off the
 // work's end) while the unit is still open, so a measure that throws leaves it open for the failure its caller then
-// gives. Only then is it ended, `ended` resolved, and the event written: a write that throws surfaces as itself, is never
-// followed by a second write, and leaves nothing waiting on `ended`.
+// gives, and a failure reported while it measures is its ending. Only then is it ended, `ended` resolved, and the event
+// written: a write that throws surfaces as itself, is never followed by a second write, and leaves nothing waiting on
+// `ended`.
 // `judged` is how the event reads the unit's ending, where it judges more than `ended` says: a request's, by its status.
 export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, judged: (ending: Ending) => Ending = (ending) => ending) {
   let failure: Ending | undefined;
@@ -92,11 +101,16 @@ export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, ju
   const { promise: ended, resolve } = Promise.withResolvers<Ending>();
   return {
     ended,
-    fail: (error: unknown) => void (failure ??= failed(error)),
+    fail: (error: unknown) => {
+      if (failure !== undefined) return;
+      failure = failed(error);
+      if (!open) log({ event: "failure", unit: event, ...facts, ...span.end(), ...failure });
+    },
     end: (reached: Ending, found: () => Facts = () => ({})) => {
       if (!open) return;
+      const measured = { ...span.end(), ...found() };
       const ending = failure ?? reached;
-      const written: Event = { event, ...facts, ...span.end(), ...found(), ...judged(ending) };
+      const written: Event = { event, ...facts, ...measured, ...judged(ending) };
       open = false;
       resolve(ending);
       log(written);
@@ -104,8 +118,8 @@ export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, ju
   };
 }
 
-// The request's unit of work as its event records it. A handler reports a failure through `fail`;
-// what the client is sent when that happens is the handler's decision, made before or after `fail`.
+// The request's unit of work as its event records it. A handler reports a failure through `fail`; what the client is
+// sent when that happens is the handler's decision, made before or after `fail`.
 // `ended` resolves when the response closes, with how its response ended: sent in full, cut, or failed as the handler
 // reported. How the request ended, which its event records, is judged from that and its status (`requestEnding`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what

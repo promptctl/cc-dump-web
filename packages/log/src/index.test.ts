@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
 import { createLog, failed, logged, loggedAfter, serve, unitOfWork, type Event, type Work } from "./index.ts";
-import { eventLog, eventsWritten, send, sendRaw, serving } from "./testing.ts";
+import { eventLog, eventsWritten, leaves, send, sendRaw, serving } from "./testing.ts";
 import { parseTraceId } from "./trace.ts";
 
 const ended: Event = { event: "e", trace_id: parseTraceId("t"), started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -127,9 +127,33 @@ describe("unitOfWork", () => {
     unit.fail(new Error("first"));
     unit.fail(new Error("second"));
     unit.end({ outcome: "ok" });
+    unit.fail(new Error("third"));
     expect(events).toMatchObject([{ outcome: "error", error: expect.stringContaining("first") }]);
     expect(events[0]!.error).not.toContain("second");
     expect(await unit.ended).toEqual({ outcome: "error", error: events[0]!.error });
+  });
+
+  it("writes the first failure reported after its end as a failure of its own, with its facts, in its trace, and its event stands", () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "request", { url: "/" }, span);
+
+    unit.end({ outcome: "aborted" });
+    unit.fail(new Error("EIO"));
+    unit.fail(new Error("EACCES"));
+    expect(events).toMatchObject([
+      { event: "request", url: "/", outcome: "aborted" },
+      { event: "failure", unit: "request", url: "/", ...span.end(), outcome: "error", error: expect.stringContaining("EIO") },
+    ]);
+    expect(events).toHaveLength(2);
+  });
+
+  it("ends with a failure reported while it measures its end", async () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "read", {}, span);
+
+    unit.end({ outcome: "ok" }, () => (unit.fail(new Error("EIO")), { to: 4 }));
+    expect(events).toMatchObject([{ event: "read", to: 4, outcome: "error", error: expect.stringContaining("EIO") }]);
+    expect(await unit.ended).toMatchObject({ outcome: "error" });
   });
 
   it("writes the ending as its event judges it, and resolves `ended` with the unit's own", async () => {
@@ -238,13 +262,22 @@ describe("serve", () => {
     const received = new Promise<void>((resolve) => (arrived = resolve));
     const { url, next } = await serving(() => arrived());
 
-    const abort = new AbortController();
-    const request = fetch(url, { signal: abort.signal }).catch(() => "aborted");
-    await received;
-    abort.abort();
-
-    expect(await request).toBe("aborted");
+    await leaves(url, received);
     expect(await next()).toMatchObject({ event: "request", outcome: "aborted", status: null });
+  });
+
+  it("records a failure the handler's work meets after its client left as a failure of the request, which `close` does not wait on", async () => {
+    const arrived = Promise.withResolvers<Work>();
+    const { url, next, close } = await serving((_req, _res, work) => arrived.resolve(work));
+
+    await leaves(`${url}/listing`, arrived.promise);
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", url: "/listing", outcome: "aborted" });
+
+    (await arrived.promise).fail(new Error("EACCES"));
+    expect(await next()).toMatchObject({ event: "failure", unit: "request", method: "GET", url: "/listing", trace_id: event.trace_id, outcome: "error", error: expect.stringContaining("EACCES") });
+    await close();
+    expect(await next()).toMatchObject({ event: "close", outcome: "ok", requests_open: 0 });
   });
 
   it("records the first failure the handler reports, beside the answer it sent", async () => {

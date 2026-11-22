@@ -54,14 +54,27 @@ export async function send(port: number, { method = "GET", path, headers = {}, b
   return res;
 }
 
-// Serves `handler`, and `upgrade` if given, on a free port until the test finishes. Binding the port is the log's first event,
-// taken here, so `next` yields the events of the handler's work.
+// Serves `handler`, and `upgrade` if given, on a free port until the test closes it or finishes. Binding the port is the
+// log's first event, taken here, so `next` yields the events of the handler's work. The server is closed once: `close`
+// is the one the test's finish calls, and resolves as it does.
 export async function serving(handler: Handler, upgrade?: Upgrade) {
   const { log, next } = eventLog();
-  const { port, close } = await serve(log, handler, 0, upgrade);
+  const serving = await serve(log, handler, 0, upgrade);
+  let closed: Promise<void> | undefined;
+  const close = () => (closed ??= serving.close());
   onTestFinished(close);
+  const { port } = serving;
   expect(await next()).toMatchObject({ event: "listen", outcome: "ok", address: LOOPBACK, requested_port: 0, port });
-  return { port, url: `http://${LOOPBACK}:${port}`, next };
+  return { port, url: `http://${LOOPBACK}:${port}`, next, close };
+}
+
+// A client of `url` that leaves once `arrived` says its request has reached the handler, and has left when this resolves.
+export async function leaves(url: string, arrived: Promise<unknown>) {
+  const abort = new AbortController();
+  const request = fetch(url, { signal: abort.signal }).catch(() => "aborted");
+  await arrived;
+  abort.abort();
+  expect(await request).toBe("aborted");
 }
 
 // The event of a unit of work `name` as a test logs it: started at a fixed time, ended as it should.
