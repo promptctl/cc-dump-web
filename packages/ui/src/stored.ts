@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Tolerated, type Unread } from "@cc-dump/log/json";
+import { kinds, notRead, object, parseJson, raw, value, type Dropped, type Tolerated, type Unread } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -127,7 +127,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...notRead(envelope.unread), ...[...notRead(state.unread), ...state.dropped].map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    const dropped = [...droppedUnread(envelope.unread), ...[...droppedUnread(state.unread), ...state.dropped].map(({ at, why }) => ({ at: ["state", ...at], why }))];
     return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
@@ -137,7 +137,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
 
 // [LAW:nothing-unseen] A field of an item, at any depth, this build does not read is dropped and named, since it is gone
 // once the item is written again: the one place a stored item's unread fields are given that meaning.
-const notRead = (unread: readonly Unread[]): Dropped[] => unread.map(({ at }) => ({ at, why: "is not read by this build" }));
+const droppedUnread = (unread: readonly Unread[]): Dropped[] => unread.map(({ at }) => ({ at, why: notRead }));
 
 const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
 const envelopeOf = (json: unknown) => envelope(json, []);

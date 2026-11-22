@@ -1,7 +1,6 @@
-import { describe } from "./describe.ts";
-import { endingFields, endingOf, type Ending } from "./ending.ts";
+import { endingVariants, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { kinds, mapped, object, parsed, parseJson, readShown, unreadFields, value } from "./json.ts";
+import { attempt, kinds, parsed, parseJson, readShown, tagged, unreadFields, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -28,7 +27,8 @@ export function levelOf(outcome: Ending["outcome"]): Level {
 
 // A logged event: the part that wrote it, the unit of work and its trace, when it started and how long it took, how it
 // ended, and every other fact on it.
-export type LoggedEvent = Ending & { service: string; event: string; trace_id: TraceId; started_at: string; duration_ms: number; facts: Record<string, unknown> };
+export type LoggedEvent = Ending & Facts & { facts: Record<string, unknown> };
+type Facts = { service: string; event: string; trace_id: TraceId; started_at: string; duration_ms: number };
 
 // Where a line is: line `seq` of the part's process `run`, numbered from 0 as the process writes them.
 export type LinePosition = { run: string; seq: number };
@@ -59,28 +59,25 @@ export function parseLogLine(data: string, id: string): LogLine {
 }
 
 // The line at `position` whose event is `data`. An event that does not parse taints no other line, so it is this
-// one's, unread, in its place among them.
+// one's, unread, in its place among them; any other error is this build's bug, and passes as it is.
 export function lineAt(position: LinePosition, data: string): LogLine {
-  try {
-    return { ...position, event: parseLoggedEvent(data) };
-  } catch (error) {
-    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
-    if (!(error instanceof Malformed)) throw error;
-    return { ...position, unread: data, error: describe(error) };
-  }
+  return attempt<LogLine>(
+    () => ({ ...position, event: parseLoggedEvent(data) }),
+    (error) => ({ ...position, unread: data, error }),
+  );
 }
 
-// The fields an event has a place of its own for, how it ended among them.
-const logged = mapped(
-  object({
+// The fields an event has a place of its own for, by how it ended.
+type Logged = Ending & Facts;
+const logged = tagged<"outcome", Logged>(
+  "outcome",
+  endingVariants<Facts>({
     service: value(kinds.string),
     event: value(kinds.string),
     trace_id: parsed(kinds.string, parseTraceId),
     started_at: value(kinds.string),
     duration_ms: value(kinds.number),
-    ...endingFields,
   }),
-  ({ outcome, error, ...fields }) => ({ ...fields, ...endingOf({ outcome, error }) }),
 );
 
 // The fields the event has a place of its own for are those `logged` reads; the rest, unread, are its facts.

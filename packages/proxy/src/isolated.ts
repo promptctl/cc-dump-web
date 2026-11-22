@@ -13,16 +13,38 @@ const { createRecordings } = await import("./recordings.ts");
 const { startProxy } = await import("./start.ts");
 const { parseUpstream } = await import("./proxy.ts");
 const { kinds, parse, parsed } = await import("@cc-dump/log/json");
+const { Malformed } = await import("@cc-dump/log/failure");
 
 // [LAW:parse-dont-validate] Each argument becomes what the proxy takes, or the process fails naming it.
-function parseArguments([upstream, dir, runStart, proxyPort, readerPort, ...rest]: string[]) {
-  if (readerPort === undefined || rest.length > 0) throw new Error("usage: isolated.ts <upstream> <recordings-dir> <run-start> <proxy-port> <reader-port>");
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(runStart!)) throw new Error(`run-start must be a UTC time like 2026-11-13T09:00:00Z, got ${JSON.stringify(runStart)}`);
+function parseArguments(args: string[]) {
+  if (args.length !== 5) throw new Error("usage: isolated.ts <upstream> <recordings-dir> <run-start> <proxy-port> <reader-port>");
+  const [upstream, dir, runStart, proxyPort, readerPort] = args;
+  const argument = <T>(as: (text: string) => T, text: string | undefined, name: string): T => parse(parsed(kinds.string, as), text, name);
   const port = (text: string) => {
-    if (!/^\d{1,5}$/.test(text) || Number(text) > 65535) throw new Error(`a port must be an integer from 0 to 65535, got ${JSON.stringify(text)}`);
+    if (!/^\d{1,5}$/.test(text) || Number(text) > 65535) throw new Malformed(`must be an integer from 0 to 65535, got ${JSON.stringify(text)}`);
     return Number(text);
   };
-  return { upstream: parse(parsed(kinds.string, parseUpstream), upstream, "upstream"), dir: dir!, run: runRecordingName(new Date(runStart!)), proxyPort: port(proxyPort!), readerPort: port(readerPort) };
+  return {
+    upstream: argument(parseUpstream, upstream, "upstream"),
+    dir: argument(
+      (text) => {
+        if (text === "") throw new Malformed("must name a directory");
+        return text;
+      },
+      dir,
+      "recordings-dir",
+    ),
+    run: argument(
+      (text) => {
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(text)) throw new Malformed(`must be a UTC time like 2026-11-13T09:00:00Z, got ${JSON.stringify(text)}`);
+        return runRecordingName(new Date(text));
+      },
+      runStart,
+      "run-start",
+    ),
+    proxyPort: argument(port, proxyPort, "proxy-port"),
+    readerPort: argument(port, readerPort, "reader-port"),
+  };
 }
 
 const { log, logs } = processLog("proxy");

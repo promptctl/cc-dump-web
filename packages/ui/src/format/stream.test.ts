@@ -39,7 +39,7 @@ describe("createReassembly", () => {
     // the event's, shown beside the message it ends, not merged into it.
     expect(whole).toMatchObject({
       message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use" },
-      fields: [{ name: "message events", parts: [{ fields: [["message_stop", [["metrics", [["ms", "1"]]]]]] }] }],
+      fields: [{ name: "message events", parts: [{ fields: [["message_stop", [["12", [["metrics", [["ms", "1"]]]]]]]] }] }],
       tail: "",
     });
     expect(whole.message).not.toHaveProperty("metrics");
@@ -60,10 +60,27 @@ describe("createReassembly", () => {
     expect(early).toEqual(copy);
   });
 
-  it("shows a tool's input as its text until its block stops", () => {
+  it("holds a tool's input as the text its deltas sent, its partial_json, until its block stops", () => {
     const text = stream("\n");
     const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: '{"command": "ls"}' });
+    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: {}, partial_json: '{"command": "ls"}' });
+  });
+
+  it("leaves the message's own fields to its start: a delta's others show as the event's fields", () => {
+    const delta = { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null, type: "other", content: 5 }, usage: { output_tokens: 1 } };
+    const { message, fields } = reassemble([messageStart, delta].map((data) => event(data)).join(""), true);
+    expect(message).toMatchObject({ type: "message", content: [], stop_reason: "end_turn" });
+    expect(fields).toMatchObject([{ name: "message events", parts: [{ fields: [["message_delta", [["1", [["delta", [["type", '"other"'], ["content", "5"]]]]]]]] }] }]);
+  });
+
+  const toolStart = { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } };
+  it.each([
+    ["an event after the message stopped", [messageStart, { type: "message_stop" }, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }], [], "content_block_start after message_stop"],
+    ["a delta of another block type", [messageStart, toolStart, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "x" } }], [toolStart.content_block], "text_delta does not extend a tool_use block"],
+  ])("does not apply %s, and says why", (_, events, content, why) => {
+    const { message, blocks } = reassemble(events.map((data) => event(data)).join(""), true);
+    expect(message!.content).toEqual(content);
+    expect(blocks).toMatchObject([{ parts: [{ label: "not applied", text: why }, { id: "data" }] }]);
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

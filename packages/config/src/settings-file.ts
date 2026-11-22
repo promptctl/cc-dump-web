@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { jsonObject, parseExact, parseJson } from "@cc-dump/log/json";
+import { kinds, parse, parseExact, parseJson, value } from "@cc-dump/log/json";
 import { settings, withDefaults, type SettingsOf, type Table } from "./settings.ts";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the settings the file
@@ -14,9 +14,12 @@ export function settingsFile<T extends Table>(what: string, table: T) {
   // holds that no setting reads is refused, since most often it is a setting misspelled.
   const reader = settings(table);
   const parseAs = (said: string) => (text: string | undefined): ReadSettings<SettingsOf<T>> => {
-    const file = text === undefined ? {} : jsonObject(parseJson(text, said), said);
+    const file = text === undefined ? {} : parse(value(kinds.object), parseJson(text, said), said);
     return { settings: parseExact(reader, withDefaults(table, file), said), file_keys: text === undefined ? null : Object.keys(file) };
   };
+  // [LAW:no-silent-failure] Each default is what a file would hold, which no type ties to its setting's read, so the
+  // defaults are read as no file is, as the table is made: one its read refuses fails the part's start, naming it.
+  parseAs(`${what}'s defaults`)(undefined);
   return {
     parse: parseAs(what),
     // A file it cannot take is refused naming it, so the user knows which file to change.

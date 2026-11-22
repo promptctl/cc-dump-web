@@ -103,6 +103,16 @@ describe("a stored item's read", () => {
     expect(store.getState()).toEqual(first);
   });
 
+  it("reads an item that holds no state as one that is not an item", async () => {
+    const { storeIn, events } = await reported();
+    const { storage, held } = memoryStorage();
+    held.set(name, JSON.stringify({ version: 0 }));
+    const store = storeIn(storage);
+    await store.persist.rehydrate();
+    expect(store.getState()).toEqual(first);
+    expect(events.at(-1)).toMatchObject({ is: "read", read: { stored: "unreadable", error: { message: expect.stringMatching(/state: is missing/) } } });
+  });
+
   it("writes nothing over what is stored after the storage failed as it was read, until a read reaches it", async () => {
     const { storeIn, events } = await reported();
     const { storage, writes } = memoryStorage({ [name]: item({ name: "a", on: true }) });

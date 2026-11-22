@@ -240,7 +240,7 @@ describe("a stored view", () => {
     expect(readView({ ...full, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 7)).toEqual({
       value: { ...full, search: { query: "x", current: undefined } },
       unread: [],
-      dropped: [{ at: ["search", "current"], why: "nth: is missing" }],
+      dropped: [{ at: ["search", "current"], why: expect.stringMatching(/^nth: is missing/) }],
     });
   });
 

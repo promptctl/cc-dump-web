@@ -7,6 +7,8 @@ import { doesNotFit, type Part } from "./parts.ts";
 // input, it never rewrites it.
 
 const text = value(kinds.string);
+// The entry of a tool all of whose input's fields read as fields: it reads none of them.
+const readsNone = mapped(object({}), (): Part[] => []);
 
 // [LAW:one-type-per-behavior] The parts a tool's input shows, by the tool's name, a tool one entry. Each reads the fields
 // it arranges; the fields it does not read follow (`unreadInputParts`). An input all of whose fields read as fields has an entry
@@ -27,9 +29,9 @@ const entries = new Map<string, Reader<Part[]>>([
       { id: "content", label: "content", kind: "text", form: "verbatim", text: content },
     ]),
   ],
-  ["Read", mapped(object({}), (): Part[] => [])],
-  ["Grep", mapped(object({}), (): Part[] => [])],
-  ["Glob", mapped(object({}), (): Part[] => [])],
+  ["Read", readsNone],
+  ["Grep", readsNone],
+  ["Glob", readsNone],
 ]);
 
 // The parts a client tool's call, a tool_use block, shows its input as. A tool with no entry shows the JSON it was sent.

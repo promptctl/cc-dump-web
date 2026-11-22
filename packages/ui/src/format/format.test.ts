@@ -1,6 +1,7 @@
 import { exchanges, recordedAt } from "../testing.ts";
 import type { Header, RecordedEvent } from "@cc-dump/proxy/format";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
+import { kinds } from "@cc-dump/log/json";
 import { describe, expect, it } from "vitest";
 import type { Block } from "./blocks.ts";
 import { createFormatter, inputOf, type FormattedExchange } from "./format.ts";
@@ -187,12 +188,12 @@ describe("format", () => {
       { id: "thinking", kind: "text", form: "markdown", text: "" },
       { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] },
     ]);
-    expect(blockEvents).toMatchObject({ name: "content block 0 events", parts: [{ kind: "rest", fields: [["content_block_delta", [["delta", [["estimated_tokens", "50"]]]]]] }] });
+    expect(blockEvents).toMatchObject({ name: "content block 0 events", parts: [{ kind: "rest", fields: [["content_block_delta", [["3", [["delta", [["estimated_tokens", "50"]]]]]]]] }] });
     expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Red and blue." }]);
     expect(toolUse!.parts).toContainEqual({ kind: "text", form: "verbatim", id: "command", label: "command", text: "ls" });
     expect(usage!.parts).toEqual([{ id: "usage", kind: "fields", fields: [["input_tokens", "2"], ["output_tokens", "90"]] }]);
     expect(message!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["id", '"msg_1"']]) }]);
-    expect(messageEvents).toMatchObject({ name: "message events", parts: [{ fields: [["message_delta", [["context_management", [["applied_edits", "[]"]]]]]] }] });
+    expect(messageEvents).toMatchObject({ name: "message events", parts: [{ fields: [["message_delta", [["14", [["context_management", [["applied_edits", "[]"]]]]]]]] }] });
     // A parameter or a field this view does not name is shown with the rest, not dropped.
     // An object's members are the fields it holds, a list's named by index; a string that is the JSON of one, as
     // metadata.user_id is, holds its fields too; any other value, an empty object or list too, reads as its JSON.
@@ -314,8 +315,8 @@ describe("format", () => {
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
     ]);
-    expect(blocks[3]!.parts).toEqual([doesNotFit("tool definition: is not an object"), { id: "received", kind: "json", value: "Bash" }]);
-    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("tool definition: description: is not a string"));
+    expect(blocks[3]!.parts).toEqual([doesNotFit("is not an object"), { id: "received", kind: "json", value: "Bash" }]);
+    expect(blocks[4]!.parts[0]).toEqual(doesNotFit("description: is not a string"));
   });
 
   it("shows a reply's usage as its JSON when it holds no fields, a string quoted, and the reply's content beside it", () => {
@@ -323,7 +324,9 @@ describe("format", () => {
       const message = { type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage };
       const formatted = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["Content-Type", "application/json"], ["Content-Encoding", "gzip"]], gzipSync(JSON.stringify(message)))]);
       expect(group(formatted, "reply").map(({ parts }) => parts)).toEqual([[{ id: "text", kind: "text", form: "markdown", text: "hi" }]]);
-      expect(group(formatted, "response").find(({ name }) => name === "usage")!.parts).toEqual([{ id: "usage", kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
+      // A usage that is no object holds no count, and says so.
+      const misfit = usage === undefined ? [doesNotFit("usage: is missing")] : kinds.object.fits(usage) ? [] : [doesNotFit("usage: is not an object")];
+      expect(group(formatted, "response").find(({ name }) => name === "usage")!.parts).toEqual([...misfit, { id: "usage", kind: "text", form: "verbatim", text: String(JSON.stringify(usage)) }]);
     }
   });
 
@@ -834,7 +837,7 @@ describe("format", () => {
       expect.stringMatching(/^content_block_stop event: the block's streamed input: is not JSON/),
       "content_block_start event: content block 1 has already started",
     ]);
-    expect(blocks.find(({ name }) => name === "message events")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["message_stop", [["metrics", [["latency_ms", "812"]]]]]]) });
+    expect(blocks.find(({ name }) => name === "message events")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["message_stop", [["9", [["metrics", [["latency_ms", "812"]]]]]]]]) });
   });
 
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {
@@ -926,7 +929,7 @@ describe("what a block states", () => {
     // Content of no shape a result holds, beside an is_error that reads: failed, and answering its call.
     const failed = block({ type: "tool_result", tool_use_id: "toolu_3", is_error: true, content: 7 });
     expect(failed).toMatchObject({ name: "tool_result: error", failed: true, result: { answers: "toolu_3" } });
-    expect(failed.parts[0]).toEqual(doesNotFit("content: is neither a string nor a list of blocks"));
+    expect(failed.parts[0]).toEqual(doesNotFit("content: is not a string or a list"));
   });
 
   it("states a tool's call by its id, whose name or input does not read, so it waits for its result", () => {
@@ -955,7 +958,11 @@ describe("what a request and its reply state", () => {
   it("reads a request's model and session each on its own, so one that does not read leaves the request shown whole", () => {
     const formatted = one(request("a", { model: 7, metadata: null, max_tokens: 9, messages: [{ role: "user", content: "Hi." }] }));
     expect(formatted.facts).toMatchObject({ model: undefined, session: undefined });
-    expect(group(formatted, "request")[1]!.parts[0]).toEqual({ id: "parameters", kind: "fields", fields: [["model", "7"], ["metadata", "null"], ["max_tokens", "9"]] });
+    // Each is shown among the parameters as it was sent, with why it does not read.
+    expect(group(formatted, "request")[1]!.parts).toEqual([
+      doesNotFit("model: is not a string; metadata: is not an object"),
+      { id: "parameters", kind: "fields", fields: [["model", "7"], ["metadata", "null"], ["max_tokens", "9"]] },
+    ]);
     expect(lines(group(formatted, "message.0"))).toEqual(["user text"]);
   });
 
@@ -998,9 +1005,71 @@ describe("a stream's events", () => {
     expect(blocks.filter(({ name }) => name.endsWith(" event"))).toEqual([]);
     expect(named("text").parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Hi there!" }]);
     expect(named("content block 0 events").parts[0]).toMatchObject({
-      fields: [["content_block_delta", [["extra", '"event\'s"'], ["delta", [["extra", '"delta\'s"']]], ["text", '"the event\'s own"'], ["__proto__", [["text", '"forged"']]]]]],
+      fields: [
+        [
+          "content_block_delta",
+          [
+            ["2", [["extra", '"event\'s"'], ["delta", [["extra", '"delta\'s"']]]]],
+            ["3", [["text", '"the event\'s own"']]],
+            ["4", [["__proto__", [["text", '"forged"']]]]],
+          ],
+        ],
+      ],
     });
-    // A field each event of a type carries is its latest.
-    expect(named("content block 1 events").parts[0]).toMatchObject({ fields: [["content_block_delta", [["delta", [["estimated_tokens", "2"]]]]]] });
+    // A field each event of a type carries is each event's own, under its place among the stream's events.
+    expect(named("content block 1 events").parts[0]).toMatchObject({
+      fields: [["content_block_delta", [["7", [["delta", [["estimated_tokens", "1"]]]]], ["8", [["delta", [["estimated_tokens", "2"]]]]]]]],
+    });
+  });
+});
+
+describe("a fact read from a part of its block", () => {
+  const sent = (content: object[]) => one(request("a", { model: "m", messages: [{ role: "assistant", content }] }));
+  const block = (content: object) => group(sent([content]), "message.0")[0]!;
+
+  it("shows a fact's field that does not read as not fitting, beside the block as it shows", () => {
+    // An Agent call's agent type of another type: it launches an agent of no type, and says why.
+    const agent = block({ type: "tool_use", id: "toolu_5", name: "Agent", input: { subagent_type: 5, prompt: "Go." } });
+    expect(agent).toMatchObject({ name: "tool_use: Agent", call: { id: "toolu_5", launches: { tool: "Agent", type: undefined } } });
+    expect(agent.parts[0]).toEqual(doesNotFit("input: subagent_type: is not a string"));
+    // A server tool's error whose type does not read: not failed, and why.
+    const result = block({ type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: { type: 7 } });
+    expect(result).toMatchObject({ name: "web_search_tool_result" });
+    expect(result.failed).toBeUndefined();
+    expect(result.parts[0]).toEqual(doesNotFit("content: type: is not a string"));
+    // One that holds what its tool found holds no error type.
+    expect(block({ type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: [] }).parts[0]).toMatchObject({ id: "content" });
+  });
+
+  it("keeps a thinking block whose text does not read among the thinking, shown raw", () => {
+    expect(block({ type: "thinking", thinking: 7, signature: "x" })).toMatchObject({ category: "thinking", parts: [doesNotFit("thinking: is not a string"), { id: "received" }] });
+  });
+});
+
+describe("what a request sends", () => {
+  it("shows a system prompt that does not read raw in its group, and the messages as they are", () => {
+    const formatted = one(request("a", { model: "m", system: 5, messages: [{ role: "user", content: "Hi." }] }));
+    expect(group(formatted, "system")).toMatchObject([{ name: "system", parts: [doesNotFit("system: is not a string or a list"), { id: "received" }] }]);
+    expect(lines(group(formatted, "message.0"))).toEqual(["user text"]);
+    expect(formatted.facts.model).toBe("m");
+  });
+
+  it("lifts a cache breakpoint only from a block whose cache_control is one", () => {
+    const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [{ type: "text", text: "Hi.", cache_control: null }] }] }));
+    expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters"]);
+  });
+});
+
+describe("a response message's fields", () => {
+  it("shows a reply with no stop reason, and why its stop reason does not read", () => {
+    const message = { id: "msg_1", type: "message", role: "assistant", content: [{ type: "text", text: "hi" }], usage: { input_tokens: 2 } };
+    const formatted = one([...request("a", { model: "m", messages: [] }), ...response("a", 200, [["content-type", "application/json"]], Buffer.from(JSON.stringify(message)))]);
+    expect(lines(group(formatted, "reply"))).toEqual(["assistant text"]);
+    expect(group(formatted, "response").find(({ name }) => name.startsWith("stop reason"))!.parts[0]).toEqual(doesNotFit("stop_reason: is missing"));
+  });
+
+  it("shows an error event with no error as not applied", () => {
+    const formatted = one([...request("a", { model: "m", messages: [] }), ...streamed("a", [messageStart, { type: "error", message: "rate limited" }])]);
+    expect(received(formatted).find(({ name }) => name === "error event")!.parts[0]).toMatchObject({ label: "not applied", text: "error: is missing" });
   });
 });

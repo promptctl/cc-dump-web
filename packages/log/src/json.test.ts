@@ -39,7 +39,7 @@ describe("a document's fields this build does not read", () => {
 
   it("are refused in a settings file, each by its path, naming what is read beside it", () => {
     expect(() => parseExact(reader, json, "settings.json")).toThrow(
-      "settings.json: extra: is not read by this build, which reads port, proxy; proxy.deep: is not read by this build, which reads host, routes; proxy.routes.0.deeper: is not read by this build, which reads to",
+      "settings.json: extra: is not read by this build, which reads port, proxy; proxy: deep: is not read by this build, which reads host, routes; proxy: routes: 0: deeper: is not read by this build, which reads to",
     );
     expect(parseExact(reader, read, "settings.json")).toEqual(read);
   });
@@ -50,9 +50,9 @@ describe("a document's fields this build does not read", () => {
     expect(shown.unread.map(({ at, value }) => [at, value])).toEqual([
       [["extra"], "top"],
       [["proxy", "deep"], true],
-      [["proxy", "routes", "0", "deeper"], 2],
+      [["proxy", "routes", 0, "deeper"], 2],
     ]);
-    expect(unreadFields(shown.unread)).toEqual({ extra: "top", proxy: { deep: true, routes: { 0: { deeper: 2 } } } });
+    expect(unreadFields(shown.unread)).toEqual({ extra: "top", proxy: { deep: true, routes: [{ deeper: 2 }] } });
   });
 
   it("are given back with a key named for a prototype's, or holding a dot, as a field", () => {

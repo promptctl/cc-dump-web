@@ -1,5 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { attempt, jsonObject, kinds, object, optional, parse, parseJson, raw, tagged, value, type Unread } from "@cc-dump/log/json";
+import { attempt, carrying, kinds, nullable, object, optional, parseJson, raw, tagged, value, type Unread } from "@cc-dump/log/json";
 import { serverSentEvents } from "@cc-dump/log/wire";
 import { formatError, restBlock, type Block } from "./blocks.ts";
 
@@ -20,6 +20,7 @@ export type Reassembly = { reassemble: (text: string, complete: boolean) => Stre
 
 const str = value(kinds.string);
 const index = value(kinds.integer);
+const fields = value(kinds.object);
 
 // [LAW:one-type-per-behavior] The deltas a content block is built by, one variant each.
 type Delta =
@@ -36,43 +37,55 @@ const delta = tagged<"type", Delta>("type", {
   citations_delta: { citation: raw },
 });
 
+// [LAW:types-are-the-program] The content block types each delta extends, as the Messages API streams them: a text's
+// text and its citations, a thinking's text and its signature, and a tool use's input.
+const extending: Record<Delta["type"], readonly string[]> = {
+  text_delta: ["text"],
+  citations_delta: ["text"],
+  thinking_delta: ["thinking"],
+  signature_delta: ["thinking"],
+  input_json_delta: ["tool_use", "server_tool_use", "mcp_tool_use"],
+};
+
+// A message as message_start begins it, read as a non-streaming response's is once built, and its usage, which a
+// message_delta's extends.
+type Started = { type: "message"; usage: Record<string, unknown> | undefined };
+type Message = Record<string, unknown> & Started;
+
 // [LAW:one-type-per-behavior] The events of a Messages stream, one variant each, read whole before any is applied, so an
-// event that does not read changes nothing.
+// event that does not read changes nothing. A message_delta's delta replaces the message's fields it names, as the
+// Messages API defines them; any other field of it is the event's, unread.
 type Event =
-  | { type: "message_start"; message: unknown }
-  | { type: "content_block_start"; index: number; content_block: unknown }
+  | { type: "message_start"; message: Message }
+  | { type: "content_block_start"; index: number; content_block: Record<string, unknown> & { type: string } }
   | { type: "content_block_delta"; index: number; delta: Delta }
   | { type: "content_block_stop"; index: number }
-  | { type: "message_delta"; delta: unknown; usage: unknown }
+  | { type: "message_delta"; delta: { stop_reason: string | null; stop_sequence: string | null }; usage: Record<string, unknown> }
   | { type: "message_stop" }
   | { type: "ping" }
-  | { type: "error"; error: unknown };
+  | { type: "error"; error: Record<string, unknown> };
 const event = tagged<"type", Event>("type", {
-  message_start: { message: raw },
-  content_block_start: { index, content_block: raw },
+  message_start: { message: carrying<Started>({ type: value(kinds.among(["message"] as const)), usage: optional(fields) }) },
+  content_block_start: { index, content_block: carrying({ type: str }) },
   content_block_delta: { index, delta },
   content_block_stop: { index },
-  message_delta: { delta: raw, usage: raw },
+  message_delta: { delta: object({ stop_reason: nullable(str), stop_sequence: nullable(str) }), usage: fields },
   // The stream's end, which the trailers already mark: it carries no content.
   message_stop: {},
   // A keep-alive, which may come at any time and builds nothing.
   ping: {},
-  error: { error: raw },
+  error: { error: fields },
 });
 
-// A message_start's message, read as a non-streaming response's is.
-const startedMessage = object({ type: value(kinds.among(["message"])) });
-// What a message_delta extends: the usage message_start began, where it began one.
-const startedUsage = object({ usage: optional(value(kinds.object)) });
+// [LAW:no-ambient-temporal-coupling] Where the message is in its life: not begun until message_start, built by the events
+// after it, and stopped at message_stop, after which no event changes it.
+type Phase = { at: "before" } | { at: "building"; message: Message } | { at: "stopped"; message: Message };
 
-// The fields of events no case reads, kept for what the events build, each at its path in its event, its type first, so
-// fields at one path are one field, of the latest event that carried it.
-type Kept = Map<string, Unread>;
-function keep(kept: Kept, type: string, unread: readonly Unread[]): void {
-  for (const field of unread) {
-    const at = [type, ...field.at];
-    kept.set(JSON.stringify(at), { ...field, at });
-  }
+// [LAW:nothing-unseen] The fields of events no case reads, kept for what the events build, each at its path in its
+// event, under the event's type and its place among the stream's events, so each event's value is its own.
+type Kept = Unread[];
+function keep(kept: Kept, type: string, place: number, unread: readonly Unread[]): void {
+  for (const field of unread) kept.push({ ...field, at: [type, String(place), ...field.at] });
 }
 
 // Reassembles the server-sent events of a Messages stream into the message they build, as a non-streaming response
@@ -84,70 +97,69 @@ export function createReassembly(): Reassembly {
   let read = 0;
   // The text after the last complete event.
   let tail = "";
-  let message: Record<string, unknown> | undefined;
-  const heard = { message: new Map() as Kept, pings: new Map() as Kept };
+  // The events applied or refused so far, the place of the next among them.
+  let events = 0;
+  let phase: Phase = { at: "before" };
+  const heard = { message: [] as Kept, pings: [] as Kept };
   const content = new Map<number, Building>();
   const errors: Block[] = [];
   const blocks: Block[] = [];
 
-  // Every event but message_start, a ping and an error builds on the message message_start began.
-  const begun = (type: string) => {
-    if (message === undefined) throw new Malformed(`${type} before message_start`);
-    return message;
+  // Every event but message_start, a ping and an error builds on the message message_start began, until it stops.
+  const building = (type: string): Message => {
+    if (phase.at === "before") throw new Malformed(`${type} before message_start`);
+    if (phase.at === "stopped") throw new Malformed(`${type} after message_stop`);
+    return phase.message;
   };
   const started = (index: number) => {
     const target = content.get(index);
     if (target === undefined) throw new Malformed(`no content block ${index} has started`);
     return target;
   };
-  // A block's deltas and its stop come between its start and its stop.
-  const open = (index: number) => {
+  // A block's deltas and its stop come between its start and its stop, while the message builds.
+  const open = (type: string, index: number) => {
+    building(type);
     const target = started(index);
     if (target.stopped !== undefined) throw new Malformed(`content block ${index} has stopped`);
     return target;
   };
-  const apply = (data: unknown) => {
+  const apply = (data: unknown, place: number) => {
     const { value: read, unread } = event(data, []);
     switch (read.type) {
       case "message_start": {
-        if (message !== undefined) throw new Malformed("the message has already started");
-        parse(startedMessage, read.message, "message_start's message");
-        message = { ...jsonObject(read.message, "message_start's message") };
-        return keep(heard.message, read.type, unread);
+        if (phase.at !== "before") throw new Malformed("the message has already started");
+        phase = { at: "building", message: read.message };
+        return keep(heard.message, read.type, place, unread);
       }
       case "content_block_start": {
-        begun(read.type);
+        building(read.type);
         if (content.has(read.index)) throw new Malformed(`content block ${read.index} has already started`);
-        const building: Building = { block: { ...jsonObject(read.content_block, "content_block") }, json: "", stopped: undefined, fields: new Map() };
-        content.set(read.index, building);
-        return keep(building.fields, read.type, unread);
+        const target: Building = { type: read.content_block.type, block: { ...read.content_block }, json: "", stopped: undefined, fields: [] };
+        content.set(read.index, target);
+        return keep(target.fields, read.type, place, unread);
       }
       case "content_block_delta": {
-        const target = open(read.index);
+        const target = open(read.type, read.index);
         applyDelta(target, read.delta);
-        return keep(target.fields, read.type, unread);
+        return keep(target.fields, read.type, place, unread);
       }
       case "content_block_stop": {
-        const target = open(read.index);
+        const target = open(read.type, read.index);
         // A tool's input is whole at its block's stop, so input that is not JSON by then does not fit.
         target.stopped = { input: target.json === "" ? undefined : parseJson(target.json, "the block's streamed input") };
-        return keep(target.fields, read.type, unread);
+        return keep(target.fields, read.type, place, unread);
       }
       case "message_delta": {
-        // Its delta replaces the message's top-level fields it names (stop_reason, stop_sequence), and its usage extends
-        // the counts message_start began, as the Messages API defines them.
-        const changes = jsonObject(read.delta, "delta");
-        const usage = jsonObject(read.usage, "usage");
-        const prior = begun(read.type);
-        const { usage: began = {} } = parse(startedUsage, prior, "message_start's message");
-        message = { ...prior, ...changes, usage: { ...began, ...usage } };
-        return keep(heard.message, read.type, unread);
+        // Its usage extends the counts message_start began.
+        const prior = building(read.type);
+        phase = { at: "building", message: { ...prior, ...read.delta, usage: { ...prior.usage, ...read.usage } } };
+        return keep(heard.message, read.type, place, unread);
       }
       case "message_stop":
-        begun(read.type);
-        return keep(heard.message, read.type, unread);
+        phase = { at: "stopped", message: building(read.type) };
+        return keep(heard.message, read.type, place, unread);
       case "ping":
-        return keep(heard.pings, read.type, unread);
+        return keep(heard.pings, read.type, place, unread);
       case "error":
         errors.push(formatError(read.error, unread));
         return;
@@ -159,12 +171,13 @@ export function createReassembly(): Reassembly {
   return {
     reassemble: (text, complete) => {
       if (text.length < read) throw new Error(`a stream reassembled to character ${read} was given ${text.length}: a body only grows`);
-      const { events, rest } = serverSentEvents(tail + text.slice(read), complete);
+      const { events: arrived, rest } = serverSentEvents(tail + text.slice(read), complete);
       read = text.length;
       tail = rest;
-      for (const { event: name, data } of events) {
+      for (const { event: name, data } of arrived) {
+        const place = events++;
         attempt(
-          () => apply(parseJson(data, "its data")),
+          () => apply(parseJson(data, "its data"), place),
           (reason) =>
             void blocks.push({
               category: "http",
@@ -176,28 +189,29 @@ export function createReassembly(): Reassembly {
             }),
         );
       }
-      const building = [...content.entries()].sort(([a], [b]) => a - b);
-      const built = message === undefined ? undefined : { ...message, content: building.map(([, built]) => assembled(built)) };
-      const held: [string, Kept][] = [["message", heard.message], ...building.map(([at, { fields }]): [string, Kept] => [`content block ${at}`, fields]), ["ping", heard.pings]];
-      const fields = held.flatMap(([name, kept]) => restBlock([...kept.values()], "http", `${name} events`));
-      return { message: built, errors: [...errors], blocks: [...blocks], fields, tail };
+      const built = [...content.entries()].sort(([a], [b]) => a - b);
+      const message = phase.at === "before" ? undefined : { ...phase.message, content: built.map(([, block]) => assembled(block)) };
+      const held: [string, Kept][] = [["message", heard.message], ...built.map(([at, { fields }]): [string, Kept] => [`content block ${at}`, fields]), ["ping", heard.pings]];
+      const fields = held.flatMap(([name, kept]) => restBlock(kept, "http", `${name} events`));
+      return { message, errors: [...errors], blocks: [...blocks], fields, tail };
     },
   };
 }
 
-// A content block being built from its events: the block, its tool input's JSON as far as it has streamed, once the
-// block has stopped, that input parsed, and the fields of its events no case reads.
-type Building = { block: Record<string, unknown>; json: string; stopped: { input: unknown } | undefined; fields: Kept };
+// A content block being built from its events: its type, the block, its tool input's JSON as far as it has streamed,
+// once the block has stopped, that input parsed, and the fields of its events no case reads.
+type Building = { type: string; block: Record<string, unknown>; json: string; stopped: { input: unknown } | undefined; fields: Kept };
 
 // A content block, a copy of its own, with its tool input as far as it has streamed: the JSON once its block has
-// stopped, its text before that, which is not yet JSON.
+// stopped, and before that the text its deltas have sent, its `partial_json`, which is not yet JSON.
 function assembled({ block, json, stopped }: Building): Record<string, unknown> {
   if (json === "") return { ...block };
-  return { ...block, input: stopped === undefined ? json : stopped.input };
+  return stopped === undefined ? { ...block, partial_json: json } : { ...block, input: stopped.input };
 }
 
 // Applies a content block delta to the block it extends, or refuses it, changing nothing.
 function applyDelta(target: Building, delta: Delta): void {
+  if (!extending[delta.type].includes(target.type)) throw new Malformed(`${delta.type} does not extend a ${target.type} block`);
   const prior = (field: string): unknown => (Object.hasOwn(target.block, field) ? target.block[field] : undefined);
   // A delta extends its field from nothing when the block's start did not carry it.
   const append = (field: string, text: string) => {
