@@ -1,6 +1,6 @@
-import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
+import type { Settings } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -10,11 +10,11 @@ import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-te
 // answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
 // launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
 // command, a whole command line, `claude` until the user launches another.
-export const launchSettingsTable = {
-  session: { default: null, parse: (value: unknown) => (value === null ? null : sessionName(value)) },
-  command: { default: "claude", parse: commandLine },
+export type LaunchSettings = { session: string | null; command: string };
+export const launchSettings: Settings<LaunchSettings> = {
+  readers: { session: nullable(parsed(kinds.string, sessionName)), command: parsed(kinds.string, commandLine) },
+  defaults: { session: null, command: "claude" },
 };
-export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 
 // The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
 export type Sessions = [string, ...string[]];
@@ -43,16 +43,16 @@ export type TmuxWindow = { start_time: number; session_id: SessionId; window_id:
 // [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
 // from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
 // session target names a session by name.
-export function sessionName(value: unknown): string {
-  return oneLine(value, "session");
+export function sessionName(value: string): string {
+  return oneLine(value);
 }
 
-export function commandLine(value: unknown): string {
-  return oneLine(value, "command");
+export function commandLine(value: string): string {
+  return oneLine(value);
 }
 
-function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
+function oneLine(value: string): string {
+  if (value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`is blank or more than one line: ${JSON.stringify(value)}`);
   return value;
 }
 
@@ -62,12 +62,12 @@ export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
-const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
+// The settings are read by the readers launch.json is read by, as a message: a setting another build added is passed
+// over, and every one this build reads is there.
+const launcher = object<Launcher>({ settings: object(launchSettings.readers), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
 
 export function parseLauncher(json: string): Launcher {
-  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
+  return parse(launcher, parseJson(json, "launcher"), "launcher");
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.

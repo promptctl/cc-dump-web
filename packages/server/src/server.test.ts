@@ -21,6 +21,13 @@ describe("GET /launch", () => {
     expect(parseLauncher(await res.text())).toEqual({ settings: { session: null, command: "claude" }, sessions: ["work", "play"] });
   });
 
+  it("passes over a setting of the launcher's it does not read, as another build's", () => {
+    expect(parseLauncher(JSON.stringify({ settings: { session: null, command: "claude", shell: "zsh" }, sessions: ["work"] }))).toEqual({
+      settings: { session: null, command: "claude" },
+      sessions: ["work"],
+    });
+  });
+
   it("refuses a launcher whose settings it cannot take, naming them once", () => {
     const refused = (() => {
       try {
@@ -29,7 +36,7 @@ describe("GET /launch", () => {
         return describeError(error);
       }
     })();
-    expect(refused).toBe('launcher settings: command must be a line of text that is not blank, got ""');
+    expect(refused).toBe('launcher: settings: command: is blank or more than one line: ""');
   });
 
   it("fails naming the settings file it cannot take", async () => {
@@ -38,7 +45,7 @@ describe("GET /launch", () => {
     writeFileSync(settingsPath, '{"command":""}');
     const res = await fetch(`${url}/launch`);
     expect(res.status).toBe(500);
-    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command must be a line of text that is not blank, got ""` });
+    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command: is blank or more than one line: ""` });
     expect(await next()).toMatchObject({ event: "request", status: 500, outcome: "error" });
   });
 
@@ -85,10 +92,10 @@ describe("POST /launch", () => {
   });
 
   it.each([
-    [{ session: "work", command: "" }, 'command must be a line of text that is not blank, got ""'],
-    [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
-    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
-    [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
+    [{ session: "work", command: "" }, 'launch: command: is blank or more than one line: ""'],
+    [{ session: "work", command: "   " }, 'launch: command: is blank or more than one line: "   "'],
+    [{ session: "work", command: "claude\nrm -rf ~" }, "launch: command: is blank or more than one line"],
+    [{ session: "work", command: "claude\0" }, 'launch: command: is blank or more than one line: "claude\\u0000"'],
     [{ command: "claude" }, "launch: session: is missing"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
