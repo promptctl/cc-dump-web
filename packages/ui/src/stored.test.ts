@@ -178,6 +178,30 @@ describe("a stored item's write", () => {
     expect(events.map(({ is }) => is)).toEqual(["read", "write_refused", "read", "read"]);
   });
 
+  it("writes only the reader's changes over the item as stored: a field it has no reader for and a value it refused stay as stored, whatever they are named", async () => {
+    const { storeIn } = await reported();
+    const text = '{"state":{"name":"a","on":"yes","size":2,"__proto__":{"x":1}},"version":0,"by":"a later build"}';
+    const { storage, held } = memoryStorage({ [name]: text });
+    const store = storeIn(storage);
+    store.setState({ name: "b" });
+    expect(held.get(name)).toBe('{"state":{"name":"b","on":"yes","size":2,"__proto__":{"x":1}},"version":0,"by":"a later build"}');
+    // A value the reader changes is its own from then on.
+    store.setState({ on: true });
+    store.setState({ on: false });
+    expect(JSON.parse(held.get(name)!).state.on).toBe(false);
+  });
+
+  it("writes a change into a value stored as no object by the reader's whole value there", async () => {
+    type Nested = { name: string; size: { rows: number; columns: number } };
+    const initial: Nested = { name: "none", size: { rows: 1, columns: 1 } };
+    const read = (state: unknown) => tolerant<Nested>({ name: value(kinds.string), size: tolerant({ rows: value(kinds.integer), columns: value(kinds.integer) }, initial.size) }, initial)(state, []);
+    const { stored } = await reported();
+    const { storage, held } = memoryStorage({ [name]: item({ name: "a", size: "big" }) });
+    const store = create<Nested>()(persist(() => initial, stored({ name, version: 0, storage: () => storage, initial, read })));
+    store.setState({ size: { rows: 3, columns: 1 } });
+    expect(JSON.parse(held.get(name)!).state).toEqual({ name: "a", size: { rows: 3, columns: 1 } });
+  });
+
   it("passes a bug in what it writes as it is, not as the storage's refusal", async () => {
     const { storeIn, events } = await reported();
     const store = storeIn(memoryStorage().storage);
@@ -210,7 +234,7 @@ describe("the storage's events", () => {
     const log = storedLog((event) => lines.push(event));
     const span = startTrace();
     log({ store: name, span, is: "read", read: { stored: "none" } });
-    log({ store: "cc-dump.view", span, is: "read", read: { stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]] } });
+    log({ store: "cc-dump.view", span, is: "read", read: { stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]], kept: [] } });
     log({ store: name, span, is: "read", read: { stored: "unreadable", error: new Malformed("is not JSON") } });
     log({ store: name, span, is: "read", read: { stored: "failed", error: new DOMException("blocked", "SecurityError") } });
     log({ store: name, span, is: "read", read: { stored: "threw", error: new TypeError("not a function") } });
@@ -218,7 +242,7 @@ describe("the storage's events", () => {
     log({ store: name, span, is: "writes_resumed" });
     expect(lines).toMatchObject([
       { event: "stored_read", store: name, stored: "none", refused: [], unknown: [], writes: "made", outcome: "ok" },
-      { event: "stored_read", store: "cc-dump.view", stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]], writes: "made", outcome: "ok" },
+      { event: "stored_read", store: "cc-dump.view", stored: "read", version: 6, refused: [{ at: ["state", "opened"], why: "names a row" }], unknown: [["state", "panes"]], kept: [], writes: "made", outcome: "ok" },
       { event: "stored_read", store: name, stored: "unreadable", writes: "made", outcome: "error" },
       { event: "stored_read", store: name, stored: "failed", writes: "skipped", outcome: "error" },
       { event: "stored_read", store: name, stored: "threw", writes: "skipped", outcome: "error" },

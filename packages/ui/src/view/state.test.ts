@@ -235,6 +235,21 @@ describe("a stored view", () => {
     expect(writes).toEqual([]);
   });
 
+  it("keeps a view another row-key scheme stored as it is, under its version, and never writes its folds as this scheme's", async () => {
+    const { storage, held } = memoryStorage({ "cc-dump.view": JSON.stringify({ state: full, version: 6 }) });
+    useView.persist.setOptions(stored(viewItem(() => storage)));
+    await useView.persist.rehydrate();
+    expect(useView.getState().opened).toEqual({});
+    useView.setState({ search: { query: "y", current: undefined } });
+    const written = JSON.parse(held.get("cc-dump.view")!);
+    expect(written).toEqual({ state: { ...full, opened: {}, position: { at: "end" }, search: { query: "y" } }, version: 7, kept: { 6: full } });
+    // Read again, and written again: the folds of scheme 6 stay reset, and kept as scheme 6 stored them.
+    await useView.persist.rehydrate();
+    expect(useView.getState()).toMatchObject({ opened: {}, search: { query: "y" } });
+    useView.setState({ search: { query: "z", current: undefined } });
+    expect(JSON.parse(held.get("cc-dump.view")!)).toMatchObject({ version: 7, state: { opened: {}, search: { query: "z" } }, kept: { 6: full } });
+  });
+
   it("keeps all else when one field is of a shape this build does not read, and that field opens reset", () => {
     // A current match as an older build named it, by where it started.
     expect(readView({ ...full, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 7)).toEqual({

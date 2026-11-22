@@ -59,6 +59,15 @@ describe("settings", () => {
     expect(writes).toEqual([]);
   });
 
+  it("keeps a setting another build stored, and one this build has no theme for, as stored when another changes", async () => {
+    const { storage, held } = memoryStorage({ "cc-dump.settings": JSON.stringify({ state: { ...chosen, theme: "a theme rich-js dropped", panes: 2 }, version: 0 }) });
+    useSettings.persist.setOptions(stored(settingsItem(() => storage)));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState().theme).toBe(defaultSettings.theme);
+    useSettings.setState({ follow: true });
+    expect(JSON.parse(held.get("cc-dump.settings")!)).toEqual({ state: { ...chosen, follow: true, theme: "a theme rich-js dropped", panes: 2 }, version: 0 });
+  });
+
   it("moves a category to its next level, of more detail, and from the most back to none", () => {
     expect(visibilities.map(levelAfter)).toEqual(["compact", "expanded", "hidden"]);
   });
