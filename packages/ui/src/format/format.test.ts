@@ -294,7 +294,7 @@ describe("format", () => {
     expect(group(formatted, "request")[2]!.preview).toEqual([{ kind: "text", form: "verbatim", text: "message.3/content.0  message.4.system.0/content.0" }]);
   });
 
-  it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest", () => {
+  it("shows each tool definition as a block of its own, named and keyed by its name, one that does not fit raw beside the rest, under its name where it names one", () => {
     const blocks = group(
       one(request("a", { model: "m", messages: [], tools: [{ name: "Read", input_schema: {} }, { name: "Read", input_schema: { type: "object" } }, { name: "a/b", input_schema: {} }, "Bash", { name: "Grep", description: 7 }, { name: "a%2Fb" }, { name: "x\ud800" }] })),
       "tools",
@@ -305,7 +305,7 @@ describe("format", () => {
       ["tools.Read.0", "Read"],
       ["tools.Read.1", "Read"],
       ["tools.a%2Fb.0", "a/b"],
-      ["tools.tool.0", "tool"],
+      ["tools.tool definition.0", "tool definition"],
       ["tools.Grep.0", "Grep"],
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
@@ -661,12 +661,13 @@ describe("format", () => {
     expect(reply(5)).toEqual([{ tool: "Agent", type: "Explore" }]);
   });
 
-  it("states each call by its id, and that every call's reply waits for its result but SubagentHandback's; a call with no id states none", () => {
-    const call = (name: string, id: unknown = "toolu_1") => ({ type: "tool_use", id, name, input: { message: "Done." } });
-    const content = [call("SubagentHandback"), call("SendMessage", "toolu_2"), call("Bash", 7)];
+  it("states each call by its id, and that every call's reply waits for its result but SubagentHandback's; a call its entry cannot read states none", () => {
+    const call = (name: unknown, id: unknown = "toolu_1") => ({ type: "tool_use", id, name, input: { message: "Done." } });
+    const content = [call("SubagentHandback"), call("SendMessage", "toolu_2"), call("Bash", 7), call(7, "toolu_3")];
     expect(group(one(request("a", { model: "m", messages: [{ role: "assistant", content }] })), "message.0").map(({ call }) => call)).toEqual([
       { id: "toolu_1", launches: undefined, waits: false },
       { id: "toolu_2", launches: undefined, waits: true },
+      undefined,
       undefined,
     ]);
   });
@@ -733,7 +734,7 @@ describe("format", () => {
     expect(group(formatted, "message.0")[0]).not.toHaveProperty("failed");
   });
 
-  it("marks failed a failed tool's result its entry cannot read, and a server tool's result of its error type", () => {
+  it("marks failed a failed tool's result, and a server tool's result of its error type; a result its entry cannot read states nothing, not even that", () => {
     const formatted = one(
       request("a", {
         model: "m",
@@ -741,6 +742,7 @@ describe("format", () => {
           {
             role: "user",
             content: [
+              { type: "tool_result", tool_use_id: "toolu_1", is_error: true },
               { type: "tool_result", tool_use_id: 1, is_error: true },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_2", content: [] },
@@ -751,6 +753,7 @@ describe("format", () => {
     );
     expect(group(formatted, "message.0").map(({ name, failed }) => [name, failed])).toEqual([
       ["tool_result: error", true],
+      ["tool_result", undefined],
       ["web_search_tool_result: error", true],
       ["web_search_tool_result", undefined],
     ]);
@@ -868,6 +871,52 @@ describe("format", () => {
     expect(blocks.find(({ name }) => name === "message_start event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: "the message has already started" });
   });
 
+  it("shows a compaction's summary, sent and streamed, with its opaque state among its other fields", () => {
+    const compaction = { type: "compaction", content: "The user asked for a parser.", encrypted_content: "opaque" };
+    const sent = group(one(request("a", { model: "m", messages: [{ role: "assistant", content: [compaction] }] })), "message.0");
+    const streamedReply = group(
+      one([
+        ...request("a", { model: "m", messages: [] }),
+        ...streamed("a", [
+          messageStart,
+          { type: "content_block_start", index: 0, content_block: { type: "compaction", content: null } },
+          { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: "The user asked", encrypted_content: null } },
+          { type: "content_block_delta", index: 0, delta: { type: "compaction_delta", content: " for a parser.", encrypted_content: "opaque" } },
+          { type: "content_block_stop", index: 0 },
+        ]),
+      ]),
+      "reply",
+    );
+    for (const blocks of [sent, streamedReply]) {
+      expect(blocks.map(({ category, name, parts }) => [category, name, parts])).toEqual([
+        [
+          "assistant",
+          "compaction",
+          [
+            { id: "content", kind: "text", form: "markdown", text: "The user asked for a parser." },
+            { id: "unread", label: "fields", kind: "rest", fields: [["encrypted_content", '"opaque"']] },
+          ],
+        ],
+      ]);
+    }
+  });
+
+  it("shows a message_delta as an event not applied when the usage it adds to is not an object", () => {
+    const blocks = received(
+      one([
+        ...request("a", { model: "m", messages: [] }),
+        ...streamed("a", [{ ...messageStart, message: { ...messageStart.message, usage: "12" } }, { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }]),
+      ]),
+    );
+    expect(blocks.find(({ name }) => name === "message_delta event")!.parts[0]).toEqual({
+      kind: "text",
+      form: "verbatim",
+      id: "misfit",
+      label: "not applied",
+      text: "the message's usage: is not an object",
+    });
+  });
+
   it("shows a delta or a stop for a block that has stopped as an event not applied, keeping the input it stopped with", () => {
     const blocks = received(
       one([
@@ -899,12 +948,9 @@ describe("format", () => {
     expect(lines(group(formatted, "reply"))).toEqual(["assistant text"]);
   });
 
-  it("shows each field of a source of a type it does not know once", () => {
+  it("shows a block whose source is of a type it does not know as its JSON, with why", () => {
     const image = { type: "image", source: { type: "s3", bucket: "b", key: "k" } };
     const formatted = one(request("a", { model: "m", messages: [{ role: "user", content: [image] }] }));
-    expect(group(formatted, "message.0")[0]!.parts).toEqual([
-      { kind: "fields", id: "source", label: "source", fields: [["type", "s3"]] },
-      { kind: "rest", id: "source/unread", label: "source fields", fields: [["bucket", '"b"'], ["key", '"k"']] },
-    ]);
+    expect(group(formatted, "message.0")[0]!.parts).toEqual([doesNotFit("image: source: type: is not one of base64, url, file, text, content"), { id: "received", kind: "json", value: image }]);
   });
 });

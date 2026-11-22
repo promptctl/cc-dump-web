@@ -8,8 +8,8 @@ import { doesNotFit, type Part } from "./parts.ts";
 
 // A tool's entry: the fields its parts arrange, each read by its reader, then every field it does not read
 // (`unreadInputParts`).
-function entry<T>(readers: Readers<T>, parts: (input: T) => Part[]): (input: unknown) => Part[] {
-  const read = object(readers, "keep");
+function entry<T extends object>(readers: Readers<T>, parts: (input: T) => Part[]): (input: unknown) => Part[] {
+  const read = object(readers);
   return (input) => {
     const { fields, rest } = parse(read, input, "input");
     return [...parts(fields), ...unreadInputParts(rest)];
@@ -18,8 +18,10 @@ function entry<T>(readers: Readers<T>, parts: (input: T) => Part[]): (input: unk
 
 const text = value(kinds.string);
 
-// [LAW:one-type-per-behavior] The parts a tool's input shows, by the tool's name, a tool one entry. An input all of whose
-// fields read as fields has an entry that reads none of them.
+// An input all of whose fields read as fields: an entry that reads none of them.
+const asFields = entry({}, () => []);
+
+// [LAW:one-type-per-behavior] The parts a tool's input shows, by the tool's name, a tool one entry.
 const entries = new Map<string, (input: unknown) => Part[]>([
   ["Bash", entry({ command: text }, ({ command }) => [{ id: "command", label: "command", kind: "text", form: "verbatim", text: command }])],
   [
@@ -36,9 +38,9 @@ const entries = new Map<string, (input: unknown) => Part[]>([
       { id: "content", label: "content", kind: "text", form: "verbatim", text: input.content },
     ]),
   ],
-  ["Read", entry({}, () => [])],
-  ["Grep", entry({}, () => [])],
-  ["Glob", entry({}, () => [])],
+  ["Read", asFields],
+  ["Grep", asFields],
+  ["Glob", asFields],
 ]);
 
 // The parts a client tool's call, a tool_use block, shows its input as. A tool with no entry shows the JSON it was sent.

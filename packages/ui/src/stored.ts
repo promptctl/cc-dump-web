@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { drop, kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -135,7 +135,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   }
 }
 
-const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) }, "drop");
+const envelope = drop(object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) }));
 const envelopeOf = (json: unknown) => envelope(json, []);
 
 // Whether a change another tab made to a storage (a `StorageEvent`) is to `item`: in its storage, at its name, or a

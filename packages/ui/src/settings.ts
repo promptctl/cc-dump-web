@@ -74,16 +74,15 @@ const visibility = Object.fromEntries(categories.map((category) => [category, va
 const settingsReader = tolerant<Settings>(
   {
     follow: boolean,
-    visibility: tolerant(visibility, defaultVisibility, "drop"),
+    visibility: tolerant(visibility, defaultVisibility),
     theme: value({ fits: isThemeChoice, expected: "a theme this build has" }),
-    search: tolerant<SearchOptions>({ caseSensitive: boolean, wholeWord: boolean, regex: boolean }, defaultSettings.search, "drop"),
+    search: tolerant<SearchOptions>({ caseSensitive: boolean, wholeWord: boolean, regex: boolean }, defaultSettings.search),
     info: boolean,
     logs: boolean,
     logLevel: value(kinds.among(levels)),
     keys: boolean,
   },
   defaultSettings,
-  "drop",
 );
 export const readSettings = (state: unknown): Read<Settings> => settingsReader(state, []);
 

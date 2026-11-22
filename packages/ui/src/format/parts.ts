@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { attempt, parseJson } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -80,12 +80,11 @@ export function fieldValue(value: unknown): string | Field[] {
 // an object's or a list's JSON shows as fields, and it begins with its bracket, so no other string is parsed.
 function heldJson(text: string): unknown {
   if (!/^[[{]/.test(text)) return text;
-  try {
-    const value: unknown = JSON.parse(text);
-    return JSON.stringify(value) === text ? value : text;
-  } catch {
-    return text;
-  }
+  const value = attempt(
+    () => parseJson(text, "a field"),
+    () => text,
+  );
+  return JSON.stringify(value) === text ? value : text;
 }
 
 // A value as the part `id` showing it: its fields when it holds any, else the JSON text a field would show it as.
@@ -97,9 +96,12 @@ export function valuePart(value: unknown, id: string): Part {
 // The fields of `value` at each of `paths`, a path its field names joined by dots, named by it, those it holds: what a
 // block's line previews of a value that holds more than a line would.
 export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, { kind: "fields" }> {
-  const held = paths.map((path): [string, unknown] => [path, path.split(".").reduce(fieldOf, value)]);
+  const held = paths.map((path): [string, unknown] => [path, path.split(".").reduce(memberAt, value)]);
   return { kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
+
+// What a value shown holds at `name`, its member there, where it is an object that has one.
+const memberAt = (value: unknown, name: string): unknown => (typeof value === "object" && value !== null && !Array.isArray(value) && Object.hasOwn(value, name) ? (value as Record<string, unknown>)[name] : undefined);
 
 // The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
 export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {

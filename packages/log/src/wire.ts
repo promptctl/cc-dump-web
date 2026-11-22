@@ -1,5 +1,5 @@
 import { DependencyFailed, Malformed } from "./failure.ts";
-import { kinds, object, parse, parseJson, value } from "./json.ts";
+import { kinds, object, parse, parseJson, strip, value } from "./json.ts";
 import { statusText } from "./status.ts";
 
 // [LAW:one-source-of-truth] What both ends of a part's HTTP wire agree on: the answer a refused or failed request gets,
@@ -10,7 +10,7 @@ import { statusText } from "./status.ts";
 export type Failure = { error: string };
 
 export function parseFailure(json: string): Failure {
-  return parse(object<Failure>({ error: value(kinds.string) }, "pass"), parseJson(json, "failure"), "failure");
+  return parse(strip(object<Failure>({ error: value(kinds.string) })), parseJson(json, "failure"), "failure");
 }
 
 // [LAW:types-are-the-program] The statuses a part answers a failed request with, each with its reason phrase (RFC 9110).

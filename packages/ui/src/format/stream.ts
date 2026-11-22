@@ -1,5 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { attempt, kinds, object, parse, parseJson, raw, tagged, value, type Kept } from "@cc-dump/log/json";
+import { attempt, kinds, nullable, object, optional, parse, parseJson, raw, tagged, value, type Kept } from "@cc-dump/log/json";
 import { serverSentEvents } from "@cc-dump/log/wire";
 import { errorReaders, formatError, restBlock, type Block } from "./blocks.ts";
 
@@ -17,9 +17,8 @@ export type Stream = { message: Record<string, unknown> | undefined; errors: Blo
 // objects of its own, so a stream already returned is never changed by an event after it.
 export type Reassembly = { reassemble: (text: string, complete: boolean) => Stream };
 
-// An object every field of which is shown as it was sent.
-type Fields = Kept<Record<never, never>>;
-const asSent = object<Record<never, never>>({}, "keep");
+type AsSent = Kept<Record<never, never>>;
+const asSent = object<Record<never, never>>({});
 
 // [LAW:types-are-the-program] A content block delta, by its type, each the field it extends a block's by.
 type Delta =
@@ -27,41 +26,41 @@ type Delta =
   | { type: "thinking_delta"; thinking: string }
   | { type: "signature_delta"; signature: string }
   | { type: "input_json_delta"; partial_json: string }
-  | { type: "citations_delta"; citation: unknown };
+  | { type: "citations_delta"; citation: unknown }
+  | { type: "compaction_delta"; content: string | null; encrypted_content: string | null };
 const text = value(kinds.string);
-const delta = tagged<"type", Delta>(
-  "type",
-  { text_delta: { text }, thinking_delta: { thinking: text }, signature_delta: { signature: text }, input_json_delta: { partial_json: text }, citations_delta: { citation: raw } },
-  "keep",
-);
+const delta = tagged<"type", Delta>("type", {
+  text_delta: { text },
+  thinking_delta: { thinking: text },
+  signature_delta: { signature: text },
+  input_json_delta: { partial_json: text },
+  citations_delta: { citation: raw },
+  compaction_delta: { content: nullable(text), encrypted_content: nullable(text) },
+});
 
 // [LAW:types-are-the-program] An event of a Messages stream this view applies, by its type, each with the fields it
 // reads; a field none reads lands on what the event builds. message_start's message is read as a non-streaming
 // response's is, its type taken, so both leave the same fields to show.
 type Event =
   | { type: "message_start"; message: Kept<{ type: "message" }> }
-  | { type: "content_block_start"; index: number; content_block: Fields }
+  | { type: "content_block_start"; index: number; content_block: AsSent }
   | { type: "content_block_delta"; index: number; delta: Kept<Delta> }
   | { type: "content_block_stop"; index: number }
-  | { type: "message_delta"; delta: Fields; usage: Fields }
+  | { type: "message_delta"; delta: AsSent; usage: AsSent }
   | { type: "error"; error: unknown }
   | { type: "ping" }
   | { type: "message_stop" };
 const index = value(kinds.integer);
-const event = tagged<"type", Event>(
-  "type",
-  {
-    message_start: { message: object<{ type: "message" }>({ type: value(kinds.among(["message"] as const)) }, "keep") },
-    content_block_start: { index, content_block: asSent },
-    content_block_delta: { index, delta },
-    content_block_stop: { index },
-    message_delta: { delta: asSent, usage: asSent },
-    error: errorReaders,
-    ping: {},
-    message_stop: {},
-  },
-  "keep",
-);
+const event = tagged<"type", Event>("type", {
+  message_start: { message: object<{ type: "message" }>({ type: value(kinds.among(["message"] as const)) }) },
+  content_block_start: { index, content_block: asSent },
+  content_block_delta: { index, delta },
+  content_block_stop: { index },
+  message_delta: { delta: asSent, usage: asSent },
+  error: errorReaders,
+  ping: {},
+  message_stop: {},
+});
 
 // Reassembles the server-sent events of a Messages stream into the message they build, as a non-streaming response
 // would have returned it, so one formatting serves both. [LAW:no-silent-failure] An event that cannot be applied is
@@ -119,7 +118,7 @@ export function createReassembly(): Reassembly {
       }
       case "message_delta": {
         const prior = begun(fields.type);
-        message = { ...prior, ...rest, ...fields.delta.rest, usage: { ...(prior.usage as object), ...fields.usage.rest } };
+        message = { ...prior, ...rest, ...fields.delta.rest, usage: { ...parse(optional(asSent), prior.usage, "the message's usage")?.rest, ...fields.usage.rest } };
         return;
       }
       case "error":
@@ -133,6 +132,8 @@ export function createReassembly(): Reassembly {
       case "message_stop":
         message = { ...begun(fields.type), ...rest };
         return;
+      default:
+        return fields satisfies never;
     }
   };
 
@@ -173,7 +174,6 @@ function assembled({ block, json, stopped }: Building): Record<string, unknown> 
   return { ...block, input: stopped === undefined ? json : stopped.input };
 }
 
-// Applies a content block delta to the block it extends, its fields no case reads among them.
 function applyDelta(target: Building, { fields: delta, rest }: Kept<Delta>) {
   // A delta extends its field from nothing when the block's start did not carry it.
   const append = (field: string, text: string) => {
@@ -200,6 +200,13 @@ function applyDelta(target: Building, { fields: delta, rest }: Kept<Delta>) {
       target.block.citations = [...prior, delta.citation];
       break;
     }
+    // A compaction's summary streams as its content, and its opaque state is replaced by each delta that carries one.
+    case "compaction_delta":
+      if (delta.content !== null) append("content", delta.content);
+      if (delta.encrypted_content !== null) target.block.encrypted_content = delta.encrypted_content;
+      break;
+    default:
+      return delta satisfies never;
   }
   Object.assign(target.block, rest);
 }

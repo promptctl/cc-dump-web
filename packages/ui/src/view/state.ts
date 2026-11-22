@@ -1,5 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
+import { drop, entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
 import { windowReaders, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -46,8 +46,8 @@ const initial: View = { open: null, terminal: null, opened: {}, position: { at: 
 // so a key made another way fails there, where the version it is stored under is changed with it.
 export const viewVersion = 7;
 
-const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } }, "drop");
-const current = object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) }, "drop");
+const moment = drop(tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } }));
+const current = drop(object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) }));
 
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
 // and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
@@ -65,14 +65,13 @@ export function readView(state: unknown, version: number): Read<View> {
   return tolerant<View>(
     {
       open: nullable(value(kinds.string)),
-      terminal: nullable(object<Terminal>({ window: object(windowReaders, "drop"), shown: value(kinds.boolean) }, "drop")),
+      terminal: nullable(drop(object<Terminal>({ window: drop(object(windowReaders)), shown: value(kinds.boolean) }))),
       opened: entries(rows(value(kinds.boolean))),
-      position: tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } }, "drop"),
+      position: drop(tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } })),
       moment,
-      search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search, "drop"),
+      search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search),
     },
     initial,
-    "drop",
   )(state, []);
 }
 

@@ -1,6 +1,6 @@
 import { ending, type Ending } from "@cc-dump/log/ending";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parseJson, parsed, strip, tagged, value } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -128,7 +128,7 @@ export function parseListing(json: string): Listing {
 }
 
 export function parseRecordingEnd(json: string): RecordingEnd {
-  return parse(object<RecordingEnd>({ unterminated_bytes: value(kinds.integer) }, "pass"), parseJson(json, "recording end"), "recording end");
+  return parse(strip(object<RecordingEnd>({ unterminated_bytes: value(kinds.integer) })), parseJson(json, "recording end"), "recording end");
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {
@@ -158,7 +158,7 @@ export function parseRecordedEvent(line: string): RecordedEvent {
     case "response":
       return { ...event, type, ...parse(response, json, what) };
     case "end":
-      return { ...event, type, ...parse(ending, json, what) };
+      return { ...event, type, ...parse(strip(ending), json, what) };
   }
 }
 
@@ -179,20 +179,20 @@ const isHeaders = (value: unknown): value is Header[] =>
   Array.isArray(value) && value.every((header) => Array.isArray(header) && header.length === 2 && header.every((part) => typeof part === "string"));
 const headers = value({ fits: isHeaders, expected: "a list of [name, value] string pairs" });
 
-const listing = object<Listing>({ name: value(kinds.string) }, "pass");
-const proxyInfo = object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) }, "pass");
-const proxyStatus = object<ProxyStatus>({
-  source: tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } }, "pass"),
-  traffic: object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) }, "pass"),
+const listing = strip(object<Listing>({ name: value(kinds.string) }));
+const proxyInfo = strip(object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) }));
+const proxyStatus = strip(object<ProxyStatus>({
+  source: strip(tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } })),
+  traffic: strip(object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) })),
   info: proxyInfo,
-}, "pass");
+}));
 
 // A recorded event's data, by its type.
 type Data<T extends Recorded["type"]> = Omit<Extract<Recorded, { type: T }>, "type">;
-const recordedType = object({ type: value(kinds.among(Object.keys(recordedTypes) as Recorded["type"][])) }, "pass");
-const traceOf = object({ trace_id: parsed(kinds.string, parseTraceId) }, "pass");
-const timestamp = object({ timestamp: time }, "pass");
-const request = object<Data<"request">>({ method: value(kinds.string), url: value(kinds.string), http_version: value(kinds.string), headers }, "pass");
-const body = object<Data<"request_body">>({ base64: value(kinds.string) }, "pass");
-const trailers = object<Data<"request_trailers">>({ headers }, "pass");
-const response = object<Data<"response">>({ status: value(kinds.integer), reason: value(kinds.string), http_version: value(kinds.string), headers }, "pass");
+const recordedType = strip(object({ type: value(kinds.among(Object.keys(recordedTypes) as Recorded["type"][])) }));
+const traceOf = strip(object({ trace_id: parsed(kinds.string, parseTraceId) }));
+const timestamp = strip(object({ timestamp: time }));
+const request = strip(object<Data<"request">>({ method: value(kinds.string), url: value(kinds.string), http_version: value(kinds.string), headers }));
+const body = strip(object<Data<"request_body">>({ base64: value(kinds.string) }));
+const trailers = strip(object<Data<"request_trailers">>({ headers }));
+const response = strip(object<Data<"response">>({ status: value(kinds.integer), reason: value(kinds.string), http_version: value(kinds.string), headers }));
