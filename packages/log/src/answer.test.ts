@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { LOOPBACK, UI_PORT } from "./address.ts";
 import { admit, bodyOf, json, refusalOf, Refused, resolve, routes, type Asked, type Json, type Route, type Table } from "./answer.ts";
 import { DependencyFailed, Malformed } from "./failure.ts";
-import { send, serving } from "./testing.ts";
+import { leaves, send, serving } from "./testing.ts";
 import { parseFailure } from "./wire.ts";
 
 const PORT = 3347;
@@ -167,21 +167,17 @@ describe("a part's routes", () => {
     expect([ok.statusCode, (await buffer(ok)).toString()]).toEqual([200, '{"fine":true}']);
   });
 
-  it("records a route that rejects after its client left as the request's late_failure", async () => {
+  it("records a route that rejects after its client left as a failure of the request", async () => {
     const arrived = Promise.withResolvers<void>();
     const rejection = Promise.withResolvers<never>();
     const { url, next } = await serving(routes({ "/slow": { GET: () => (arrived.resolve(), rejection.promise) } }));
 
-    const abort = new AbortController();
-    const request = fetch(`${url}/slow`, { signal: abort.signal }).catch(() => "aborted");
-    await arrived.promise;
-    abort.abort();
-    expect(await request).toBe("aborted");
+    await leaves(`${url}/slow`, arrived.promise);
     const event = await next();
     expect(event).toMatchObject({ event: "request", outcome: "aborted", status: null });
 
     rejection.reject(new Error("EACCES: permission denied, scandir"));
-    expect(await next()).toMatchObject({ event: "late_failure", unit: "request", trace_id: event.trace_id, error: expect.stringContaining("EACCES") });
+    expect(await next()).toMatchObject({ event: "failure", unit: "request", url: "/slow", trace_id: event.trace_id, error: expect.stringContaining("EACCES") });
   });
 
   it("takes a request target in absolute form, as RFC 9112 has a server", async () => {

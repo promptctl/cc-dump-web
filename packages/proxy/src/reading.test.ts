@@ -379,7 +379,7 @@ describe("createReader", () => {
     expect(lines.map((line) => (JSON.parse(line) as RecordedEvent).type)).toEqual(["request_trailers", "response", "response_body", "response_trailers", "end"]);
   });
 
-  it("logs a file read that fails after its reader left as the request's late_failure, not as the reader leaving", async () => {
+  it("logs a file read that fails after its reader left as a failure of the request, not as the reader leaving", async () => {
     const dir = recordingsDir();
     writeFileSync(join(dir, pastRun), `${JSON.stringify({ type: "request" })}\n`);
     const reading = Promise.withResolvers<void>();
@@ -395,7 +395,7 @@ describe("createReader", () => {
     expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "aborted" });
 
     failing.reject(new Error("EIO: i/o error, read"));
-    expect(await reader.next()).toMatchObject({ event: "late_failure", unit: "request", trace_id: left.trace_id, error: expect.stringContaining("EIO") });
+    expect(await reader.next()).toMatchObject({ event: "failure", unit: "request", url: `/recordings/${pastRun}`, trace_id: left.trace_id, error: expect.stringContaining("EIO") });
   });
 
   it("makes a read error after the response started the request's error, and ends the stream with a failed event", async () => {

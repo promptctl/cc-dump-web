@@ -52,8 +52,12 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
 
     // An upstream failure reaches the agent as it would on a direct connection: before the
     // response started, an error response in the API's own shape; after, the cut itself.
-    // [LAW:one-source-of-truth] Once the response has closed, the exchange's ending is the close's: the close below
-    // destroys `outgoing`, and an upstream error from then on is that cut, not a failure of the upstream.
+    // The exchange ends at its response's close, whose listener below destroys `outgoing`, and node reports that cut on
+    // the upstream side as one the upstream made: a hang-up of a request with no response yet, an abort of a response
+    // (ECONNRESET both). So an upstream error once the response has closed is the close's own cut, and the exchange's
+    // ending is the close's.
+    // [LAW:no-silent-failure] exception: an upstream failure node had already queued as the agent left, and delivers
+    // after the close, cannot be told from that cut, and is not recorded.
     const upstreamFailed = (error: NodeJS.ErrnoException) => {
       if (res.closed) return;
       fail(error);

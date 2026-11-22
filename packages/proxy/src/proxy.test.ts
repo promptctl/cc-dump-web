@@ -1,12 +1,13 @@
 import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { request, type IncomingMessage } from "node:http";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
+import { request, type ClientRequest, type IncomingMessage } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { gzipSync } from "node:zlib";
-import type { Handler } from "@cc-dump/log";
+import type { Event, Handler } from "@cc-dump/log";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { eventLog, send, sendRaw, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -52,6 +53,29 @@ const shape = (events: RecordedEvent[]) => events.map(({ type }) => type).filter
 
 function pairs(rawHeaders: string[]): [string, string][] {
   return rawHeaders.flatMap((name, i): [string, string][] => (i % 2 ? [] : [[name, rawHeaders[i + 1]!]]));
+}
+
+// The proxy's request of the upstream for `path`, closed: node's client announces each request it starts, and its close
+// is subscribed to as it does.
+function upstreamRequestClosed(path: string): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const started = (message: unknown) => {
+    const { request } = message as { request: ClientRequest };
+    if (request.path === path) request.once("close", () => resolve());
+  };
+  subscribe("http.client.request.start", started);
+  onTestFinished(() => void unsubscribe("http.client.request.start", started));
+  return promise;
+}
+
+// The cut the agent's leaving makes upstream is the request's ending, which its event has, and no failure. node reports
+// the cut as the proxy's upstream request closes: one with no response yet hangs up as it closes, and the response of
+// one that has one is aborted on the tick queue after, which node drains before the close's promise resolves. Past
+// both, the next event is the close of the proxy's server.
+async function theCutIsNoFailure(upstreamClosed: Promise<void>, next: () => Promise<Event>, close: () => Promise<void>) {
+  await upstreamClosed;
+  await close();
+  expect(await next()).toMatchObject({ event: "close", requests_open: 0 });
 }
 
 describe("createProxy", () => {
@@ -193,7 +217,8 @@ describe("createProxy", () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("event: message_start\n\n");
     });
-    const { port, next } = await proxyTo(upstream);
+    const cut = upstreamRequestClosed("/upstream/v1/messages");
+    const { port, next, close } = await proxyTo(new URL("/upstream", upstream));
 
     const res = await send(port, { method: "POST", path: "/v1/messages" });
     await once(res, "data");
@@ -201,6 +226,7 @@ describe("createProxy", () => {
 
     await closedUpstream;
     expect(await next()).toMatchObject({ outcome: "aborted" });
+    await theCutIsNoFailure(cut, next, close);
   });
 
   it("closes the upstream request when the agent leaves before the response starts", async () => {
@@ -212,7 +238,8 @@ describe("createProxy", () => {
       res.on("close", upstreamClosed);
       requestArrived();
     });
-    const { port, next } = await proxyTo(upstream);
+    const cut = upstreamRequestClosed("/upstream/v1/messages");
+    const { port, next, close } = await proxyTo(new URL("/upstream", upstream));
 
     const req = request({ host: LOOPBACK, port, method: "POST", path: "/v1/messages" });
     const hungUp = once(req, "error");
@@ -223,34 +250,7 @@ describe("createProxy", () => {
     await expect(hungUp).resolves.toEqual([expect.objectContaining({ code: "ECONNRESET" })]);
     await closedUpstream;
     expect(await next()).toMatchObject({ outcome: "aborted" });
-  });
-
-  // The proxy's side of the cut errors as the proxy destroys it, before the upstream can see the connection close, so
-  // once each upstream request has closed, the cut's error has been handled; the next event is the next request's.
-  it("logs the cut the agent's leaving makes upstream as no failure of the upstream", async () => {
-    let upstreamClosed = Promise.withResolvers<void>();
-    let arrived = Promise.withResolvers<void>();
-    const upstream = await upstreamServing((_req, res) => {
-      const closed = upstreamClosed;
-      res.on("close", () => closed.resolve());
-      arrived.resolve();
-    });
-    const { port, next } = await proxyTo(upstream);
-    const leaveBeforeTheResponse = async () => {
-      [upstreamClosed, arrived] = [Promise.withResolvers(), Promise.withResolvers()];
-      const req = request({ host: LOOPBACK, port, method: "POST", path: "/v1/messages" });
-      const hungUp = once(req, "error");
-      req.end();
-      await arrived.promise;
-      req.destroy();
-      await hungUp;
-      await upstreamClosed.promise;
-    };
-
-    await leaveBeforeTheResponse();
-    expect(await next()).toMatchObject({ event: "request", outcome: "aborted" });
-    await leaveBeforeTheResponse();
-    expect(await next()).toMatchObject({ event: "request", outcome: "aborted" });
+    await theCutIsNoFailure(cut, next, close);
   });
 
   // llhttp's parse errors carry the bytes they were parsing as rawPacket, on either side of the proxy.
