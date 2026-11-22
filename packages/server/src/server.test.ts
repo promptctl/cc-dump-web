@@ -77,7 +77,7 @@ describe("POST /launch", () => {
     [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
     [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
     [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
-    [{ command: "claude" }, "session must be a line of text that is not blank, got undefined"],
+    [{ command: "claude" }, "launch: session: is missing"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {
     const { opened, settingsPath, launch, next } = await app();
@@ -194,7 +194,7 @@ describe("the launch's answer", () => {
     [{ window_id: "@1x" }, /not a tmux window id/],
     [{ window_id: "@03" }, /not a tmux window id/],
     [{ session_id: "$9007199254740993" }, /not a tmux session id/],
-    [{ start_time: -1 }, /not a tmux server's start time: -1/],
+    [{ start_time: -1 }, /not a tmux server's start time: "-1"/],
     [{ start_time: 1.5 }, /start_time: is not an integer/],
   ])("is refused with %j, which tmux would not write", (fields, error) => {
     expect(() => parseLaunched(launched(fields))).toThrow(error);

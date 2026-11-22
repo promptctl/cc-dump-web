@@ -64,6 +64,8 @@ export function lineAt(position: LinePosition, data: string): LogLine {
   try {
     return { ...position, event: parseLoggedEvent(data) };
   } catch (error) {
+    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
+    if (!(error instanceof Malformed)) throw error;
     return { ...position, unread: data, error: describe(error) };
   }
 }

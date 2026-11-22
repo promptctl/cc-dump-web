@@ -1,6 +1,6 @@
-// [LAW:single-enforcer] The one parse of JSON text into a JSON object, for every part's messages (each part's format.ts)
-// and settings files (@cc-dump/config) alike, each failure naming `what` was read. Imports nothing that needs node, so
-// the formats a part shares with the UI use it too.
+// [LAW:single-enforcer] The readers of JSON for the parts' messages (each part's format.ts), settings files
+// (@cc-dump/config) and the UI's stored items alike, each refusal naming `what` was read. Imports nothing that needs
+// node, so the formats a part shares with the UI use it too.
 import { describe } from "./describe.ts";
 import { Malformed } from "./failure.ts";
 
@@ -77,8 +77,9 @@ export const raw: Reader<unknown> = (json) => ({ value: json, dropped: [] });
 
 const fieldsOf = value(kinds.object);
 
-// [LAW:nothing-unseen] A field of `json` this build does not read, at every object the readers below read: it is gone
-// once the value is written again, so it is named.
+// [LAW:nothing-unseen] A field of `json` this build does not read, at every object the readers below read, named in what
+// the read dropped: a stored item's read reports it, since it is gone once the item is written again, and a message's
+// `parse` passes it over, as another build's.
 const unread = (object: Record<string, unknown>, readers: object, at: Path): Dropped[] =>
   Object.keys(object)
     .filter((key) => !Object.hasOwn(readers, key))

@@ -1,6 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
+import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -56,9 +56,10 @@ function oneLine(value: unknown, name: string): string {
   return value;
 }
 
+const launch = object<Launch>({ session: parsed(kinds.string, sessionName), command: parsed(kinds.string, commandLine) });
+
 export function parseLaunch(json: string): Launch {
-  const launch = jsonObject(parseJson(json, "launch"), "launch");
-  return { session: sessionName(launch.session), command: commandLine(launch.command) };
+  return parse(launch, parseJson(json, "launch"), "launch");
 }
 
 const launcher = object<Launcher>({
@@ -80,15 +81,12 @@ export function parseLaunched(json: string): Launched {
   return parse(launched, parseJson(json, "launched"), "launched");
 }
 
-// [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: a whole number, exact
-// as a JSON number, and in text decimal with no leading zero. `@03` is no window's.
-function tmuxNumber(number: number, what: string): number {
-  if (!(Number.isSafeInteger(number) && number >= 0)) throw new Malformed(`not ${what}: ${number}`);
+// [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no
+// leading zero, and exact as a JSON number. `@03` is no window's.
+function tmuxNumber(value: string, what: string): number {
+  const number = Number(value);
+  if (!(/^(0|[1-9]\d*)$/.test(value) && Number.isSafeInteger(number))) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
   return number;
-}
-function tmuxText(value: string, what: string): number {
-  if (!/^(0|[1-9]\d*)$/.test(value)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
-  return tmuxNumber(Number(value), what);
 }
 
 // A session's id, `$1`, a window's, `@3`, or a pane's, `%7`, as tmux writes them. The library's own parsers are in the
@@ -97,7 +95,7 @@ const idKinds = { $: "session", "@": "window", "%": "pane" } as const;
 function tmuxId<P extends keyof typeof idKinds>(prefix: P, value: string): `${P}${number}` {
   const what = `a tmux ${idKinds[prefix]} id`;
   if (!value.startsWith(prefix)) throw new Malformed(`not ${what}: ${JSON.stringify(value)}`);
-  tmuxText(value.slice(1), what);
+  tmuxNumber(value.slice(1), what);
   return value as `${P}${number}`;
 }
 export type SessionId = `$${number}`;
@@ -106,13 +104,13 @@ export const windowId = (value: string): WindowId => tmuxId("@", value);
 export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
-const aStartTime = "a tmux server's start time";
-export const startTime = (value: string): number => tmuxText(value, aStartTime);
+export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
 
 // [LAW:single-enforcer] A window as a value holds it, read alike in a launch's answer and in the UI's view, which
 // keeps its agent's.
 const windowReaders: Readers<TmuxWindow> = {
-  start_time: parsed(kinds.integer, (seconds) => tmuxNumber(seconds, aStartTime)),
+  // Read by tmux's one rule, as the text tmux wrote it.
+  start_time: parsed(kinds.integer, (seconds) => startTime(String(seconds))),
   session_id: parsed(kinds.string, sessionId),
   window_id: parsed(kinds.string, windowId),
 };

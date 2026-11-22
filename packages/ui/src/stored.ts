@@ -19,14 +19,22 @@ export type StoredRead =
   | { stored: "failed"; error: unknown }
   | { stored: "threw"; error: unknown };
 
-// What the UI's storage reports, each on the span begun as it happened: each read of an item; the first write of a run
-// the storage refused; and a run of writes lost, to a refusal or to a read that did not reach what is stored, ending,
-// on the run's span, with how many it lost.
-export type StoredEvent = { store: StoreName; span: Span } & (
-  | { is: "read"; read: StoredRead }
-  | { is: "write_refused"; error: unknown }
-  | { is: "writes_resumed"; why: Lost; lost: number }
-);
+// [LAW:single-enforcer] Whether a read reached what is stored, so that what it holds is known: the one answer to it.
+function reached(read: StoredRead): boolean {
+  switch (read.stored) {
+    case "none":
+    case "read":
+    case "unreadable":
+      return true;
+    case "failed":
+    case "threw":
+      return false;
+  }
+}
+
+// What the UI's storage reports, each on a span ended as it happened: each read of an item; and a run of writes the
+// storage refused, as it begins and, on the same span, as it ends.
+export type StoredEvent = { store: StoreName; span: Span } & ({ is: "read"; read: StoredRead } | { is: "write_refused"; error: unknown } | { is: "writes_resumed" });
 export type Report = (event: StoredEvent) => void;
 
 // [LAW:no-shared-mutable-globals] [LAW:no-ambient-temporal-coupling] Where the storage's events go, owned here: held
@@ -43,47 +51,41 @@ export function reportStored(report: Report): void {
   events.forEach(report);
 }
 
+// [LAW:nothing-unseen] `span` ended now, for an event reported later (a read held until the page's log exists), so it
+// keeps the times it was measured at.
+function ended(span: Span): Span {
+  const times = span.end();
+  return { trace_id: span.trace_id, end: () => times };
+}
+
 // An item as one store keeps it: its name, the version this build stores it under, the storage it is kept in, the
 // store's first state, and how a stored state is read, by the version it was stored under.
 export type Item<T> = { name: StoreName; version: number; storage: () => Storage; initial: T; read: (state: unknown, version: number) => Read<T> };
 
-// Why a run of writes is lost: no read reached what is stored, so none is tried; or the storage refused the last one.
-type Lost = "unread" | "refused";
-
-// [LAW:types-are-the-program] What the item's writes are doing: made, or lost since a run of them began on `span`, for
-// `why`, `lost` of them so far.
-type Writes = { are: "made" } | { are: "lost"; why: Lost; lost: number; span: Span };
-
 // [LAW:single-enforcer] [LAW:one-source-of-truth] An item's options for zustand `persist`, which owns the item from
-// here: it reads it as the store is made, before any write, and again as `rehydrate` asks, through the raw set, which
-// writes nothing, and writes it as the reader changes the store. The item is stored as persist stores it,
-// `{state, version}`, so an item any build stored is read by this read. Every stored version is read here, so the state
-// persist is given is always of this one's, and it never migrates.
+// here: it reads it as the store is made, and again as `rehydrate` asks, through the raw set, which writes nothing, and
+// writes it as the reader changes the store. The item is stored as persist stores it, `{state, version}`, so an item
+// any build stored is read by this read. Every stored version is read here, so the state persist is given is always of
+// this one's, and it never migrates.
 export function stored<T>(item: Item<T>): { name: StoreName; version: number; storage: PersistStorage<T> } {
   const { name, version, storage } = item;
-  // [LAW:no-ambient-temporal-coupling] The writes' one owner, moved by each read and each write.
-  let writes: Writes = { are: "made" };
-  const resume = (from: Extract<Writes, { are: "lost" }>): Writes => {
-    emit({ store: name, span: from.span, is: "writes_resumed", why: from.why, lost: from.lost });
-    return { are: "made" };
-  };
-  // A read that did not reach what is stored loses every write until one does; one that did resumes them, unless the
-  // storage refused the last, which only a write it takes ends.
-  const read = (outcome: StoredRead, span: Span): Writes => {
-    const reached = outcome.stored !== "failed" && outcome.stored !== "threw";
-    if (writes.are === "made") return reached ? writes : { are: "lost", why: "unread", lost: 0, span };
-    if (!reached) return { ...writes, why: "unread" };
-    return writes.why === "unread" ? resume(writes) : writes;
-  };
-  // A write, unless no read reached what is stored: what is written is the storage's to refuse.
-  const write = (call: (storage: Storage) => void): Writes => {
-    if (writes.are === "lost" && writes.why === "unread") return { ...writes, lost: writes.lost + 1 };
+  // [LAW:no-ambient-temporal-coupling] The item's two facts, independent, each the one owner of what it gates. Whether
+  // the last read reached what is stored: until one has, a write would put the store's state over an item nobody read,
+  // so none is made, as that read's event says. And the run of writes the storage is refusing, on the span it began
+  // on, which only a write the storage takes ends.
+  let known = false;
+  let refusing: Span | undefined;
+  const write = (call: (storage: Storage) => void) => {
+    if (!known) return;
     const written = reach(storage, call);
-    if (!("error" in written)) return writes.are === "lost" ? resume(writes) : writes;
-    if (writes.are === "lost") return { ...writes, lost: writes.lost + 1 };
-    const span = startTrace();
-    emit({ store: name, span, is: "write_refused", error: written.error });
-    return { are: "lost", why: "refused", lost: 1, span };
+    if ("error" in written && refusing === undefined) {
+      refusing = startTrace();
+      emit({ store: name, span: ended(refusing), is: "write_refused", error: written.error });
+    }
+    if (!("error" in written) && refusing !== undefined) {
+      emit({ store: name, span: ended(refusing), is: "writes_resumed" });
+      refusing = undefined;
+    }
   };
   return {
     name,
@@ -91,18 +93,16 @@ export function stored<T>(item: Item<T>): { name: StoreName; version: number; st
     storage: {
       getItem: () => {
         const span = startTrace();
-        const { read: outcome, state } = readItem(item);
-        emit({ store: name, span, is: "read", read: outcome });
-        writes = read(outcome, span);
+        const { read, state } = readItem(item);
+        emit({ store: name, span: ended(span), is: "read", read });
+        known = reached(read);
         return state;
       },
       setItem: (_, stored) => {
         const text = JSON.stringify(stored);
-        writes = write((kept) => kept.setItem(name, text));
+        write((kept) => kept.setItem(name, text));
       },
-      removeItem: () => {
-        writes = write((kept) => kept.removeItem(name));
-      },
+      removeItem: () => write((kept) => kept.removeItem(name)),
     },
   };
 }
@@ -144,8 +144,8 @@ export const changes = ({ name, storage }: Item<unknown>, { storageArea, key }: 
   storageArea === storage() && (key === null || key === name);
 
 // [LAW:nothing-unseen] The storage's events written to `log`: `stored_read`, at each read of an item, which says how it
-// was read (`stored`) and names each part dropped, or the failure; `stored_write_refused`, as a run of writes the
-// storage refuses (a full quota) begins; and `stored_writes_resumed`, as a run of lost writes ends, with how many.
+// was read (`stored`) and names each part dropped, or the failure, and whether writes are made after it (`writes`); `stored_write_refused`, as a run of writes the storage refuses (a full quota) begins; and
+// `stored_writes_resumed`, as it ends, on its span, so its duration is the run's.
 export const storedLog =
   (log: Log): Report =>
   (event) => {
@@ -156,24 +156,29 @@ export const storedLog =
 function described(event: StoredEvent): [string, Facts, Ending] {
   switch (event.is) {
     case "read":
-      return ["stored_read", ...readFacts(event.read)];
+      return readFacts(event.read);
     case "write_refused":
       return ["stored_write_refused", {}, failed(event.error)];
     case "writes_resumed":
-      return ["stored_writes_resumed", { why: event.why, lost: event.lost }, { outcome: "ok" }];
+      return ["stored_writes_resumed", {}, { outcome: "ok" }];
   }
 }
 
-function readFacts(read: StoredRead): [Facts, Ending] {
+// A read's event: how it was read, and whether writes are made after it, as `reached` says.
+function readFacts(read: StoredRead): [string, Facts, Ending] {
+  const [facts, ending] = readOutcome(read);
+  return ["stored_read", { stored: read.stored, ...facts, writes: reached(read) ? "made" : "skipped" }, ending];
+}
+
+function readOutcome(read: StoredRead): [Facts, Ending] {
   switch (read.stored) {
     case "none":
-      return [{ stored: read.stored, dropped: [] }, { outcome: "ok" }];
+      return [{ dropped: [] }, { outcome: "ok" }];
     case "read":
-      return [{ stored: read.stored, version: read.version, dropped: read.dropped }, { outcome: "ok" }];
+      return [{ version: read.version, dropped: read.dropped }, { outcome: "ok" }];
     case "unreadable":
-      return [{ stored: read.stored }, failed(read.error)];
     case "failed":
     case "threw":
-      return [{ stored: read.stored, writes: "lost" }, failed(read.error)];
+      return [{}, failed(read.error)];
   }
 }
