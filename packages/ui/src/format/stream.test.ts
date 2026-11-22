@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InputSoFar } from "./blocks.ts";
 import { createReassembly } from "./stream.ts";
 
 // A stream's text reassembled all at once.
@@ -37,7 +38,9 @@ describe("createReassembly", () => {
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
+      message: { stop_reason: "tool_use" },
+      content: [{ block: { type: "text", text: "Hello, world." }, cut: false }, { block: { type: "tool_use", input: { command: "ls" } }, cut: false }],
+      fields: [["message_stop.metrics", [["ms", "1"]]]],
       tail: "",
     });
     for (let at = 0; at <= text.length; at++) {
@@ -60,7 +63,7 @@ describe("createReassembly", () => {
   it("shows a tool's input as its text until its block stops", () => {
     const text = stream("\n");
     const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: '{"command": "ls"}' });
+    expect(sofar.content[1]).toMatchObject({ block: { input: new InputSoFar('{"command": "ls"}') }, cut: false });
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

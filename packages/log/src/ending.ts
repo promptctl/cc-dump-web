@@ -1,22 +1,25 @@
-import { kinds, object, value, type Reader } from "./json.ts";
+import { kinds, tagged, value, type Reader, type Readers } from "./json.ts";
 import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 
-// [LAW:types-are-the-program] How a unit of work ended. An error is carried exactly when the outcome is
-// "error". "aborted" is work its client left; "stopped" is work cut because its server was closed.
-// Its own module, importing nothing that needs node, so code that runs without node (the UI) can name it.
-export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
+// [LAW:types-are-the-program] How a unit of work ended, one variant per outcome, as a message says it. An error is
+// carried exactly when the outcome is "error". "aborted" is work its client left; "stopped" is work cut because its
+// server was closed. Its own module, importing nothing that needs node, so code that runs without node (the UI) can
+// name it.
+export type Ended = { outcome: "ok" } | { outcome: "aborted" } | { outcome: "stopped" } | { outcome: "error"; error: string };
 
-// Every outcome, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
-const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) });
-const error = object({ error: value(kinds.string) });
+// [LAW:one-source-of-truth] `Ended` as code holds it, derived from it: every variant but the error's says it carries
+// none, so `error` is read off any ending without telling the outcomes apart first.
+type Carrying<E> = E extends { error: string } ? E : E & { error?: never };
+export type Ending = Carrying<Ended>;
 
-// [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`): its
-// outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.
-export const ending: Reader<Ending> = (json, at) => {
-  const ended = outcome(json, at).value;
-  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [] };
-};
+// [LAW:one-source-of-truth] The fields each outcome carries, keyed by outcome, so an outcome added to `Ended` is a
+// compile error here until it is read. A message holding an ending beside fields of its own (a log line) reads its
+// own fields in each variant.
+export const endings: { [O in Ended["outcome"]]: Readers<Omit<Extract<Ended, { outcome: O }>, "outcome">> } = { ok: {}, aborted: {}, stopped: {}, error: { error: value(kinds.string) } };
+
+// [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a recording's `end`): its outcome,
+// and its error, there exactly when the outcome is "error".
+export const ending: Reader<Ending> = tagged<"outcome", Ended>("outcome", endings);
 
 // [LAW:single-enforcer] How a request ended, from how its response ended and the status line it was sent with, which a
 // recording holds none of for a response failed before its head, or whose head's write failed (proxy/src/format.ts),

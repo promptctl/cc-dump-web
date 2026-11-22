@@ -18,7 +18,7 @@ export type Upstream = string & { readonly [parsed]: true };
 export function parseUpstream(value: unknown): Upstream {
   const url = typeof value === "string" ? URL.parse(value) : null;
   if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname)
-    throw new Malformed("upstream must be an http or https origin with an optional path");
+    throw new Malformed("is not an http or https origin with an optional path");
   return url.href as Upstream;
 }
 

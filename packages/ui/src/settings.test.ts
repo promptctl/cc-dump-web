@@ -19,15 +19,16 @@ describe("settings", () => {
     // A level the last build stored, "shown", is not one this build has.
     expect(readSettings({ ...chosen, visibility: { ...chosen.visibility, assistant: "shown" }, search: { ...chosen.search, wholeWord: "yes" } })).toEqual({
       value: chosen,
-      dropped: [
+      unknown: [],
+      replaced: [
         { at: ["visibility", "assistant"], why: "is not one of hidden, compact, expanded" },
         { at: ["search", "wholeWord"], why: "is not a boolean" },
       ],
     });
     expect(readSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], logLevel: "debug", panes: 2 })).toEqual({
       value: defaultSettings,
-      dropped: [
-        { at: ["panes"], why: "is not read by this build" },
+      unknown: [{ at: ["panes"], value: 2 }],
+      replaced: [
         { at: ["follow"], why: "is not a boolean" },
         { at: ["visibility"], why: "is not an object" },
         { at: ["theme"], why: "is not a theme this build has" },
@@ -56,6 +57,15 @@ describe("settings", () => {
     settings.changedElsewhere();
     expect(useSettings.getState()).toEqual(defaultSettings);
     expect(writes).toEqual([]);
+  });
+
+  it("keeps a setting another build stored, and one this build has no theme for, as stored when another changes", async () => {
+    const { storage, held } = memoryStorage({ "cc-dump.settings": JSON.stringify({ state: { ...chosen, theme: "a theme rich-js dropped", panes: 2 }, version: 0 }) });
+    useSettings.persist.setOptions(stored(settingsItem(() => storage)));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState().theme).toBe(defaultSettings.theme);
+    useSettings.setState({ follow: true });
+    expect(JSON.parse(held.get("cc-dump.settings")!)).toEqual({ state: { ...chosen, follow: true, theme: "a theme rich-js dropped", panes: 2 }, version: 0 });
   });
 
   it("moves a category to its next level, of more detail, and from the most back to none", () => {

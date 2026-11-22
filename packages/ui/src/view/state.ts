@@ -1,5 +1,6 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { entries, kinds, nullable, object, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
+import { entries, kinds, nullable, object, parsed, tagged, tolerant, value, type Read, type Reader } from "@cc-dump/log/json";
+import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 import { tmuxWindow, type Launched, type TmuxWindow } from "@cc-dump/server/format";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -31,7 +32,7 @@ export type Terminal = { window: TmuxWindow; shown: boolean };
 // follow on resumes following from `now` or `left`, while the end of a chosen step is a place like any other, and
 // following resumes from it by the control or a move to the latest step. The view's own placing, a clamp or the end
 // becoming a place while follow is off, never changes the moment.
-export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chosen"; trace: string };
+export type Moment = { at: "now" } | { at: "left"; trace: TraceId } | { at: "chosen"; trace: TraceId };
 
 // The search: its query, and the match last stepped to, the one holder of which match is current. Each render reads it
 // as the column's judge finds it (moves.ts `judge`), which clears it once it is none, as under a new query or a new
@@ -46,14 +47,15 @@ const initial: View = { open: null, terminal: null, opened: {}, position: { at: 
 // so a key made another way fails there, where the version it is stored under is changed with it.
 export const viewVersion = 7;
 
-const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } });
+const trace = parsed(kinds.string, parseTraceId);
+const moment = tagged<"at", Moment>("at", { now: {}, left: { trace }, chosen: { trace } });
 const current = object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) });
 
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
 // and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
-// field is a choice of its own, so one dropped leaves the rest.
+// field is a choice of its own, so one refused leaves the rest.
 // A row key of another scheme names another row or none, so under another version each value that names a row (each
-// fold, a place at a row, the current match) is refused as it is read, and dropped and named alone; a place at the start
+// fold, a place at a row, the current match) is refused as it is read, and replaced and named alone; a place at the start
 // or the end, and all else, is kept.
 export function readView(state: unknown, version: number): Read<View> {
   const rows = <T,>(reader: Reader<T>): Reader<T> =>
@@ -103,7 +105,7 @@ export const view = {
   toggle: (key: string, starts: boolean) => useView.setState(({ opened }) => ({ opened: { ...opened, [key]: !isOpen(opened, key, starts) } })),
   // The position moved, by `by`. At the end it is following, so the moment is now; a reader's move anywhere else, while
   // the moment is now, leaves it at now's step, `now`, the latest step's exchange.
-  place: (position: Position, by: By, now: string | undefined) =>
+  place: (position: Position, by: By, now: TraceId | undefined) =>
     useView.setState(({ moment }) => ({ position, moment: position.at === "end" ? { at: "now" } : by === "reader" ? leave(moment, now) : moment })),
   // A move in time, to `moment`, with the view put at `position`, and no current match: the one there was is in another
   // moment's text, where the search, which walks the moment shown, no longer counts it.
@@ -119,17 +121,17 @@ export const view = {
   // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set or
   // a block starts, never hides the current match: what the search stepped into stays open at a level that starts it
   // closed, until the reader closes it.
-  goTo: ({ match, folds }: Step, now: string | undefined) => useView.setState((state) => ({ ...movedTo(state, match.key, folds, now), search: { ...state.search, current: match } })),
+  goTo: ({ match, folds }: Step, now: TraceId | undefined) => useView.setState((state) => ({ ...movedTo(state, match.key, folds, now), search: { ...state.search, current: match } })),
   // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show
   // the entry's heading and what stands under it, `folds`, show open, and the view moves to the row of its block,
   // `key`, which the click then refines to the heading's line.
-  toHeading: (key: string, folds: string[], now: string | undefined) => useView.setState((state) => movedTo(state, key, folds, now)),
+  toHeading: (key: string, folds: string[], now: TraceId | undefined) => useView.setState((state) => movedTo(state, key, folds, now)),
 };
 
 // [LAW:single-enforcer] The reader's move to something in the row `key`, with now's step `now`: each of `opens` the
 // choices do not hold open is chosen open, the choices the record they were if they hold all of them open, the view is
 // at the row's top, and now is left.
-function movedTo({ opened, moment }: View, key: string, opens: string[], now: string | undefined): Pick<View, "opened" | "position" | "moment"> {
+function movedTo({ opened, moment }: View, key: string, opens: string[], now: TraceId | undefined): Pick<View, "opened" | "position" | "moment"> {
   const closed = opens.filter((open) => opened[open] !== true);
   return {
     opened: closed.length === 0 ? opened : { ...opened, ...Object.fromEntries(closed.map((open) => [open, true] as const)) },
@@ -140,6 +142,6 @@ function movedTo({ opened, moment }: View, key: string, opens: string[], now: st
 
 // The moment once the reader's own act takes them away from now's step, `now`: left there, or, if it is not now, as it
 // was. Before any exchange there is no step to leave.
-function leave(moment: Moment, now: string | undefined): Moment {
+function leave(moment: Moment, now: TraceId | undefined): Moment {
   return moment.at === "now" && now !== undefined ? { at: "left", trace: now } : moment;
 }

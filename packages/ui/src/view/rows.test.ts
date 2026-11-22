@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -330,7 +331,7 @@ describe("a set", () => {
       const layout = layouts(events)(1);
       const to = matchMove({ ...layout, moment: readWith(() => undefined) }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
-      view.goTo(to, "t1");
+      view.goTo(to, parseTraceId("t1"));
     };
     const toggle = (visibility: Record<Category, Visibility>) => view.toggle("t1/tools", setStartsOpen("tools", visibility));
     // What the reader sees of the set at the levels `visibility`, with the choices and the current match they hold:

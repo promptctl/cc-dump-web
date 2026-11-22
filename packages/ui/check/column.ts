@@ -1,6 +1,7 @@
 import { describe } from "@cc-dump/log/describe";
 import { createLog } from "@cc-dump/log/event";
-import { categories, launchName, type Category, type Launch } from "../src/format/blocks.ts";
+import { categories, type Category } from "../src/format/blocks.ts";
+import { launchName, type Launch } from "../src/format/tools.ts";
 import type { FormattedExchange, KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
 import type { Visibility } from "../src/settings.ts";

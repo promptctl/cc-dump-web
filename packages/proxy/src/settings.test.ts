@@ -17,27 +17,32 @@ function refusal(act: () => unknown): string {
 
 describe("parseProxySettings", () => {
   it("reads no file as every setting's default, and says there was none", () => {
-    expect(parseProxySettings(undefined)).toEqual({ settings: { port: 3344, upstream: "https://api.anthropic.com/" }, file_keys: null });
+    expect(parseProxySettings(undefined)).toEqual({ settings: { port: 3344, upstream: "https://api.anthropic.com/" }, file_keys: null, unknown_keys: [] });
   });
 
   it("takes each setting the file sets, the rest their defaults, and says which the file set", () => {
-    expect(parseProxySettings("{}")).toEqual({ settings: { port: 3344, upstream: "https://api.anthropic.com/" }, file_keys: [] });
-    expect(parseProxySettings('{"port":3400}')).toEqual({ settings: { port: 3400, upstream: "https://api.anthropic.com/" }, file_keys: ["port"] });
+    expect(parseProxySettings("{}")).toEqual({ settings: { port: 3344, upstream: "https://api.anthropic.com/" }, file_keys: [], unknown_keys: [] });
+    expect(parseProxySettings('{"port":3400}')).toEqual({ settings: { port: 3400, upstream: "https://api.anthropic.com/" }, file_keys: ["port"], unknown_keys: [] });
     expect(parseProxySettings('{"upstream":"http://127.0.0.1:8080/anthropic","port":3400}')).toEqual({
       settings: { port: 3400, upstream: "http://127.0.0.1:8080/anthropic" },
       file_keys: ["upstream", "port"],
+      unknown_keys: [],
     });
   });
 
+  it("reads a file holding a key no setting is named, a setting misspelled or another build's, naming it", () => {
+    expect(parseProxySettings('{"prot":3400,"port":3401}')).toEqual({ settings: { port: 3401, upstream: "https://api.anthropic.com/" }, file_keys: ["prot", "port"], unknown_keys: ["prot"] });
+  });
+
   it.each([
-    ['{"port":"3400"}', 'port must be an integer from 1 to 65535, got "3400"'],
-    ['{"port":0}', "port must be an integer from 1 to 65535, got 0"],
-    ['{"port":65536}', "port must be an integer from 1 to 65535, got 65536"],
-    ['{"port":3400.5}', "port must be an integer from 1 to 65535, got 3400.5"],
-    ['{"port":null}', "port must be an integer from 1 to 65535, got null"],
-    ['{"upstream":1}', "upstream must be an http or https origin with an optional path"],
-    ['{"upstream":"https://gw.example/?key=1"}', "upstream must be an http or https origin with an optional path"],
-    ['{"prot":3400,"upstrem":""}', 'proxy settings: no setting is named "prot", "upstrem"; the settings are port, upstream'],
+    ['{"port":"3400"}', "proxy settings: port: is not an integer"],
+    ['{"port":0}', "proxy settings: port: is not from 1 to 65535: 0"],
+    ['{"port":65536}', "proxy settings: port: is not from 1 to 65535: 65536"],
+    ['{"port":3400.5}', "proxy settings: port: is not an integer"],
+    ['{"port":null}', "proxy settings: port: is not an integer"],
+    ['{"upstream":1}', "proxy settings: upstream: is not a string"],
+    ['{"upstream":"https://gw.example/?key=1"}', "proxy settings: upstream: is not an http or https origin with an optional path"],
+    ['{"port":"x","upstream":1}', "proxy settings: port: is not an integer; upstream: is not a string"],
     ["port = 3400", "proxy settings: is not JSON"],
     ["[3400]", "proxy settings: is not an object"],
     ["null", "proxy settings: is not an object"],
