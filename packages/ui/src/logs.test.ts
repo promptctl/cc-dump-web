@@ -22,7 +22,7 @@ describe("logsChanged", () => {
       { part: "server", line: line("s", 0, 2, 1000) },
     );
     expect(names(logs)).toEqual(["p0", "s0", "p1"]);
-    expect(logs.connections).toEqual({ proxy: { state: "connected" }, server: { state: "connected" } });
+    expect(logs.connections).toEqual({ proxy: { state: "connected" }, server: { state: "connected" }, ui: { state: "connected" } });
   });
 
   it("counts the lines a part did not keep: before the first one sent, and between two of the same process", () => {
@@ -38,6 +38,15 @@ describe("logsChanged", () => {
   it("lists a line already read once, as a connection made anew is sent the kept lines again", () => {
     const logs = after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 2) }, { part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 2) }, { part: "proxy", line: line("p", 2, 3) });
     expect([names(logs), logs.notKept]).toEqual([["p0", "p1", "p2"], 0]);
+  });
+
+  it("lists the UI's own lines among the parts', by when their work ended, its log reached from the first", () => {
+    expect(noLogs.connections.ui).toEqual({ state: "connected" });
+    const logs = after({ part: "proxy", line: line("p", 0, 1) }, { part: "proxy", line: line("p", 1, 5) }, { part: "ui", line: line("u", 0, 3) });
+    expect([names(logs), logs.lines.map(({ part }) => part)]).toEqual([
+      ["p0", "u0", "p1"],
+      ["proxy", "ui", "proxy"],
+    ]);
   });
 
   it("lists a part's lines in the order its process wrote them, whatever their times say", () => {
@@ -61,6 +70,6 @@ describe("logsChanged", () => {
   it("says a part's log is lost while it is tried again, and why one failed", () => {
     const error = new Error("GET http://127.0.0.1:3346/logs: not served");
     expect(after({ part: "proxy", connection: { state: "dropped" } }).connections.proxy).toEqual({ state: "dropped" });
-    expect(after({ part: "server", connection: { state: "failed", error } }).connections).toEqual({ proxy: { state: "connecting" }, server: { state: "failed", error } });
+    expect(after({ part: "server", connection: { state: "failed", error } }).connections).toEqual({ proxy: { state: "connecting" }, server: { state: "failed", error }, ui: { state: "connected" } });
   });
 });

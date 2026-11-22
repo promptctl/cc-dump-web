@@ -1,4 +1,5 @@
 import { describe as said } from "@cc-dump/log/describe";
+import { eventsWritten } from "@cc-dump/log/testing";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import type { Reader } from "./connection/connection.ts";
@@ -51,10 +52,11 @@ function started(open: OpenRecording = agent) {
   const shown: FormattedExchange[][] = [];
   const states: Reading[] = [];
   const abort = new AbortController();
-  readRecording(connection, open, (formatted) => void shown.push(formatted), frames.frames, abort.signal, (reading) => states.push(reading));
+  const { events, log } = eventsWritten();
+  readRecording(connection, log, open, (formatted) => void shown.push(formatted), frames.frames, abort.signal, (reading) => states.push(reading));
   let offset = 0;
   const deliver = (...events: RecordedEvent[]) => events.forEach((event) => reads[0]!.reader.event(event, (offset += 100)));
-  return { reads, frames, shown, states, abort, deliver };
+  return { reads, frames, shown, states, abort, deliver, events };
 }
 
 describe("readRecording", () => {
@@ -114,10 +116,28 @@ describe("readRecording", () => {
     expect(frames.pending()).toBe(0);
   });
 
+  it("writes one event as it ends: ended, with the end the proxy gave; failed, with its failure; left by its reader; each with the exchanges it read", () => {
+    const ended = started();
+    ended.deliver(event(1), event(2));
+    ended.reads[0]!.reader.end({ unterminated_bytes: 3 });
+    ended.abort.abort();
+    expect(ended.events).toEqual([expect.objectContaining({ event: "recording_read", name: agent, outcome: "ok", exchanges: 2, unterminated_bytes: 3 })]);
+    const failed = started();
+    failed.deliver(event(1), end(1), event(1));
+    expect(failed.events).toEqual([
+      expect.objectContaining({ event: "recording_read", name: agent, outcome: "error", error: `${agent}: the event ending at byte 300: trace t1's request_body follows its trace's end`, exchanges: 1 }),
+    ]);
+    const left = started();
+    left.abort.abort();
+    expect(left.events).toEqual([expect.objectContaining({ event: "recording_read", name: agent, outcome: "aborted", exchanges: 0 })]);
+    // No recording open is no read, and writes nothing.
+    expect(started(null).events).toEqual([]);
+  });
+
   it("throws the reason of a signal aborted before it begins, as the connection's read does", () => {
     const abort = new AbortController();
     abort.abort(new Error("gone"));
-    expect(() => readRecording(fakeConnection().connection, agent, () => {}, handFrames().frames, abort.signal, () => {})).toThrow("gone");
+    expect(() => readRecording(fakeConnection().connection, eventsWritten().log, agent, () => {}, handFrames().frames, abort.signal, () => {})).toThrow("gone");
   });
 
   it("leaves a frame's exchanges as they were when later events change the exchange", () => {
@@ -182,7 +202,7 @@ describe("readRecording", () => {
       const { connection, reads } = fakeConnection();
       const frames = handFrames();
       const states: Reading[] = [];
-      readRecording(connection, agent, sink, frames.frames, new AbortController().signal, (reading) => states.push(reading));
+      readRecording(connection, eventsWritten().log, agent, sink, frames.frames, new AbortController().signal, (reading) => states.push(reading));
       const request: RecordedEvent = { ...at("t1"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] };
       reads[0]!.reader.event(request, 100);
       return { reader: reads[0]!.reader, signal: reads[0]!.signal, frames, states };
@@ -204,7 +224,7 @@ describe("readRecording", () => {
     const sink = (shown: FormattedExchange[]) => {
       if (shown.length > 0) throw broke;
     };
-    readRecording(connection, agent, sink, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    readRecording(connection, eventsWritten().log, agent, sink, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
     const request: RecordedEvent = { ...at("t1"), type: "request", method: "POST", url: "/v1/messages", http_version: "1.1", headers: [] };
     const { reader } = reads[0]!;
     reader.event(request, 100);
@@ -229,7 +249,7 @@ describe("readRecording", () => {
   it("ends in a failure the read reports as it begins", () => {
     const error = new Error("GET /recordings/x: not served");
     const states: Reading[] = [];
-    readRecording({ read: (_name, reader) => reader.failed(error) }, agent, () => {}, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
+    readRecording({ read: (_name, reader) => reader.failed(error) }, eventsWritten().log, agent, () => {}, handFrames().frames, new AbortController().signal, (reading) => states.push(reading));
     expect(states).toEqual([{ state: "reading", name: agent }, { state: "failed", error }]);
   });
 

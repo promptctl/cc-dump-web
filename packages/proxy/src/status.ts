@@ -76,8 +76,14 @@ export function watchSource(log: Log, source: Source): Watched<SourceStatus> {
     return watched;
   }
   starting.end({ outcome: "ok" });
-  // The text on disk may have changed between its load and the watch.
-  check();
+  // The text on disk may have changed between its load and the watch. A first check that throws, as its event's write
+  // can, throws out of the watch before anyone holds it, so it leaves none of its watchers running.
+  try {
+    check();
+  } catch (error) {
+    for (const watcher of watchers) watcher.close();
+    throw error;
+  }
 
   return watched;
 }

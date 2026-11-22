@@ -52,9 +52,10 @@ export function waitingOf(column: ColumnState, position: Position, current: Matc
   return match?.at === "pending" ? { held: "match", read: match.read } : undefined;
 }
 
-// The judgement that nothing will bring the current match, which the view then no longer holds as current; none while
-// it can still come, or none is current.
-export function matchGone(column: ColumnState, current: Match | undefined): Gone | undefined {
-  const at = current === undefined ? undefined : matchAt(column, current);
-  return at?.at === "gone" ? at : undefined;
+// The current match nothing will bring, by its block's key, with the judgement that says so, which the view then no
+// longer holds as current; none while it can still come, or none is current.
+export function matchGone(column: ColumnState, current: Match | undefined): (Gone & { key: string }) | undefined {
+  if (current === undefined) return undefined;
+  const at = matchAt(column, current);
+  return at.at === "gone" ? { ...at, key: current.key } : undefined;
 }

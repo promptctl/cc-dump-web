@@ -1,4 +1,5 @@
 import { describe } from "@cc-dump/log/describe";
+import { createLog } from "@cc-dump/log/event";
 import { categories, launchName, type Category, type Launch } from "../src/format/blocks.ts";
 import type { FormattedExchange, KeyedBlock } from "../src/format/format.ts";
 import { senderOf } from "../src/format/wire.ts";
@@ -374,13 +375,16 @@ function doingOf(
   );
 }
 
+// The read's event, as the tab writes it to its page log, here on stderr, apart from what the check says.
+const checkLog = createLog("check", (line) => process.stderr.write(line));
+
 // A recording's history, read as the tab reads it (reading.ts), so what the check holds is what the tab holds: its
 // file's events, a frame's worth at a time, each frame's exchanges formatted and an ended one held as what it showed.
 // What a write cut short left after its last whole event is said and not read.
 async function historyOf(recording: string): Promise<History> {
   const formatted = await new Promise<FormattedExchange[]>((resolve, reject) => {
     let shown: FormattedExchange[] = [];
-    readRecording(fileConnection, recording, (formatted) => (shown = formatted), frames, new AbortController().signal, (reading) => {
+    readRecording(fileConnection, checkLog, recording, (formatted) => (shown = formatted), frames, new AbortController().signal, (reading) => {
       switch (reading.state) {
         case "failed":
           return reject(reading.error);

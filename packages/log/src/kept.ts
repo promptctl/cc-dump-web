@@ -28,5 +28,3 @@ export function keptLines(keep: number) {
     },
   };
 }
-
-export type KeptLines = ReturnType<typeof keptLines>;

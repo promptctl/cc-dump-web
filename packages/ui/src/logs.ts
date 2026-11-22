@@ -1,27 +1,32 @@
 import type { LogLine } from "@cc-dump/log/line";
 import { useEffect, useReducer } from "react";
 import { parts, type Connection, type Part } from "./connection/connection.ts";
+import type { ReadLog } from "./log.ts";
+
+// The parts whose logs the panel lists: those the connection reaches, and the UI, whose log is the page's own (log.ts).
+export const logParts = [...parts, "ui"] as const;
+export type LogPart = (typeof logParts)[number];
 
 // [LAW:types-are-the-program] Where the UI's connection to a part's log stands: being made, made, lost or not made and
-// being tried again, or ended, not served or sending what is no log's.
+// being tried again, or ended, not served or sending what is no log's. The UI's own is made as the page is.
 export type LogConnection = { state: "connecting" } | { state: "connected" } | { state: "dropped" } | { state: "failed"; error: Error };
 
-// A line as the panel lists it: its part, the line, and when its work ended, which orders it among the other part's.
-export type Listed = { part: Part; line: LogLine; ended: number };
+// A line as the panel lists it: its part, the line, and when its work ended, which orders it among the other parts'.
+export type Listed = { part: LogPart; line: LogLine; ended: number };
 
-// The logs panel's state (docs/design/01-features.md, F9). `lines`: both parts' lines, in the order their work ended, the
-// last `kept` of them. `notKept`: how many lines either part wrote that are not among them, read off the gaps in the
+// The logs panel's state (docs/design/01-features.md, F9). `lines`: every part's lines, in the order their work ended,
+// the last `kept` of them. `notKept`: how many lines any part wrote that are not among them, read off the gaps in the
 // numbers of a process's lines, and the lines let go here. `last`: the last line read of each part's process.
 export type Logs = {
   lines: Listed[];
-  connections: Record<Part, LogConnection>;
+  connections: Record<LogPart, LogConnection>;
   notKept: number;
-  last: Partial<Record<Part, Pick<LogLine, "run" | "seq">>>;
+  last: Partial<Record<LogPart, Pick<LogLine, "run" | "seq">>>;
 };
 
-export type LogsChange = { part: Part; line: LogLine } | { part: Part; connection: LogConnection };
+export type LogsChange = { part: LogPart; line: LogLine } | { part: Part; connection: LogConnection };
 
-export const noLogs: Logs = { lines: [], connections: { proxy: { state: "connecting" }, server: { state: "connecting" } }, notKept: 0, last: {} };
+export const noLogs: Logs = { lines: [], connections: { proxy: { state: "connecting" }, server: { state: "connecting" }, ui: { state: "connected" } }, notKept: 0, last: {} };
 
 // How many lines the panel holds: more than either part keeps (processLog's 1000), so a restart's lines stay beside the
 // ones before it, and few enough to list without a virtualizer.
@@ -39,7 +44,7 @@ export function logsChanged(logs: Logs, change: LogsChange): Logs {
   // A line not read has no time of its own, so it is listed where it arrived, last.
   const ended = "event" in line ? Date.parse(line.event.started_at) + line.event.duration_ms : (logs.lines.at(-1)?.ended ?? -Infinity);
   const listed: Listed = { part, line, ended };
-  // A process writes its lines in the order their work ends, so a line goes near the end: among the other part's lines
+  // A process writes its lines in the order their work ends, so a line goes near the end: among the other parts' lines
   // by when its work ended, and after its own part's, which were written before it, whatever the times say (a time is
   // to the millisecond).
   let at = logs.lines.length;
@@ -54,12 +59,13 @@ export function logsChanged(logs: Logs, change: LogsChange): Logs {
   };
 }
 
-// Both parts' logs, read for as long as the component using it is mounted: each part's kept lines, then each as it is
-// written.
-export function useLogs(connection: Pick<Connection, "logs">): Logs {
+// Every part's log, read for as long as the component using it is mounted: each part's kept lines, then each as it is
+// written. The UI's is the page's, `page`.
+export function useLogs(connection: Pick<Connection, "logs">, page: ReadLog): Logs {
   const [logs, change] = useReducer(logsChanged, noLogs);
   useEffect(() => {
     const abort = new AbortController();
+    page((line) => change({ part: "ui", line }), abort.signal);
     for (const part of parts) {
       connection.logs(
         part,
@@ -73,6 +79,6 @@ export function useLogs(connection: Pick<Connection, "logs">): Logs {
       );
     }
     return () => abort.abort();
-  }, [connection]);
+  }, [connection, page]);
   return logs;
 }

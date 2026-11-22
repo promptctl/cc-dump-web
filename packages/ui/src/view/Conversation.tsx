@@ -1,7 +1,8 @@
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
+import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
+import type { Log } from "@cc-dump/log/event";
 import { isErrorStatus } from "@cc-dump/log/status";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
@@ -9,6 +10,7 @@ import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
+import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
 import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
@@ -34,8 +36,10 @@ import { WaitingLine } from "./WaitingLine.tsx";
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
 // and near the view are mounted. `read`: how the read of the recording stands (reading.ts), which says whether it can
 // still bring an exchange its end, or a row the view's place names. `theme`: what the minimap's canvas is painted in.
-export function Conversation({ formatted, read, theme }: { formatted: FormattedExchange[]; read: Read; theme: Theme }) {
+// `log`: the page's log, which the view's decisions are written to (decisions.ts).
+export function Conversation({ formatted, read, theme, log }: { formatted: FormattedExchange[]; read: Read; theme: Theme; log: Log }) {
   const reading = read === "reading";
+  const [decisions] = useState(() => viewLog(log, () => performance.now()));
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
   const conversation = useMemo(() => history(formatted), [history, formatted]);
@@ -114,11 +118,20 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
       rowAt,
     };
     const kept = { position, written: written.current };
-    const next = step(cause, element.scrollTop, largest(element), kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
+    const [offset, end] = [element.scrollTop, largest(element)];
+    const next = step(cause, offset, end, kept, useSettings.getState().follow, moment.at !== "chosen", rowsNow);
     written.current = next.written;
+    decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== position) view.place(next.position, next.by, now);
-    if (matchGone(column, useView.getState().search.current)) view.matchGone();
-    if (column.moment.at === "gone") view.moveInTime({ at: "now" }, useView.getState().position);
+    const cleared = matchGone(column, useView.getState().search.current);
+    if (cleared !== undefined) {
+      decisions.matchCleared(cleared);
+      view.matchGone();
+    }
+    if (column.moment.at === "gone") {
+      decisions.momentReplaced(useView.getState().moment, column.moment);
+      view.moveInTime({ at: "now" }, useView.getState().position);
+    }
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.
@@ -132,6 +145,7 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   useLayoutEffect(() => {
     latest.current = sync;
     sync("change");
+    decisions.held(waiting);
   });
   useLayoutEffect(() => {
     const element = scroller.current!;

@@ -89,7 +89,7 @@ describe("a move from the reader's place", () => {
   });
 
   it("finds a current match gone only when nothing will bring it", () => {
-    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([{ at: "gone", why: "read_ended" }, undefined, undefined, undefined]);
+    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([{ at: "gone", why: "read_ended", key: "z/said" }, undefined, undefined, undefined]);
   });
 });
 
