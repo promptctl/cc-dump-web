@@ -1,7 +1,7 @@
 import { describe } from "./describe.ts";
-import { outcomes, type Ending } from "./ending.ts";
+import { ending, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { fields, jsonObject, parseJson } from "./json.ts";
+import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -64,22 +64,24 @@ export function lineAt(position: LinePosition, data: string): LogLine {
   try {
     return { ...position, event: parseLoggedEvent(data) };
   } catch (error) {
+    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
+    if (!(error instanceof Malformed)) throw error;
     return { ...position, unread: data, error: describe(error) };
   }
 }
 
+// The fields an event has a place of its own for, beside how it ended.
+const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
+  service: value(kinds.string),
+  event: value(kinds.string),
+  trace_id: parsed(kinds.string, parseTraceId),
+  started_at: value(kinds.string),
+  duration_ms: value(kinds.number),
+});
+
 function parseLoggedEvent(json: string): LoggedEvent {
   const event = jsonObject(parseJson(json, "log line"), "log line");
-  const f = fields(event, "log line");
-  const logged = {
-    service: f.string("service"),
-    event: f.string("event"),
-    trace_id: f.parsed("trace_id", parseTraceId),
-    started_at: f.string("started_at"),
-    duration_ms: f.read("duration_ms", (value) => typeof value === "number", "a number"),
-  };
-  const ending = f.oneOf("outcome", outcomes);
-  const placed = ending === "error" ? { ...logged, outcome: ending, error: f.string("error") } : { ...logged, outcome: ending };
+  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
   // The fields the event has a place of its own for are those just read; the rest are its facts.
   return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
 }

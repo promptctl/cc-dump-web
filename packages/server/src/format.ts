@@ -1,6 +1,6 @@
 import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { fields, jsonObject, parseJson } from "@cc-dump/log/json";
+import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -56,14 +56,18 @@ function oneLine(value: unknown, name: string): string {
   return value;
 }
 
+const launch = object<Launch>({ session: parsed(kinds.string, sessionName), command: parsed(kinds.string, commandLine) });
+
 export function parseLaunch(json: string): Launch {
-  const launch = jsonObject(parseJson(json, "launch"), "launch");
-  return { session: sessionName(launch.session), command: commandLine(launch.command) };
+  return parse(launch, parseJson(json, "launch"), "launch");
 }
 
+// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
+const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
+
 export function parseLauncher(json: string): Launcher {
-  const f = fields(parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, f.object("settings")), sessions: sessions(f.strings("sessions").map(sessionName)) };
+  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
+  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
@@ -73,15 +77,7 @@ export function sessions(names: string[]): Sessions {
 }
 
 export function parseLaunched(json: string): Launched {
-  const f = fields(parseJson(json, "launched"), "launched");
-  return {
-    session: sessionName(f.string("session")),
-    pane_id: paneId(f.string("pane_id")),
-    recording: f.string("recording"),
-    start_time: startTime(String(f.integer("start_time"))),
-    session_id: sessionId(f.string("session_id")),
-    window_id: windowId(f.string("window_id")),
-  };
+  return parse(launched, parseJson(json, "launched"), "launched");
 }
 
 // [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no
@@ -108,3 +104,15 @@ export const paneId = (value: string): PaneId => tmuxId("%", value);
 
 // A tmux server's start time, as tmux writes it: seconds since the epoch.
 export const startTime = (value: string): number => tmuxNumber(value, "a tmux server's start time");
+
+// [LAW:single-enforcer] A window as a value holds it, read alike in a launch's answer and in the UI's view, which
+// keeps its agent's.
+const windowReaders: Readers<TmuxWindow> = {
+  // Read by tmux's one rule, as the text tmux wrote it.
+  start_time: parsed(kinds.integer, (seconds) => startTime(String(seconds))),
+  session_id: parsed(kinds.string, sessionId),
+  window_id: parsed(kinds.string, windowId),
+};
+export const tmuxWindow: Reader<TmuxWindow> = object(windowReaders);
+
+const launched = object<Launched>({ session: parsed(kinds.string, sessionName), pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });

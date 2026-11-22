@@ -1,6 +1,6 @@
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import type { Ending } from "@cc-dump/log/ending";
-import { unitOfWork } from "../log.ts";
+import { decided as decide, unitOfWork } from "../log.ts";
 import type { Cleared, Waiting } from "./moves.ts";
 import type { Gone } from "./rows.ts";
 import type { Cause, Kept, Stepped } from "./scroll.ts";
@@ -26,14 +26,15 @@ export type StepTaken = { cause: Cause; offset: number; end: number; kept: Kept;
 //   (`aborted`, `close`). Told what holds them however often, each is written once for each hold.
 export function viewLog(log: Log) {
   // A decision is a unit of work that ends as it is taken.
-  const decided = (event: string, facts: Facts, span: Span = startTrace()) => unitOfWork(log, event, facts, span).end({ outcome: "ok" });
+  const taken: Ending = { outcome: "ok" };
+  const decided = (event: string, facts: Facts) => decide(log, event, facts, taken, startTrace());
   // [LAW:no-ambient-temporal-coupling] The hold in force, whose one owner this is: it begins it, and ends it as what
   // holds the moves changes or the view goes, on its own span.
   type Hold = { waiting: NonNullable<Waiting>; span: Span };
   let hold: Hold | undefined;
   const begun = (waiting: NonNullable<Waiting>): Hold => {
     const span = startTrace();
-    decided("moves_held", waiting, span);
+    decide(log, "moves_held", waiting, taken, span);
     return { waiting, span };
   };
   const free = (ending: Ending) => {

@@ -75,16 +75,16 @@ describe("parseRecordedEvent", () => {
   it.each([
     ["not json", "{", "recorded event: is not JSON"],
     ["not an object", "[]", "recorded event: is not an object"],
-    ["an unknown type", { ...event, type: "response_footer" }, "recorded event: type is not one of request, "],
-    ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "trace t1's response: status is not an integer"],
-    ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "trace t1's request_body: base64 is not a string"],
-    ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "trace t1's request_trailers: headers is not a list of [name, value] string pairs"],
+    ["an unknown type", { ...event, type: "response_footer" }, "recorded event: type: is not one of request, "],
+    ["a missing field", { ...event, type: "response", reason: "OK", http_version: "1.1", headers: [] }, "trace t1's response: status: is missing"],
+    ["a field of the wrong type", { ...event, type: "request_body", base64: 7 }, "trace t1's request_body: base64: is not a string"],
+    ["a malformed header", { ...event, type: "request_trailers", headers: [["x-one"]] }, "trace t1's request_trailers: headers: is not a list of [name, value] string pairs"],
     ["a trace id that is not a word", { ...event, trace_id: "a/b", type: "end", outcome: "ok" }, `recorded end event: trace_id: "a/b" is not a word: one or more letters, digits, '-' or '_'`],
-    ["a time that is not one", { ...event, timestamp: "yesterday", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
-    ["a day its month does not have", { ...event, timestamp: "2026-02-31T00:00:00.000Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
-    ["a time written as the proxy does not", { ...event, timestamp: "2026-11-13T08:00:00Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp is not an ISO 8601 UTC time"],
-    ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "trace t1's end: outcome is not one of ok, aborted, stopped, error"],
-    ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "trace t1's end: error is not a string"],
+    ["a time that is not one", { ...event, timestamp: "yesterday", type: "end", outcome: "ok" }, "trace t1's end: timestamp: is not an ISO 8601 UTC time"],
+    ["a day its month does not have", { ...event, timestamp: "2026-02-31T00:00:00.000Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp: is not an ISO 8601 UTC time"],
+    ["a time written as the proxy does not", { ...event, timestamp: "2026-11-13T08:00:00Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp: is not an ISO 8601 UTC time"],
+    ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "trace t1's end: outcome: is not one of ok, aborted, stopped, error"],
+    ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "trace t1's end: error: is missing"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
     expect(refusal(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line)))).toContain(message);
   });
@@ -107,10 +107,10 @@ describe("the reader's messages", () => {
 
   it("refuses a list or an end of another shape", () => {
     expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
-    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name is not a string");
+    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name: is not a string");
     expect(() => parseListing("[]")).toThrow("recording: is not an object");
-    expect(() => parseListing('{"name":7}')).toThrow("recording: name is not a string");
-    expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes is not an integer");
+    expect(() => parseListing('{"name":7}')).toThrow("recording: name: is not a string");
+    expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes: is not an integer");
   });
 
   const info = { base_url: "http://127.0.0.1:3344", upstream: "https://api.anthropic.com/", recordings: "/home/me/.local/share/cc-dump/recordings" };
@@ -126,22 +126,22 @@ describe("the reader's messages", () => {
   it("refuses a status of another shape, the shapes before its traffic and its info were sent included", () => {
     const status = { info, source: { state: "watching", changed_source: [] }, traffic: { in_flight: 0, last_request: null } };
     const refused = (changed: object) => () => parseProxyStatus(JSON.stringify({ ...status, ...changed }));
-    expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is not an object");
-    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state is not one of watching, failed");
-    expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source: changed_source is not a list of strings");
-    expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source: message is not a string");
-    expect(refused({ traffic: undefined })).toThrow("proxy status: traffic: is not an object");
-    expect(refused({ traffic: { in_flight: 0.5, last_request: null } })).toThrow("proxy status: traffic: in_flight is not an integer");
+    expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is missing");
+    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is not one of watching, failed");
+    expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source: changed_source: is not a list of strings");
+    expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source: message: is missing");
+    expect(refused({ traffic: undefined })).toThrow("proxy status: traffic: is missing");
+    expect(refused({ traffic: { in_flight: 0.5, last_request: null } })).toThrow("proxy status: traffic: in_flight: is not an integer");
     for (const last_request of ["yesterday", "2026", "Nov 16 2026", "2026-11-16T10:00:00Z", "2026-11-16T10:00:00.000+01:00"]) {
-      expect(refused({ traffic: { in_flight: 0, last_request } })).toThrow("proxy status: traffic: last_request is not an ISO 8601 UTC time or null");
+      expect(refused({ traffic: { in_flight: 0, last_request } })).toThrow("proxy status: traffic: last_request: is not an ISO 8601 UTC time");
     }
-    expect(refused({ info: undefined })).toThrow("proxy status: info: is not an object");
-    expect(refused({ info: { ...info, recordings: undefined } })).toThrow("proxy status: info: recordings is not a string");
+    expect(refused({ info: undefined })).toThrow("proxy status: info: is missing");
+    expect(refused({ info: { ...info, recordings: undefined } })).toThrow("proxy status: info: recordings: is missing");
   });
 
   it("reads back the proxy's info, and refuses info without the recordings' directory", () => {
     expect(parseProxyInfo(JSON.stringify(info))).toEqual(info);
-    expect(() => parseProxyInfo('{"base_url":"http://127.0.0.1:3344","upstream":"https://api.anthropic.com/"}')).toThrow("proxy info: recordings is not a string");
+    expect(() => parseProxyInfo('{"base_url":"http://127.0.0.1:3344","upstream":"https://api.anthropic.com/"}')).toThrow("proxy info: recordings: is missing");
   });
 });
 

@@ -82,6 +82,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 
 ### F9. Logs panel
 - A panel shows the log lines of the proxy, the app server and the browser UI as they are written, and can be filtered by level. The UI's are its own decisions about the reader's view and its reads of a recording, each with the facts that decided it: a place that moved after a reload says what moved it.
+- Each page start lists one read of the stored view and one of the stored settings (`stored_read`), even when nothing was dropped. Each says how it was read (`stored`: nothing stored, read, an item that is not one, a storage that could not be reached, or the build's own read failing) and names each value dropped, at any depth, with why, including values this build does not read. All but the first two are errors. Each says whether writes are made after it (`writes`): after a read that did not reach what is stored, nothing is written over it until a read reaches it. A run of writes the storage refused (a full quota) is one line as it begins (`stored_write_refused`) and one as it ends, in its trace, timed from its start (`stored_writes_resumed`).
 
 ### F10. Themes
 - The app ships with more than one theme, including a light one and a dark one. Switching takes effect immediately.
@@ -94,6 +95,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - Saving a change to any source file except the proxy's takes effect in the running app without restarting the proxy.
 - A request in flight during a reload completes for the agent and is recorded in full.
 - After a reload the user sees the same conversation at the same scroll position, with the same filters, expanded blocks, search and follow state.
+- A stored value of a shape this build does not read is reset alone, and every other is kept. After a change to how rows are named, the recording, terminal, moment and query are kept, and only what names a row is reset: expanded blocks, a place at a row, and the current match. A place at the start or the end is kept.
 - A change to the proxy's own source does not take effect until the proxy restarts. The app shows that a proxy restart is pending.
 
 ### F13. Terminal
