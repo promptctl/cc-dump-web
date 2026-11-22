@@ -1,10 +1,10 @@
 import { readWith } from "../testing.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { forkMove, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
+import { forkMove, injectedMove, matchCleared, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import type { Position } from "./position.ts";
 import type { ForkRow, Keys, Row } from "./rows.ts";
-import { address, createSearch, type Match } from "./search.ts";
+import { address, createSearch, type Current } from "./search.ts";
 import { WaitingLine } from "./WaitingLine.tsx";
 
 const standing = { depth: 0, dimmed: false };
@@ -18,7 +18,7 @@ const block = (key: string, said: string, injected = false): Row => ({
   versions: [
     {
       step: 1,
-      block: { key, category: "user", name: "text", parts: [{ kind: "text", form: "verbatim", text: said }], ...(injected ? { injected: true as const } : {}) },
+      block: { key, category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "verbatim", text: said }], ...(injected ? { injected: true as const } : {}) },
       reply: false,
       rewrote: undefined,
       previous: undefined,
@@ -45,7 +45,8 @@ const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
 const at = (key: string): Position => ({ at: "row", key, offset: 0 });
-const match = (key: string): Match => ({ key, at: address.part(0), start: 4 });
+// The first match of the text of the block at `key`, taken under the search's pattern.
+const match = (key: string): Current => ({ key, at: address.part({ id: "text" }), nth: 0, pattern: String(pattern) });
 const [listed, pending, gone] = [at("a"), at("later/x"), at("z/x")];
 
 describe("a move from the reader's place", () => {
@@ -76,11 +77,17 @@ describe("a move from the reader's place", () => {
     expect(waitingOf(column, gone, undefined)).toBeUndefined();
   });
 
-  it("goes on from a current match among the rows, and is none from one not read yet, which the line says, or one gone", () => {
+  it("goes on from a current match among the rows, and is none from one not read yet, which the line says", () => {
     expect(matchMove(column, found, match("a/said"), listed, "next", pattern)?.match.key).toBe("a/reminder");
     expect(matchMove(column, found, match("later/said"), listed, "next", pattern)).toBeUndefined();
     expect(waitingOf(column, listed, match("later/said"))).toEqual({ held: "match", read: "reading" });
-    expect(matchMove(column, found, match("z/said"), listed, "next", pattern)).toBeUndefined();
+  });
+
+  it("goes on from the reader's place, as with no current match, from one that is none", () => {
+    const fromPlace = matchMove(column, found, undefined, listed, "next", pattern);
+    for (const none of [match("z/said"), { ...match("a/said"), nth: 1 }, { ...match("a/said"), at: address.part({ id: "input" }) }, { ...match("a/said"), pattern: "/other/g" }]) {
+      expect(matchMove(column, found, none, listed, "next", pattern)).toEqual(fromPlace);
+    }
     expect(waitingOf(column, listed, match("z/said"))).toBeUndefined();
   });
 
@@ -88,14 +95,25 @@ describe("a move from the reader's place", () => {
     expect(waitingOf(column, pending, match("later/said"))).toEqual({ held: "place", read: "reading" });
   });
 
-  it("finds a current match gone only when nothing will bring it", () => {
-    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([{ at: "gone", why: "read_ended", key: "z/said" }, undefined, undefined, undefined]);
+  it("clears a current match nothing will bring, taken under another pattern, or that its text no longer holds, and says where it was and why", () => {
+    const where = (current: Current) => ({ key: current.key, at: current.at, nth: current.nth });
+    const cases: [Current, string][] = [
+      [match("z/said"), "read_ended"],
+      [{ ...match("a/said"), pattern: "/other/g" }, "pattern_changed"],
+      [{ ...match("a/said"), at: address.part({ id: "input" }) }, "text_gone"],
+      [{ ...match("a/said"), nth: 1 }, "text_changed"],
+    ];
+    for (const [current, why] of cases) expect(matchCleared(column, current, pattern)).toEqual({ ...where(current), why });
+  });
+
+  it("keeps a current match its text holds, one not read yet, or none", () => {
+    expect([match("a/said"), match("later/said"), undefined].map((current) => matchCleared(column, current, pattern))).toEqual([undefined, undefined, undefined]);
   });
 });
 
 describe("the line under the rows", () => {
   // What the line says, fed as the conversation feeds it, from the store's place and current match.
-  const says = (position: Position, current?: Match, read = column) => renderToStaticMarkup(<WaitingLine waiting={waitingOf(read, position, current)} />);
+  const says = (position: Position, current?: Current, read = column) => renderToStaticMarkup(<WaitingLine waiting={waitingOf(read, position, current)} />);
 
   it("says which of the place and the current match is not read yet, as a status", () => {
     expect(says(pending)).toMatch(/<p role="status"[^>]*>Your place is not read yet<\/p>/);

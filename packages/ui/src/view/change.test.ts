@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Block } from "../format/blocks.ts";
+import { labelled } from "../format/parts.ts";
 import { blockDiff, blockText, type DiffLine, type LineFold } from "./change.ts";
 
-const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text }] });
+const block = (text: string): Block => ({ category: "system", name: "system", parts: [{ id: "text", kind: "text", form: "markdown", text }] });
 const numbered = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}`);
 const kinds = (entries: (DiffLine | LineFold)[]) => entries.map((entry) => (entry.kind === "fold" ? `fold ${entry.at}+${entry.lines.length}` : entry.change));
 const line = (change: DiffLine["change"], ...words: [DiffLine["change"], string][]): DiffLine => ({ kind: "line", change, words: words.map(([change, text]) => ({ change, text })) });
@@ -14,18 +15,18 @@ describe("blockText", () => {
         category: "tools",
         name: "tool_use: X",
         parts: [
-          { kind: "text", form: "verbatim", label: "command", text: "ls" },
-          { kind: "json", value: { a: 1 } },
-          { kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
-          { kind: "diff", before: "old", after: "new" },
-          { kind: "media", of: "image", source: { type: "url", url: "u" } },
+          { kind: "text", form: "verbatim", ...labelled("command"), text: "ls" },
+          { id: "input", kind: "json", value: { a: 1 } },
+          { id: "fields", kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
+          { id: "diff", kind: "diff", before: "old", after: "new" },
+          { id: "source", kind: "media", of: "image", source: { type: "url", url: "u" } },
         ],
       }),
     ).toBe(["ls", '{\n  "a": 1\n}', "id: 1\nthinking:\n  type: adaptive", "-old\n+new", "[image: u]"].join("\n\n"));
   });
 
   it("tells two images of one size apart", () => {
-    const image = (data: string): Block => ({ category: "user", name: "image", parts: [{ kind: "media", of: "image", source: { type: "base64", media_type: "image/png", data } }] });
+    const image = (data: string): Block => ({ category: "user", name: "image", parts: [{ id: "source", kind: "media", of: "image", source: { type: "base64", media_type: "image/png", data } }] });
     expect(blockText(image("AAAA"))).not.toBe(blockText(image("AAAB")));
   });
 });

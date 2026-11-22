@@ -29,7 +29,7 @@ function partText(part: Part): string {
       return jsonText(part);
     case "fields":
       return fieldLines(part.fields)
-        .map(({ name, value, depth }) => `${"  ".repeat(depth)}${name}:${value === undefined ? "" : ` ${value}`}`)
+        .map(({ name, value, path }) => `${"  ".repeat(path.length - 1)}${name}:${value === undefined ? "" : ` ${value}`}`)
         .join("\n");
     case "diff":
       return diffOf(part)

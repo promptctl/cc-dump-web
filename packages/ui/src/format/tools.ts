@@ -1,5 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
-import { doesNotFit, type Part } from "./parts.ts";
+import { doesNotFit, labelled, type Part } from "./parts.ts";
 import { fitting, readObject, type Fields } from "./read.ts";
 
 // A tool call's input, shown as the tool's work: a command as the shell line it is, an edit as the change it makes, a
@@ -10,19 +10,19 @@ import { fitting, readObject, type Fields } from "./read.ts";
 // it arranges; the fields it does not read follow (`unreadInputParts`). An input all of whose fields read as fields has an entry
 // that reads none of them.
 const entries = new Map<string, (input: Fields) => Part[]>([
-  ["Bash", (input) => [{ kind: "text", form: "verbatim", label: "command", text: input.string("command") }]],
+  ["Bash", (input) => [{ kind: "text", form: "verbatim", ...labelled("command"), text: input.string("command") }]],
   [
     "Edit",
     (input) => [
-      { kind: "fields", fields: [["file_path", input.string("file_path")]] },
-      { kind: "diff", label: "old_string → new_string", before: input.string("old_string"), after: input.string("new_string") },
+      { id: "file_path", kind: "fields", fields: [["file_path", input.string("file_path")]] },
+      { kind: "diff", ...labelled("old_string → new_string"), before: input.string("old_string"), after: input.string("new_string") },
     ],
   ],
   [
     "Write",
     (input) => [
-      { kind: "fields", fields: [["file_path", input.string("file_path")]] },
-      { kind: "text", form: "verbatim", label: "content", text: input.string("content") },
+      { id: "file_path", kind: "fields", fields: [["file_path", input.string("file_path")]] },
+      { kind: "text", form: "verbatim", ...labelled("content"), text: input.string("content") },
     ],
   ],
   ["Read", () => []],
@@ -46,7 +46,7 @@ export function inputParts(name: string, input: unknown): Part[] {
 }
 
 // A tool's input as the JSON it was sent.
-export const jsonInput = (input: unknown): Part[] => [{ kind: "json", label: "input", value: input }];
+export const jsonInput = (input: unknown): Part[] => [{ kind: "json", ...labelled("input"), value: input }];
 
 // The fields of an input its entry did not read: the ones a line holds, a string, a number or a boolean, as fields, in
 // the order they were sent, and the others together as the input's JSON.
@@ -54,7 +54,7 @@ function unreadInputParts(input: Fields): Part[] {
   const rest = Object.entries(input.rest());
   const fields: Header[] = rest.filter(([, value]) => isScalar(value)).map(([name, value]) => [name, String(value)]);
   const values = rest.filter(([, value]) => !isScalar(value));
-  return [...(fields.length === 0 ? [] : [{ kind: "fields" as const, fields }]), ...(values.length === 0 ? [] : jsonInput(Object.fromEntries(values)))];
+  return [...(fields.length === 0 ? [] : [{ id: "input fields", kind: "fields" as const, fields }]), ...(values.length === 0 ? [] : jsonInput(Object.fromEntries(values)))];
 }
 
 const isScalar = (value: unknown): value is string | number | boolean => typeof value === "string" || typeof value === "number" || typeof value === "boolean";

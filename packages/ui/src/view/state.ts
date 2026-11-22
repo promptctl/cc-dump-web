@@ -7,7 +7,7 @@ import { recording } from "../store.ts";
 import type { Position } from "./position.ts";
 import type { By } from "./scroll.ts";
 import { isOpen, type Opened } from "./rows.ts";
-import type { Match, Step } from "./search.ts";
+import type { Current, Step } from "./search.ts";
 
 // [LAW:one-source-of-truth] What the reader has chosen about the view: the recording open, the agent's window their
 // launch opened and whether its terminal is shown (F13), each block, set, nest, region or fold they opened or closed
@@ -30,8 +30,9 @@ export type Terminal = { window: TmuxWindow; shown: boolean };
 // becoming a place while follow is off, never changes the moment.
 export type Moment = { at: "now" } | { at: "left"; trace: string } | { at: "chosen"; trace: string };
 
-// The search: its query, and the match last stepped to, the one holder of which match is current. A new query has none.
-export type Search = { query: string; current: Match | undefined };
+// The search: its query, and the match last stepped to, the one holder of which match is current. The column's judge
+// clears it once it is none (moves.ts `matchCleared`), as under a new query or a new way of reading it, in every tab.
+export type Search = { query: string; current: Current | undefined };
 
 // A tab opens with no recording: the person launches an agent, or opens one.
 const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
@@ -42,7 +43,7 @@ export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 6,
+    version: 7,
     migrate: () => initial,
   }),
 );
@@ -76,23 +77,18 @@ export const view = {
   // moment's text, where the search, which walks the moment shown, no longer counts it.
   moveInTime: (moment: Exclude<Moment, { at: "left" }>, position: Position) =>
     useView.setState(({ search }) => ({ moment, position, search: { ...search, current: undefined } })),
-  search: (query: string) => useView.setState({ search: { query, current: undefined } }),
-  // A change of how the query is read finds other matches, as a change of the query does, so none is current.
-  // [LAW:one-source-of-truth] The option itself is the settings', which every tab shares.
-  searchOption: (option: keyof SearchOptions, on: boolean) => {
-    settings.setSearchOption(option, on);
-    useView.setState(({ search }) => ({ search: { ...search, current: undefined } }));
-  },
-  // The current match is one nothing will bring (moves.ts `matchGone`), as one kept for a tab whose read ended without
-  // it: none is current.
-  matchGone: () => useView.setState(({ search }) => ({ search: { ...search, current: undefined } })),
-  // A step to a match, the reader's act, with now's step `now`: it becomes current, the folds holding it show open, and
-  // the view moves to its row, which the step then refines to the match's line. The folds are chosen open, however they
-  // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set
-  // or a block starts, never hides the current match: what the search stepped into stays open at a level that starts
-  // it closed, until the reader closes it.
-  goTo: ({ match, folds }: Step, now: string | undefined) =>
-    useView.setState((state) => ({ ...movedTo(state, match.key, folds, now), search: { ...state.search, current: match } })),
+  search: (query: string) => useView.setState(({ search }) => ({ search: { ...search, query } })),
+  // [LAW:one-source-of-truth] The option is the settings', which every tab shares.
+  searchOption: (option: keyof SearchOptions, on: boolean) => settings.setSearchOption(option, on),
+  // The current match is none (moves.ts `matchCleared`).
+  clearMatch: () => useView.setState(({ search }) => ({ search: { ...search, current: undefined } })),
+  // A step to a match under `pattern`, the reader's act, with now's step `now`: it becomes current, the folds holding it
+  // show open, and the view moves to its row, which the step then refines to the match's line. The folds are chosen
+  // open, however they start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which
+  // moves how a set or a block starts, never hides the current match: what the search stepped into stays open at a
+  // level that starts it closed, until the reader closes it.
+  goTo: ({ match, folds }: Step, pattern: RegExp, now: string | undefined) =>
+    useView.setState((state) => ({ ...movedTo(state, match.key, folds, now), search: { ...state.search, current: { ...match, pattern: String(pattern) } } })),
   // A click on an entry of a text's contents (contents.ts), the reader's act, with now's step `now`: the folds that show
   // the entry's heading and what stands under it, `folds`, show open, and the view moves to the row of its block,
   // `key`, which the click then refines to the heading's line.

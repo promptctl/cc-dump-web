@@ -44,12 +44,12 @@ describe("the view's decisions", () => {
     expect(events).toEqual([expect.objectContaining({ event: "reader_scroll", from: end, to: inC, cause: "scroll", offset: 120, written: 170, end: 250 })]);
   });
 
-  it("say why a current match was cleared, and a moment replaced by now", () => {
+  it("say where a current match was and why it was cleared, and a moment replaced by now", () => {
     const { events, decisions } = logged();
-    decisions.matchCleared({ at: "gone", why: "step_unlisted", key: "t9/said" });
+    decisions.matchCleared({ key: "t9/said", at: '["part","text"]', nth: 2, why: "text_changed" });
     decisions.momentReplaced({ at: "chosen", trace: "t3" }, { at: "gone", why: "read_ended" });
     expect(events).toEqual([
-      expect.objectContaining({ event: "match_cleared", key: "t9/said", why: "step_unlisted" }),
+      expect.objectContaining({ event: "match_cleared", key: "t9/said", at: '["part","text"]', nth: 2, why: "text_changed" }),
       expect.objectContaining({ event: "moment_replaced", from: { at: "chosen", trace: "t3" }, why: "read_ended" }),
     ]);
   });

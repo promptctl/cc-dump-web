@@ -2,7 +2,7 @@ import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
 import type { ForkRow, Gone, Layout, MomentStanding, Pending } from "./rows.ts";
-import { adjacent, type Direction, type Found, type Match, type Step } from "./search.ts";
+import { adjacent, resolve, type Current, type Direction, type Found, type Match, type Step, type Unresolved } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
 // view's store holds it: what each would go to, decided apart from carrying it out (Conversation.tsx).
@@ -35,10 +35,11 @@ export function injectedMove(column: ColumnState, position: Position, direction:
 }
 
 // The step the search takes to the match after or before the one it counts from: the current match, `current`, while
-// there is one, or else the reader's place. None while that is not read yet or will not come.
-export function matchMove(column: ColumnState, found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp): Step | undefined {
-  const at = startOf(current === undefined ? inEvery(column, position) : matchAt(column, current));
-  return at === undefined ? undefined : adjacent(found, { match: current, at }, direction, pattern);
+// it stands (`matchCleared`), or else the reader's place. None while that is not read yet or will not come.
+export function matchMove(column: ColumnState, found: Found, current: Current | undefined, position: Position, direction: Direction, pattern: RegExp): Step | undefined {
+  const standing = current !== undefined && matchCleared(column, current, pattern) === undefined ? current : undefined;
+  const at = startOf(standing === undefined ? inEvery(column, position) : matchAt(column, standing));
+  return at === undefined ? undefined : adjacent(found, { match: standing, at }, direction, pattern);
 }
 
 // What holds the moves, said by the line under the rows: the reader's place, or the current match, not read yet, by
@@ -52,10 +53,23 @@ export function waitingOf(column: ColumnState, position: Position, current: Matc
   return match?.at === "pending" ? { held: "match", read: match.read } : undefined;
 }
 
-// The current match nothing will bring, by its block's key, with the judgement that says so, which the view then no
-// longer holds as current; none while it can still come, or none is current.
-export function matchGone(column: ColumnState, current: Match | undefined): (Gone & { key: string }) | undefined {
-  if (current === undefined) return undefined;
-  const at = matchAt(column, current);
-  return at.at === "gone" ? { ...at, key: current.key } : undefined;
+// Why a current match is none: nothing will bring its row (Gone), the search's pattern is now another than the one it
+// was taken under (`pattern_changed`), or its text no longer holds it (search.ts `Unresolved`).
+export type Cleared = Match & { why: Gone["why"] | "pattern_changed" | Unresolved };
+
+// [LAW:single-enforcer] The one judge of the current match, run on every commit: the match, with why, when it is none,
+// which the view then no longer holds as current; none while it stands, or none is current. A match whose row is not
+// listed yet, or stands in a row that replaced it, stands until its row is read.
+export function matchCleared(column: ColumnState, current: Current | undefined, pattern: RegExp): Cleared | undefined {
+  const why = current === undefined ? undefined : whyCleared(column, current, pattern);
+  return why === undefined ? undefined : { key: current!.key, at: current!.at, nth: current!.nth, why };
+}
+
+function whyCleared(column: ColumnState, current: Current, pattern: RegExp): Cleared["why"] | undefined {
+  const standing = matchAt(column, current);
+  if (standing.at === "gone") return standing.why;
+  if (current.pattern !== String(pattern)) return "pattern_changed";
+  if (standing.at !== "row") return undefined;
+  const resolved = resolve(column.every.rows[standing.index]!, current, pattern);
+  return "why" in resolved ? resolved.why : undefined;
 }

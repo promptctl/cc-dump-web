@@ -13,7 +13,7 @@ import { Minimap } from "./Minimap.tsx";
 import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
-import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
+import { forkMove, inListed, injectedMove, matchCleared, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
@@ -124,10 +124,10 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
-    const cleared = matchGone(column, useView.getState().search.current);
+    const cleared = matchCleared(column, useView.getState().search.current, pattern);
     if (cleared !== undefined) {
       decisions.matchCleared(cleared);
-      view.matchGone();
+      view.clearMatch();
     }
     // The moment replaced is the one the column judged gone, this render's.
     if (column.moment.at === "gone") {
@@ -196,7 +196,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   const stepTo = (direction: Direction) => {
     const next = matchMove(column, found, current, useView.getState().position, direction, pattern);
     if (next === undefined) return;
-    flushSync(() => view.goTo(next, now));
+    flushSync(() => view.goTo(next, pattern, now));
     const match = currentMatch();
     // [LAW:no-silent-failure] The step opens every fold its match needs listed and drawn (search.ts), so the match is
     // painted once committed.
@@ -655,8 +655,8 @@ function BlockView({ row }: { row: BlockRow }) {
       {open && (
         <div className="max-w-[110ch] pb-1 pl-6">
           <Sections.Provider value={sectionsStartOpen(block)}>
-            {block.parts.map((part, index) => (
-              <PartView key={index} part={part} blockKey={row.key} index={index} />
+            {block.parts.map((part) => (
+              <PartView key={part.id} part={part} blockKey={row.key} />
             ))}
           </Sections.Provider>
         </div>
@@ -753,43 +753,42 @@ function DiffLineView({ change, children }: { change: Edit["change"]; children: 
   );
 }
 
-// `index`: the part's place among its block's parts.
-function PartView({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
+function PartView({ part, blockKey }: { part: Part; blockKey: string }) {
   return (
     <div className="py-0.5">
       {part.label !== undefined && <div className="text-foreground-muted">{part.label}</div>}
-      <PartContent part={part} blockKey={blockKey} index={index} />
+      <PartContent part={part} blockKey={blockKey} />
     </div>
   );
 }
 
 // [LAW:types-are-the-program] Its return type is the switch's exhaustiveness check: a Part kind it misses leaves a path
 // returning nothing, which tsc refuses.
-function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }): ReactElement {
+function PartContent({ part, blockKey }: { part: Part; blockKey: string }): ReactElement {
   switch (part.kind) {
     case "text":
-      return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <TextView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "json":
-      return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <JsonView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "fields":
       return (
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
-          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
-            <div key={field} className="contents">
-              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
+          {fieldLines(part.fields).map(({ name, value, path }) => (
+            <div key={address.field(part, path, "name")} className="contents">
+              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${(path.length - 1) * 2}ch` }}>
+                <HighlightedText blockKey={blockKey} at={address.field(part, path, "name")} text={name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
+                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(part, path, "value")} text={value} />}
               </dd>
             </div>
           ))}
         </dl>
       );
     case "diff":
-      return <DiffView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <DiffView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "media": {
       const { of, source } = part;
       switch (source.type) {
