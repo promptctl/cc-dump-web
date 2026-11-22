@@ -74,7 +74,7 @@ describe("a stored item's read", () => {
           stored: "read",
           version: 0,
           dropped: [
-            { at: ["by"], why: "is not read by this build" },
+            { at: ["by"], why: "is not read by this build, which reads state, version" },
             { at: ["state", "on"], why: "is not a boolean" },
           ],
         },

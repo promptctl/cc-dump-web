@@ -15,7 +15,7 @@ const error = object({ error: value(kinds.string) });
 // outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.
 export const ending: Reader<Ending> = (json, at) => {
   const ended = outcome(json, at).value;
-  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [] };
+  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [], unread: [] };
 };
 
 // [LAW:single-enforcer] How a request ended, from how its response ended and the status line it was sent with, which a

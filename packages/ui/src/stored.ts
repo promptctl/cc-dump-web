@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { droppedOf, kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -127,7 +127,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    const dropped = [...droppedOf(envelope), ...droppedOf(state).map(({ at, why }) => ({ at: ["state", ...at], why }))];
     return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
