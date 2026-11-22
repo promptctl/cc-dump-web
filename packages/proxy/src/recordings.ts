@@ -98,6 +98,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
       for (const listener of told) listener(name);
     };
   };
+  const follows = (name: string) => writers.has(name);
   const files = async () => (await readdir(dir)).filter((name) => name.endsWith(".jsonl"));
   const sizeOf = (name: string) => stat(join(dir, name)).then(({ size }) => size, (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? 0 : Promise.reject(error)));
   return {
@@ -110,7 +111,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
       if (writer === undefined) throw new Error(`${name}: this run holds no writer for it`);
       return writer.written();
     },
-    follows: (name) => writers.has(name),
+    follows,
     onWritten: (listener) => {
       listeners.add(listener);
       return () => void listeners.delete(listener);
@@ -124,7 +125,7 @@ export function createRecordings(log: Log, dir: string, run: string, now: () => 
     // case-insensitive filesystem cannot open the run's recording by another spelling and serve it as finished. The run's
     // own are known in memory, so the directory is listed only for a name it does not hold. A name that is neither, a
     // typo or one nothing made, is not waited on.
-    named: async (asked) => (writers.has(asked) || (await files()).includes(asked) ? (asked as ReadableName) : undefined),
+    named: async (asked) => (follows(asked) || (await files()).includes(asked) ? (asked as ReadableName) : undefined),
     measure: (name) => recordedLength(join(dir, name)),
     read: async (name, position, length) => {
       await using file = await open(join(dir, name));

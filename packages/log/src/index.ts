@@ -10,13 +10,15 @@ import { mintTraceId, type TraceId } from "./trace.ts";
 export type { Ending, TraceId };
 
 // [LAW:nothing-unseen] One wide event per unit of work, carrying the observability floor's default
-// fields. Parts add facts beside them and never rename them; `service` is added by the sink.
+// fields. Parts add facts beside them and never rename them; `service` is added by the sink, and `unit` names the unit
+// of work a `failure` is of (`unitOfWork`).
 export type Event = {
   event: string;
   trace_id: TraceId;
   started_at: string;
   duration_ms: number;
   service?: never;
+  unit?: string;
   [fact: string]: unknown;
 } & Ending;
 export type Log = (event: Event) => void;
