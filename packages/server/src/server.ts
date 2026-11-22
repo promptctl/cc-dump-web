@@ -24,10 +24,10 @@ export type Parts = {
 // and tmux and the proxy are asked again on each request.
 export function createApp({ log, logs, settingsPath, tmux, proxyInfo, proxyRecording, directory }: Parts): Handler {
   // The launch settings, and on their event which of them launch.json set, `file_keys` (null: there is no file), the
-  // rest being their defaults.
+  // rest being their defaults, and each key in it this build does not read, `unread`.
   const readSettings = async (trace_id: TraceId) =>
     (
-      await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys }) => ({ file_keys }))
+      await loggedIn(log, trace_id, "launch_settings", { path: settingsPath }, async () => launchSettings.read(settingsPath), ({ file_keys, unread }) => ({ file_keys, unread }))
     ).settings;
 
   // `GET /launch` (docs/design/01-features.md, F1): what a launch starts from.

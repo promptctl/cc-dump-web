@@ -29,19 +29,19 @@ it("reads its settings from cc-dump/proxy.json under the XDG config home, and do
 
   expect(code).toBe(1);
   expect(out.trim().split("\n").map((line) => JSON.parse(line) as unknown)).toEqual([
-    expect.objectContaining({ event: "settings", path, config_home_from: "XDG_CONFIG_HOME", outcome: "error", error: expect.stringContaining("port must be an integer from 1 to 65535, got 0") }),
+    expect.objectContaining({ event: "settings", path, config_home_from: "XDG_CONFIG_HOME", outcome: "error", error: expect.stringContaining(`proxy settings in ${path}: port: is not an integer from 1 to 65535`) }),
   ]);
 });
 
 // The port agents are pointed at is bound before the reader port, so its listen event is written even beside a proxy
 // already holding the reader port.
-it("listens for agents on the port its settings file sets", async () => {
+it("listens for agents on the port its settings file sets, naming on its settings event each key it does not read", async () => {
   // A free port: one the system gave, let go of again.
   const free = await serve(() => {}, () => {}, 0);
   await free.close();
   const { port } = free;
 
-  const { child, path } = proxyWith(JSON.stringify({ port, upstream: "http://127.0.0.1:9/gateway" }));
+  const { child, path } = proxyWith(JSON.stringify({ port, upstream: "http://127.0.0.1:9/gateway", theme: "dark" }));
   const events: Record<string, unknown>[] = [];
   for await (const line of createInterface({ input: child.stdout })) {
     events.push(JSON.parse(line) as Record<string, unknown>);
@@ -51,7 +51,8 @@ it("listens for agents on the port its settings file sets", async () => {
   expect(events.find(({ event }) => event === "settings")).toMatchObject({
     path,
     outcome: "ok",
-    file_keys: ["port", "upstream"],
+    file_keys: ["port", "upstream", "theme"],
+    unread: [{ at: ["theme"], why: "is not read by this build, which reads port, upstream" }],
     port,
     upstream: "http://127.0.0.1:9/gateway",
   });

@@ -29,7 +29,38 @@ describe("GET /launch", () => {
         return describeError(error);
       }
     })();
-    expect(refused).toBe('launcher settings: command must be a line of text that is not blank, got ""');
+    expect(refused).toBe('launcher: settings: command: is not a line of text that is not blank, got ""');
+  });
+
+  it("passes over a launcher setting it does not read, as another build's, and refuses one missing", () => {
+    expect(parseLauncher(JSON.stringify({ settings: { session: "work", command: "claude", theme: "dark" }, sessions: ["work"] }))).toEqual({
+      settings: { session: "work", command: "claude" },
+      sessions: ["work"],
+    });
+    expect(() => parseLauncher(JSON.stringify({ settings: { session: null }, sessions: ["work"] }))).toThrow("launcher: settings: command: is missing");
+  });
+
+  it("refuses a session list naming a session no window can be opened in, at its index, or naming none", () => {
+    expect(() => parseLauncher(JSON.stringify({ settings: { session: null, command: "claude" }, sessions: ["work", " "] }))).toThrow(
+      'launcher: sessions: 1: is not a line of text that is not blank, got " "',
+    );
+    expect(() => parseLauncher(JSON.stringify({ settings: { session: null, command: "claude" }, sessions: [] }))).toThrow("launcher: sessions: tmux listed none");
+  });
+
+  it("reads a settings file holding a key it does not read, naming it on the settings' event", async () => {
+    const { url, settingsPath, work } = await app();
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, '{"command":"claude --resume","theme":"dark"}');
+    const res = await fetch(`${url}/launch`);
+    expect(res.status).toBe(200);
+    expect(await work()).toMatchObject({
+      event: "launch_settings",
+      outcome: "ok",
+      path: settingsPath,
+      file_keys: ["command", "theme"],
+      unread: [{ at: ["theme"], why: "is not read by this build, which reads session, command" }],
+    });
+    expect(parseLauncher(await res.text()).settings).toEqual({ session: null, command: "claude --resume" });
   });
 
   it("fails naming the settings file it cannot take", async () => {
@@ -38,7 +69,7 @@ describe("GET /launch", () => {
     writeFileSync(settingsPath, '{"command":""}');
     const res = await fetch(`${url}/launch`);
     expect(res.status).toBe(500);
-    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command must be a line of text that is not blank, got ""` });
+    expect(parseFailure(await res.text())).toEqual({ error: `launch settings in ${settingsPath}: command: is not a line of text that is not blank, got ""` });
     expect(await next()).toMatchObject({ event: "request", status: 500, outcome: "error" });
   });
 
@@ -85,10 +116,10 @@ describe("POST /launch", () => {
   });
 
   it.each([
-    [{ session: "work", command: "" }, 'command must be a line of text that is not blank, got ""'],
-    [{ session: "work", command: "   " }, 'command must be a line of text that is not blank, got "   "'],
-    [{ session: "work", command: "claude\nrm -rf ~" }, "command must be a line of text that is not blank"],
-    [{ session: "work", command: "claude\0" }, 'command must be a line of text that is not blank, got "claude\\u0000"'],
+    [{ session: "work", command: "" }, 'command: is not a line of text that is not blank, got ""'],
+    [{ session: "work", command: "   " }, 'command: is not a line of text that is not blank, got "   "'],
+    [{ session: "work", command: "claude\nrm -rf ~" }, "command: is not a line of text that is not blank"],
+    [{ session: "work", command: "claude\0" }, 'command: is not a line of text that is not blank, got "claude\\u0000"'],
     [{ command: "claude" }, "launch: session: is missing"],
     ["claude", "launch: is not an object"],
   ])("refuses %j, saying why, and neither launches nor stores it", async (body, reason) => {

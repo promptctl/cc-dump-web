@@ -1,6 +1,6 @@
 import { ending, type Ending } from "@cc-dump/log/ending";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
+import { kinds, list, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -101,7 +101,7 @@ export type ProxyStatus = { info: ProxyInfo; source: SourceStatus; traffic: Traf
 // Whether the proxy runs the source on disk. `changed_source`: the files whose text on disk differs from the text the
 // proxy runs, or that are gone; a restart of the proxy is pending while there is one. A watch that failed says so, and
 // is never an empty `changed_source`: a dead watch must not read as nothing pending.
-export type SourceStatus = { state: "watching"; changed_source: string[] } | { state: "failed"; message: string };
+export type SourceStatus = { state: "watching"; changed_source: readonly string[] } | { state: "failed"; message: string };
 
 // The agents' requests this run of the proxy forwards, on any path of its agent port, and none of its reader port's,
 // where the UI's own open reads would keep `in_flight` above 0. `in_flight`: those that arrived and have not ended.
@@ -182,7 +182,7 @@ const headers = value({ fits: isHeaders, expected: "a list of [name, value] stri
 const listing = object<Listing>({ name: value(kinds.string) });
 const proxyInfo = object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) });
 const proxyStatus = object<ProxyStatus>({
-  source: tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } }),
+  source: tagged<"state", SourceStatus>("state", { watching: { changed_source: list(value(kinds.string)) }, failed: { message: value(kinds.string) } }),
   traffic: object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) }),
   info: proxyInfo,
 });

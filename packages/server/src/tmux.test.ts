@@ -16,7 +16,7 @@ function setEnv(name: string, value: string) {
 describe("createTmux", () => {
   it("names every session on the server", async () => {
     const { socketPath } = tmuxServer("one two", "alpha");
-    expect((await createTmux({ socketPath }).sessions()).sort()).toEqual(["alpha", "one two"]);
+    expect([...(await createTmux({ socketPath }).sessions())].sort()).toEqual(["alpha", "one two"]);
   });
 
   it("is refused in tmux's words when no server runs", async () => {

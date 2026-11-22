@@ -40,8 +40,6 @@ export const kinds = {
   boolean: { fits: (value): value is boolean => typeof value === "boolean", expected: "a boolean" } as Kind<boolean>,
   integer: { fits: Number.isSafeInteger as (value: unknown) => value is number, expected: "an integer" } as Kind<number>,
   number: { fits: Number.isFinite as (value: unknown) => value is number, expected: "a number" } as Kind<number>,
-  strings: { fits: (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"), expected: "a list of strings" } as Kind<string[]>,
-  object: { fits: isObject, expected: "an object" } as Kind<Record<string, unknown>>,
   among: <T extends string>(values: readonly T[]): Kind<T> => ({
     fits: (value): value is T => typeof value === "string" && (values as readonly string[]).includes(value),
     expected: `one of ${values.join(", ")}`,
@@ -328,6 +326,3 @@ export const readShown = <T>(reader: Reader<T>, json: unknown): Shown<T> => held
 
 // The value JSON text `text` says, or `Malformed` naming `what`.
 export const parseJson = (text: string, what: string): unknown => parse(fromJsonText(raw), text, what);
-
-// The object `what` is, or `Malformed` naming it.
-export const jsonObject = (json: unknown, what: string): Record<string, unknown> => parse(value(kinds.object), json, what);

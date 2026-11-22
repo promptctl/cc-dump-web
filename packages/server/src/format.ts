@@ -1,6 +1,5 @@
-import { parseSettings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parse, parsed, parseJson, value, type Reader, type Readers } from "@cc-dump/log/json";
+import { fromJsonText, kinds, list, nullable, object, parse, parsed, refined, value, type Reader, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -8,16 +7,12 @@ import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-te
 
 // [LAW:one-source-of-truth] The launch settings (docs/design/01-features.md, F1, F11), in launch.json and in `GET /launch`'s
 // answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
-// launch is tried, so one that failed is tried again as it was asked. `session`: null until a launch names one; the agent
-// command, a whole command line, `claude` until the user launches another.
-export const launchSettingsTable = {
-  session: { default: null, parse: (value: unknown) => (value === null ? null : sessionName(value)) },
-  command: { default: "claude", parse: commandLine },
-};
-export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
+// launch is tried, so one that failed is tried again as it was asked. `session`: the session the last launch named;
+// `command`: the agent command, a whole command line. Their defaults are launch.json's (settings.ts).
+export type LaunchSettings = { session: string | null; command: string };
 
 // The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
-export type Sessions = [string, ...string[]];
+export type Sessions = readonly [string, ...string[]];
 
 // `GET /launch`: the settings, and the sessions on the user's tmux server.
 export type Launcher = { settings: LaunchSettings; sessions: Sessions };
@@ -40,44 +35,40 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 // from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
-// [LAW:parse-dont-validate] [LAW:single-enforcer] Each value of a launch is parsed here, from the request's body and
-// from the settings file alike. tmux runs a window's command as one line, with no NUL, which ends a C string, and a
-// session target names a session by name.
-export function sessionName(value: unknown): string {
-  return oneLine(value, "session");
-}
+// [LAW:parse-dont-validate] [LAW:single-enforcer] Each name and command of a launch is read by this one reader, from
+// the request's body, the settings file, the launcher and tmux's list alike. tmux runs a window's command as one line,
+// with no NUL, which ends a C string, and a session target names a session by name.
+const oneLine = refined(value(kinds.string), (text) => {
+  if (text.trim() === "" || /[\n\0]/.test(text)) throw new Malformed(`is not a line of text that is not blank, got ${JSON.stringify(text)}`);
+  return text;
+});
 
-export function commandLine(value: unknown): string {
-  return oneLine(value, "command");
-}
+// The launch settings as launch.json and the launcher hold them.
+export const launchSettingsReaders: Readers<LaunchSettings> = { session: nullable(oneLine), command: oneLine };
 
-function oneLine(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "" || /[\n\0]/.test(value)) throw new Malformed(`${name} must be a line of text that is not blank, got ${JSON.stringify(value)}`);
-  return value;
-}
-
-const launch = object<Launch>({ session: parsed(kinds.string, sessionName), command: parsed(kinds.string, commandLine) });
+const launch = object<Launch>({ session: oneLine, command: oneLine });
 
 export function parseLaunch(json: string): Launch {
-  return parse(launch, parseJson(json, "launch"), "launch");
+  return parse(fromJsonText(launch), json, "launch");
 }
 
-// The settings are read by the settings files' own table (@cc-dump/config), which names them in its refusals.
-const launcher = object({ settings: value(kinds.object), sessions: parsed(kinds.strings, (names) => sessions(names.map(sessionName))) });
+// A setting the launcher leaves out is refused, since the app server sends each; one this build does not read is
+// another build's, passed over.
+const launcher = object<Launcher>({ settings: object(launchSettingsReaders), sessions: refined(list(oneLine), sessions) });
 
 export function parseLauncher(json: string): Launcher {
-  const { settings, sessions } = parse(launcher, parseJson(json, "launcher"), "launcher");
-  return { settings: parseSettings("launcher settings", launchSettingsTable, settings), sessions };
+  return parse(fromJsonText(launcher), json, "launcher");
 }
 
 // [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
-export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Malformed("sessions: tmux listed none");
-  return names as Sessions;
+export function sessions(names: readonly string[]): Sessions {
+  const [first, ...rest] = names;
+  if (first === undefined) throw new Malformed("tmux listed none");
+  return [first, ...rest];
 }
 
 export function parseLaunched(json: string): Launched {
-  return parse(launched, parseJson(json, "launched"), "launched");
+  return parse(fromJsonText(launched), json, "launched");
 }
 
 // [LAW:single-enforcer] The one rule for a number tmux writes, every id's and the start time's: decimal, with no
@@ -115,4 +106,4 @@ const windowReaders: Readers<TmuxWindow> = {
 };
 export const tmuxWindow: Reader<TmuxWindow> = object(windowReaders);
 
-const launched = object<Launched>({ session: parsed(kinds.string, sessionName), pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });
+const launched = object<Launched>({ session: oneLine, pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });
