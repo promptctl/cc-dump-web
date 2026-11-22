@@ -16,7 +16,7 @@ import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, bringerOf, pendingOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Read, type Row, type SetRow, type Stands } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, standingOf, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type MomentStep, type NestRow, type Parent, type Read, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -43,13 +43,10 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   // Now's step, the latest, by its exchange: where a reader's act away from now leaves the moment.
   const now = conversation.segments.at(-1)?.formatted.exchange.trace_id;
   const moment = useView((state) => state.moment);
-  // The moment's step, undefined for one the read has not brought; the column shows now's step until it does. While it
-  // is not read, what can still bring it holds every move (position.ts), and once nothing can, the moment is gone and
-  // the view's sync replaces it with now.
-  const momentStep = moment.at === "now" ? steps : conversation.stepOf(moment.trace);
-  const shown = momentStep ?? steps;
-  const momentPending = momentStep === undefined ? bringerOf(read) : undefined;
-  const momentGone = momentStep === undefined && momentPending === undefined;
+  // The moment's step: now, or the step a moment away from now holds, undefined for one the read has not brought; the
+  // column shows now's step until it does.
+  const momentStep: MomentStep = useMemo(() => (moment.at === "now" ? { at: "now" } : { at: "held", step: conversation.stepOf(moment.trace) }), [moment, conversation]);
+  const shown = (momentStep.at === "held" ? momentStep.step : undefined) ?? steps;
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
@@ -57,11 +54,10 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   const current = useView((state) => state.search.current);
   const opened = useView((state) => state.opened);
   const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, current?.key, opened), [layOut, conversation, shown, current?.key, opened]);
-  // What can still bring a row the view's place or current match names, into the column of the steps up to the
-  // moment's, or of every step to come, now; and the column the moves count in.
-  const reach = moment.at === "now" ? Infinity : shown;
-  const pending = useMemo(() => pendingOf(conversation, read, reach), [conversation, read, reach]);
-  const column: ColumnState = { rows, keys, every, pending, moment: momentPending };
+  // How the moment stands, which holds every move while its step is not read and, once nothing can bring it, is
+  // replaced with now by the view's sync; and the column the moves count in.
+  const standing = useMemo(() => standingOf(conversation, read, momentStep, listed), [conversation, read, momentStep, listed]);
+  const column: ColumnState = { rows, keys, every, moment: standing };
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -122,7 +118,7 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
     written.current = next.written;
     if (next.position !== position) view.place(next.position, next.by, now);
     if (matchGone(column, useView.getState().search.current)) view.matchGone();
-    if (momentGone) view.moveInTime({ at: "now" }, useView.getState().position);
+    if (column.moment.at === "gone") view.moveInTime({ at: "now" }, useView.getState().position);
     if (next.write === undefined) return;
     element.scrollTop = next.write;
     // The browser clamps an offset past the end, so what was written is what it reads back.

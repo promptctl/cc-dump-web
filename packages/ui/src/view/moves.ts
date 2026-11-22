@@ -1,20 +1,20 @@
 import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
-import type { ForkRow, Layout, Pending } from "./rows.ts";
+import type { ForkRow, Layout, MomentStanding, Pending } from "./rows.ts";
 import { adjacent, type Direction, type Found, type Match, type Step } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
 // view's store holds it: what each would go to, decided apart from carrying it out (Conversation.tsx).
 
-// What a move reads of the column: the rows listed and their keys, every row's keys, what can still bring a row not
-// among them (rows.ts `pendingOf`), and what can still bring the moment's step while it is not read (`moment`).
-export type ColumnState = Pick<Layout, "rows" | "keys" | "every"> & { pending: (key: string) => Pending | undefined; moment: Pending | undefined };
+// What a move reads of the column: the rows listed and their keys, every row's keys, and how the moment it is of stands
+// (rows.ts `standingOf`).
+export type ColumnState = Pick<Layout, "rows" | "keys" | "every"> & { moment: MomentStanding };
 
 // Where `position` stands among the rows listed, which the forks, the injected blocks and the scroll step count in.
-export const inListed = ({ keys, every, pending, moment }: ColumnState, position: Position): Presence => presence(position, keys, every.keys.indexOf, pending, moment);
+export const inListed = ({ keys, every, moment }: ColumnState, position: Position): Presence => presence(position, keys, every.keys.indexOf, moment);
 // Where `position` stands among every row, which the search counts in.
-const inEvery = ({ every, pending, moment }: ColumnState, position: Position): Presence => presence(position, every.keys, every.keys.indexOf, pending, moment);
+const inEvery = ({ every, moment }: ColumnState, position: Position): Presence => presence(position, every.keys, every.keys.indexOf, moment);
 // A match stands where its block's row does.
 const matchAt = (column: ColumnState, { key }: Match): Presence => inEvery(column, { at: "row", key, offset: 0 });
 

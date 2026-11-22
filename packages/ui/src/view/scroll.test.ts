@@ -14,7 +14,7 @@ const indexOf = (key: string) => {
 };
 // The rows, every one listed; a row `d` the read can still bring, and any other not among them that nothing will.
 const rows: Rows = {
-  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, (key) => (key.startsWith("d") ? "reading" : undefined), undefined),
+  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, { at: "read", pending: (key) => (key.startsWith("d") ? "reading" : undefined) }),
   placed: (index) => placed[index],
   rowAt: (offset) => placed.findLast((row) => row.start <= offset),
 };

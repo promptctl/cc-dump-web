@@ -1,4 +1,4 @@
-import type { Keys, Pending } from "./rows.ts";
+import type { Keys, MomentStanding, Pending } from "./rows.ts";
 
 // Where the reader is in the conversation: at its end, wherever the end now is; at its start; or at a row, `offset`
 // pixels into it at the top of the view.
@@ -23,16 +23,15 @@ export type Presence = At | { at: "pending"; read: Pending } | { at: "gone" };
 // the row listed before it (Keys), or before them all when none is. Otherwise it stands where the nearest row it is
 // inside does: `a/b/c` is inside `a/b`, which is inside `a`, so a block the formatter replaced, as it replaces a request
 // body so far, stands at its group, and a fork's line still to come at the row it will follow. Inside none, it is
-// pending while the read can still bring it (`pending`, rows.ts), and gone otherwise. A reader's place is a moment and
-// a place in its column, so while the moment's step is not read, by what can still bring it (`moment`), the column
-// shown is another's, and every position is pending.
-export function presence(position: Position, keys: Keys, every: Keys["indexOf"], pending: (key: string) => Pending | undefined, moment: Pending | undefined): Presence {
-  if (moment !== undefined) return { at: "pending", read: moment };
+// pending while what can still bring it does (rows.ts, MomentStanding), and gone otherwise. A reader's place is a moment
+// and a place in its column, so every position stands as its moment does while that is not read, or gone.
+export function presence(position: Position, keys: Keys, every: Keys["indexOf"], moment: MomentStanding): Presence {
+  if (moment.at !== "read") return moment;
   if (position.at !== "row") return position;
   const { key, offset } = position;
   const inside = insideOf(key, every);
   if (inside === undefined) {
-    const read = pending(key);
+    const read = moment.pending(key);
     return read === undefined ? { at: "gone" } : { at: "pending", read };
   }
   const index = keys.indexOf(inside);

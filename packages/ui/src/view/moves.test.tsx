@@ -38,8 +38,8 @@ const keys: Keys = {
 };
 // The column, every row listed, in which a key starting `later` is one the read can still bring, and any other not
 // among the rows one nothing will; and the same column after the read failed.
-const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, pending: (key) => (key.startsWith("later") ? "reading" : undefined), moment: undefined };
-const failed: ColumnState = { ...column, pending: (key) => (key.startsWith("later") ? "failed" : undefined) };
+const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: { at: "read", pending: (key) => (key.startsWith("later") ? "reading" : undefined) } };
+const failed: ColumnState = { ...column, moment: { at: "read", pending: (key) => (key.startsWith("later") ? "failed" : undefined) } };
 const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
@@ -61,7 +61,7 @@ describe("a move from the reader's place", () => {
   });
 
   it("is none from any place while the moment's step is not read, since the column shown is another's", () => {
-    const held: ColumnState = { ...column, moment: "reading" };
+    const held: ColumnState = { ...column, moment: { at: "pending", read: "reading" } };
     expect([forkMove(held, listed), injectedMove(held, listed, "next"), matchMove(held, found, undefined, listed, "next", pattern), matchMove(held, found, match("a/said"), listed, "next", pattern)]).toEqual([undefined, undefined, undefined, undefined]);
     expect(waitingOf(held, listed, undefined)).toEqual({ held: "place", read: "reading" });
   });
@@ -107,7 +107,7 @@ describe("the line under the rows", () => {
   });
 
   it("says the place is not read yet while the moment's step is not, wherever the place is", () => {
-    expect(says(listed, undefined, { ...column, moment: "reading" })).toMatch(/>Your place is not read yet</);
+    expect(says(listed, undefined, { ...column, moment: { at: "pending", read: "reading" } })).toMatch(/>Your place is not read yet</);
   });
 
   it("is empty while nothing holds the moves, and for a place nothing will bring", () => {
