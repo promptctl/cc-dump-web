@@ -273,16 +273,16 @@ describe("format", () => {
     expect(formatted.messages).toBe(2);
   });
 
-  it("numbers the speakers' messages among themselves, a system-role message standing before one and moving none", () => {
-    const system = (text: string) => ({ role: "system", content: text });
-    const messages = [system("First."), { role: "user", content: "Hi." }, system("Second."), system("Third."), { role: "assistant", content: "Hello." }, { role: "narrator", content: "Later." }, system("Last.")];
+  it("numbers the speakers' messages among themselves, a system-role message standing before one and moving none, whether or not its content reads", () => {
+    const system = (text: unknown) => ({ role: "system", content: text });
+    const messages = [system("First."), { role: "user", content: "Hi." }, system("Second."), system(5), { role: "assistant", content: "Hello." }, { role: "narrator", content: "Later." }, system("Last.")];
     const formatted = one([...request("a", { model: "m", messages: [...messages, { role: "user", content: [{ type: "text", text: "Go.", cache_control: { type: "ephemeral" } }] }, { role: "system", content: [{ type: "text", text: "End.", cache_control: { type: "ephemeral" } }] }] })]);
     // A role this view does not know is a speaker's, so the messages after it keep their places.
     expect(formatted.groups.filter(({ key }) => key.startsWith("message")).map(({ key, title, blocks }) => [key, title, blocks[0]!.place])).toEqual([
       ["message.0.system.0", "system", { in: "system message", before: 0, index: 0 }],
       ["message.0", "user", { in: "message", index: 0 }],
       ["message.1.system.0", "system", { in: "system message", before: 1, index: 0 }],
-      ["message.1.system.1", "system", { in: "system message", before: 1, index: 1 }],
+      ["message.1.system.1", "message", { in: "system message", before: 1, index: 1 }],
       ["message.1", "assistant", { in: "message", index: 1 }],
       ["message.2", "message", { in: "message", index: 2 }],
       ["message.3.system.0", "system", { in: "system message", before: 3, index: 0 }],
@@ -305,7 +305,7 @@ describe("format", () => {
       ["tools.Read.0", "Read"],
       ["tools.Read.1", "Read"],
       ["tools.a%2Fb.0", "a/b"],
-      ["tools.tool definition.0", "tool definition"],
+      ["tools.tool.0", "tool"],
       ["tools.Grep.0", "Grep"],
       ["tools.a%252Fb.0", "a%2Fb"],
       ["tools.x\ud800.0", "x\ud800"],
@@ -734,7 +734,7 @@ describe("format", () => {
     expect(group(formatted, "message.0")[0]).not.toHaveProperty("failed");
   });
 
-  it("marks failed a failed tool's result, and a server tool's result of its error type; a result its entry cannot read states nothing, not even that", () => {
+  it("marks failed a failed tool's result, whether or not its content reads, and a server tool's result of its error type; a result whose call does not read states nothing", () => {
     const formatted = one(
       request("a", {
         model: "m",
@@ -743,6 +743,7 @@ describe("format", () => {
             role: "user",
             content: [
               { type: "tool_result", tool_use_id: "toolu_1", is_error: true },
+              { type: "tool_result", tool_use_id: "toolu_2", is_error: true, content: 42 },
               { type: "tool_result", tool_use_id: 1, is_error: true },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
               { type: "web_search_tool_result", tool_use_id: "srvtoolu_2", content: [] },
@@ -751,12 +752,14 @@ describe("format", () => {
         ],
       }),
     );
-    expect(group(formatted, "message.0").map(({ name, failed }) => [name, failed])).toEqual([
-      ["tool_result: error", true],
-      ["tool_result", undefined],
-      ["web_search_tool_result: error", true],
-      ["web_search_tool_result", undefined],
+    expect(group(formatted, "message.0").map(({ name, failed, result }) => [name, failed, result?.answers])).toEqual([
+      ["tool_result: error", true, "toolu_1"],
+      ["tool_result: error", true, "toolu_2"],
+      ["tool_result", undefined, undefined],
+      ["web_search_tool_result: error", true, undefined],
+      ["web_search_tool_result", undefined, undefined],
     ]);
+    expect(group(formatted, "message.0")[1]!.parts[0]).toEqual(doesNotFit("tool_result: content: is not a string or a list of blocks"));
   });
 
   it("decodes a body whose trailers were not recorded once its exchange has ended", () => {

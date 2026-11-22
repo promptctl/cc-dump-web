@@ -1,6 +1,6 @@
 import { settings, type SettingsOf } from "@cc-dump/config/settings";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, nullable, object, parse, parseJson, parsed, strip, value, type Readers } from "@cc-dump/log/json";
+import { kinds, nullable, object, parse, parseJson, parsed, value, type Readers } from "@cc-dump/log/json";
 import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:one-source-of-truth] What the app server and the UI say to each other about launching (docs/design/01-features.md,
@@ -28,6 +28,13 @@ export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 // The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
 export type Sessions = [string, ...string[]];
 
+// [LAW:parse-dont-validate] The names of tmux's sessions, each a line, as Sessions, as tmux lists them and as `GET
+// /launch` answers them: refused when there are none.
+export const sessionNames = parsed(kinds.strings, (names): Sessions => {
+  if (names.length === 0) throw new Malformed("lists none");
+  return names.map(line) as Sessions;
+});
+
 // `GET /launch`: the settings, and the sessions on the user's tmux server.
 export type Launcher = { settings: LaunchSettings; sessions: Sessions };
 
@@ -49,22 +56,16 @@ export type Launched = { session: string; pane_id: PaneId; recording: string } &
 // from 0 again, so after a restart the same ids name others, and only with the start time are they the ones they were.
 export type TmuxWindow = { start_time: number; session_id: SessionId; window_id: WindowId };
 
-const launch = strip(object<Launch>({ session: oneLine, command: oneLine }));
+const launch = object<Launch>({ session: oneLine, command: oneLine });
 
 export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-const launcher = strip(object<Launcher>({ settings: settings(launchSettingsTable), sessions: parsed(kinds.strings, (names) => sessions(names.map(line))) }));
+const launcher = object<Launcher>({ settings: settings(launchSettingsTable), sessions: sessionNames });
 
 export function parseLauncher(json: string): Launcher {
   return parse(launcher, parseJson(json, "launcher"), "launcher");
-}
-
-// [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
-export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Malformed("tmux listed none");
-  return names as Sessions;
 }
 
 export function parseLaunched(json: string): Launched {
@@ -104,4 +105,4 @@ export const windowReaders: Readers<TmuxWindow> = {
   session_id: parsed(kinds.string, sessionId),
   window_id: parsed(kinds.string, windowId),
 };
-const launched = strip(object<Launched>({ session: oneLine, pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders }));
+const launched = object<Launched>({ session: oneLine, pane_id: parsed(kinds.string, paneId), recording: value(kinds.string), ...windowReaders });

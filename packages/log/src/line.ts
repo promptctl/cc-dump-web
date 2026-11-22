@@ -1,7 +1,6 @@
-import { describe } from "./describe.ts";
 import { ending, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { kinds, object, parse, parseJson, parsed, value } from "./json.ts";
+import { attempt, kinds, kept, object, parse, parseJson, parsed, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -61,13 +60,10 @@ export function parseLogLine(data: string, id: string): LogLine {
 // The line at `position` whose event is `data`. An event that does not parse taints no other line, so it is this
 // one's, unread, in its place among them.
 export function lineAt(position: LinePosition, data: string): LogLine {
-  try {
-    return { ...position, event: parseLoggedEvent(data) };
-  } catch (error) {
-    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
-    if (!(error instanceof Malformed)) throw error;
-    return { ...position, unread: data, error: describe(error) };
-  }
+  return attempt(
+    (): LogLine => ({ ...position, event: parseLoggedEvent(data) }),
+    (error) => ({ ...position, unread: data, error }),
+  );
 }
 
 // The fields an event has a place of its own for, beside how it ended.
@@ -80,8 +76,8 @@ const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
 });
 
 function parseLoggedEvent(json: string): LoggedEvent {
-  const { fields, rest } = parse(logged, parseJson(json, "log line"), "log line");
+  const { fields, rest } = parse(kept(logged), parseJson(json, "log line"), "log line");
   // The fields the event has a place of its own for are those just read; the rest are its facts.
-  const { fields: ended, rest: facts } = parse(ending, rest, "log line");
+  const { fields: ended, rest: facts } = parse(kept(ending), rest, "log line");
   return { ...fields, ...ended, facts };
 }

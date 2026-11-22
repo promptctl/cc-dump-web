@@ -1,4 +1,4 @@
-import { attempt, kinds, object, parse, value, type Readers } from "@cc-dump/log/json";
+import { attempt, kept, kinds, object, parse, value, type Readers } from "@cc-dump/log/json";
 import type { Header } from "@cc-dump/proxy/format";
 import { doesNotFit, type Part } from "./parts.ts";
 
@@ -9,7 +9,7 @@ import { doesNotFit, type Part } from "./parts.ts";
 // A tool's entry: the fields its parts arrange, each read by its reader, then every field it does not read
 // (`unreadInputParts`).
 function entry<T extends object>(readers: Readers<T>, parts: (input: T) => Part[]): (input: unknown) => Part[] {
-  const read = object(readers);
+  const read = kept(object(readers));
   return (input) => {
     const { fields, rest } = parse(read, input, "input");
     return [...parts(fields), ...unreadInputParts(rest)];

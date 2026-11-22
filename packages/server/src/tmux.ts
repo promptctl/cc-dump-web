@@ -14,7 +14,8 @@ import {
   type SpawnOptions,
   type TmuxConnection,
 } from "@promptctl/tmux-control-mode-js";
-import { startTime, sessions, type Launched, type Sessions, type TmuxWindow } from "./format.ts";
+import { parse } from "@cc-dump/log/json";
+import { startTime, sessionNames, type Launched, type Sessions, type TmuxWindow } from "./format.ts";
 
 // A window to open in a session: the command its pane runs, through the user's shell, in `cwd`, an absolute directory,
 // with `env` set for it alone.
@@ -83,7 +84,7 @@ export function createTmux(options: SpawnOptions = {}): Tmux {
     }
   };
   return {
-    sessions: () => connected(async (client) => sessions((await listSessions(client)).map((session) => session.sessionName))),
+    sessions: () => connected(async (client) => parse(sessionNames, (await listSessions(client)).map((session) => session.sessionName), "tmux's sessions")),
     newWindow: ({ session, command, cwd, env }) =>
       connected(async (client) => {
         // tmux takes a session by id: a name it would also match as a prefix, a pattern, another session's id or a client.

@@ -1,6 +1,5 @@
 import { ending, type Ending } from "@cc-dump/log/ending";
-import { Malformed } from "@cc-dump/log/failure";
-import { kinds, nullable, object, parse, parseJson, parsed, strip, tagged, value } from "@cc-dump/log/json";
+import { kinds, list, nullable, object, parse, parseJson, parsed, tagged, value } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -118,9 +117,7 @@ export type ProxyInfo = { base_url: string; upstream: string; recordings: string
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
 
 export function parseListings(json: string): Listing[] {
-  const listings = parseJson(json, "recordings list");
-  if (!Array.isArray(listings)) throw new Malformed("recordings list: is not an array");
-  return listings.map((entry: unknown) => parse(listing, entry, "recordings list entry"));
+  return parse(list(listing), parseJson(json, "recordings list"), "recordings list");
 }
 
 export function parseListing(json: string): Listing {
@@ -128,7 +125,7 @@ export function parseListing(json: string): Listing {
 }
 
 export function parseRecordingEnd(json: string): RecordingEnd {
-  return parse(strip(object<RecordingEnd>({ unterminated_bytes: value(kinds.integer) })), parseJson(json, "recording end"), "recording end");
+  return parse(object<RecordingEnd>({ unterminated_bytes: value(kinds.integer) }), parseJson(json, "recording end"), "recording end");
 }
 
 export function parseProxyStatus(json: string): ProxyStatus {
@@ -145,7 +142,7 @@ export function parseRecordedEvent(line: string): RecordedEvent {
   const { trace_id } = parse(traceOf, json, `recorded ${type} event`);
   // Named as the fold names an event it refuses (ui/src/exchanges.ts), so either refusal names its trace and type.
   const what = `trace ${trace_id}'s ${type}`;
-  const event = { ...parse(timestamp, json, what), trace_id };
+  const event = { type, trace_id };
   switch (type) {
     case "request":
       return { ...event, type, ...parse(request, json, what) };
@@ -158,7 +155,7 @@ export function parseRecordedEvent(line: string): RecordedEvent {
     case "response":
       return { ...event, type, ...parse(response, json, what) };
     case "end":
-      return { ...event, type, ...parse(strip(ending), json, what) };
+      return { ...event, type, ...parse(timed, json, what), ...parse(ending, json, what) };
   }
 }
 
@@ -179,20 +176,20 @@ const isHeaders = (value: unknown): value is Header[] =>
   Array.isArray(value) && value.every((header) => Array.isArray(header) && header.length === 2 && header.every((part) => typeof part === "string"));
 const headers = value({ fits: isHeaders, expected: "a list of [name, value] string pairs" });
 
-const listing = strip(object<Listing>({ name: value(kinds.string) }));
-const proxyInfo = strip(object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) }));
-const proxyStatus = strip(object<ProxyStatus>({
-  source: strip(tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } })),
-  traffic: strip(object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) })),
+const listing = object<Listing>({ name: value(kinds.string) });
+const proxyInfo = object<ProxyInfo>({ base_url: value(kinds.string), upstream: value(kinds.string), recordings: value(kinds.string) });
+const proxyStatus = object<ProxyStatus>({
+  source: tagged<"state", SourceStatus>("state", { watching: { changed_source: value(kinds.strings) }, failed: { message: value(kinds.string) } }),
+  traffic: object<Traffic>({ in_flight: value(kinds.integer), last_request: nullable(time) }),
   info: proxyInfo,
-}));
+});
 
-// A recorded event's data, by its type.
-type Data<T extends Recorded["type"]> = Omit<Extract<Recorded, { type: T }>, "type">;
-const recordedType = strip(object({ type: value(kinds.among(Object.keys(recordedTypes) as Recorded["type"][])) }));
-const traceOf = strip(object({ trace_id: parsed(kinds.string, parseTraceId) }));
-const timestamp = strip(object({ timestamp: time }));
-const request = strip(object<Data<"request">>({ method: value(kinds.string), url: value(kinds.string), http_version: value(kinds.string), headers }));
-const body = strip(object<Data<"request_body">>({ base64: value(kinds.string) }));
-const trailers = strip(object<Data<"request_trailers">>({ headers }));
-const response = strip(object<Data<"response">>({ status: value(kinds.integer), reason: value(kinds.string), http_version: value(kinds.string), headers }));
+// A recorded event's data, by its type, and the time it was recorded at.
+type Timed<T extends Recorded["type"]> = Omit<Extract<Recorded, { type: T }>, "type"> & { timestamp: string };
+const recordedType = object({ type: value(kinds.among(Object.keys(recordedTypes) as Recorded["type"][])) });
+const traceOf = object({ trace_id: parsed(kinds.string, parseTraceId) });
+const timed = object({ timestamp: time });
+const request = object<Timed<"request">>({ timestamp: time, method: value(kinds.string), url: value(kinds.string), http_version: value(kinds.string), headers });
+const body = object<Timed<"request_body">>({ timestamp: time, base64: value(kinds.string) });
+const trailers = object<Timed<"request_trailers">>({ timestamp: time, headers });
+const response = object<Timed<"response">>({ timestamp: time, status: value(kinds.integer), reason: value(kinds.string), http_version: value(kinds.string), headers });

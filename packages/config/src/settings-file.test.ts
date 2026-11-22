@@ -29,8 +29,8 @@ it("refuses a message's settings missing one, where a file's is its default", ()
   expect(() => parse(settings(table), { name: "only" }, "test message")).toThrow(new Malformed("test message: count: is missing"));
 });
 
-it("refuses a setting it does not know, naming the ones it has, and one it cannot take, naming where it is", () => {
-  expect(() => file.parse('{"name":"only","other":2}')).toThrow(new Malformed("test settings: other: is not read by this build, which reads name, count"));
+it("refuses a setting it does not know, and one it cannot take, naming where it is", () => {
+  expect(() => file.parse('{"name":"only","other":2}')).toThrow(new Malformed("test settings: other: is not read by this build"));
   expect(() => file.parse('{"count":"2"}')).toThrow(new Malformed("test settings: count: is not an integer"));
 });
 

@@ -1,4 +1,4 @@
-import { kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/json";
+import { drop, kinds, tolerant, value, type Read, type Readers } from "@cc-dump/log/json";
 import { levels, type Level } from "@cc-dump/log/line";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -70,8 +70,9 @@ const visibility = Object.fromEntries(categories.map((category) => [category, va
 
 // [LAW:parse-dont-validate] Settings as stored, read as this build reads them: each setting, and each category's level
 // and each way of reading a query, the one stored, or its default where none is stored or the one stored is not a value
-// this build has, which is named.
-const settingsReader = tolerant<Settings>(
+// this build has, which is named, as is a field it does not read.
+const settingsReader = drop(
+  tolerant<Settings>(
   {
     follow: boolean,
     visibility: tolerant(visibility, defaultVisibility),
@@ -83,6 +84,7 @@ const settingsReader = tolerant<Settings>(
     keys: boolean,
   },
   defaultSettings,
+  ),
 );
 export const readSettings = (state: unknown): Read<Settings> => settingsReader(state, []);
 

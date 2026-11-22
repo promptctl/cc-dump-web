@@ -85,6 +85,7 @@ describe("parseRecordedEvent", () => {
     ["a time written as the proxy does not", { ...event, timestamp: "2026-11-13T08:00:00Z", type: "end", outcome: "ok" }, "trace t1's end: timestamp: is not an ISO 8601 UTC time"],
     ["an unknown outcome", { ...event, type: "end", outcome: "gone" }, "trace t1's end: outcome: is not one of ok, aborted, stopped, error"],
     ["an error ending without its error", { ...event, type: "end", outcome: "error" }, "trace t1's end: error: is missing"],
+    ["an error beside another outcome", { ...event, type: "end", outcome: "ok", error: "boom" }, "trace t1's end: error: is not one it may have"],
   ])("refuses %s, naming what does not fit", (_, line, message) => {
     expect(refusal(() => parseRecordedEvent(typeof line === "string" ? line : JSON.stringify(line)))).toContain(message);
   });
@@ -106,8 +107,8 @@ describe("the reader's messages", () => {
   });
 
   it("refuses a list or an end of another shape", () => {
-    expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
-    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name: is not a string");
+    expect(() => parseListings("{}")).toThrow("recordings list: is not a list");
+    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list: 0: name: is not a string");
     expect(() => parseListing("[]")).toThrow("recording: is not an object");
     expect(() => parseListing('{"name":7}')).toThrow("recording: name: is not a string");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes: is not an integer");

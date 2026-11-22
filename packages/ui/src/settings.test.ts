@@ -23,6 +23,7 @@ describe("settings", () => {
         { at: ["visibility", "assistant"], why: "is not one of hidden, compact, expanded" },
         { at: ["search", "wholeWord"], why: "is not a boolean" },
       ],
+      unread: [],
     });
     expect(readSettings({ follow: "no", visibility: "hidden", theme: "a theme rich-js dropped", search: [true], logLevel: "debug", panes: 2 })).toEqual({
       value: defaultSettings,
@@ -34,6 +35,7 @@ describe("settings", () => {
         { at: ["search"], why: "is not an object" },
         { at: ["logLevel"], why: "is not one of error, warn, info" },
       ],
+      unread: [],
     });
   });
 

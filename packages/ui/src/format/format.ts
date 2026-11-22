@@ -1,4 +1,4 @@
-import { attempt, kinds, object, optional, parse, parsed, parseJson, raw as asIs, strip, tagged, tolerant, value } from "@cc-dump/log/json";
+import { attempt, kept, kinds, object, optional, parse, parsed, parseJson, raw as asIs, tagged, tolerant, value } from "@cc-dump/log/json";
 import { statusText } from "@cc-dump/log/status";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
@@ -235,7 +235,8 @@ function requestShown(sides: Sides, side: RequestSide): RequestShown {
 // its tools' and its system prompt's groups whether or not it sends any.
 const blocksOf = (content: string | unknown[]): unknown[] => (typeof content === "string" ? [{ type: "text", text: content }] : content);
 
-const requestReader = object({ tools: optional(value(kinds.list)), system: optional(said), messages: value(kinds.list) });
+const string = value(kinds.string);
+const requestReader = kept(object({ tools: optional(value(kinds.list)), system: optional(said), messages: value(kinds.list) }));
 function requestBody(text: string, whole: boolean): RequestShown {
   if (!whole) return { own: one("body", leftover("request body so far", text)), sent: [], messages: 0, ...unsaid };
   return attempt(
@@ -254,7 +255,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
       let standing = 0;
       const messages = body.messages.map((sent) => {
         const message = messageOf(sent);
-        const system = "role" in message && message.role === "system";
+        const system = message.role === "system";
         const key = system ? `message.${speakers}.system.${standing}` : `message.${speakers}`;
         const place: Place = system ? { in: "system message", before: speakers, index: standing } : { in: "message", index: speakers };
         standing = system ? standing + 1 : 0;
@@ -277,7 +278,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
           ...messages.map(({ group }) => group),
         ],
         messages: speakers,
-        model: typeof rest.model === "string" ? rest.model : undefined,
+        model: factOf(string, rest.model, undefined),
         session: factOf(metadataSession, rest.metadata, undefined)?.user_id,
       };
     },
@@ -287,13 +288,13 @@ function requestBody(text: string, whole: boolean): RequestShown {
 
 // The session a request's metadata names: Claude Code's `user_id` is the JSON text of an object holding `session_id`
 // (seen on Claude Code's traffic, 2026-11-16; the format is not documented). The metadata is among the parameters.
-const sessionHolder = strip(object({ session_id: value(kinds.string) }));
-const metadataSession = strip(object({ user_id: parsed(kinds.string, (userId) => sessionHolder(parseJson(userId, "its text"), []).value.session_id) }));
+const sessionHolder = object({ session_id: string });
+const metadataSession = object({ user_id: parsed(kinds.string, (userId) => sessionHolder(parseJson(userId, "its text"), []).value.session_id) });
 
 // The blocks with each one's cache breakpoint taken out, `held`, and each breakpoint `set`, by its block's index. A
 // block that is not an object holds no breakpoint, and is left for its reader to show.
 type Breakpoint = [index: number, breakpoint: Field[1]];
-const breakpointed = object({ cache_control: optional(asIs) });
+const breakpointed = kept(object({ cache_control: optional(asIs) }));
 function lift(blocks: unknown[]): { held: unknown[]; set: Breakpoint[] } {
   const read = blocks.map((block, index) =>
     attempt(
@@ -313,19 +314,29 @@ const named = (set: Breakpoint[], key: (index: number) => string): Field[] => se
 // how many tokens it may write, how it thinks and with what effort, and how it samples.
 const varied = ["model", "max_tokens", "thinking", "output_config.effort", "temperature"];
 
-// A message, read once: its role, its content as blocks with each one's cache breakpoint taken out (`lift`) and its other
-// fields; or why it does not read, with the message as it was sent, which holds its breakpoints still.
-type Message = ({ role: Role; content: unknown[]; rest: Record<string, unknown> } | { refused: string; sent: unknown }) & { set: Breakpoint[] };
-const messageReader = object({ role: value(kinds.among(Object.keys(roleCategory) as Role[])), content: said });
-const messageOf = (sent: unknown): Message =>
-  attempt(
+// A message, read once: its role, which places it, read first, so a message whose content does not read stands where
+// its role puts it; then its content as blocks with each one's cache breakpoint taken out (`lift`) and its other fields.
+// One that does not read is why, with the message as it was sent, which holds its breakpoints still.
+type Message = { role: Role; content: unknown[]; rest: Record<string, unknown>; set: Breakpoint[] } | { role: Role | undefined; refused: string; sent: unknown; set: [] };
+const roleReader = kept(object({ role: value(kinds.among(Object.keys(roleCategory) as Role[])) }));
+const contentReader = kept(object({ content: said }));
+const messageOf = (sent: unknown): Message => {
+  const refused = (role: Role | undefined) => (why: string): Message => ({ role, refused: why, sent, set: [] });
+  return attempt(
     (): Message => {
-      const { fields: { role, content }, rest } = parse(messageReader, sent, "message");
-      const { held, set } = lift(blocksOf(content));
-      return { role, content: held, rest, set };
+      const { fields: { role }, rest: others } = parse(roleReader, sent, "message");
+      return attempt(
+        (): Message => {
+          const { fields: { content }, rest } = parse(contentReader, others, "message");
+          const { held, set } = lift(blocksOf(content));
+          return { role, content: held, rest, set };
+        },
+        refused(role),
+      );
     },
-    (refused) => ({ refused, sent, set: [] }),
+    refused(undefined),
   );
+};
 function messageGroup(message: Message, key: string, place: Place): Group {
   if ("refused" in message) return { key, title: "message", blocks: placed(place, one("message", [raw("http", "message", message.refused, { kind: "json", value: message.sent })])) };
   return { key, title: message.role, blocks: [...messageContent(message.content, message.role, place), ...placed(place, one("fields", restBlock(message.rest, "parameters", "message")))] };
@@ -348,12 +359,12 @@ function toolDefinitions(tools: unknown[]): { key: string; block: Block }[] {
 
 // A tool definition, read once: named first, a client tool's by its name, a server tool's, which has none, by its type,
 // which is then not shown again among its other fields; then its description, read first, and the rest. One that names
-// no tool is shown raw, named for what it is, and one that names one but does not read otherwise, under its name.
+// no tool is shown raw as a tool, and one that names one but does not read otherwise, under its name.
 const definition = "tool definition";
-const optionalText = optional(value(kinds.string));
-const clientName = object({ name: optionalText });
-const serverName = object({ type: value(kinds.string) });
-const described = object({ description: optionalText });
+const optionalText = optional(string);
+const clientName = kept(object({ name: optionalText }));
+const serverName = kept(object({ type: string }));
+const described = kept(object({ description: optionalText }));
 function toolBlock(tool: unknown): Block {
   const received = { kind: "json", value: tool } as const;
   return attempt(
@@ -368,7 +379,7 @@ function toolBlock(tool: unknown): Block {
         (reason) => raw("tools", name, reason, received),
       );
     },
-    (reason) => raw("tools", definition, reason, received),
+    (reason) => raw("tools", "tool", reason, received),
   );
 }
 function serverNamed(fields: Record<string, unknown>): { name: string; others: Record<string, unknown> } {
@@ -414,10 +425,10 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
 }
 
 // A whole response body: a message, or an error.
-const responseReader = tagged<"type", { type: "message" } | { type: "error"; error: unknown }>("type", { message: {}, error: errorReaders });
+const responseReader = kept(tagged<"type", { type: "message" } | { type: "error"; error: unknown }>("type", { message: {}, error: errorReaders }));
 
 // A response message's fields the view shows on their own; the rest are what else the API reported.
-const replyReader = object({ content: value(kinds.list), stop_reason: optional(asIs), stop_sequence: optional(asIs), usage: optional(asIs) });
+const replyReader = kept(object({ content: value(kinds.list), stop_reason: optional(asIs), stop_sequence: optional(asIs), usage: optional(asIs) }));
 
 // A response no message was read from: the blocks that are its exchange's own, and no reply.
 const none = (own: KeyedBlock[]): ResponseShown => ({ own, reply: [], message: noMessage });
@@ -468,7 +479,7 @@ const messageFacts = (counted: Counts, stopReason: unknown): MessageFacts => ({
   cacheRead: counted.cache_read_input_tokens,
   cacheWritten: counted.cache_creation_input_tokens,
   output: counted.output_tokens,
-  stopReason: typeof stopReason === "string" ? stopReason : undefined,
+  stopReason: factOf(string, stopReason, undefined),
 });
 
 // How an exchange ended, as the block it adds, to the reply or to the exchange's own: none for one that completed or

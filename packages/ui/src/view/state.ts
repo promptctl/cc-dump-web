@@ -46,11 +46,12 @@ const initial: View = { open: null, terminal: null, opened: {}, position: { at: 
 // so a key made another way fails there, where the version it is stored under is changed with it.
 export const viewVersion = 7;
 
-const moment = drop(tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } }));
-const current = drop(object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) }));
+const moment = tagged<"at", Moment>("at", { now: {}, left: { trace: value(kinds.string) }, chosen: { trace: value(kinds.string) } });
+const current = object<Current>({ key: value(kinds.string), at: value(kinds.string), nth: value(kinds.integer), pattern: value(kinds.string) });
 
 // [LAW:parse-dont-validate] A view as stored under `version`, read as this build reads it: each field it holds kept,
-// and one of a shape this build does not read (a current match an older build stored), its first state, named. Each
+// one of a shape this build does not read (a current match an older build stored), its first state, and a field it
+// does not read, at any depth, dropped, each named. Each
 // field is a choice of its own, so one dropped leaves the rest.
 // A row key of another scheme names another row or none, so under another version each value that names a row (each
 // fold, a place at a row, the current match) is refused as it is read, and dropped and named alone; a place at the start
@@ -62,16 +63,18 @@ export function readView(state: unknown, version: number): Read<View> {
       : () => {
           throw new Malformed(`names a row as row-key scheme ${version} does; this build's is ${viewVersion}`);
         };
-  return tolerant<View>(
+  return drop(
+    tolerant<View>(
     {
       open: nullable(value(kinds.string)),
-      terminal: nullable(drop(object<Terminal>({ window: drop(object(windowReaders)), shown: value(kinds.boolean) }))),
+      terminal: nullable(object<Terminal>({ window: object(windowReaders), shown: value(kinds.boolean) })),
       opened: entries(rows(value(kinds.boolean))),
-      position: drop(tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } })),
+      position: tagged<"at", Position>("at", { end: {}, start: {}, row: { key: rows(value(kinds.string)), offset: value(kinds.number) } }),
       moment,
       search: tolerant<Search>({ query: value(kinds.string), current: rows(current) }, initial.search),
     },
     initial,
+    ),
   )(state, []);
 }
 

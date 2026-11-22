@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { jsonObject, parse, parseJson } from "@cc-dump/log/json";
+import { jsonObject, parse, parseJson, strict } from "@cc-dump/log/json";
 import { settings, withDefaults, type SettingsOf, type Table } from "./settings.ts";
 
 // The settings read, and where they came from: `file_keys` is null when there is no file, else the settings the file
@@ -11,7 +11,8 @@ export type ReadSettings<S> = { settings: S; file_keys: string[] | null };
 // part's file is an instance.
 export function settingsFile<T extends Table>(what: string, table: T) {
   // `text` is the file's, or undefined when there is no file; `said`, the file as its failures name it.
-  const reader = settings(table);
+  // [LAW:no-silent-failure] A key it does not know is refused, never passed over: most often it is a setting misspelled.
+  const reader = strict(settings(table));
   const parseAs = (said: string) => (text: string | undefined): ReadSettings<SettingsOf<T>> => {
     const file = text === undefined ? {} : jsonObject(parseJson(text, said), said);
     return { settings: parse(reader, withDefaults(table, file), said), file_keys: text === undefined ? null : Object.keys(file) };

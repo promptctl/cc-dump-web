@@ -1,5 +1,5 @@
 import { Malformed } from "@cc-dump/log/failure";
-import { attempt, kinds, nullable, object, optional, parse, parseJson, raw, tagged, value, type Kept } from "@cc-dump/log/json";
+import { attempt, kept, kinds, nullable, object, optional, parse, parseJson, raw, tagged, value, type Kept } from "@cc-dump/log/json";
 import { serverSentEvents } from "@cc-dump/log/wire";
 import { errorReaders, formatError, restBlock, type Block } from "./blocks.ts";
 
@@ -18,7 +18,7 @@ export type Stream = { message: Record<string, unknown> | undefined; errors: Blo
 export type Reassembly = { reassemble: (text: string, complete: boolean) => Stream };
 
 type AsSent = Kept<Record<never, never>>;
-const asSent = object<Record<never, never>>({});
+const asSent = kept(object<Record<never, never>>({}));
 
 // [LAW:types-are-the-program] A content block delta, by its type, each the field it extends a block's by.
 type Delta =
@@ -29,14 +29,16 @@ type Delta =
   | { type: "citations_delta"; citation: unknown }
   | { type: "compaction_delta"; content: string | null; encrypted_content: string | null };
 const text = value(kinds.string);
-const delta = tagged<"type", Delta>("type", {
+const delta = kept(
+  tagged<"type", Delta>("type", {
   text_delta: { text },
   thinking_delta: { thinking: text },
   signature_delta: { signature: text },
   input_json_delta: { partial_json: text },
   citations_delta: { citation: raw },
   compaction_delta: { content: nullable(text), encrypted_content: nullable(text) },
-});
+  }),
+);
 
 // [LAW:types-are-the-program] An event of a Messages stream this view applies, by its type, each with the fields it
 // reads; a field none reads lands on what the event builds. message_start's message is read as a non-streaming
@@ -51,8 +53,9 @@ type Event =
   | { type: "ping" }
   | { type: "message_stop" };
 const index = value(kinds.integer);
-const event = tagged<"type", Event>("type", {
-  message_start: { message: object<{ type: "message" }>({ type: value(kinds.among(["message"] as const)) }) },
+const event = kept(
+  tagged<"type", Event>("type", {
+  message_start: { message: kept(object<{ type: "message" }>({ type: value(kinds.among(["message"] as const)) })) },
   content_block_start: { index, content_block: asSent },
   content_block_delta: { index, delta },
   content_block_stop: { index },
@@ -60,7 +63,8 @@ const event = tagged<"type", Event>("type", {
   error: errorReaders,
   ping: {},
   message_stop: {},
-});
+  }),
+);
 
 // Reassembles the server-sent events of a Messages stream into the message they build, as a non-streaming response
 // would have returned it, so one formatting serves both. [LAW:no-silent-failure] An event that cannot be applied is
