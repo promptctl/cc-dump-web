@@ -2,7 +2,7 @@ import { diffOf } from "../format/diff.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
-import type { At } from "./position.ts";
+import { rankOf, type At } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
@@ -174,27 +174,30 @@ export type Step = { match: Match; folds: string[] };
 
 export type Direction = "next" | "previous";
 
-// The match after or before `current`, in the order the conversation shows them, wrapping at either end; undefined
-// when there is no match. The current match's row, `current.at`, and the reader's place, `from`, are judged in the
-// order of every row, hidden or not, which `found` was made from (position.ts). A current whose block is not among
-// them stands just after the row standing in for it: the row it was inside when the formatter replaced it. So the
-// steps go on from where it was. With no current, the steps start from the reader's place: its top row's matches
-// first going on, and the matches above it going back.
-export function adjacent(found: Found, current: { match: Match; at: At } | undefined, from: At, direction: Direction, pattern: RegExp): Step | undefined {
+// Where a step of the search counts from: the current match, `match`, while there is one, or the reader's place; `at`:
+// where that stands, in the order of every row, hidden or not, which `found` was made from (position.ts).
+export type From = { match: Match | undefined; at: At };
+
+// The match after or before the one `from` names, in the order the conversation shows them, wrapping at either end;
+// undefined when there is no match. A current whose block is not among the rows stands at the end of the row standing
+// in for it: the row it was inside when the formatter replaced it. So the steps go on from where it was. With no
+// current, the steps start from the reader's place: its top row's matches first going on, and the matches above it
+// going back.
+export function adjacent(found: Found, from: From, direction: Direction, pattern: RegExp): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
   // In its own block, the first match past it in the direction of the step.
-  const own = current === undefined ? undefined : found.byKey.get(current.match.key);
+  const own = from.match === undefined ? undefined : found.byKey.get(from.match.key);
   if (own !== undefined) {
-    const { at, start } = current!.match;
+    const { at, start } = from.match!;
     const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
     if (past !== undefined) return stepTo(found, own, past);
   }
-  // Where the step starts among the rows; `bias`: where it stands against its own row.
-  const placeOf = (at: At, bias: number) => (at.at === "start" ? -Infinity : at.at === "end" ? Infinity : at.index + (at.own ? bias : 0.5));
-  const place = current !== undefined ? placeOf(current.at, 0) : placeOf(from, -0.5);
+  // Where the step starts among the rows (position.ts): a reader's place at its own row stands before it, so that row's
+  // matches are ahead.
+  const place = from.match === undefined && from.at.at === "row" && from.at.offset !== Infinity ? from.at.index - 0.5 : rankOf(from.at);
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);

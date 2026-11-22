@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { forkMove, injectedMove, matchGone, matchMove, waitingOf, type Column } from "./moves.ts";
+import { forkMove, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import type { Position } from "./position.ts";
 import type { ForkRow, Keys, Row } from "./rows.ts";
 import { address, createSearch, type Match } from "./search.ts";
@@ -37,14 +37,15 @@ const keys: Keys = {
   },
 };
 // The column, every row listed, in which a key starting `later` is one the read can still bring, and any other not
-// among the rows one nothing will.
-const column: Column = { layout: { rows, keys, every: { keys } }, unread: (key) => key.startsWith("later") };
+// among the rows one nothing will; and the same column after the read failed.
+const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, pending: (key) => (key.startsWith("later") ? "reading" : undefined) };
+const failed: ColumnState = { ...column, pending: (key) => (key.startsWith("later") ? "failed" : undefined) };
 const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
 const at = (key: string): Position => ({ at: "row", key, offset: 0 });
 const match = (key: string): Match => ({ key, at: address.part(0), start: 4 });
-const [listed, unread, gone] = [at("a"), at("later/x"), at("z/x")];
+const [listed, pending, gone] = [at("a"), at("later/x"), at("z/x")];
 
 describe("a move from the reader's place", () => {
   it("counts from a place among the rows", () => {
@@ -53,9 +54,14 @@ describe("a move from the reader's place", () => {
     expect(matchMove(column, found, undefined, listed, "next", pattern)?.match.key).toBe("a/said");
   });
 
-  it("is none from a place not read yet, which the line says", () => {
-    expect([forkMove(column, unread), injectedMove(column, unread, "next"), matchMove(column, found, undefined, unread, "next", pattern)]).toEqual([undefined, undefined, undefined]);
-    expect(waitingOf(column, unread, undefined)).toBe("place");
+  it("is none from a place not read yet, which the line says, with what can still bring it", () => {
+    expect([forkMove(column, pending), injectedMove(column, pending, "next"), matchMove(column, found, undefined, pending, "next", pattern)]).toEqual([undefined, undefined, undefined]);
+    expect(waitingOf(column, pending, undefined)).toEqual({ held: "place", read: "reading" });
+    expect(waitingOf(failed, pending, undefined)).toEqual({ held: "place", read: "failed" });
+  });
+
+  it("steps the search from a current match among the rows, though the place is not read yet", () => {
+    expect(matchMove(column, found, match("a/said"), pending, "next", pattern)?.match.key).toBe("a/reminder");
   });
 
   it("is none from a place nothing will bring, which the line does not say: the scroll step replaces it", () => {
@@ -66,13 +72,13 @@ describe("a move from the reader's place", () => {
   it("goes on from a current match among the rows, and is none from one not read yet, which the line says, or one gone", () => {
     expect(matchMove(column, found, match("a/said"), listed, "next", pattern)?.match.key).toBe("a/reminder");
     expect(matchMove(column, found, match("later/said"), listed, "next", pattern)).toBeUndefined();
-    expect(waitingOf(column, listed, match("later/said"))).toBe("match");
+    expect(waitingOf(column, listed, match("later/said"))).toEqual({ held: "match", read: "reading" });
     expect(matchMove(column, found, match("z/said"), listed, "next", pattern)).toBeUndefined();
     expect(waitingOf(column, listed, match("z/said"))).toBeUndefined();
   });
 
   it("says the place first when both it and the current match are not read yet", () => {
-    expect(waitingOf(column, unread, match("later/said"))).toBe("place");
+    expect(waitingOf(column, pending, match("later/said"))).toEqual({ held: "place", read: "reading" });
   });
 
   it("finds a current match gone only when nothing will bring it", () => {
@@ -82,11 +88,16 @@ describe("a move from the reader's place", () => {
 
 describe("the line under the rows", () => {
   // What the line says, fed as the conversation feeds it, from the store's place and current match.
-  const says = (position: Position, current?: Match) => renderToStaticMarkup(<WaitingLine waiting={waitingOf(column, position, current)} />);
+  const says = (position: Position, current?: Match, read = column) => renderToStaticMarkup(<WaitingLine waiting={waitingOf(read, position, current)} />);
 
   it("says which of the place and the current match is not read yet, as a status", () => {
-    expect(says(unread)).toMatch(/<p role="status"[^>]*>Your place is not read yet<\/p>/);
+    expect(says(pending)).toMatch(/<p role="status"[^>]*>Your place is not read yet<\/p>/);
     expect(says(listed, match("later/said"))).toMatch(/>The current match is not read yet</);
+  });
+
+  it("says, after the read failed, that the row was not read before it failed and how to read on", () => {
+    expect(says(pending, undefined, failed)).toMatch(/>Your place was not read before the read failed: open the recording again to read on</);
+    expect(says(listed, match("later/said"), failed)).toMatch(/>The current match was not read before the read failed: open the recording again to read on</);
   });
 
   it("is empty while nothing holds the moves, and for a place nothing will bring", () => {

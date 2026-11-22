@@ -38,10 +38,12 @@ const read = (query: string, options: Partial<SearchOptions> = {}) => patternOf(
 const { pattern } = read("needle");
 // The view at its start, where a step with no current match goes on from.
 const top = { at: "start" } as const;
-// A step of the search as the view takes it (moves.ts): the place and the current match judged among every row, keyed
+// A step of the search as the view takes it (moves.ts), in a column listing every row `found` was made from, keyed
 // `keys`, none of them still to be read.
-const adjacent = (found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys) =>
-  matchMove({ layout: { rows: [], keys, every: { keys } }, unread: () => false }, found, current, position, direction, pattern);
+const adjacent = (found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys) => {
+  const rows = [...found.rows];
+  return matchMove({ rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, pending: () => undefined }, found, current, position, direction, pattern);
+};
 // The keys of `rows`, in order.
 const keysOf = (rows: readonly Row[]): Keys => ({ at: (index) => rows[index]!.key, indexOf: (key) => { const index = rows.findIndex((row) => row.key === key); return index === -1 ? undefined : index; } });
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
@@ -241,7 +243,7 @@ describe("search", () => {
     const hidden = layOut({ ...shown, http: "hidden", tools: "hidden" });
     const found = createSearch()(hidden.every.rows, pattern);
     // The column as the view holds it: its listed rows, fewer than every row, the hidden HTTP blocks among them.
-    const column = { layout: hidden, unread: () => false };
+    const column = { ...hidden, pending: () => undefined };
     const at = { at: "row", key: "thread:b/message.0/content.0", offset: 40 } as const;
     expect(hidden.keys.indexOf(at.key)).not.toBe(hidden.every.keys.indexOf(at.key));
     expect(matchMove(column, found, undefined, at, "next", pattern)!.match.key).toBe("thread:b/message.0/content.0");

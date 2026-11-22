@@ -6,11 +6,11 @@ import { categories, type Block, type Category } from "../format/blocks.ts";
 import { createFormatter } from "../format/format.ts";
 import type { Part } from "../format/parts.ts";
 import type { Visibility } from "../settings.ts";
-import { createHistory } from "./history.ts";
+import { createHistory, traceOf } from "./history.ts";
 import { matchMove } from "./moves.ts";
 import { createSearch } from "./search.ts";
 import { useView, view } from "./state.ts";
-import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, stepOfKey, summaryOf, unreadOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Row, type SetRow } from "./rows.ts";
+import { blockOf, blocksOf, categoryOf, clockTime, compact, createLayout, describeSize, estimateHeight, isGone, isOpen, lastOf, markOf, modelName, nestsOf, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, showsOpen, sizeOf, startsExpanded, summaryOf, pendingOf, type BlockRow, type Doing, type ForkRow, type NestRow, type Opened, type Read, type Row, type SetRow } from "./rows.ts";
 
 // A thread of `turns` requests, each resending the last's messages and adding a user's, so each turn adds one message.
 const turns = (count: number, system = "Be brief.") =>
@@ -317,7 +317,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = matchMove({ layout, unread: () => false }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
+      const to = matchMove({ ...layout, pending: () => undefined }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -819,32 +819,31 @@ describe("the column", () => {
     expect(dimmed.some((key) => key.includes("probe") || key.includes("c1"))).toBe(false);
   });
 
-  it("says the step each row's key stands with: the trace it names, after a thread item's prefix, and for a nest its level's first step", () => {
-    // Every row the layout makes, a fork's line and nests open to the innermost among them, stands with a step read.
+  it("brings, as the read goes on, of the rows the layout makes, only those of a step still running: each stands with a step read, a nest's line with the step that opens its level", () => {
+    // A fork's line and nests open to the innermost among them, among every row; the nested agents' last step, t2, runs.
     for (const events of [parted, nested]) {
       const history = createHistory()(createFormatter()(exchanges(events)));
       const { every } = layouts(events)(history.segments.length, undefined, { [outer]: true, [inner]: true });
-      expect(every.rows.filter(({ key }) => stepOfKey(history, key) === undefined).map(({ key }) => key)).toEqual([]);
+      const pending = pendingOf(history, "reading", false);
+      const running = new Set<string>(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
+      const keys = every.rows.map(({ key }) => key);
+      expect(keys.filter((key) => pending(key) !== undefined)).toEqual(keys.filter((key) => running.has(traceOf(key))));
     }
-    // A fork's line and a thread's line stand with the step whose rows they follow, though a later step brings them.
-    const parts = createHistory()(createFormatter()(exchanges(parted)));
-    expect(["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http"].map((key) => stepOfKey(parts, key))).toEqual([2, 2, 4, 3]);
+    // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));
-    expect([outer, inner, "nest:agent:z", "z/request/http"].map((key) => stepOfKey(nests, key))).toEqual([2, 3, undefined, undefined]);
+    expect([outer, inner, "nest:agent:z"].map(pendingOf(nests, "reading", false))).toEqual([undefined, undefined, "reading"]);
   });
 
-  it("says the read can still bring a row while it reads and the row's step is not read or still running, or the moment's step is not read, and always after it failed", () => {
+  it("says what can still bring a row: the read while the row's step is not read or still running, or the moment's step is not read; the read begun again after it failed; nothing after it ended", () => {
     const events = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")]), ...request("t2", { ...main, messages: more }), ...streaming("t2", [text("More")])];
     const history = createHistory()(createFormatter()(exchanges(events)));
     // A row of the step that ended, of the step still running, of an agent with no step read, and of an exchange not read.
     const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x"];
-    const can = (read: "reading" | "ended" | "failed" | "none", held?: string) => keys.map(unreadOf(history, read, held));
-    expect(can("reading")).toEqual([false, true, true, true]);
-    expect(can("reading", "t1")).toEqual([false, true, true, true]);
-    // The moment held is a step not read yet, so the column shows another: any of its rows may still come.
-    expect(can("reading", "later")).toEqual([true, true, true, true]);
-    // A failed read has shown no row absent; one that ended, or none, brings nothing more.
-    expect(can("failed")).toEqual([true, true, true, true]);
-    expect([can("ended"), can("none")]).toEqual([keys.map(() => false), keys.map(() => false)]);
+    const can = (read: Read, momentPending = false) => keys.map(pendingOf(history, read, momentPending));
+    expect(can("reading")).toEqual([undefined, "reading", "reading", "reading"]);
+    // The moment's step is not read yet, so the column shows another: any of its rows may still come.
+    expect(can("reading", true)).toEqual(keys.map(() => "reading"));
+    expect(can("failed")).toEqual(keys.map(() => "failed"));
+    expect(can("ended")).toEqual(keys.map(() => undefined));
   });
 });

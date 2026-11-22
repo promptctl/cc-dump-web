@@ -1,4 +1,4 @@
-import type { At } from "./position.ts";
+import { rankOf, type At } from "./position.ts";
 import { blockOf, type Row } from "./rows.ts";
 import type { Direction } from "./search.ts";
 
@@ -10,11 +10,7 @@ import type { Direction } from "./search.ts";
 export function injectedFrom(rows: readonly Row[], at: At, direction: Direction): string | undefined {
   const stop = (row: Row) => row.kind === "block" && blockOf(row).injected !== undefined;
   const injected = rows.flatMap((row, index) => (stop(row) ? [{ key: row.key, index }] : []));
-  // The row the place is at, and whether it is `past` that row's start: some way into it, or at the end of a row
-  // standing in for its own.
-  const index = at.at === "end" ? rows.length : at.at === "start" ? -1 : at.index;
-  const past = at.at === "row" && (!at.own || at.offset > 0);
-  const found =
-    direction === "next" ? (injected.find((row) => row.index > index) ?? injected[0]) : (injected.findLast((row) => row.index < index || (past && row.index === index)) ?? injected.at(-1));
+  const rank = rankOf(at);
+  const found = direction === "next" ? (injected.find(({ index }) => index > rank) ?? injected[0]) : (injected.findLast(({ index }) => index < rank) ?? injected.at(-1));
   return found?.key;
 }

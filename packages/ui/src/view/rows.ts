@@ -4,7 +4,7 @@ import { fieldLines, fieldValue, jsonText, type Field, type Part } from "../form
 import { inputOf, type FormattedExchange, type Heading, type KeyedBlock } from "../format/format.ts";
 import type { Reading } from "../reading.ts";
 import type { Visibility } from "../settings.ts";
-import { levelKey, placeOf, sameFields, threadPrefix, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
+import { levelKey, placeOf, sameFields, traceOf, type After, type History, type Item, type Level, type Segment, type Tie, type Version } from "./history.ts";
 import { renderingOf } from "./rendering.ts";
 
 // The conversation at a moment as the rows the view lists, one line or one block each, in one column
@@ -332,34 +332,47 @@ type Column = {
 // The main agent's level, which stands in no nest.
 const top = levelKey({ kind: "main" });
 // [LAW:one-source-of-truth] The key of a level's nest's line, the same at every moment, wherever the nest stands.
-const nestPrefix = "nest:";
-export const nestKey = (level: Level) => `${nestPrefix}${levelKey(level)}`;
+export const nestKey = (level: Level) => `nest:${levelKey(level)}`;
 
-// The step a row's key stands with, by its number in the history, undefined while it is not read: for a nest's line,
-// its level's first step, which opens the nest (StepWire.opens) as columnOf does; for every other row, the step whose
-// trace the key starts with, after a thread item's prefix. A key names the step it stands with, not the one that
-// brings it: a fork's line comes with a later sibling, and a thread's line with the step that carries the thread on.
-export function stepOfKey({ segments, stepOf }: History, key: string): number | undefined {
-  if (key.startsWith(nestPrefix)) {
-    const level = key.slice(nestPrefix.length);
-    const index = segments.findIndex(({ wire }) => wire.opens !== undefined && levelKey(wire.level) === level);
-    return index === -1 ? undefined : index + 1;
-  }
-  const path = key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key;
-  return stepOf(path.split("/", 1)[0]!);
+// How the read of a recording open stands (reading.ts), as the conversation shown is read: reading, ended or failed.
+export type Read = Exclude<Reading["state"], "none">;
+// What can still bring a row not among the rows: the read as it goes on, or, failed, the read begun when the recording
+// is opened again.
+export type Pending = Exclude<Read, "ended">;
+
+// [LAW:one-source-of-truth] Each nested level's step that opens it (view/history.ts, StepWire), by the level's key,
+// with its level and what the step says of it, of the steps `segments`.
+function openingsOf(segments: readonly Segment[]) {
+  const openings = new Map<string, { own: number; level: Exclude<Level, { kind: "main" }>; opens: NonNullable<Segment["wire"]["opens"]> }>();
+  segments.forEach(({ wire: { level, opens } }, index) => {
+    if (opens !== undefined && level.kind !== "main") openings.set(levelKey(level), { own: index + 1, level, opens });
+  });
+  return openings;
 }
 
-// Whether the read can still bring a row not among the rows and inside none of them (position.ts), by its key: it
-// failed, which shows no row absent; or it is reading, and the step the key stands with is not read yet or its
-// exchange is still running, or the moment's step, `held` (view/state.ts), is not read yet, so the column shows
-// another. A read that ended, or none, brings nothing more.
-export function unreadOf(history: History, read: Reading["state"], held: string | undefined): (key: string) => boolean {
-  const heldUnread = held !== undefined && history.stepOf(held) === undefined;
-  return (key) => {
-    const step = stepOfKey(history, key);
-    const running = step === undefined || history.segments[step - 1]!.formatted.exchange.end === undefined;
-    return read === "failed" || (read === "reading" && (heldUnread || running));
-  };
+// Whether a step's exchange is still running: no end has been read of it.
+const running = ({ formatted }: Segment) => formatted.exchange.end === undefined;
+
+// What can still bring a row not among the rows and inside none of them (position.ts), by its key, or none: a read that
+// ended brings nothing more, and one that failed shows no row absent until it is begun again. One reading brings it
+// while the moment's step is not read (`momentPending`), so the column shows another, or while the step the key stands
+// with is not read or still running. That step is, for a nest's line, the one that opens its level, and for every other
+// row the step whose trace the key starts with. A key names the step it stands with, not the one that brings it: a
+// fork's line comes with a later sibling, and a thread's line with the step that carries the thread on.
+export function pendingOf({ segments, stepOf }: History, read: Read, momentPending: boolean): (key: string) => Pending | undefined {
+  switch (read) {
+    case "ended":
+      return () => undefined;
+    case "failed":
+      return () => "failed";
+    case "reading": {
+      const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
+      return (key) => {
+        const step = opening.get(key) ?? stepOf(traceOf(key));
+        return momentPending || step === undefined || running(segments[step - 1]!) ? "reading" : undefined;
+      };
+    }
+  }
 }
 // [LAW:one-source-of-truth] A nest starts closed: the reader opens it, and it stays as they left it.
 export const nestStartsOpen = false;
@@ -369,11 +382,8 @@ function columnOf({ segments, forks }: History, step: number): Column {
   const add = <K, V>(lists: Map<K, V[]>, key: K, value: V) => lists.set(key, lists.get(key) ?? []).get(key)!.push(value);
   const arrived = segments.slice(0, step);
   const levelAt = (own: number) => levelKey(arrived[own - 1]!.wire.level);
-  // Each nested level's first step by the moment, the one that opens it (view/history.ts, StepWire), by its key.
-  const first = new Map<string, { own: number; level: Exclude<Level, { kind: "main" }>; opens: NonNullable<Segment["wire"]["opens"]> }>();
-  arrived.forEach(({ wire: { level, opens } }, index) => {
-    if (opens !== undefined && level.kind !== "main") first.set(levelKey(level), { own: index + 1, level, opens });
-  });
+  // Each nested level's step that opens it, by the moment.
+  const first = openingsOf(arrived);
   // The parent each nested level stands under by the moment (Parent): the level its parent header names, `namedOf`,
   // where that level has a step by the moment and the chain of parent headers from it does not come back.
   const namedOf = (key: string) => {
@@ -478,12 +488,13 @@ function doingOf(arrived: readonly Segment[], step: number): (agent: string) => 
   const coming = ({ formatted: { exchange } }: Segment) => exchange.end === undefined || (now !== undefined && Date.parse(exchange.end.timestamp) > now);
   const answered = new Map<string, Set<string>>();
   const stopped = new Map<string, { own: number; status: string }>();
-  arrived.forEach(({ wire, formatted }, index) => {
+  arrived.forEach((segment, index) => {
+    const { wire } = segment;
     for (const { agent, status } of wire.stops) stopped.set(agent, { own: index + 1, status });
     if (wire.level.kind !== "agent") return;
     const own = answered.get(wire.level.id) ?? new Set<string>();
     answered.set(wire.level.id, own);
-    if (wire.did !== undefined || formatted.exchange.end !== undefined) for (const call of wire.answers) own.add(call);
+    if (wire.did !== undefined || !running(segment)) for (const call of wire.answers) own.add(call);
   });
   const runs = new Map<string, KeyedBlock | undefined>();
   arrived.forEach((segment, index) => {

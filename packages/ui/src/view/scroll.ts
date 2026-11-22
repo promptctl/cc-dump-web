@@ -43,24 +43,17 @@ export function step(
   // listener, and a clamp's event can come after a render, so a render that took an offset for the reader's could take
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   const by: By = own ? "view" : "reader";
-  // The position the step keeps: the view's own, unless the end it holds no longer follows; and, until its event
-  // runs, the one under a reader's offset. Only a kept position is judged: a reader's offset reads as a row among the
-  // rows, so a scroll off a place not among them takes the reader's place.
-  const kept = own ? (position.at !== "end" || follow ? position : undefined) : cause === "change" ? position : undefined;
-  const judged = kept === undefined ? undefined : rows.judge(kept);
-  // A kept place not read yet is kept as it is until it is, and nothing is written, so the moves wait for it.
-  if (judged?.at === "unread") return { position, written: own ? offset : written, write: undefined, by };
-  // A kept place nothing will bring is replaced by the place under the view, as the view's own placing; a reader's
-  // offset under it is still the scroll event's to take.
-  if (judged?.at === "gone") return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: own ? offset : written, write: undefined, by: "view" };
   if (!own && cause === "change") return { position, written, write: undefined, by };
-  // A reader's offset becomes the position.
-  const next = kept ?? readAt(offset, end, follow, resumable, rows.rowAt);
-  // Resolved against where the rows now are, within reach, and written when it moved; a row not placed yet writes
-  // nothing until it is.
-  const resolved = resolve(judged ?? rows.judge(next), rows.placed);
+  // The position the step keeps, judged among the rows: the view's own, unless the end it holds no longer follows.
+  const kept = own && (position.at !== "end" || follow) ? rows.judge(position) : undefined;
+  // A reader's offset, or a kept place nothing will bring, gives way to the place under the view, which is where the
+  // view already is, so nothing is written.
+  if (kept === undefined || kept.at === "gone") return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: offset, write: undefined, by };
+  // A kept place is resolved against where the rows now are, within reach, and written when it moved; one not read yet,
+  // or whose row is not placed yet, writes nothing until it is, so the moves wait for it.
+  const resolved = resolve(kept, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
-  return { position: next, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
+  return { position, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
 }
 
 // The position a reader's offset reads as, by a scroll or a press on the minimap. Following, an offset within a pixel of

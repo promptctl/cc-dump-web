@@ -1,4 +1,4 @@
-import type { At } from "./position.ts";
+import { rankOf, type At } from "./position.ts";
 import type { ForkRow, Row } from "./rows.ts";
 import type { Direction } from "./search.ts";
 
@@ -7,9 +7,9 @@ import type { Direction } from "./search.ts";
 // end, following, that is the last listed. Undefined where the column lists no fork. `rows`: the rows listed, in the
 // order `at` was judged in (position.ts).
 export function forkAbove(rows: readonly Row[], at: At): ForkRow | undefined {
-  const index = at.at === "start" ? -1 : at.at === "end" ? rows.length : at.index;
-  const forks = rows.flatMap((row, place) => (row.kind === "fork" ? [{ row, place }] : []));
-  return (forks.findLast(({ place }) => place <= index) ?? forks[0])?.row;
+  const rank = rankOf(at);
+  const forks = rows.flatMap((row, index) => (row.kind === "fork" ? [{ row, index }] : []));
+  return (forks.findLast(({ index }) => index <= rank) ?? forks[0])?.row;
 }
 
 // The sibling a switch at a fork goes to, by its first step: the one listed after, or before, the sibling the view is

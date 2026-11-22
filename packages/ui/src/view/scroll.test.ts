@@ -14,7 +14,7 @@ const indexOf = (key: string) => {
 };
 // The rows, every one listed; a row `d` the read can still bring, and any other not among them that nothing will.
 const rows: Rows = {
-  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, (key) => key.startsWith("d")),
+  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, (key) => (key.startsWith("d") ? "reading" : undefined)),
   placed: (index) => placed[index],
   rowAt: (offset) => placed.findLast((row) => row.start <= offset),
 };
@@ -91,11 +91,12 @@ describe("step", () => {
     expect(step("scroll", 170, 250, { position: later, written: 0 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "reader" });
   });
 
-  it("replaces a place nothing will bring with the place under the view, as the view's own, on a render and on a scroll", () => {
+  it("replaces a place nothing will bring with the place under the view, as the view's own, on a render and on a scroll that is its own", () => {
     const gone = { at: "row", key: "z", offset: 5 } as const;
     expect(step("change", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view" });
     expect(step("scroll", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view" });
-    // Under a reader's offset, the offset is still the scroll event's to take.
-    expect(step("change", 170, 250, { position: gone, written: 0 }, true, true, rows)).toEqual({ position: inC, written: 0, write: undefined, by: "view" });
+    // Under a reader's offset, the place is left as it is for the scroll event, which takes the reader's.
+    expect(step("change", 170, 250, { position: gone, written: 0 }, true, true, rows)).toEqual({ position: gone, written: 0, write: undefined, by: "reader" });
+    expect(step("scroll", 170, 250, { position: gone, written: 0 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "reader" });
   });
 });

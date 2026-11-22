@@ -67,7 +67,10 @@ export type Tie = { agent: string; call: string } & ({ found: true; key: string;
 // `<trace>/<group>/<block>`.
 export type Item = { key: string; versions: readonly Version[] };
 // [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace.
-export const threadPrefix = "thread:";
+const threadPrefix = "thread:";
+// The trace of the exchange an item's or a row's key starts with, as the keys are made here: after a thread's prefix,
+// up to its first `/`. A key no exchange's trace begins, as a nest's line's, gives a trace no step has.
+export const traceOf = (key: string): string => (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0]!;
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it
 // stands `after`, and what it says of its level's agents (StepWire).

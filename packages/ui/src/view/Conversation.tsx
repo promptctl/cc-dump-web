@@ -7,17 +7,16 @@ import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
-import type { Reading } from "../reading.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
 import { siblingFrom } from "./forks.ts";
-import { createHistory, sameFields, type History } from "./history.ts";
-import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type Column } from "./moves.ts";
+import { createHistory, sameFields } from "./history.ts";
+import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, unreadOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, pendingOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Read, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -27,7 +26,7 @@ import { Hold, Painted, Sections, ToHeading, ToSibling, useToggle, useWhere } fr
 import { TextView } from "./Text.tsx";
 import { address, createSearch, ordinal, patternOf, type Direction } from "./search.ts";
 import { settings, useSettings } from "../settings.ts";
-import { useView, view, type Moment } from "./state.ts";
+import { useView, view } from "./state.ts";
 import { Toggle } from "./Toggle.tsx";
 import { TurnStrip } from "./TurnStrip.tsx";
 import { WaitingLine } from "./WaitingLine.tsx";
@@ -35,7 +34,7 @@ import { WaitingLine } from "./WaitingLine.tsx";
 // The conversation at the moment shown (docs/design/02-design.md, "Two axes"): one column, of which only the rows in
 // and near the view are mounted. `read`: how the read of the recording stands (reading.ts), which says whether it can
 // still bring an exchange its end, or a row the view's place names. `theme`: what the minimap's canvas is painted in.
-export function Conversation({ formatted, read, theme }: { formatted: FormattedExchange[]; read: Reading["state"]; theme: Theme }) {
+export function Conversation({ formatted, read, theme }: { formatted: FormattedExchange[]; read: Read; theme: Theme }) {
   const reading = read === "reading";
   // Fast Refresh keeps state but re-runs memos, so an edited module's history and layout are the ones used.
   const history = useMemo(() => createHistory(), []);
@@ -44,7 +43,9 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   // Now's step, the latest, by its exchange: where a reader's act away from now leaves the moment.
   const now = conversation.segments.at(-1)?.formatted.exchange.trace_id;
   const moment = useView((state) => state.moment);
-  const shown = stepShown(moment, conversation);
+  // The moment's step, undefined for a chosen one the read has not brought; the column shows now's step until it does.
+  const momentStep = moment.at === "now" ? steps : conversation.stepOf(moment.trace);
+  const shown = momentStep ?? steps;
   // The same object while no category's visibility changes, as when another tab changes only follow, so the layout
   // and its cache are kept.
   const visibility = useSettings(useShallow((state) => state.visibility));
@@ -52,10 +53,10 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   const current = useView((state) => state.search.current);
   const opened = useView((state) => state.opened);
   const { rows, keys, every, steps: listed } = useMemo(() => layOut(conversation, shown, current?.key, opened), [layOut, conversation, shown, current?.key, opened]);
-  // Whether the read can still bring a row the view's place or current match names, and the column the moves count in.
-  const held = moment.at === "now" ? undefined : moment.trace;
-  const unread = useMemo(() => unreadOf(conversation, read, held), [conversation, read, held]);
-  const column: Column = { layout: { rows, keys, every }, unread };
+  // What can still bring a row the view's place or current match names, and the column the moves count in.
+  const momentPending = momentStep === undefined;
+  const pending = useMemo(() => pendingOf(conversation, read, momentPending), [conversation, read, momentPending]);
+  const column: ColumnState = { rows, keys, every, pending };
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -98,11 +99,11 @@ export function Conversation({ formatted, read, theme }: { formatted: FormattedE
   const following = !follow ? "off" : atEnd ? "on" : chosen ? "chosen" : "paused";
   const control = followStates[following];
   // What holds the moves, which the line under the rows says.
-  const waiting = useView((state) => waitingOf(column, state.position, state.search.current));
+  const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
 
   const written = useRef(0);
-  // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, and
-  // carries it out.
+  // [LAW:effects-at-boundaries] Takes the step (view/scroll.ts) on what the scroller and the stores hold now, against
+  // the rows of the render last committed, and carries it out.
   const sync = (cause: Cause) => {
     const element = scroller.current!;
     const { position, moment } = useView.getState();
@@ -366,12 +367,6 @@ const followStates = {
   chosen: { pressed: "mixed", glyph: "○", label: "Follow paused", title: "At an earlier step. Click, or go to the latest step, to follow again." },
   off: { pressed: false, glyph: "○", label: "Follow off", title: "Click to follow the newest content." },
 } as const;
-
-// The moment's step: the latest, now; or the step held, which, until its exchange is read, as after a reload, is as far
-// as the read has come.
-function stepShown(moment: Moment, { segments, stepOf }: History): number {
-  return moment.at === "now" ? segments.length : (stepOf(moment.trace) ?? segments.length);
-}
 
 // The largest scroll offset: the one that shows the end of the conversation.
 function largest(element: HTMLElement): number {
