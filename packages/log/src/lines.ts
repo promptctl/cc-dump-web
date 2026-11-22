@@ -37,7 +37,7 @@ export function processLog(service: string, out: Writable = process.stdout, keep
   // closes. A reader is sent lines while its connection takes them and the rest once it drains, so one that stops
   // reading holds none of them; a line let go before it is sent is not sent, and the reader sees the gap in the numbers.
   const logs: Route = (req) =>
-    stream((res) => {
+    stream(async (res) => {
       let next = resumedAfter(req.headers["last-event-id"], run) + 1;
       let full = false;
       const send = () => {

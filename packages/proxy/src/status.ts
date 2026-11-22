@@ -92,7 +92,7 @@ export function countTraffic(now: () => Date = () => new Date()): Watched<Traffi
     counted: (handler) => (req, res, work) => {
       become({ in_flight: traffic.state().in_flight + 1, last_request: now().toISOString() });
       void work.ended.then(() => become({ ...traffic.state(), in_flight: traffic.state().in_flight - 1 }));
-      handler(req, res, work);
+      return handler(req, res, work);
     },
   };
 }
@@ -114,7 +114,7 @@ function onDisk(path: string) {
 // connection to the proxy (F8).
 export function createStatus(info: ProxyInfo, source: Watched<SourceStatus>, traffic: Watched<Traffic>): Route {
   return () =>
-    stream((res) => {
+    stream(async (res) => {
       const send = () => void res.write(frame({ data: JSON.stringify({ info, source: source.state(), traffic: traffic.state() } satisfies ProxyStatus) }));
       const unwatched = [source.onChanged(send), traffic.onChanged(send)];
       res.on("close", () => unwatched.forEach((unwatch) => unwatch()));

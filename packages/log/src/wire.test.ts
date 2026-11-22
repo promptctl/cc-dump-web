@@ -86,7 +86,7 @@ describe("ask", () => {
   });
 
   it("fails naming the request and the status line when the body is no Failure", async () => {
-    const { url } = await serving((_req, res) => void res.writeHead(404, { "content-type": "text/plain" }).end("nope"));
+    const { url } = await serving(async (_req, res) => void res.writeHead(404, { "content-type": "text/plain" }).end("nope"));
     await expect(ask(`${url}/info`, {}, text)).rejects.toThrow(`GET ${url}/info: 404 Not Found`);
   });
 

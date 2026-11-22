@@ -37,7 +37,7 @@ it("reads its settings from cc-dump/proxy.json under the XDG config home, and do
 // already holding the reader port.
 it("listens for agents on the port its settings file sets", async () => {
   // A free port: one the system gave, let go of again.
-  const free = await serve(() => {}, () => {}, 0);
+  const free = await serve(() => {}, async () => {}, 0);
   await free.close();
   const { port } = free;
 

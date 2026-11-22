@@ -34,7 +34,7 @@ async function proxyAndConnection() {
   onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, finishedName), `${finishedLines.join("\n")}\n{"tim`);
-  const upstream = await serving((_req, res) => res.end("answer"));
+  const upstream = await serving(async (_req, res) => void res.end("answer"));
   const proxy = await proxyProcess(upstream.url, dir, "unlimited");
   // The next event of the proxy's log that `matches`.
   const logged = async (matches: (event: Event) => boolean) => {
@@ -178,7 +178,7 @@ describe("the browser connection", () => {
   it("resumes a read whose connection dropped from its last event, reporting nothing", async () => {
     const [first, second] = finishedLines;
     const resumedFrom: (string | string[] | undefined)[] = [];
-    const reader = await serving((req, res) => {
+    const reader = await serving(async (req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       resumedFrom.push(req.headers["last-event-id"]);
       // `retry` makes the browser reconnect in 10ms, not its default 3s.
@@ -196,7 +196,7 @@ describe("the browser connection", () => {
   });
 
   it("ends a read at a message whose id is not a byte offset, reporting it as failed", async () => {
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(`id: 7x\ndata: ${finishedLines[0]}\n\n`);
     });
@@ -246,7 +246,7 @@ describe("the browser connection", () => {
       watching("/proxy/src/proxy.ts"),
       { info, source: { state: "failed", message: "EMFILE: too many open files, watch" }, traffic: { in_flight: 1, last_request: "2026-11-16T10:00:00.000Z" } },
     ];
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(statuses.map((status) => `data: ${JSON.stringify(status)}\n\n`).join(""));
     });
@@ -257,7 +257,7 @@ describe("the browser connection", () => {
 
   it("reports a status that does not parse as unreadable, and goes on following the stream", async () => {
     const sources = watchEventSources();
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: {"info":1}\n\ndata: ${JSON.stringify(watching())}\n\n`);
     });
@@ -269,7 +269,7 @@ describe("the browser connection", () => {
 
   it("reports a status the reader does not serve as failed, and closes the stream", async () => {
     const sources = watchEventSources();
-    const reader = await serving((_req, res) => void res.writeHead(404).end());
+    const reader = await serving(async (_req, res) => void res.writeHead(404).end());
     const status = statusing(createBrowserConnection({ readerPort: reader.port }));
     expect(await status.next()).toEqual({ failed: expect.any(Error) });
     expect(sources.map((source) => source.readyState)).toEqual([EventSource.CLOSED]);
@@ -278,7 +278,7 @@ describe("the browser connection", () => {
   it("follows the proxy across a restart: the connection, dropped, reconnects to the restarted proxy's status", async () => {
     const statuses: ProxyStatus[] = [watching("/proxy/src/proxy.ts"), watching()];
     let connections = 0;
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       const status = `data: ${JSON.stringify(statuses[connections++])}\n\n`;
       // The first proxy stops after its status; `retry` makes the browser reconnect in 10ms, not its default 3s.
@@ -291,13 +291,13 @@ describe("the browser connection", () => {
 
   it("reports a proxy not reached as dropped, and its status once it is", async () => {
     // A port nothing listens on yet: the first connection is refused, and the browser tries again.
-    const { port, close } = await serve(() => {}, (_req, res) => res.end(), 0);
+    const { port, close } = await serve(() => {}, async (_req, res) => void res.end(), 0);
     await close();
     const status = statusing(createBrowserConnection({ readerPort: port }));
     expect(await status.next()).toBe("dropped");
     const reader = serve(
       () => {},
-      (_req, res) => {
+      async (_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write(`data: ${JSON.stringify(watching())}\n\n`);
       },
@@ -345,7 +345,7 @@ describe("a part's log", () => {
     const dropping: Route = async (req, work, matched) => {
       const reply = await logs(req, work, matched);
       if (reply.kind !== "stream" || ++connections > 1) return reply;
-      return stream((res) => {
+      return stream(async (res) => {
         reply.write(res);
         res.write("retry: 10\n\n", () => res.destroy());
       });
@@ -358,7 +358,7 @@ describe("a part's log", () => {
   });
 
   it("delivers a line whose event does not parse unread, and goes on to the lines after it", async () => {
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`id: ab:0\ndata: {}\n\nid: ab:1\ndata: ${JSON.stringify({ service: "proxy", ...event("next") })}\n\n`);
     });
@@ -367,7 +367,7 @@ describe("a part's log", () => {
   });
 
   it("ends a log whose message has no line's position, reporting it as failed", async () => {
-    const reader = await serving((_req, res) => {
+    const reader = await serving(async (_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`data: ${JSON.stringify({ service: "proxy", ...event("nowhere") })}\n\n`);
     });
@@ -399,7 +399,7 @@ describe("launching", () => {
 
   it("fails naming the request when the app server cannot be reached", async () => {
     // A port a server bound and closed, so nothing answers on it.
-    const { port, close } = await serve(() => {}, (_req, res) => res.end(), 0);
+    const { port, close } = await serve(() => {}, async (_req, res) => void res.end(), 0);
     await close();
     await expect(createBrowserConnection({ serverPort: port }).launcher(signal())).rejects.toMatchObject({
       message: `GET http://${LOOPBACK}:${port}/launch`,

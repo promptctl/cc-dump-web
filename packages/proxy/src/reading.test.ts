@@ -29,8 +29,8 @@ const agentName = recordingName(new Date("2026-11-13T08:00:00.000Z"));
 const pastRun = "run-20261101T000000.000Z.jsonl";
 
 // The reader's routes, as the reader port serves them.
-function readerOver(log: Log, recordings: Recordings) {
-  const { list, read } = createReader(log, recordings);
+function readerOver(log: Log, recordings: Recordings, open?: Parameters<typeof createReader>[2]) {
+  const { list, read } = createReader(log, recordings, open);
   return routes({ [ROUTES.recordings]: { GET: list }, [ROUTES.recording]: { GET: read } });
 }
 
@@ -38,7 +38,7 @@ function readerOver(log: Log, recordings: Recordings) {
 // makes `agentName`, the moment the proxy's clock stands at.
 async function proxyAndReader(dir = recordingsDir(), wrap = (recordings: Recordings) => recordings) {
   const recordings = wrap(createRecordings(() => {}, dir, runName, () => new Date("2026-11-13T08:00:00.000Z")));
-  const upstream = await serving((_req, res) => res.end("answer"));
+  const upstream = await serving(async (_req, res) => void res.end("answer"));
   const proxy = await serving(createProxy(parseUpstream(upstream.url), recordings));
   const readerLog = eventLog();
   const reader = await serving(readerOver(readerLog.log, recordings));
@@ -335,8 +335,9 @@ describe("createReader", () => {
     const reader = await serve(
       log,
       (req, res, work) => {
-        handle(req, res, work);
+        const handled = handle(req, res, work);
         closed = reader.close();
+        return handled;
       },
       0,
     );
@@ -355,7 +356,7 @@ describe("createReader", () => {
 
   it("sends each event written whole after a write that failed part-way as its own event", async () => {
     const dir = recordingsDir();
-    const upstream = await serving((_req, res) => res.end("answer"));
+    const upstream = await serving(async (_req, res) => void res.end("answer"));
     // A file size limit of 8 blocks: 4096 or 8192 bytes, as the shell counts them. The exchange's first
     // event, its request, is over 10 KB: POSIX has a write with less room than it asks for write what fits,
     // so writing it writes up to the limit, and carrying on fails with EFBIG. Its later
@@ -395,5 +396,38 @@ describe("createReader", () => {
     expect(message).toMatch(/^EISDIR/);
     expect(await readerLog.next()).toMatchObject({ event: "catch_up", outcome: "error", error: expect.stringContaining(message) });
     expect(await reader.next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining(message), status: 200 });
+  });
+
+  it("logs a file read that fails after its reader left as the read's failure, on its catch_up and its request", async () => {
+    const dir = recordingsDir();
+    writeFileSync(join(dir, pastRun), `${JSON.stringify({ data: "x" })}\n`);
+    const { promise: opening, resolve: open } = Promise.withResolvers<void>();
+    const { promise: read, reject: failRead } = Promise.withResolvers<never>();
+    const { promise: left, resolve: leave } = Promise.withResolvers<void>();
+    const { log, next } = eventLog();
+    // The read's file opens only once the test fails it, which is after its reader has left.
+    const handle = readerOver(log, createRecordings(() => {}, dir, runName), () => (open(), read));
+    const reader = await serve(
+      log,
+      (req, res, work) => {
+        res.once("close", leave);
+        return handle(req, res, work);
+      },
+      0,
+    );
+    onTestFinished(reader.close);
+    await next();
+
+    const stream = await subscribe(reader.port, `/recordings/${pastRun}`);
+    await opening;
+    stream.res.destroy();
+    await left;
+    // Everything the close set going has run: the read is still under way.
+    await setImmediate();
+    failRead(Object.assign(new Error("EIO: i/o error, read"), { code: "EIO" }));
+
+    const [caughtUp, request] = [await next(), await next()];
+    expect(caughtUp).toMatchObject({ event: "catch_up", outcome: "error", error: expect.stringContaining("EIO"), events_read: 0 });
+    expect(request).toMatchObject({ event: "request", trace_id: caughtUp.trace_id, outcome: "error", error: expect.stringContaining("EIO"), status: 200 });
   });
 });

@@ -1,4 +1,4 @@
-import { readdir, open, stat } from "node:fs/promises";
+import { readdir, open as openFile, stat, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline, Readable } from "node:stream";
 import { failed, startSpan, unitOfWork, type Ending, type Log, type TraceId } from "@cc-dump/log";
@@ -19,20 +19,22 @@ import type { Recordings } from "./recordings.ts";
 // that fails once begun ends with a `failed` event: the stream's only way to tell a reader it failed, since an
 // EventSource takes a cut stream for a dropped connection and reconnects into the same failure.
 // A reader never creates a recording: only a name with a file, or one the run is writing, is read, and any other is 404.
-export function createReader(log: Log, recordings: Recordings): { list: Route; read: Route } {
+// `open` opens a recording's file for each read of its bytes.
+export function createReader(log: Log, recordings: Recordings, open: Open = openFile): { list: Route; read: Route } {
   const { dir } = recordings;
   return {
     list: async () => json((await nonEmpty(dir, await files(dir))).map((name): Listing => ({ name }))),
     read: async (req, { trace_id, fail, ended }, { params, query }) => {
       const name = await readableName(recordings, params.name);
       if (!name) throw new Refused(404, `${params.name} is no recording this proxy lists or follows`);
-      const reading = readingOf(log, recordings, trace_id, ended, name);
+      const reading = readingOf(log, recordings, open, trace_id, ended, name);
       const position = positionOf(req.headers["last-event-id"], query);
       if (position === undefined || !(await atLineStart(reading, position))) throw new Refused(400, "from must be 0 or the id of an event");
       // Every await of the answer comes before its response's headers; a read fails after them in its stream.
-      // pipeline destroys the stream when the response closes. Its callback runs after that close, when the request's
-      // event is written, so it has nothing to add.
-      return stream((res) => void pipeline(recordingEvents(reading, position, fail), res, () => {}));
+      // pipeline destroys the stream when the response closes, and calls back once the read under way has settled, so a
+      // failure it meets as its reader leaves is on the request's event. A cut is the response's close, which the event
+      // already says.
+      return stream((res) => new Promise((resolve) => void pipeline(recordingEvents(reading, position, fail), res, () => resolve())));
     },
   };
 }
@@ -70,6 +72,8 @@ function positionOf(lastEventId: string | string[] | undefined, query: URLSearch
   return offsetOf(given);
 }
 
+type Open = (path: string) => Promise<FileHandle>;
+
 // One reader's read of the recording `name`, which is followed, not ended, when `followed`.
 // [LAW:one-source-of-truth] `limit()`: how many bytes of it may be read now, the one source of that for the whole read.
 // A recording no writer holds is finished, so its limit is measured once, when the read first asks, and only a followed
@@ -80,13 +84,14 @@ type Reading = {
   ended: Promise<Ending>;
   name: ReadableName;
   path: string;
+  open: Open;
   followed: boolean;
   recordings: Recordings;
   limit: () => number;
   unterminated: () => number;
 };
 
-function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
+function readingOf(log: Log, recordings: Recordings, open: Open, trace_id: TraceId, ended: Promise<Ending>, name: ReadableName): Reading {
   const path = join(recordings.dir, name);
   const followed = recordings.follows(name);
   // [LAW:no-silent-failure] A finished recording is listed by its file, so a file that is gone fails the read, not ends it
@@ -99,6 +104,7 @@ function readingOf(log: Log, recordings: Recordings, trace_id: TraceId, ended: P
     ended,
     name,
     path,
+    open,
     followed,
     recordings,
     limit: followed ? () => recordings.readable(name) : () => measured().terminated,
@@ -118,7 +124,7 @@ async function atLineStart(reading: Reading, position: number) {
 // Up to `length` bytes of the recording from `position`, of the first `limit` bytes, which are whole events; with none
 // there may be no file. Each read opens the file and closes it before it returns, so a
 // reader that leaves mid-read holds nothing open.
-async function bytesAt({ path }: Reading, position: number, length: number, limit: number) {
+async function bytesAt({ path, open }: Reading, position: number, length: number, limit: number) {
   const readable = Math.max(0, Math.min(length, limit - position));
   if (readable === 0) return Buffer.alloc(0);
   await using file = await open(path);
@@ -128,7 +134,8 @@ async function bytesAt({ path }: Reading, position: number, length: number, limi
 
 // [LAW:no-ambient-temporal-coupling] The read is a stream piped into the response, so node owns backpressure
 // and the response's close destroys it, which stops its wait for the followed recording's next event written; a file
-// read under way runs on, and what it read is dropped when it finds the stream destroyed. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
+// read under way runs on, and the stream is destroyed once it has settled: what it read is dropped, and a failure is
+// still the read's. Lines are split on the raw newline byte, never decoded, so every id is an exact offset.
 // [LAW:nothing-unseen] Catching up to the end of what exists is the reader's bounded work, and its own event
 // in the request's trace, as an exchange's recording is: written when it first reaches the end, fails, or the
 // request ends before then, with how the request's response ended. Following is the request itself; what it delivered is
@@ -140,6 +147,8 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   let pending: Buffer = Buffer.alloc(0); // the bytes after `offset` read so far: not yet a whole line
   let eventsRead = 0;
   let stopWaiting: (() => void) | undefined;
+  let filling: Promise<void> = Promise.resolve(); // the file read under way
+  const readOn = () => (filling = fill());
   // The catch-up ends at the first of: the read reaching the end, failing, or the request ending.
   const catchUp = unitOfWork(log, "catch_up", { recording: name, followed, from }, span);
   // events_read: read into the response stream; delivery past node's buffers is not knowable.
@@ -150,10 +159,10 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
   void ended.then((ending) => catchUp.end(ending, read));
 
   const readable = new Readable({
-    read: () => void fill(),
+    read: () => void readOn(),
     destroy: (error, callback) => {
       stopWaiting?.();
-      callback(error);
+      void filling.finally(() => callback(error));
     },
   });
 
@@ -165,7 +174,7 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
     offset += data.length - rest.length;
     pending = rest;
     // A line longer than what was read so far: read on.
-    if (events === "") return void fill();
+    if (events === "") return fill();
     readable.push(events);
   };
 
@@ -193,13 +202,14 @@ function recordingEvents(reading: Reading, from: number, fail: (error: unknown) 
         if (written !== name) return;
         stopWaiting?.();
         stopWaiting = undefined;
-        void fill();
+        void readOn();
       });
     } catch (error) {
-      if (readable.destroyed) return;
       catchUp.end(failed(error), read);
-      // The request's failure, on its event, written at the close the stream's end brings.
+      // The request's failure, on its event, written once the response has closed and this read has settled.
       fail(error);
+      // A reader that left is sent nothing more.
+      if (readable.destroyed) return;
       // The `failed` event's data is a `Failure`, as a refusal's body is: the error's words, which the request's event has
       // with its stack.
       const failure: Failure = { error: describe(error) };

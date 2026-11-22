@@ -88,7 +88,7 @@ describe("createProxy", () => {
 
   it("returns the upstream's status, headers and body bytes unchanged", async () => {
     const compressed = gzipSync('{"type":"message"}');
-    const upstream = await upstreamServing((_req, res) => {
+    const upstream = await upstreamServing(async (_req, res) => {
       res.writeHead(529, "Overloaded", ["Content-Encoding", "gzip", "Set-Cookie", "a=1", "Set-Cookie", "b=2"]);
       res.end(compressed);
     });
@@ -104,7 +104,7 @@ describe("createProxy", () => {
   });
 
   it("logs a request the upstream answered with an error as failed, by the status line relayed, and records its exchange as ended", async () => {
-    const upstream = await upstreamServing((_req, res) => res.writeHead(529, "Overloaded").end('{"type":"error"}'));
+    const upstream = await upstreamServing(async (_req, res) => void res.writeHead(529, "Overloaded").end('{"type":"error"}'));
     const { port, next, events } = await proxyTo(upstream);
 
     await buffer(await send(port, { method: "POST", path: "/v1/messages" }));
@@ -151,7 +151,7 @@ describe("createProxy", () => {
     { statusLine: "HTTP/1.1 099 Early", code: "ERR_HTTP_INVALID_STATUS_CODE" },
     { statusLine: "HTTP/1.1 200 O\x7fK", code: "ERR_INVALID_CHAR" },
   ])("cuts the agent's response when upstream answers $statusLine, which node cannot relay", async ({ statusLine, code }) => {
-    const upstream = await upstreamServing((req) => req.socket.end(`${statusLine}\r\ncontent-length: 2\r\n\r\nok`));
+    const upstream = await upstreamServing(async (req) => void req.socket.end(`${statusLine}\r\ncontent-length: 2\r\n\r\nok`));
     const { port, next } = await proxyTo(upstream);
 
     await expect(send(port, { method: "POST", path: "/v1/messages" })).rejects.toThrow(/socket hang up/);
@@ -159,7 +159,7 @@ describe("createProxy", () => {
   });
 
   it("frames the response for the agent's HTTP version", async () => {
-    const upstream = await upstreamServing((_req, res) => {
+    const upstream = await upstreamServing(async (_req, res) => {
       res.write("hel");
       res.end("lo");
     });
@@ -173,7 +173,7 @@ describe("createProxy", () => {
   });
 
   it("cuts the agent's response when the upstream cuts mid-stream", async () => {
-    const upstream = await upstreamServing((req, res) => {
+    const upstream = await upstreamServing(async (req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("event: message_start\n\n", () => req.socket.destroy());
     });
@@ -188,7 +188,7 @@ describe("createProxy", () => {
   it("closes the upstream request when the agent leaves", async () => {
     let upstreamClosed!: () => void;
     const closedUpstream = new Promise<void>((resolve) => (upstreamClosed = resolve));
-    const upstream = await upstreamServing((_req, res) => {
+    const upstream = await upstreamServing(async (_req, res) => {
       res.on("close", upstreamClosed);
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write("event: message_start\n\n");
@@ -208,7 +208,7 @@ describe("createProxy", () => {
     const closedUpstream = new Promise<void>((resolve) => (upstreamClosed = resolve));
     let requestArrived!: () => void;
     const arrived = new Promise<void>((resolve) => (requestArrived = resolve));
-    const upstream = await upstreamServing((_req, res) => {
+    const upstream = await upstreamServing(async (_req, res) => {
       res.on("close", upstreamClosed);
       requestArrived();
     });
@@ -238,7 +238,7 @@ describe("createProxy", () => {
   });
 
   it("answers 502 to an upstream response node cannot parse and logs it without the response's bytes", async () => {
-    const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 200 OK\r\nset-cookie: session=1\r\nbad header\r\n\r\n"));
+    const upstream = await upstreamServing(async (req) => void req.socket.end("HTTP/1.1 200 OK\r\nset-cookie: session=1\r\nbad header\r\n\r\n"));
     const { port, next } = await proxyTo(upstream);
 
     const res = await send(port, { method: "POST", path: "/v1/messages" });
@@ -302,7 +302,7 @@ describe("createProxy", () => {
 
     it("records each agent's requests in its own recording, forwarded without the path that names it, and the rest in the run's, forwarded as sent", async () => {
       const received: (string | undefined)[] = [];
-      const upstream = await upstreamServing((req, res) => {
+      const upstream = await upstreamServing(async (req, res) => {
         received.push(req.url);
         res.end("answer");
       });
@@ -334,7 +334,7 @@ describe("createProxy", () => {
     });
 
     it("logs each exchange's recording as its own event in the exchange's trace, counting what it wrote", async () => {
-      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const upstream = await upstreamServing(async (_req, res) => void res.end("answer"));
       const { port, next, path, recordLog } = await proxyTo(upstream);
 
       await buffer(await send(port, { path: "/v1/models" }));
@@ -353,7 +353,7 @@ describe("createProxy", () => {
 
     it("forwards credentials in both directions and never writes them", async () => {
       let received!: [string, string][];
-      const upstream = await upstreamServing((req, res) => {
+      const upstream = await upstreamServing(async (req, res) => {
         received = pairs(req.rawHeaders);
         res.writeHead(200, ["Set-Cookie", "session=s3"]).end();
       });
@@ -446,7 +446,7 @@ describe("createProxy", () => {
     });
 
     it("answers 502 to a request node's client refuses to forward, and keeps serving", async () => {
-      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const upstream = await upstreamServing(async (_req, res) => void res.end("answer"));
       const { port, next, events } = await proxyTo(upstream);
 
       // Raw, because node's own client refuses to send it: a Trailer header on a body that is not chunked.
@@ -465,7 +465,7 @@ describe("createProxy", () => {
     });
 
     it("records a stream the upstream cuts, up to the cut", async () => {
-      const upstream = await upstreamServing((req, res) => {
+      const upstream = await upstreamServing(async (req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n", () => req.socket.destroy());
       });
@@ -480,7 +480,7 @@ describe("createProxy", () => {
     });
 
     it("records the agent leaving mid-stream as an aborted ending", async () => {
-      const upstream = await upstreamServing((_req, res) => {
+      const upstream = await upstreamServing(async (_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
@@ -496,7 +496,7 @@ describe("createProxy", () => {
     });
 
     it("records a response node cannot relay to the agent", async () => {
-      const upstream = await upstreamServing((req) => req.socket.end("HTTP/1.1 099 Early\r\ncontent-length: 2\r\n\r\nok"));
+      const upstream = await upstreamServing(async (req) => void req.socket.end("HTTP/1.1 099 Early\r\ncontent-length: 2\r\n\r\nok"));
       const { port, next, events } = await proxyTo(upstream);
 
       await expect(send(port, { method: "POST", path: "/v1/messages" })).rejects.toThrow(/socket hang up/);
@@ -507,7 +507,7 @@ describe("createProxy", () => {
     });
 
     it("ends an exchange with its last event when the upstream answers before the agent finishes sending", async () => {
-      const upstream = await upstreamServing((_req, res) => res.end("early"));
+      const upstream = await upstreamServing(async (_req, res) => void res.end("early"));
       const { port, next, events } = await proxyTo(upstream);
 
       // Raw, so the agent keeps sending after its answer, as a client that does not watch for one would.
@@ -522,7 +522,7 @@ describe("createProxy", () => {
     });
 
     it("logs a recording that cannot be written once, counted, beside the exchange's own ending", async () => {
-      const upstream = await upstreamServing((req, res) => {
+      const upstream = await upstreamServing(async (req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n", () => req.socket.destroy());
       });
@@ -548,7 +548,7 @@ describe("createProxy", () => {
     });
 
     it("continues a recording already at its path after its last whole line, cutting what a crash left", async () => {
-      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const upstream = await upstreamServing(async (_req, res) => void res.end("answer"));
       const { port, next, path, events, recordLog } = await proxyTo(upstream);
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, '{"an":"earlier event"}\n{"cut');
@@ -564,7 +564,7 @@ describe("createProxy", () => {
     });
 
     it("never recreates a recording deleted mid-run, and logs each event it could not write", async () => {
-      const upstream = await upstreamServing((_req, res) => res.end("answer"));
+      const upstream = await upstreamServing(async (_req, res) => void res.end("answer"));
       const { port, next, path, recordLog } = await proxyTo(upstream);
       await buffer(await send(port, { path: "/v1/models" }));
       await next();
@@ -591,7 +591,7 @@ describe("createProxy", () => {
     });
 
     it("leaves every event it saw up to the moment the proxy is killed", async () => {
-      const upstream = await upstreamServing((_req, res) => {
+      const upstream = await upstreamServing(async (_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });
@@ -613,7 +613,7 @@ describe("createProxy", () => {
     // A proxy process with the work a stop must cut open: an exchange streaming from an upstream that never
     // ends, and a reader following a recording. `untilShutdown` takes every event up to the stop's own.
     async function proxyWithWorkOpen() {
-      const upstream = await upstreamServing((_req, res) => {
+      const upstream = await upstreamServing(async (_req, res) => {
         res.writeHead(200, { "content-type": "text/event-stream" });
         res.write("event: message_start\n\n");
       });

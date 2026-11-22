@@ -37,7 +37,7 @@ export async function app({
   };
   const events = eventLog();
   // The app server's log lines, as a stand-in: what is served at `/logs` is processLog's to test.
-  const logs: Route = () => stream((res) => void res.end("the app server's log"));
+  const logs: Route = () => stream(async (res) => void res.end("the app server's log"));
   const { url, port, next } = await serving(createApp({ log: events.log, logs, settingsPath, tmux: fake, proxyInfo, proxyRecording: makeRecording, directory: "/work/project" }));
   const launch = (body: unknown, headers: Record<string, string> = {}) =>
     fetch(`${url}${ROUTES.launch}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
@@ -84,7 +84,7 @@ export function tmuxServer(...sessions: string[]) {
 export async function terminal(...sessions: string[]) {
   const server = tmuxServer(...sessions);
   const own = eventLog();
-  const served = await serving((_req, res) => res.writeHead(404).end(), createTerminal(own.log, { socketPath: server.socketPath }));
+  const served = await serving(async (_req, res) => void res.writeHead(404).end(), createTerminal(own.log, { socketPath: server.socketPath }));
   const clients = () => server.tmux("list-clients", "-F", "#{client_session}").split("\n").filter(Boolean);
   return { ...served, ...server, bridge: own.next, clients };
 }

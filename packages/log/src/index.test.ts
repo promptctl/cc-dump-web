@@ -2,11 +2,11 @@ import { once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection } from "node:net";
 import { buffer } from "node:stream/consumers";
-import { setTimeout } from "node:timers/promises";
+import { setImmediate, setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { createLog, failed, logged, loggedAfter, serve, unitOfWork, type Event, type Work } from "./index.ts";
+import { createLog, failed, logged, loggedAfter, serve, unitOfWork, type Ending, type Event, type Work } from "./index.ts";
 import { eventLog, eventsWritten, send, sendRaw, serving } from "./testing.ts";
 import { parseTraceId } from "./trace.ts";
 
@@ -187,7 +187,7 @@ describe("unitOfWork", () => {
 
 describe("serve", () => {
   it("emits one event for an answered request", async () => {
-    const { url, next } = await serving((_req, res) => res.writeHead(204).end());
+    const { url, next } = await serving(async (_req, res) => void res.writeHead(204).end());
 
     await (await fetch(`${url}/a?b=1`, { method: "POST" })).text();
 
@@ -212,7 +212,7 @@ describe("serve", () => {
     { status: 503, reason: undefined, error: "503 Service Unavailable" },
   ])("records a request answered in full with $status as failed, by the answer's status line, with no word from the handler", async ({ status, reason, error }) => {
     let work!: Work;
-    const { url, next } = await serving((_req, res, given) => {
+    const { url, next } = await serving(async (_req, res, given) => {
       work = given;
       res.writeHead(status, reason).end();
     });
@@ -224,7 +224,7 @@ describe("serve", () => {
   });
 
   it("records a request whose error answer its client left before it finished as aborted", async () => {
-    const { url, next } = await serving((_req, res) => res.writeHead(404).flushHeaders());
+    const { url, next } = await serving(async (_req, res) => void res.writeHead(404).flushHeaders());
 
     const abort = new AbortController();
     await fetch(url, { signal: abort.signal });
@@ -236,7 +236,7 @@ describe("serve", () => {
   it("records an aborted request with no status when the client leaves first", async () => {
     let arrived!: () => void;
     const received = new Promise<void>((resolve) => (arrived = resolve));
-    const { url, next } = await serving(() => arrived());
+    const { url, next } = await serving(async () => void arrived());
 
     const abort = new AbortController();
     const request = fetch(url, { signal: abort.signal }).catch(() => "aborted");
@@ -248,7 +248,7 @@ describe("serve", () => {
   });
 
   it("records the first failure the handler reports, beside the answer it sent", async () => {
-    const { url, next } = await serving((_req, res, { fail }) => {
+    const { url, next } = await serving(async (_req, res, { fail }) => {
       fail(new Error("first"));
       fail(new Error("second"));
       res.writeHead(502).end();
@@ -263,7 +263,7 @@ describe("serve", () => {
 
   it("cuts and records the request of a handler that throws, and goes on serving", async () => {
     let calls = 0;
-    const { url, next } = await serving((_req, res) => {
+    const { url, next } = await serving(async (_req, res) => {
       if (++calls === 1) throw new TypeError("Invalid URL");
       res.end("served");
     });
@@ -273,9 +273,35 @@ describe("serve", () => {
     expect(await (await fetch(url)).text()).toBe("served");
   });
 
+  it("records a failure the handler's work meets after its response closed, and ends the request only once that work has settled", async () => {
+    const { promise: work, reject: failWork } = Promise.withResolvers<never>();
+    const { promise: left, resolve: leave } = Promise.withResolvers<void>();
+    let ended!: Promise<Ending>;
+    const { url, next } = await serving(async (_req, res, given) => {
+      ended = given.ended;
+      res.once("close", leave);
+      res.writeHead(200).flushHeaders();
+      await work;
+    });
+
+    const abort = new AbortController();
+    await fetch(url, { signal: abort.signal });
+    abort.abort();
+    await left;
+    let settled = false;
+    void ended.then(() => (settled = true));
+    await setImmediate();
+    expect(settled).toBe(false);
+    failWork(new Error("late"));
+
+    const event = await next();
+    expect(event).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining("late"), status: 200 });
+    expect(await ended).toEqual({ outcome: "error", error: event.error });
+  });
+
   it("hands the handler its request's trace_id, and the ending its event records once the response closes", async () => {
     let work!: Work;
-    const { url, next } = await serving((_req, res, given) => {
+    const { url, next } = await serving(async (_req, res, given) => {
       work = given;
       given.fail(new Error("boom"));
       res.end();
@@ -316,7 +342,7 @@ describe("serve", () => {
   });
 
   it("records a connection error beside the request it cut, joined by the client's port", async () => {
-    const { port, next } = await serving((req, res) => {
+    const { port, next } = await serving(async (req, res) => {
       req.resume();
       req.on("end", () => res.end());
     });
@@ -336,7 +362,7 @@ describe("serve", () => {
   it("records the port asked for, the port it bound, and closing it", async () => {
     const { log, next } = eventLog();
 
-    const { port, close } = await serve(log, () => {}, 0);
+    const { port, close } = await serve(log, async () => {}, 0);
     await close();
 
     expect(await next()).toMatchObject({ event: "listen", outcome: "ok", requested_port: 0, port });
@@ -345,7 +371,7 @@ describe("serve", () => {
 
   it.each([200, 404])("cuts a request still open when closed, and resolves once its event, ended as stopped, is written, its answer's status %i or any", async (status) => {
     const { log, next } = eventLog();
-    const { port, close } = await serve(log, (_req, res) => res.writeHead(status).flushHeaders(), 0);
+    const { port, close } = await serve(log, async (_req, res) => void res.writeHead(status).flushHeaders(), 0);
     await next();
     const res = await send(port, { path: "/" });
 
@@ -359,7 +385,7 @@ describe("serve", () => {
 
   it("records and rethrows a close that fails", async () => {
     const { log, next } = eventLog();
-    const { port, close } = await serve(log, () => {}, 0);
+    const { port, close } = await serve(log, async () => {}, 0);
     await next();
     await close();
     await next();
@@ -370,7 +396,7 @@ describe("serve", () => {
 
   it("writes a failed close's event only after the events of the requests it cut", async () => {
     const { log, next } = eventLog();
-    const { port, close } = await serve(log, (_req, res) => res.writeHead(200).flushHeaders(), 0);
+    const { port, close } = await serve(log, async (_req, res) => void res.writeHead(200).flushHeaders(), 0);
     await next();
     const res = await send(port, { path: "/" });
 
@@ -391,7 +417,7 @@ describe("serve", () => {
     const port = await bare(LOOPBACK);
     const { log, next } = eventLog();
 
-    await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
+    await expect(serve(log, async () => {}, port)).rejects.toThrow(/EADDRINUSE/);
     const listen = await next();
     expect(listen).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, requested_port: port, error: expect.stringContaining("EADDRINUSE") });
     expect(listen).not.toHaveProperty("port");
@@ -407,7 +433,7 @@ describe("serve", () => {
     const { port: loopbackFree } = free.address() as AddressInfo;
     await new Promise((resolve) => free.close(resolve));
     const port = await bare(undefined, loopbackFree);
-    const { close } = await serve(eventLog().log, (_req, res) => res.writeHead(204).end(), port);
+    const { close } = await serve(eventLog().log, async (_req, res) => void res.writeHead(204).end(), port);
     onTestFinished(close);
 
     expect((await send(port, { path: "/" })).statusCode).toBe(204);
@@ -429,7 +455,7 @@ describe("serve with an upgrade", () => {
   it("hands the part the connection and writes one event when its socket closes", async () => {
     // The part closes its side when the client closes its own, as a WebSocket's closing handshake ends.
     const { port, next } = await serving(
-      () => {},
+      async () => {},
       async (_req, socket) => void socket.on("end", () => socket.end()).write(switched),
     );
 
@@ -451,7 +477,7 @@ describe("serve with an upgrade", () => {
 
   it("records the failure the part reports", async () => {
     const { port, next } = await serving(
-      () => {},
+      async () => {},
       async (_req, socket, _head, work) => {
         work.fail(new Error("refused"));
         socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -466,7 +492,7 @@ describe("serve with an upgrade", () => {
 
   it("waits for the part to be done with the connection, so a failure it learns of as the connection ends is the outcome", async () => {
     const { port, next } = await serving(
-      () => {},
+      async () => {},
       async (_req, socket, _head, work) => {
         socket.on("end", () => socket.end()).write(switched);
         await once(socket, "close");
@@ -483,7 +509,7 @@ describe("serve with an upgrade", () => {
   it("records a connection its client reset, as its error and an upgrade aborted, and goes on serving", async () => {
     const handed = Promise.withResolvers<void>();
     const { port, next } = await serving(
-      () => {},
+      async () => {},
       async (req, socket) => {
         if (req.url === "/up") return void socket.write(switched);
         handed.resolve();
@@ -503,7 +529,7 @@ describe("serve with an upgrade", () => {
 
   it("cuts the connection of a part that throws, and records it", async () => {
     const { port, next } = await serving(
-      () => {},
+      async () => {},
       () => {
         throw new Error("boom");
       },
@@ -519,7 +545,7 @@ describe("serve with an upgrade", () => {
 
   it("cuts an upgraded connection still open when closed, and resolves once its event, ended as stopped, is written", async () => {
     const { log, next } = eventLog();
-    const { port, close } = await serve(log, () => {}, 0, async (_req, socket) => void socket.write(switched));
+    const { port, close } = await serve(log, async () => {}, 0, async (_req, socket) => void socket.write(switched));
     await next();
     const { socket } = await upgradeTo(port);
 
@@ -532,7 +558,7 @@ describe("serve with an upgrade", () => {
   });
 
   it("hands an upgrade request to the handler, as any other request, when the part takes no upgrades", async () => {
-    const { port, next } = await serving((_req, res) => res.writeHead(426).end());
+    const { port, next } = await serving(async (_req, res) => void res.writeHead(426).end());
 
     const { answer } = await upgradeTo(port);
 
@@ -543,7 +569,7 @@ describe("serve with an upgrade", () => {
   it("hands a request offering any other upgrade to the handler, as any other request, when the part takes upgrades", async () => {
     const upgrades: string[] = [];
     const { port, next } = await serving(
-      (_req, res) => res.writeHead(204).end(),
+      async (_req, res) => void res.writeHead(204).end(),
       async (req, socket) => void (upgrades.push(req.url!), socket.destroy()),
     );
 

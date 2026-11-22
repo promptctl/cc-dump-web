@@ -159,6 +159,33 @@ describe("a part's routes", () => {
     }
   });
 
+  it("records a route's rejection after its client left as the request's error, with no answer sent", async () => {
+    const { promise: arrived, resolve: arrive } = Promise.withResolvers<void>();
+    const { promise: left, resolve: leave } = Promise.withResolvers<void>();
+    const { promise: listing, reject: failListing } = Promise.withResolvers<never>();
+    const { url, next } = await serving(
+      routes({
+        "/late": {
+          GET: async (req) => {
+            req.socket.once("close", leave);
+            arrive();
+            return listing;
+          },
+        },
+      }),
+    );
+
+    const abort = new AbortController();
+    const request = fetch(`${url}/late`, { signal: abort.signal }).catch(() => "aborted");
+    await arrived;
+    abort.abort();
+    await left;
+    failListing(Object.assign(new Error("EACCES: permission denied, scandir"), { code: "EACCES" }));
+
+    expect(await request).toBe("aborted");
+    expect(await next()).toMatchObject({ event: "request", outcome: "error", error: expect.stringContaining("EACCES"), status: null });
+  });
+
   it("answers 500 for a body JSON cannot take, and serves the next request", async () => {
     const { port, failure, next } = await part();
     expect(await failure("/cycle")).toMatchObject({ status: 500, error: expect.stringContaining("circular") });

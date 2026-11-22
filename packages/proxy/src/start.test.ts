@@ -13,7 +13,7 @@ describe("the reader port", () => {
   const proxy = async () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-    const upstream = await serving((_req, res) => res.end());
+    const upstream = await serving(async (_req, res) => void res.end());
     return { dir, upstream: upstream.url, ...(await proxyProcess(upstream.url, dir, "unlimited")) };
   };
 
@@ -21,7 +21,7 @@ describe("the reader port", () => {
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     // A port nothing listens on: bound, then let go.
-    const bound = await serve(() => {}, (_req, res) => res.end(), 0);
+    const bound = await serve(() => {}, async (_req, res) => void res.end(), 0);
     await bound.close();
     const { proxyPort, readerPort } = await proxyProcess(`http://${LOOPBACK}:${bound.port}`, dir, "unlimited");
     const { res, next } = await subscribe(readerPort, "/logs");
@@ -91,7 +91,7 @@ describe("the reader port", () => {
 
   it("sends the traffic in its status: a request in flight until it ends, and when it arrived", async () => {
     const held = Promise.withResolvers<void>();
-    const upstream = await serving((_req, res) => void held.promise.then(() => res.end()));
+    const upstream = await serving(async (_req, res) => void held.promise.then(() => res.end()));
     const dir = mkdtempSync(join(tmpdir(), "cc-dump-"));
     onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
     const { proxyPort, readerPort } = await proxyProcess(upstream.url, dir, "unlimited");

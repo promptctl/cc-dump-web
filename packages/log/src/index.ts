@@ -106,13 +106,17 @@ export function unitOfWork(log: Log, event: string, facts: Facts, span: Span, ju
 
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
 // what the client is sent when that happens is the handler's decision, made before or after `fail`.
-// `ended` resolves when the response closes, with how its response ended: sent in full, cut, or failed as the handler
-// reported. How the request ended, which its event records, is judged from that and its status (`requestEnding`).
+// `ended` resolves once the response has closed and the handler's work has settled, with how its response ended: sent
+// in full, cut, or failed as the handler reported. How the request ended, which its event records, is judged from that
+// and its status (`requestEnding`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
 export type Work = { trace_id: TraceId } & Pick<ReturnType<typeof unitOfWork>, "fail" | "ended">;
 
-export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => void;
+// A request's handler: its promise settles once the part is done with the request, which may be after the response
+// has closed (a route that answers no one, a read under way as its reader leaves), so a failure the part meets then
+// is still the request's. The work it returns cannot wait on `ended`, which waits on it.
+export type Handler = (req: IncomingMessage, res: ServerResponse, work: Work) => Promise<void>;
 
 // A request to switch protocols (a WebSocket's) that the part takes over: from here the connection's socket is the
 // part's, and the unit of work is the connection's whole life. The part's promise settles once it is done with the
@@ -222,10 +226,11 @@ function clientOf(socket: Socket) {
   return { client_address: socket.remoteAddress, client_port: socket.remotePort };
 }
 
-// The event is written once, when the response closes. The response's ending is an error reported before then, the
-// first one if there were several; or, for a response cut short, stopped if its server had stopped listening by then,
-// which only `close` does, and left by its client otherwise; or ok. The request's ending, which its event records, is
-// judged from that and the status the handler set, which on a cut response the client may not have received.
+// The event is written once, when the response has closed and the handler's work has settled, as an upgrade's is. The
+// response's ending is an error reported before then, the first one if there were several; or, for a response cut short,
+// stopped if its server had stopped listening as it closed, which only `close` does, and left by its client otherwise;
+// or ok. The request's ending, which its event records, is judged from that and the status the handler set, which on a
+// cut response the client may not have received.
 // [LAW:one-source-of-truth] This is the one place that decides how a request's response ended, which the handler reads
 // from `ended`. The request is in flight, for `close` to wait on, until it is.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
@@ -235,17 +240,18 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       requestEnding(response, { status: res.statusCode, reason: res.statusMessage }),
     );
     inFlight.add(work.ended);
-    res.on("close", () => {
-      inFlight.delete(work.ended);
-      work.end({ outcome: res.writableFinished ? "ok" : server.listening ? "aborted" : "stopped" }, () => ({ status: res.headersSent ? res.statusCode : null }));
-    });
-    // A handler that throws fails its own request, which is cut, and not the process with every other request in it.
-    try {
-      handler(req, res, { trace_id: span.trace_id, fail: work.fail, ended: work.ended });
-    } catch (error) {
+    const closed = new Promise<Exclude<Ending["outcome"], "error">>((resolve) =>
+      res.once("close", () => resolve(res.writableFinished ? "ok" : server.listening ? "aborted" : "stopped")),
+    );
+    // A handler that throws or rejects fails its own request, which is cut, and not the process with every other request in it.
+    const done = Promise.try(handler, req, res, { trace_id: span.trace_id, fail: work.fail, ended: work.ended }).catch((error: unknown) => {
       work.fail(error);
       res.destroy();
-    }
+    });
+    void Promise.all([closed, done]).then(([outcome]) => {
+      inFlight.delete(work.ended);
+      work.end({ outcome }, () => ({ status: res.headersSent ? res.statusCode : null }));
+    });
   };
 }
 

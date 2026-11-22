@@ -33,7 +33,7 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
   const request = requestFor[url.protocol as keyof typeof requestFor];
   const basePath = url.pathname.replace(/\/$/, "");
 
-  return (req, res, { trace_id, fail, ended }) => {
+  return async (req, res, { trace_id, fail, ended }) => {
     const { name, url: target } = agentOf(req.url!) ?? { name: run, url: req.url! };
     const seen = record(name, trace_id);
     const headers = pairs(req.rawHeaders);
@@ -46,8 +46,8 @@ export function createProxy(upstream: Upstream, { record, run }: Pick<Recordings
       to.addTrailers(trailers);
       to.end();
     };
-    // `ended` resolves as the response closes, and a promise's callback runs only once every close
-    // listener has, the one below that stops the recording included: `end` is the exchange's last event.
+    // `ended` resolves after the response closes, and so only once every close listener has run, the one below that
+    // stops the recording included: `end` is the exchange's last event.
     ended.then((ending) => seen({ type: "end", ...ending }));
 
     // An upstream failure reaches the agent as it would on a direct connection: before the

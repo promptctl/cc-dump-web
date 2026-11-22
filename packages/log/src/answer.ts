@@ -47,8 +47,9 @@ export type Method = "GET" | "POST";
 
 // [LAW:types-are-the-program] What a route decides to answer, before it has written a byte: a refusal before the first
 // byte is representable, and one after it is not. A `Stream` writes a Server-Sent Events body, which begins once the
-// route has answered.
-export type Stream = (res: ServerResponse) => void;
+// route has answered; its promise settles once it is done with the response, and a failure it meets as it ends is the
+// request's.
+export type Stream = (res: ServerResponse) => Promise<void>;
 
 // What JSON text can say, so a body `JSON.stringify` turns into no text at all (undefined, a function) is no reply.
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -158,7 +159,7 @@ export async function bodyOf<T>(req: IncomingMessage, parse: (text: string) => T
 // refusal written as a `Failure` body, on the request's event as on its answer.
 // [LAW:nothing-unseen] No refusal is answered without `work.fail`, so none is logged as ok.
 export function routes(table: Table): Handler {
-  return (req, res, work) => void answered(table, req, res, work);
+  return (req, res, work) => answered(table, req, res, work);
 }
 
 async function answered(table: Table, req: IncomingMessage, res: ServerResponse, work: Work) {
@@ -170,11 +171,14 @@ async function answered(table: Table, req: IncomingMessage, res: ServerResponse,
     if (admitted.origin !== undefined) res.setHeader("access-control-allow-origin", admitted.origin);
     const { route, ...matched } = resolve(table, admitted);
     const reply = await route(req, work, matched);
-    // A client that left while the route ran has no one to be answered; the request's event is written at its close.
+    // A client that left while the route ran has no one to be answered.
     if (res.destroyed) return;
-    write(res, reply);
+    await write(res, reply);
   } catch (error) {
     work.fail(error);
+    // Nor has a client that left before the route failed: an answer begun on its closed response would put a status
+    // on the request's event that no one was sent.
+    if (res.destroyed) return;
     const { status, message, headers } = refusalOf(error);
     // An answer begun cannot be taken back, so a failure after it cuts the response.
     if (res.headersSent) return void res.destroy();
@@ -182,7 +186,7 @@ async function answered(table: Table, req: IncomingMessage, res: ServerResponse,
   }
 }
 
-function write(res: ServerResponse, reply: Reply | Preflight) {
+async function write(res: ServerResponse, reply: Reply | Preflight) {
   switch (reply.kind) {
     case "json": {
       // Serialized before the first byte, so a body that cannot be is a failure the request is still answered with.
