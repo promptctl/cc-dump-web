@@ -4,7 +4,7 @@ import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "./equal.ts";
-import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
+import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadLabel, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
 import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { senderOf, type Sender } from "./wire.ts";
@@ -252,10 +252,10 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied, "parameters")] };
       // Its line previews where they are.
-      const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
+      const places: Part = { id: "breakpoints", kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ id: "breakpoints", kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
         own: [...placed({ in: "parameters" }, one("parameters", [parameters])), ...one("cache", cache)],
         sent: [
@@ -364,7 +364,7 @@ function toolBlock(tool: unknown, name: string): Block {
       return {
         category: "tools",
         name,
-        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
+        parts: [...(description === undefined ? [] : [{ id: "description", kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
       };
     },
     (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
@@ -442,13 +442,13 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
             {
               category: "usage",
               name: `stop reason: ${show(stopReason)}`,
-              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"])],
-              preview: [pickedPart(stop, ["stop_sequence"])],
+              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"], "stop")],
+              preview: [pickedPart(stop, ["stop_sequence"], "stop")],
             },
           ]),
-          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
+          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted, "usage")] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
+          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"], unreadLabel)] })),
         ],
         message: {
           uncached: tokens(usage, "input_tokens"),
@@ -477,14 +477,14 @@ function tokens(usage: unknown, name: string): number | undefined {
 // has not ended.
 type Ending = { own: BlockOrNone; reply: BlockOrNone };
 function ending(end: Of<"end"> | undefined): Ending {
-  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }], reply: [] });
+  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ id: "ending", kind: "text", form: "verbatim", text }] }], reply: [] });
   switch (end?.outcome) {
     case undefined:
     case "ok":
       return { own: [], reply: [] };
     // A failure stands where the reply would have been, as an error the API returned does.
     case "error":
-      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }] };
+      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ id: "error", kind: "text", form: "verbatim", text: end.error }] }] };
     case "aborted":
       return cut("aborted", "The agent left the exchange before it completed.");
     case "stopped":
@@ -493,12 +493,12 @@ function ending(end: Of<"end"> | undefined): Ending {
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
-  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "http", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ id: "trailers", kind: "fields" as const, label: "trailers", fields: trailers.headers }];
+  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { id: "headers", kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {
-  return { category: "http", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+  return { category: "http", name: `HTTP ${side}`, parts: [{ id: "head", kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
 }
 
 // A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
@@ -511,10 +511,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
 function undecoded(body: Body): BlockOrNone {
-  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
+  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ id: "error", kind: "text", form: "verbatim", text: body.error }] }];
 }
 function leftover(name: string, text: string): BlockOrNone {
-  return text === "" ? [] : [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }];
+  return text === "" ? [] : [{ category: "http", name, parts: [{ id: "text", kind: "text", form: "verbatim", text }] }];
 }
 
 function show(value: unknown): string {

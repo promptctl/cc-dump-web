@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LONG } from "./regions.ts";
-import { regionsAround, render, renderingOf, type Block, type Inline, type Leaf, type Rendering, type Run } from "./rendering.ts";
+import { placesOf, regionsAround, render, renderingOf, type Block, type Inline, type Leaf, type Rendering, type Run } from "./rendering.ts";
 import { find } from "./search.ts";
 
 // Every leaf a rendering draws, in order.
@@ -203,9 +203,36 @@ describe("render", () => {
   });
 
   it("renders a text once in a form, whichever part holds it, as a resent prompt or a reply's text remade by each event is", () => {
-    const part = (form: "markdown" | "verbatim") => ({ kind: "text" as const, form, text: "# Rules\n**be brief**\n" });
+    const part = (form: "markdown" | "verbatim") => ({ id: "text", kind: "text" as const, form, text: "# Rules\n**be brief**\n" });
     expect(renderingOf(part("markdown"))).toBe(renderingOf(part("markdown")));
     expect(renderingOf(part("verbatim")).text).toBe("# Rules\n**be brief**\n");
+  });
+
+  it("places each character a rendering shows where its text writes it, past markup, an escape or an entity", () => {
+    const placesAt = (rendering: Rendering, starts: number[]) => placesOf(rendering, starts.map((start) => ({ start }))).map(({ place }) => place);
+    const every = (rendering: Rendering) => placesAt(rendering, Array.from(rendering.text, (_, index) => index));
+    const source = "a &amp; \\* `c` **d**";
+    const markdown = render(source, "markdown");
+    expect(markdown.text).toBe("a & * c d");
+    expect(every(markdown)).toEqual([0, 1, 2, 7, 8, 10, 12, 14, 17]);
+    // A verbatim text shows every character as written.
+    const verbatim = render(source, "verbatim");
+    expect(every(verbatim)).toEqual(Array.from(source, (_, index) => index));
+    // Each block's characters are found from where it begins, so markup a block shows as written leaves the next block's
+    // places as they are.
+    expect(placesAt(render("x *y\n\n- needle\n", "markdown"), [4])).toEqual([8]);
+  });
+
+  it("keeps a character's place as its text streams on and closes markup ahead of it", () => {
+    const placeOf = (text: string) => {
+      const rendering = render(text, "markdown");
+      return placesOf(rendering, [{ start: rendering.text.indexOf("needle") }])[0]!.place;
+    };
+    for (const [open, closed] of [
+      ["x *a needle", "x *a needle*"],
+      ["a `b needle", "a `b needle`"],
+      ["say **so needle", "say **so needle** and on"],
+    ]) expect(placeOf(closed!), closed).toBe(placeOf(open!));
   });
 
   it("opens a section only at a line holding its tag alone, never a self-closing one, in either form", () => {

@@ -69,8 +69,10 @@ export type Folded = { text: string; passages: Range[]; folds: (Range & { line: 
 // `passages`: the stretches of `text` a query matches within, in order, each leaves drawn one after another; a block,
 // a cell, the lines either side of a hard break and a region each end one, so a match runs across no two things a
 // reader sees apart, and into no region from outside it. `folds`: each region's line and characters, and each heading's
-// section's, which are those under its heading, not the heading's own, outermost first.
-export type Rendering = Folded & { runs: Run[] };
+// section's, which are those under its heading, not the heading's own, outermost first. `source`: the text as written,
+// and `anchors`, where each of its blocks begins in it, at the character the rendering begins the block at, in order.
+export type Rendering = Folded & { runs: Run[]; source: string; anchors: Anchor[] };
+export type Anchor = { at: number; source: number };
 
 type TextPart = Extract<Part, { kind: "text" }>;
 
@@ -100,9 +102,47 @@ function remembered({ text, form }: TextPart): Rendering {
 
 // `text` as it shows in `form`. [LAW:dataflow-not-control-flow] The form is the one thing that varies how it is read.
 export function render(text: string, form: Form): Rendering {
-  const writer = createWriter();
+  const writer = createWriter(text);
+  writer.anchor(0);
   const runs: Run[] = form === "verbatim" ? verbatim(segments(text), writer) : [{ kind: "markdown", blocks: markdown(text, writer) }];
-  return { ...writer.done(), runs };
+  return { ...writer.done(), runs, source: text };
+}
+
+// Each of `starting`, ascending by where it starts in a rendering, with `place`, where the character it starts at
+// stands in the text as written: what names a character whatever a step does after it, as a text streams on, or closes
+// markup the rendering showed as written until then. Each block's characters are found in order from where the block
+// begins, past the source's markup, before the next block begins: a character is where it is written, as itself or as
+// the escape or entity it is written as. One written some other way, as markdown-it writes a code span's newline as a
+// space, is where the search for it began. So each place is past the one before, and no two characters share one.
+export function placesOf<Starting extends { start: number }>({ text, source, anchors }: Rendering, starting: Starting[]): (Starting & { place: number })[] {
+  let next = 0;
+  let cursor = 0;
+  let at = 0;
+  let place = 0;
+  return starting.map((item) => {
+    for (; at <= item.start; at++) {
+      for (; next < anchors.length && anchors[next]!.at <= at; next++) cursor = Math.max(cursor, anchors[next]!.source);
+      const end = anchors[next]?.source ?? source.length;
+      const { at: written, length } = writtenAt(source, text[at]!, cursor, end);
+      place = written;
+      cursor = written + length;
+    }
+    return { ...item, place };
+  });
+}
+
+// An escape or an entity, as the source writes one character with it.
+const escaped = /^(?:\\[!-/:-@[-`{-~]|&(?:#\d{1,7}|#[xX][\da-fA-F]{1,6}|[A-Za-z][A-Za-z\d]{1,31});)/;
+
+// Where `character` is written in `source` from `from`, before `end`, and in how many characters: as itself, or as an
+// escape or an entity; where the search began, as one character, when it is neither.
+function writtenAt(source: string, character: string, from: number, end: number): { at: number; length: number } {
+  for (let at = from; at < end; at++) {
+    if (source[at] === character) return { at, length: 1 };
+    const sequence = source[at] === "\\" || source[at] === "&" ? escaped.exec(source.slice(at, at + 40)) : null;
+    if (sequence !== null) return { at, length: sequence[0].length };
+  }
+  return { at: from, length: 1 };
 }
 
 // The lines of the folds holding offset `at` of a text, outermost first.
@@ -110,20 +150,25 @@ export function regionsAround({ folds }: Folded, at: number): number[] {
   return folds.filter(({ start, end }) => start <= at && at < end).map(({ line }) => line);
 }
 
-// The rendering's text, written as its leaves are made, in order: `cut` ends a passage, and `fold` places the region
-// opening on `line` on its characters, already written, a passage ending on each side of them.
+// The rendering's text, written as its leaves are made, in order: `cut` ends a passage, `fold` places the region
+// opening on `line` on its characters, already written, a passage ending on each side of them, and `anchor` says the
+// block written next begins on `line` of the source.
 type Writer = {
   leaf: (text: string) => Leaf;
   cut: () => void;
   at: () => number;
   fold: (line: number, characters: Range) => void;
-  done: () => Omit<Rendering, "runs">;
+  anchor: (line: number) => void;
+  done: () => Omit<Rendering, "runs" | "source">;
 };
 
-function createWriter(): Writer {
+function createWriter(source: string): Writer {
   const written: string[] = [];
   const passages: Range[] = [];
   const folds: Rendering["folds"] = [];
+  const anchors: Anchor[] = [];
+  // Where each of the source's lines begins, its lines ended as markdown-it ends them.
+  const lines = [0, ...Array.from(source.matchAll(/\r\n?|\n/g), (end) => end.index + end[0].length)];
   let length = 0;
   let passage = 0;
   const cut = () => {
@@ -140,11 +185,12 @@ function createWriter(): Writer {
     cut,
     at: () => length,
     fold: (line, characters) => folds.push({ line, ...characters }),
+    anchor: (line) => anchors.push({ at: length, source: lines[line]! }),
     // A region is placed once whole, so one inside another is placed first; outermost first is by where each starts,
     // and, of two of the same characters, a section and the one region under its heading, the one placed last.
     done: () => {
       cut();
-      return { text: written.join(""), passages, folds: folds.reverse().sort((a, b) => a.start - b.start || b.end - a.end) };
+      return { text: written.join(""), passages, folds: folds.reverse().sort((a, b) => a.start - b.start || b.end - a.end), anchors };
     },
   };
 }
@@ -232,6 +278,7 @@ function blocks(reader: Reader, writer: Writer, close: string | undefined): Bloc
   for (let token = reader.next().value; token !== undefined && token.type !== close; token = reader.next().value) {
     const [first, last] = token.map!;
     const start = writer.at();
+    writer.anchor(first);
     const made = block(token, reader, writer);
     read.push({ block: made, characters: { start, end: writer.at() }, lines: { start: first, end: last } } as Placed<Block> | Placed<TagLine>);
     // Each block ends a passage, so a query never runs from one into the next.

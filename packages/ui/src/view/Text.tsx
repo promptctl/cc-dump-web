@@ -14,7 +14,7 @@ import { keyAt, partKey } from "./search.ts";
 // above it, as its contents.
 export function TextView({ part, blockKey, at }: { part: Extract<Part, { kind: "text" }>; blockKey: string; at: string }) {
   const rendering = renderingOf(part);
-  const where = useWhere(blockKey, at, rendering);
+  const where = useWhere(blockKey, at, useMemo(() => ({ in: "regions", searched: rendering }), [rendering]));
   const contents = useMemo(() => contentsOf(rendering.runs), [rendering]);
   return (
     <div>

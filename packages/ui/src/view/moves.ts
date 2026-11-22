@@ -2,7 +2,7 @@ import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
 import type { ForkRow, Gone, Layout, MomentStanding, Pending } from "./rows.ts";
-import { adjacent, type Direction, type Found, type Match, type Step } from "./search.ts";
+import { adjacent, ordinal, type Direction, type Found, type Match, type Step } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
 // view's store holds it: what each would go to, decided apart from carrying it out (Conversation.tsx).
@@ -52,10 +52,16 @@ export function waitingOf(column: ColumnState, position: Position, current: Matc
   return match?.at === "pending" ? { held: "match", read: match.read } : undefined;
 }
 
-// The current match nothing will bring, by its block's key, with the judgement that says so, which the view then no
-// longer holds as current; none while it can still come, or none is current.
-export function matchGone(column: ColumnState, current: Match | undefined): (Gone & { key: string }) | undefined {
+// A current match the view no longer holds, by its block's key, and why: nothing will bring its row, or its row is
+// read and its text holds no match at its place (search.ts `Match`), as a tool's input so far once whole. A move in
+// time leaves no match current (state.ts), and at now a text only grows, so nothing brings that match back either.
+export type Cleared = { key: string; why: Gone["why"] | "text_changed" };
+
+// [LAW:single-enforcer] The current match the view no longer holds, which the counter, the highlight and the steps
+// then agree is none; none while it can still come, or none is current.
+export function matchGone(column: ColumnState, found: Found, current: Match | undefined, pattern: RegExp): Cleared | undefined {
   if (current === undefined) return undefined;
   const at = matchAt(column, current);
-  return at.at === "gone" ? { ...at, key: current.key } : undefined;
+  if (at.at === "gone") return { key: current.key, why: at.why };
+  return at.at !== "pending" && ordinal(found, current, pattern) === undefined ? { key: current.key, why: "text_changed" } : undefined;
 }

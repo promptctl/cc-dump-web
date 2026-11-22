@@ -3,9 +3,9 @@ import { paint } from "./highlights.ts";
 import { useWhere, type Where } from "./painting.ts";
 import { rangesIn, whole } from "./search.ts";
 
-// A whole text, its matches highlighted.
-export function HighlightedText({ blockKey, at, text }: { blockKey: string; at: string; text: string }) {
-  return <Highlighted slice={text} from={0} where={useWhere(blockKey, at, useMemo(() => whole(text), [text]))} />;
+// A whole text, its matches highlighted, shown `on` the block's line or in its content.
+export function HighlightedText({ blockKey, at, text, on }: { blockKey: string; at: string; text: string; on: "line" | "content" }) {
+  return <Highlighted slice={text} from={0} where={useWhere(blockKey, at, useMemo(() => ({ in: on, searched: whole(text) }), [on, text]))} />;
 }
 
 // A slice of a text, starting at `from` in it: a leaf of its rendering. Its matches are highlighted, as much of each as

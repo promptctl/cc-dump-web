@@ -8,10 +8,12 @@ import { regionKey } from "./regions.ts";
 import { render } from "./rendering.ts";
 import { request as fixtureRequest } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
+import { fieldLines, type FieldLine, type Part } from "../format/parts.ts";
+import { formatBlock } from "../format/blocks.ts";
 import { blockOf, createLayout, type BlockRow, type Keys, type Layout, type Row } from "./rows.ts";
-import { matchMove } from "./moves.ts";
+import { matchGone, matchMove, type ColumnState } from "./moves.ts";
 import type { Position } from "./position.ts";
-import { address, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Direction, type Found, type Match, type Searched } from "./search.ts";
+import { address, createSearch, find, matchIn, ordinal, partKey, patternOf, rangesIn, shownTexts, whole, type Direction, type Found, type Match, type Searched, type Step } from "./search.ts";
 
 // A request whose header holds what a search can find.
 const request = (trace_id: string, body: unknown): RecordedEvent[] => fixtureRequest(trace_id, body, { headers: [["x-probe", "needle in a header"]] });
@@ -44,6 +46,16 @@ const adjacent = (found: Found, current: Match | undefined, position: Position, 
   const rows = [...found.rows];
   return matchMove({ rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: readWith(() => undefined) }, found, current, position, direction, pattern);
 };
+// The address of the part a block names `id`.
+const partNamed = (id: string) => address.part({ id, kind: "text", form: "verbatim", text: "" });
+// Every step of the search from the view's start, in order, once around.
+const stepsOf = (found: Found, keys: Keys): Step[] => {
+  const steps: Step[] = [];
+  for (let index = 0; index < found.count; index++) steps.push(adjacent(found, steps.at(-1)?.match, top, "next", pattern, keys)!);
+  return steps;
+};
+// The column the view holds of `rows`, every one listed and none still to be read.
+const columnOf = (rows: Row[]): ColumnState => ({ rows, keys: { ...keysOf(rows), measuredBy: keysOf(rows).at }, every: { rows, keys: keysOf(rows) }, moment: readWith(() => undefined) });
 // The keys of `rows`, in order.
 const keysOf = (rows: readonly Row[]): Keys => ({ at: (index) => rows[index]!.key, indexOf: (key) => { const index = rows.findIndex((row) => row.key === key); return index === -1 ? undefined : index; } });
 // A row the step shown added, of `block` alone; or, `gone`, one it took away, which shows the block it was.
@@ -55,30 +67,32 @@ const added = (block: Block, gone = false): BlockRow => {
 
 describe("search", () => {
   it("names each text a block shows by its address, and where it shows", () => {
-    expect(
-      shownTexts(
-        added({
-          category: "tools",
-          name: "tool_use: X",
-          parts: [
-            { kind: "text", form: "verbatim", text: "t" },
-            { kind: "json", value: { a: 1 } },
-            { kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]]] },
-            { kind: "media", of: "image", source: { type: "url", url: "u" } },
-          ],
-        }),
-      ),
-    ).toEqual([
+    const parts: Part[] = [
+      { id: "t", kind: "text", form: "verbatim", text: "t" },
+      { id: "j", kind: "json", value: { a: 1 } },
+      { id: "f", kind: "fields", fields: [["id", "1"], ["thinking", [["type", "adaptive"]]], ["id", "2"]] },
+      { id: "m", kind: "media", of: "image", source: { type: "url", url: "u" } },
+    ];
+    const [text, json, fields] = parts as [Part, Part, Extract<Part, { kind: "fields" }>];
+    const [id, thinking, type, again] = fieldLines(fields.fields);
+    const field = (line: FieldLine | undefined, side: "name" | "value") => address.field(fields, line!, side);
+    const shown = shownTexts(added({ category: "tools", name: "tool_use: X", parts }));
+    expect(shown).toEqual([
       { at: address.name, searched: whole("tool_use: X"), in: "line" },
-      { at: "0", searched: render("t", "verbatim"), in: "regions" },
-      { at: "1", searched: whole('{\n  "a": 1\n}'), in: "content" },
-      { at: "2/0/name", searched: whole("id"), in: "content" },
-      { at: "2/0/value", searched: whole("1"), in: "content" },
+      { at: address.part(text), searched: render("t", "verbatim"), in: "regions" },
+      { at: address.part(json), searched: whole('{\n  "a": 1\n}'), in: "content" },
+      { at: field(id, "name"), searched: whole("id"), in: "content" },
+      { at: field(id, "value"), searched: whole("1"), in: "content" },
       // A field that holds fields is its name alone, and the fields it holds are lines of their own after it.
-      { at: "2/1/name", searched: whole("thinking"), in: "content" },
-      { at: "2/2/name", searched: whole("type"), in: "content" },
-      { at: "2/2/value", searched: whole("adaptive"), in: "content" },
+      { at: field(thinking, "name"), searched: whole("thinking"), in: "content" },
+      { at: field(type, "name"), searched: whole("type"), in: "content" },
+      { at: field(type, "value"), searched: whole("adaptive"), in: "content" },
+      { at: field(again, "name"), searched: whole("id"), in: "content" },
+      { at: field(again, "value"), searched: whole("2"), in: "content" },
     ]);
+    // Every text its own address: a name its siblings repeat, as a header's is, is each line's with its place among
+    // them.
+    expect(new Set(shown.map(({ at }) => at)).size).toBe(shown.length);
   });
 
   it("reads a query as a regular expression, in any case, and the empty query as matching nowhere", () => {
@@ -128,14 +142,15 @@ describe("search", () => {
   });
 
   it("reads a diff's lines in order, each a passage, so a match is found within a line and never across two", () => {
-    const [, shown] = shownTexts(added({ category: "tools", name: "tool_use: Edit", parts: [{ kind: "diff", before: "keep\nold end", after: "keep\nnew" }] }));
-    expect(shown).toMatchObject({ at: "0", searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
+    const diff: Part = { id: "change", kind: "diff", before: "keep\nold end", after: "keep\nnew" };
+    const [, shown] = shownTexts(added({ category: "tools", name: "tool_use: Edit", parts: [diff] }));
+    expect(shown).toMatchObject({ at: address.part(diff), searched: { text: "keep\nold end\nnew", passages: [{ start: 0, end: 4 }, { start: 5, end: 12 }, { start: 13, end: 16 }] }, in: "content" });
     expect(find(read("end\\snew").pattern, shown!.searched as Searched)).toEqual([]);
     expect(find(read("new").pattern, shown!.searched as Searched)).toEqual([{ start: 13, end: 16 }]);
   });
 
   it("searches a block a step took away as the block it was, which its row shows", () => {
-    const row = added({ category: "system", name: "system", parts: [{ kind: "text", form: "markdown", text: "the needle" }] }, true);
+    const row = added({ category: "system", name: "system", parts: [{ id: "text", kind: "text", form: "markdown", text: "the needle" }] }, true);
     expect(createSearch()([row], pattern).count).toBe(1);
   });
 
@@ -169,7 +184,7 @@ describe("search", () => {
     expect(seen[10]).toEqual(seen[0]);
     expect(adjacent(found, seen[0], top, "previous", pattern, keys)!.match).toEqual(seen[9]);
     expect(adjacent(found, undefined, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
-    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10 });
+    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, place: 10 });
     const absent = read("absent").pattern;
     expect(adjacent(createSearch()(every.rows, absent), undefined, top, "next", absent, keys)).toBeUndefined();
   });
@@ -190,10 +205,10 @@ describe("search", () => {
   it("steps on from a current match in a hidden category to the match before and after it in the conversation", () => {
     const { every } = layOut({ ...shown, tools: "hidden" });
     const found = createSearch()(every.rows, pattern);
-    const toolResult = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, every.keys)!.match;
+    const toolResult = stepsOf(found, every.keys).find(({ match }) => match.key === "thread:a/message.2/content.0")!.match;
     // After exchange a's tool result: exchange b's header; before it: the JSON of exchange a's tool call, also hidden.
     expect(adjacent(found, toolResult, top, "next", pattern, every.keys)!.match.key).toBe("b/request/http");
-    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
+    expect(adjacent(found, toolResult, top, "previous", pattern, every.keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: partNamed("input") });
   });
 
   it("lists a hidden category's block while it holds the current match, and no longer once a step moves on from it", () => {
@@ -222,9 +237,9 @@ describe("search", () => {
   it("steps on from a current match whose block the formatter replaced, from the row it was inside, as the view does", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const replaced = { key: "thread:a/message.1/content.0/so-far", at: address.part(0), start: 0 };
+    const replaced = { key: "thread:a/message.1/content.0/so-far", at: partNamed("input so far"), place: 0 };
     expect(adjacent(found, replaced, top, "next", pattern, keys)!.match.key).toBe("thread:a/message.2/content.0");
-    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: address.part(0) });
+    expect(adjacent(found, replaced, top, "previous", pattern, keys)!.match).toMatchObject({ key: "thread:a/message.1/content.0", at: partNamed("input") });
     // One whose exchange is not among the rows at all, with nothing more to read, is gone: no step counts from it.
     expect(adjacent(found, { ...replaced, key: "z/request/http" }, top, "next", pattern, keys)).toBeUndefined();
   });
@@ -253,30 +268,32 @@ describe("search", () => {
   it("opens the block and every region holding a match, and nothing for a match on the block's line", () => {
     const { rows, keys } = layOut().every;
     const found = createSearch()(rows, pattern);
-    const result = adjacent(found, { key: "thread:a/message.2/content.0", at: address.part(0), start: -1 }, top, "next", pattern, keys)!;
-    const part = partKey("thread:a/message.2/content.0", address.part(0));
+    const steps = stepsOf(found, keys);
+    const result = steps.find(({ match }) => match.key === "thread:a/message.2/content.0")!;
+    const part = partKey("thread:a/message.2/content.0", partNamed("content"));
     expect(result).toEqual({
-      match: { key: "thread:a/message.2/content.0", at: address.part(0), start: result.match.start },
+      match: { key: "thread:a/message.2/content.0", at: partNamed("content"), place: result.match.place },
       folds: ["thread:a/message.2/content.0", regionKey(part, 1), regionKey(part, 3)],
     });
-    const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
+    const name = steps.find(({ match }) => match.key === "thread:a/message.1/content.0" && match.at === address.name)!;
     expect(name).toMatchObject({ match: { key: "thread:a/message.1/content.0" }, folds: [] });
   });
 
   it("opens the nests a match's block is inside, the innermost first", () => {
     const nest = (key: string, depth: number): Row => ({ kind: "nest", key, change: "same", level: { kind: "unread" }, prompt: "", count: 1, depth, dimmed: false });
-    const inner = { ...added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
+    const inner = { ...added({ category: "assistant", name: "text", parts: [{ id: "text", kind: "text", form: "verbatim", text: "the needle" }] }), depth: 2 };
     const nested = [nest("outer/nest", 0), nest("inner/nest", 1), inner];
     const found = createSearch()(nested, pattern);
     expect(adjacent(found, undefined, top, "next", pattern, keysOf(nested))!.folds).toEqual(["inner/nest", "outer/nest", "k"]);
   });
 
   it("opens the section of each heading over a match, and none for a match in a heading no section holds", () => {
-    const row = added({ category: "assistant", name: "text", parts: [{ kind: "text", form: "markdown", text: "# Needle plan\n\n## Steps\n\nfind the needle\n" }] });
+    const row = added({ category: "assistant", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text: "# Needle plan\n\n## Steps\n\nfind the needle\n" }] });
     const found = createSearch()([row], pattern);
-    const part = partKey("k", address.part(0));
+    const part = partKey("k", partNamed("text"));
     const heading = adjacent(found, undefined, top, "next", pattern, keysOf([row]))!;
-    expect(heading).toMatchObject({ match: { at: address.part(0), start: 0 }, folds: ["k"] });
+    // The heading's first character is written after its `# `.
+    expect(heading).toMatchObject({ match: { at: partNamed("text"), place: 2 }, folds: ["k"] });
     expect(adjacent(found, heading.match, top, "next", pattern, keysOf([row]))!.folds).toEqual(["k", regionKey(part, 0), regionKey(part, 2)]);
   });
 
@@ -305,5 +322,63 @@ describe("search", () => {
     expect(find(read("`").pattern, rendering)).toEqual([]);
     expect(find(read("hello world").pattern, rendering)).toHaveLength(1);
     expect(find(read("code too").pattern, rendering)).toHaveLength(1);
+  });
+});
+
+// A block reshaped by a later step, its row's key the same: the reader's place in it stays on its text.
+describe("a match in a block a step reshapes", () => {
+  const verbatim = (id: string, text: string): Part => ({ id, kind: "text", form: "verbatim", text });
+  const said = (text: string) => added({ category: "assistant", name: "text", parts: [{ id: "text", kind: "text", form: "markdown", text }] });
+  // The match the search steps to last in `row`, under `query`.
+  const lastIn = (row: BlockRow, query: RegExp) => adjacent(createSearch()([row], query), undefined, { at: "end" }, "previous", query, keysOf([row]))!.match;
+  // A Read call, its input `input`: so far, the JSON a stream has sent, or whole.
+  const read_ = (input: unknown) => added(formatBlock({ type: "tool_use", id: "toolu_needle", name: "Read", input }, "assistant", "markdown"));
+
+  it("stays on its text when a part of the same kind and label is added ahead of it", () => {
+    const [b, a] = [verbatim("content/0/text", "needle B"), verbatim("content/1/text", "needle A")];
+    const current = lastIn(added({ category: "tools", name: "tool_result", parts: [a] }), pattern);
+    const reshaped = added({ category: "tools", name: "tool_result", parts: [b, a] });
+    const found = createSearch()([reshaped], pattern);
+    expect(current.at).toBe(address.part(a));
+    expect(ordinal(found, current, pattern)).toBe(2);
+    expect(adjacent(found, current, top, "previous", pattern, keysOf([reshaped]))!.match.at).toBe(address.part(b));
+    expect(matchGone(columnOf([reshaped]), found, current, pattern)).toBeUndefined();
+  });
+
+  it("stays on the block's id when the tool's input, which has an id of its own, goes from so far to whole", () => {
+    const current = lastIn(read_('{"file_path":"a","id":"needle'), pattern);
+    const whole = read_({ file_path: "a", id: "needle 2" });
+    const found = createSearch()([whole], pattern);
+    const [input, id] = shownTexts(whole).filter(({ searched }) => find(pattern, searched).length > 0);
+    expect(current.at).toBe(id!.at);
+    // The input's own id is the match before it, and the block's id is still the match current.
+    expect(ordinal(found, current, pattern)).toBe(2);
+    expect(adjacent(found, current, top, "previous", pattern, keysOf([whole]))!.match.at).toBe(input!.at);
+    expect(matchIn(id!, find(pattern, id!.searched), current.place)).toEqual({ start: 6, end: 12 });
+  });
+
+  it("is no longer current once its text is no longer shown, and the view's log says why", () => {
+    const soFar = read_('{"file_path":"a","id":"needle');
+    const current = adjacent(createSearch()([soFar], pattern), undefined, top, "next", pattern, keysOf([soFar]))!.match;
+    expect(current.at).toBe(partNamed("input so far"));
+    const whole = read_({ file_path: "a", id: "needle 2" });
+    const found = createSearch()([whole], pattern);
+    expect(ordinal(found, current, pattern)).toBeUndefined();
+    expect(matchGone(columnOf([whole]), found, current, pattern)).toEqual({ key: "k", why: "text_changed" });
+  });
+
+  it("stays on its match as a streaming Markdown text closes markup ahead of it, a match coming or going ahead", () => {
+    // A code span closes, so a phrase reads across it: a match comes ahead.
+    const across = read("a b|needle").pattern;
+    const current = lastIn(said("a `b needle"), across);
+    const closed = said("a `b needle`");
+    const found = createSearch()([closed], across);
+    expect(ordinal(found, current, across)).toBe(2);
+    const [, text] = shownTexts(closed);
+    expect(matchIn(text!, find(across, text!.searched), current.place)).toEqual({ start: 4, end: 10 });
+    // Emphasis closes, so its asterisks are markup: a match goes ahead.
+    const stars = read("needle|\\*").pattern;
+    const before = lastIn(said("x *a needle"), stars);
+    expect(ordinal(createSearch()([said("x *a needle*")], stars), before, stars)).toBe(1);
   });
 });

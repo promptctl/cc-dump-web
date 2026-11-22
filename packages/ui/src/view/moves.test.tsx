@@ -1,3 +1,4 @@
+import type { Part } from "../format/parts.ts";
 import { readWith } from "../testing.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,8 @@ import { WaitingLine } from "./WaitingLine.tsx";
 const standing = { depth: 0, dimmed: false };
 const line = (key: string): Row => ({ kind: "group", key, title: "tools", change: "same", ...standing });
 const fork: ForkRow = { kind: "fork", key: "a/fork", change: "same", siblings: [{ step: 2, preview: "" }, { step: 3, preview: "" }], shown: 2, ...standing };
+// The text a block says.
+const text = (said: string): Part => ({ id: "text", kind: "text", form: "verbatim", text: said });
 // A block's row at `key` saying `said`, which the harness injected when `injected`.
 const block = (key: string, said: string, injected = false): Row => ({
   kind: "block",
@@ -18,7 +21,7 @@ const block = (key: string, said: string, injected = false): Row => ({
   versions: [
     {
       step: 1,
-      block: { key, category: "user", name: "text", parts: [{ kind: "text", form: "verbatim", text: said }], ...(injected ? { injected: true as const } : {}) },
+      block: { key, category: "user", name: "text", parts: [text(said)], ...(injected ? { injected: true as const } : {}) },
       reply: false,
       rewrote: undefined,
       previous: undefined,
@@ -45,7 +48,8 @@ const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
 const at = (key: string): Position => ({ at: "row", key, offset: 0 });
-const match = (key: string): Match => ({ key, at: address.part(0), start: 4 });
+// The match of "needle" in "the needle" at `key`.
+const match = (key: string): Match => ({ key, at: address.part(text("the needle")), place: 4 });
 const [listed, pending, gone] = [at("a"), at("later/x"), at("z/x")];
 
 describe("a move from the reader's place", () => {
@@ -89,7 +93,7 @@ describe("a move from the reader's place", () => {
   });
 
   it("finds a current match gone only when nothing will bring it", () => {
-    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([{ at: "gone", why: "read_ended", key: "z/said" }, undefined, undefined, undefined]);
+    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, found, current, pattern))).toEqual([{ why: "read_ended", key: "z/said" }, undefined, undefined, undefined]);
   });
 });
 

@@ -124,7 +124,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
-    const cleared = matchGone(column, useView.getState().search.current);
+    const cleared = matchGone(column, found, useView.getState().search.current, pattern);
     if (cleared !== undefined) {
       decisions.matchCleared(cleared);
       view.matchGone();
@@ -641,7 +641,7 @@ function BlockView({ row }: { row: BlockRow }) {
           <span className="w-3 text-foreground-muted">{open ? "▾" : "▸"}</span>
           {/* A block a step took away is struck: what the conversation held, no longer part of it. */}
           <span className={`min-w-0 truncate ${isGone(row) ? "text-foreground-muted line-through" : ""}`} title={block.name}>
-            <HighlightedText blockKey={row.key} at={address.name} text={block.name} />
+            <HighlightedText blockKey={row.key} at={address.name} text={block.name} on="line" />
           </span>
           {/* Expanded, the content itself is below, so the line does not say it twice. */}
           <span className="min-w-0 flex-1 truncate font-mono text-foreground-muted">{open ? "" : preview(block)}</span>
@@ -655,8 +655,8 @@ function BlockView({ row }: { row: BlockRow }) {
       {open && (
         <div className="max-w-[110ch] pb-1 pl-6">
           <Sections.Provider value={sectionsStartOpen(block)}>
-            {block.parts.map((part, index) => (
-              <PartView key={index} part={part} blockKey={row.key} index={index} />
+            {block.parts.map((part) => (
+              <PartView key={part.id} part={part} blockKey={row.key} />
             ))}
           </Sections.Provider>
         </div>
@@ -753,43 +753,45 @@ function DiffLineView({ change, children }: { change: Edit["change"]; children: 
   );
 }
 
-// `index`: the part's place among its block's parts.
-function PartView({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
+function PartView({ part, blockKey }: { part: Part; blockKey: string }) {
   return (
     <div className="py-0.5">
       {part.label !== undefined && <div className="text-foreground-muted">{part.label}</div>}
-      <PartContent part={part} blockKey={blockKey} index={index} />
+      <PartContent part={part} blockKey={blockKey} />
     </div>
   );
 }
 
 // [LAW:types-are-the-program] Its return type is the switch's exhaustiveness check: a Part kind it misses leaves a path
 // returning nothing, which tsc refuses.
-function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }): ReactElement {
+function PartContent({ part, blockKey }: { part: Part; blockKey: string }): ReactElement {
   switch (part.kind) {
     case "text":
-      return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <TextView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "json":
-      return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <JsonView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "fields":
       return (
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
-          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
-            <div key={field} className="contents">
-              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
-              </dt>
-              <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
-              </dd>
-            </div>
-          ))}
+          {fieldLines(part.fields).map((line) => {
+            const name = address.field(part, line, "name");
+            return (
+              <div key={name} className="contents">
+                <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${line.depth * 2}ch` }}>
+                  <HighlightedText blockKey={blockKey} at={name} text={line.name} on="content" />
+                </dt>
+                <dd className="break-all whitespace-pre-wrap">
+                  {line.value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(part, line, "value")} text={line.value} on="content" />}
+                </dd>
+              </div>
+            );
+          })}
         </dl>
       );
     case "diff":
-      return <DiffView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <DiffView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "media": {
       const { of, source } = part;
       switch (source.type) {
@@ -823,7 +825,7 @@ const diffMarks: Record<Edit["change"], { ground: string; color: string; weight:
 // they are.
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
   const diff = diffOf(part);
-  const where = useWhere(blockKey, at, diff);
+  const where = useWhere(blockKey, at, useMemo(() => ({ in: "content", searched: diff }), [diff]));
   return (
     <div className="font-mono break-words whitespace-pre-wrap">
       {diff.lines.map((line, index) => (
@@ -839,7 +841,7 @@ function JsonView({ part, blockKey, at }: { part: Extract<Part, { kind: "json" }
   const text = jsonText(part);
   return (
     <pre className="break-all whitespace-pre-wrap">
-      <HighlightedText blockKey={blockKey} at={at} text={text} />
+      <HighlightedText blockKey={blockKey} at={at} text={text} on="content" />
     </pre>
   );
 }

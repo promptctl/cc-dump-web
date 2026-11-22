@@ -46,7 +46,7 @@ describe("the view's decisions", () => {
 
   it("say why a current match was cleared, and a moment replaced by now", () => {
     const { events, decisions } = logged();
-    decisions.matchCleared({ at: "gone", why: "step_unlisted", key: "t9/said" });
+    decisions.matchCleared({ why: "step_unlisted", key: "t9/said" });
     decisions.momentReplaced({ at: "chosen", trace: "t3" }, { at: "gone", why: "read_ended" });
     expect(events).toEqual([
       expect.objectContaining({ event: "match_cleared", key: "t9/said", why: "step_unlisted" }),

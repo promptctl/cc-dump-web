@@ -1,7 +1,7 @@
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import type { Ending } from "@cc-dump/log/ending";
 import { unitOfWork } from "../log.ts";
-import type { Waiting } from "./moves.ts";
+import type { Cleared, Waiting } from "./moves.ts";
 import type { Gone } from "./rows.ts";
 import type { Cause, Kept, Stepped } from "./scroll.ts";
 import type { Moment } from "./state.ts";
@@ -41,7 +41,7 @@ export function viewLog(log: Log) {
       if (next.replaced !== undefined) decided("place_replaced", { from: kept.position, to: next.position, why: next.replaced });
       if (!kept.scrolled && next.scrolled) decided("reader_scroll", { from: kept.position, to: next.position, cause, offset, written: kept.written, end });
     },
-    matchCleared: ({ key, why }: Gone & { key: string }) => decided("match_cleared", { key, why }),
+    matchCleared: ({ key, why }: Cleared) => decided("match_cleared", { key, why }),
     momentReplaced: (from: Moment, { why }: Gone<"read_ended">) => decided("moment_replaced", { from, why }),
     // A hold is of what holds the moves, the place or the match: the read it waits on may fail during it, which leaves
     // the moves held, so the hold goes on, and its end says how the read stood last.

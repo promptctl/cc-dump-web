@@ -503,4 +503,4 @@ function asResent(reply: Block, resent: Block): Block {
   };
 }
 
-const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.label === unreadLabel;
+const isUnread = (part: Part): part is Extract<Part, { kind: "fields" }> => part.kind === "fields" && part.id === unreadLabel;
