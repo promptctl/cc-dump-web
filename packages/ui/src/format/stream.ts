@@ -115,8 +115,8 @@ export function createReassembly(): Reassembly {
               category: "http",
               name: `${event} event`,
               parts: [
-                { kind: "text", form: "verbatim", label: "not applied", text: reason },
-                { kind: "text", form: "verbatim", label: "data", text: data },
+                { id: "not applied", kind: "text", form: "verbatim", label: "not applied", text: reason },
+                { id: "data", kind: "text", form: "verbatim", label: "data", text: data },
               ],
             }),
         );

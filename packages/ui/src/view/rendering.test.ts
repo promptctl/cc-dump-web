@@ -203,7 +203,7 @@ describe("render", () => {
   });
 
   it("renders a text once in a form, whichever part holds it, as a resent prompt or a reply's text remade by each event is", () => {
-    const part = (form: "markdown" | "verbatim") => ({ kind: "text" as const, form, text: "# Rules\n**be brief**\n" });
+    const part = (form: "markdown" | "verbatim") => ({ id: "text", kind: "text" as const, form, text: "# Rules\n**be brief**\n" });
     expect(renderingOf(part("markdown"))).toBe(renderingOf(part("markdown")));
     expect(renderingOf(part("verbatim")).text).toBe("# Rules\n**be brief**\n");
   });

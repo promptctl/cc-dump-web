@@ -2,7 +2,7 @@ import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
 import type { ForkRow, Gone, Layout, MomentStanding, Pending } from "./rows.ts";
-import { adjacent, type Direction, type Found, type Match, type Step } from "./search.ts";
+import { adjacent, carried, textAt, type Direction, type Found, type Match, type Step } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
 // view's store holds it: what each would go to, decided apart from carrying it out (Conversation.tsx).
@@ -58,4 +58,20 @@ export function matchGone(column: ColumnState, current: Match | undefined): (Gon
   if (current === undefined) return undefined;
   const at = matchAt(column, current);
   return at.at === "gone" ? { ...at, key: current.key } : undefined;
+}
+
+// A judgement of the current match in its text: the match as it was judged, and the characters of the text it stood in.
+export type Judged = { match: Match; text: string };
+
+// The current match as its row among every row shows its text now, `last` the judgement before: carried through what
+// changed in the text since `last`, when that judged this match, or judged where it stands, when it did not (search.ts
+// `carried`); or gone, `text_changed`, when the change took it or its block no longer shows the text it was in. None
+// while its row is not among them: whether that row comes is the read's to judge (`matchGone`).
+export function matchJudged(every: ColumnState["every"], current: Match, last: Judged | undefined, pattern: RegExp): Judged | Gone<"text_changed"> | undefined {
+  const index = every.keys.indexOf(current.key);
+  const row = index === undefined ? undefined : every.rows[index];
+  if (row?.kind !== "block") return undefined;
+  const now = textAt(row, current.at);
+  const match = now && carried(current, last?.match === current ? last.text : now.text, now, pattern);
+  return now === undefined || match === undefined ? { at: "gone", why: "text_changed" } : { match, text: now.text };
 }

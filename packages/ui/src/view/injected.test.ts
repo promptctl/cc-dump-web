@@ -11,7 +11,7 @@ const block = (key: string, injected: boolean): Row => ({
   versions: [
     {
       step: 1,
-      block: { key, category: "user", name: injected ? "system reminder" : "text", parts: [{ kind: "text", form: "verbatim", text: key }], ...(injected ? { injected: true as const } : {}) },
+      block: { key, category: "user", name: injected ? "system reminder" : "text", parts: [{ id: "text", kind: "text", form: "verbatim", text: key }], ...(injected ? { injected: true as const } : {}) },
       reply: false,
       rewrote: undefined,
       previous: undefined,

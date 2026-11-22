@@ -18,7 +18,7 @@ const block = (key: string, said: string, injected = false): Row => ({
   versions: [
     {
       step: 1,
-      block: { key, category: "user", name: "text", parts: [{ kind: "text", form: "verbatim", text: said }], ...(injected ? { injected: true as const } : {}) },
+      block: { key, category: "user", name: "text", parts: [{ id: "text", kind: "text", form: "verbatim", text: said }], ...(injected ? { injected: true as const } : {}) },
       reply: false,
       rewrote: undefined,
       previous: undefined,
@@ -45,7 +45,7 @@ const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
 const at = (key: string): Position => ({ at: "row", key, offset: 0 });
-const match = (key: string): Match => ({ key, at: address.part(0), start: 4 });
+const match = (key: string): Match => ({ key, at: address.part({ id: "text" }), start: 4 });
 const [listed, pending, gone] = [at("a"), at("later/x"), at("z/x")];
 
 describe("a move from the reader's place", () => {

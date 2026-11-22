@@ -76,6 +76,20 @@ export function wordDiff(before: string, after: string): Edit[] {
 const words = new Intl.Segmenter("und", { granularity: "word" });
 const wordsOf = (text: string) => Array.from(words.segment(text), ({ segment }) => segment);
 
+// Where the character at `at` in `before` stands in `after`, the text it became: carried through what a shortest edit
+// script between the two, character by character, kept, as an editor carries a cursor through an edit. None when the
+// change removed it.
+export function carriedTo(before: string, after: string, at: number): number | undefined {
+  let from = 0;
+  let to = 0;
+  for (const { change } of diff(before.split(""), after.split(""))) {
+    if (from === at && change !== "added") return change === "same" ? to : undefined;
+    if (change !== "added") from++;
+    if (change !== "removed") to++;
+  }
+  return undefined;
+}
+
 // The items `a` became `b` by, in order: the items both start and end with kept, and between them a shortest edit
 // script, by Myers' O(ND) greedy algorithm ("An O(ND) Difference Algorithm and Its Variations", 1986), so a change of a
 // few items in a long sequence costs those few. Where an item was removed and another added, the removal comes first.

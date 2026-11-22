@@ -79,8 +79,8 @@ describe("history", () => {
     const after = read(edited);
     const system = () => after.segments[1]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/system/system.0")!;
     expect(system().versions.map(({ step, block }) => [step, block?.parts])).toEqual([
-      [2, [{ kind: "text", form: "markdown", text: "You are Claude Code." }]],
-      [5, [{ kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
+      [2, [{ id: "text", kind: "text", form: "markdown", text: "You are Claude Code." }]],
+      [5, [{ id: "text", kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
     ]);
     expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"], "message.4": ["thread:t3/message.4/content.0"] });
     // Read without the last step, the history is as it was before it.

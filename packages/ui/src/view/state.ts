@@ -36,13 +36,13 @@ export type Search = { query: string; current: Match | undefined };
 // A tab opens with no recording: the person launches an agent, or opens one.
 const initial: View = { open: null, terminal: null, opened: {}, position: { at: "end" }, moment: { at: "now" }, search: { query: "", current: undefined } };
 
-// The stored view's version. A view stored by another version names its recording, its moment, or its window, in a form
-// this one does not read, so the tab opens as a new one.
+// The stored view's version. A view stored by another version names its recording, its moment, its window, or the text
+// a match or a fold is in, in a form this one does not read, so the tab opens as a new one.
 export const useView = create<View>()(
   persist((): View => initial, {
     name: "cc-dump.view",
     storage: createJSONStorage(() => sessionStorage),
-    version: 6,
+    version: 7,
     migrate: () => initial,
   }),
 );
@@ -86,6 +86,8 @@ export const view = {
   // The current match is one nothing will bring (moves.ts `matchGone`), as one kept for a tab whose read ended without
   // it: none is current.
   matchGone: () => useView.setState(({ search }) => ({ search: { ...search, current: undefined } })),
+  // The current match where its text's change carried it (moves.ts `matchJudged`).
+  matchCarried: (match: Match) => useView.setState(({ search }) => ({ search: { ...search, current: match } })),
   // A step to a match, the reader's act, with now's step `now`: it becomes current, the folds holding it show open, and
   // the view moves to its row, which the step then refines to the match's line. The folds are chosen open, however they
   // start, as the reader's choice (docs/design/01-features.md, F4), so a later change of level, which moves how a set

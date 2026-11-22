@@ -13,7 +13,7 @@ import { Minimap } from "./Minimap.tsx";
 import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
-import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
+import { forkMove, inListed, injectedMove, matchGone, matchJudged, matchMove, waitingOf, type ColumnState, type Judged } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
@@ -179,6 +179,25 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
   const search = useMemo(() => createSearch(), []);
   const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
+  // [LAW:effects-at-boundaries] The current match judged in its text as this commit shows it (moves.ts `matchJudged`),
+  // against the judgement before, which this effect alone keeps: carried as the text changes, or cleared once it no
+  // longer holds it. A commit's layout effects run before it is painted, so the counter, the highlight and the steps
+  // never show a match the text has moved or lost.
+  const judged = useRef<Judged | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (current === undefined) return;
+    const judgement = matchJudged(every, current, judged.current, pattern);
+    if (judgement === undefined) return;
+    if ("why" in judgement) {
+      decisions.matchCleared({ ...judgement, key: current.key });
+      view.matchGone();
+      return;
+    }
+    judged.current = judgement;
+    if (judgement.match === current) return;
+    decisions.matchCarried(current, judgement.match);
+    view.matchCarried(judgement.match);
+  }, [decisions, every, current, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
   // [LAW:single-enforcer] The view put at `target`, drawn in the element `text` of the row `key`, a few of the text's
   // lines below the top: what ends a move to something a commit has just shown, a match or a heading.
@@ -655,8 +674,8 @@ function BlockView({ row }: { row: BlockRow }) {
       {open && (
         <div className="max-w-[110ch] pb-1 pl-6">
           <Sections.Provider value={sectionsStartOpen(block)}>
-            {block.parts.map((part, index) => (
-              <PartView key={index} part={part} blockKey={row.key} index={index} />
+            {block.parts.map((part) => (
+              <PartView key={part.id} part={part} blockKey={row.key} />
             ))}
           </Sections.Provider>
         </div>
@@ -753,43 +772,42 @@ function DiffLineView({ change, children }: { change: Edit["change"]; children: 
   );
 }
 
-// `index`: the part's place among its block's parts.
-function PartView({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
+function PartView({ part, blockKey }: { part: Part; blockKey: string }) {
   return (
     <div className="py-0.5">
       {part.label !== undefined && <div className="text-foreground-muted">{part.label}</div>}
-      <PartContent part={part} blockKey={blockKey} index={index} />
+      <PartContent part={part} blockKey={blockKey} />
     </div>
   );
 }
 
 // [LAW:types-are-the-program] Its return type is the switch's exhaustiveness check: a Part kind it misses leaves a path
 // returning nothing, which tsc refuses.
-function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }): ReactElement {
+function PartContent({ part, blockKey }: { part: Part; blockKey: string }): ReactElement {
   switch (part.kind) {
     case "text":
-      return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <TextView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "json":
-      return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <JsonView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "fields":
       return (
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
-          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
-            <div key={field} className="contents">
-              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
+          {fieldLines(part.fields).map((line) => (
+            <div key={JSON.stringify(line.path)} className="contents">
+              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${line.depth * 2}ch` }}>
+                <HighlightedText blockKey={blockKey} at={address.field(part, line, "name")} text={line.name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
+                {line.value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(part, line, "value")} text={line.value} />}
               </dd>
             </div>
           ))}
         </dl>
       );
     case "diff":
-      return <DiffView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <DiffView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "media": {
       const { of, source } = part;
       switch (source.type) {

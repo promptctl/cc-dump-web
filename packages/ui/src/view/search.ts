@@ -1,5 +1,5 @@
-import { diffOf } from "../format/diff.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { carriedTo, diffOf } from "../format/diff.ts";
+import { fieldLines, jsonText, type FieldLine, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rankBefore, rankOf, type At } from "./position.ts";
@@ -11,17 +11,18 @@ import { blockOf, nestsOf, type BlockRow, type Row } from "./rows.ts";
 // Search (docs/design/01-features.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
 
-// A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text
-// that changes at its address names by that offset whichever match starts there now, or none: a tool's input so far
-// replaced by its JSON once whole, or a streaming Markdown text whose rendering a closing backtick or asterisk shortens.
+// A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text as the
+// reader sees it. A text that changes at its address, as a streaming Markdown text does when its text grows or a
+// closing backtick or asterisk arrives, carries the match to where its characters went (`carried`).
 export type Match = { key: string; at: string; start: number };
 
-// [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON, the name or value
-// of a part's field. The search and the view both name a text by them.
+// [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON by the part's id,
+// the name or value of a field by the part's id and the field line's path. The search and the view both name a text by
+// them. Each is a JSON tuple, so no two are alike, whatever an id or a field's name holds.
 export const address = {
-  name: "name",
-  part: (part: number) => String(part),
-  field: (part: number, field: number, side: "name" | "value") => `${part}/${field}/${side}`,
+  name: JSON.stringify(["name"]),
+  part: ({ id }: Pick<Part, "id">) => JSON.stringify(["part", id]),
+  field: ({ id }: Pick<Part, "id">, { path }: Pick<FieldLine, "path">, side: "name" | "value") => JSON.stringify(["field", id, path, side]),
 };
 
 // The key of a block's part, under which its regions are kept: the block's row key and the part's address.
@@ -54,22 +55,22 @@ export type Shown = { at: string } & ({ in: "line" | "content"; searched: Search
 // say its headings again (contents.ts), so none is searched.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap(partTexts)];
 }
 
-function partTexts(part: Part, index: number): Shown[] {
+function partTexts(part: Part): Shown[] {
   switch (part.kind) {
     case "text":
-      return [{ at: address.part(index), searched: renderingOf(part), in: "regions" }];
+      return [{ at: address.part(part), searched: renderingOf(part), in: "regions" }];
     case "json":
-      return [{ at: address.part(index), searched: whole(jsonText(part)), in: "content" }];
+      return [{ at: address.part(part), searched: whole(jsonText(part)), in: "content" }];
     case "fields":
-      return fieldLines(part.fields).flatMap(({ name, value }, field): Shown[] => [
-        { at: address.field(index, field, "name"), searched: whole(name), in: "content" },
-        ...(value === undefined ? [] : [{ at: address.field(index, field, "value"), searched: whole(value), in: "content" } as const]),
+      return fieldLines(part.fields).flatMap((line): Shown[] => [
+        { at: address.field(part, line, "name"), searched: whole(line.name), in: "content" },
+        ...(line.value === undefined ? [] : [{ at: address.field(part, line, "value"), searched: whole(line.value), in: "content" } as const]),
       ]);
     case "diff":
-      return [{ at: address.part(index), searched: diffOf(part), in: "content" }];
+      return [{ at: address.part(part), searched: diffOf(part), in: "content" }];
     case "media":
       return [];
   }
@@ -157,6 +158,19 @@ function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
+
+// The text at `at` among those a block's row shows; none when it shows none there.
+export const textAt = (row: BlockRow, at: string): Searched | undefined => shownTexts(row).find((shown) => shown.at === at)?.searched;
+
+// The match `current` in its text as it shows now, `now`, which showed `before` when the match was last judged: its
+// start carried to where that character went (format/diff.ts), so a match stays on its characters as the text grows
+// after it or closes markup before it. It is current while a match of `pattern` starts there; none when the change took
+// its first character, or no match starts there now. Where nothing moved it, it is `current` itself.
+export function carried(current: Match, before: string, now: Searched, pattern: RegExp): Match | undefined {
+  const start = carriedTo(before, now.text, current.start);
+  if (start === undefined || !find(pattern, now).some((found) => found.start === start)) return undefined;
+  return start === current.start ? current : { ...current, start };
+}
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
 // block is one the formatter replaced.

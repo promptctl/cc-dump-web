@@ -186,15 +186,23 @@ function growing<T>(cache: WeakMap<object, T>, side: RequestSide | ResponseSide,
 // The blocks of one source, each keyed by it: a source of at most one block, or a list, whose blocks are keyed by their
 // place in it, since a list only grows at its end.
 function one(key: string, blocks: BlockOrNone): KeyedBlock[] {
-  return blocks.map((block) => ({ ...block, key }));
+  return blocks.map((block) => keyed(block, key));
 }
 function each(key: string, blocks: Block[]): KeyedBlock[] {
-  return blocks.map((block, index) => ({ ...block, key: `${key}.${index}` }));
+  return blocks.map((block, index) => keyed(block, `${key}.${index}`));
 }
 // The blocks of one content block of a message: the one block keeps the content block's key, so a text nothing was
 // injected into is keyed as it always was, and a text split into several is keyed by the place of each piece in it.
 function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
-  return blocks.length === 1 ? blocks.map((block) => ({ ...block, key })) : each(key, blocks);
+  return blocks.length === 1 ? blocks.map((block) => keyed(block, key)) : each(key, blocks);
+}
+// [LAW:single-enforcer] A block keyed `key`, as every block the view gets is: here no two of its parts share an id,
+// since the view names a part's texts by it (format/parts.ts). Two that do are the formatter's error, not the traffic's.
+function keyed(block: Block, key: string): KeyedBlock {
+  const ids = block.parts.map(({ id }) => id);
+  const twice = ids.filter((id, index) => ids.indexOf(id) !== index);
+  if (twice.length > 0) throw new Error(`the block ${key}, ${block.name}, has two parts of each id: ${twice.join(", ")}`);
+  return { ...block, key };
 }
 // Blocks standing at `place` in their thread.
 function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
@@ -252,10 +260,10 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart("parameters", rest)], preview: [pickedPart("parameters", rest, varied)] };
       // Its line previews where they are.
-      const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
+      const places: Part = { id: "breakpoints", kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
+      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ id: "breakpoints", kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
         own: [...placed({ in: "parameters" }, one("parameters", [parameters])), ...one("cache", cache)],
         sent: [
@@ -268,7 +276,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
         session: sessionOf(rest.metadata),
       };
     },
-    (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
+    (reason) => ({ own: one("body", [raw("http", "request body", reason, { id: "received", kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
   );
 }
 
@@ -316,7 +324,7 @@ function messageGroup(message: unknown, key: string, place: Place): Group {
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
       return { key, title: role, blocks: [...messageContent(blocks, role, place), ...placed(place, one("fields", restBlock(fields, "parameters", "message")))] };
     },
-    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("http", "message", reason, { kind: "json", value: message })])) }),
+    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("http", "message", reason, { id: "received", kind: "json", value: message })])) }),
   );
 }
 
@@ -340,7 +348,7 @@ function toolBlocks(tools: unknown): KeyedBlock[] {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
   const keys = toolKeys(tools);
-  return tools.map((tool, index) => ({ ...toolBlock(tool, toolName(tool)), key: keys[index]! }));
+  return tools.map((tool, index) => keyed(toolBlock(tool, toolName(tool)), keys[index]!));
 }
 
 // Each tool's key, its name's `%` and `/` escaped as a URI's are.
@@ -364,10 +372,10 @@ function toolBlock(tool: unknown, name: string): Block {
       return {
         category: "tools",
         name,
-        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
+        parts: [...(description === undefined ? [] : [{ id: "description", kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
       };
     },
-    (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
+    (reason) => raw("tools", name, reason, { id: "received", kind: "json", value: tool }),
   );
 }
 
@@ -417,7 +425,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", form: "verbatim", text })])),
+    (reason) => none(one("body", [raw("http", "response body", reason, { id: "received", kind: "text", form: "verbatim", text })])),
   );
 }
 
@@ -442,13 +450,13 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
             {
               category: "usage",
               name: `stop reason: ${show(stopReason)}`,
-              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"])],
-              preview: [pickedPart(stop, ["stop_sequence"])],
+              parts: [pickedPart("stop", stop, ["stop_reason", "stop_sequence"])],
+              preview: [pickedPart("stop", stop, ["stop_sequence"])],
             },
           ]),
-          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
+          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart("usage", usage)], preview: [pickedPart("usage", usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
+          ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart("unread", fields.rest(), ["id"])] })),
         ],
         message: {
           uncached: tokens(usage, "input_tokens"),
@@ -459,7 +467,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
         },
       };
     },
-    (reason) => none(one("message", [raw("http", "message", reason, { kind: "json", value: message })])),
+    (reason) => none(one("message", [raw("http", "message", reason, { id: "received", kind: "json", value: message })])),
   );
 }
 
@@ -477,14 +485,14 @@ function tokens(usage: unknown, name: string): number | undefined {
 // has not ended.
 type Ending = { own: BlockOrNone; reply: BlockOrNone };
 function ending(end: Of<"end"> | undefined): Ending {
-  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }], reply: [] });
+  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ id: "text", kind: "text", form: "verbatim", text }] }], reply: [] });
   switch (end?.outcome) {
     case undefined:
     case "ok":
       return { own: [], reply: [] };
     // A failure stands where the reply would have been, as an error the API returned does.
     case "error":
-      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }] };
+      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ id: "error", kind: "text", form: "verbatim", text: end.error }] }] };
     case "aborted":
       return cut("aborted", "The agent left the exchange before it completed.");
     case "stopped":
@@ -493,12 +501,12 @@ function ending(end: Of<"end"> | undefined): Ending {
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
-  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "http", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ id: "trailers", kind: "fields" as const, label: "trailers", fields: trailers.headers }];
+  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { id: "headers", kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {
-  return { category: "http", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+  return { category: "http", name: `HTTP ${side}`, parts: [{ id: "text", kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
 }
 
 // A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
@@ -511,10 +519,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
 function undecoded(body: Body): BlockOrNone {
-  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
+  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ id: "error", kind: "text", form: "verbatim", text: body.error }] }];
 }
 function leftover(name: string, text: string): BlockOrNone {
-  return text === "" ? [] : [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }];
+  return text === "" ? [] : [{ category: "http", name, parts: [{ id: "text", kind: "text", form: "verbatim", text }] }];
 }
 
 function show(value: unknown): string {
