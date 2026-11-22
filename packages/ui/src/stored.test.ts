@@ -1,7 +1,7 @@
 import type { Event } from "@cc-dump/log/event";
 import { startTrace } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, tolerant, value, type Read } from "@cc-dump/log/json";
+import { entries, kinds, tolerant, value, type Read } from "@cc-dump/log/json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -74,7 +74,7 @@ describe("a stored item's read", () => {
           stored: "read",
           version: 0,
           dropped: [
-            { at: ["by"], why: "is not read by this build" },
+            { at: ["by"], why: "is not read by this build, which reads state, version" },
             { at: ["state", "on"], why: "is not a boolean" },
           ],
         },
@@ -148,6 +148,47 @@ describe("a stored item's write", () => {
     await store.persist.rehydrate();
     expect(store.getState()).toEqual({ name: "elsewhere", on: true });
     expect(writes).toHaveLength(1);
+  });
+
+  describe("of an item holding what this build cannot read", () => {
+    type Kept = { name: string; on: boolean; folds: Record<string, boolean> };
+    const initial: Kept = { name: "none", on: false, folds: {} };
+    const readKept = (state: unknown): Read<Kept> => tolerant<Kept>({ name: value(kinds.string), on: value(kinds.boolean), folds: entries(value(kinds.boolean)) }, initial)(state, []);
+    // A later build's item: a value this build drops (`on`), a field it has no reader for (`pane`), and a fold it drops.
+    const later = { name: "a", on: "yes", pane: 2, folds: { x: true, y: "open" } };
+
+    async function keptIn(stored: Record<string, string>, version = 0) {
+      const module = await reported();
+      const { storage, held, writes } = memoryStorage(stored);
+      const store = create<Kept>()(persist(() => initial, module.stored({ name, version, storage: () => storage, initial, read: readKept })));
+      return { store, held, writes };
+    }
+
+    it("keeps each as stored through a write that changes another field, and writes the change", async () => {
+      const { store, held } = await keptIn({ [name]: item(later) });
+      expect(store.getState()).toEqual({ name: "a", on: false, folds: { x: true } });
+      store.setState({ name: "b", folds: { x: false } });
+      expect(JSON.parse(held.get(name)!)).toEqual({ state: { name: "b", on: "yes", pane: 2, folds: { x: false, y: "open" } }, version: 0 });
+    });
+
+    it("writes a field the reader set over one this build dropped", async () => {
+      const { store, held } = await keptIn({ [name]: item(later) });
+      store.setState({ on: true });
+      expect(JSON.parse(held.get(name)!).state).toEqual({ ...later, on: true });
+    });
+
+    it("writes a change reverted after a write", async () => {
+      const { store, held } = await keptIn({ [name]: item(later) });
+      store.setState({ name: "b" });
+      store.setState({ name: "a" });
+      expect(JSON.parse(held.get(name)!).state).toEqual(later);
+    });
+
+    it("writes an item stored under another version as this build's", async () => {
+      const { store, held } = await keptIn({ [name]: item(later, 1) });
+      store.setState({ name: "b" });
+      expect(JSON.parse(held.get(name)!)).toEqual({ state: { name: "b", on: false, folds: { x: true } }, version: 0 });
+    });
   });
 
   it("never throws a write the storage refuses into the change, and reports a run of them as it begins and, on its span, as it ends", async () => {

@@ -1,8 +1,9 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { droppedOf, kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
+import { equal } from "./format/equal.ts";
 import { decided, failed } from "./log.ts";
 
 // The items the UI keeps in a Web Storage: the tab's view (view/state.ts) and the reader's settings (settings.ts).
@@ -73,10 +74,14 @@ export function stored<T>(item: Item<T>): { name: StoreName; version: number; st
   // the last read reached what is stored: until one has, a write would put the store's state over an item nobody read,
   // so none is made, as that read's event says. And the run of writes the storage is refusing, on the span it began
   // on, which only a write the storage takes ends.
+  // And the item as this tab last read or wrote it under this build's version: the state stored, and the state this
+  // build read of it, so a write keeps what this build does not read.
   let known = false;
   let refusing: Span | undefined;
-  const write = (call: (storage: Storage) => void) => {
-    if (!known) return;
+  let last: Last | undefined;
+  // Whether the storage took the write.
+  const write = (call: (storage: Storage) => void): boolean => {
+    if (!known) return false;
     const written = reach(storage, call);
     if ("error" in written && refusing === undefined) {
       refusing = startTrace();
@@ -86,6 +91,7 @@ export function stored<T>(item: Item<T>): { name: StoreName; version: number; st
       emit({ store: name, span: ended(refusing), is: "writes_resumed" });
       refusing = undefined;
     }
+    return !("error" in written);
   };
   return {
     name,
@@ -93,18 +99,45 @@ export function stored<T>(item: Item<T>): { name: StoreName; version: number; st
     storage: {
       getItem: () => {
         const span = startTrace();
-        const { read, state } = readItem(item);
-        emit({ store: name, span: ended(span), is: "read", read });
-        known = reached(read);
-        return state;
+        const read = readItem(item);
+        emit({ store: name, span: ended(span), is: "read", read: read.read });
+        known = reached(read.read);
+        last = read.last;
+        return read.state;
       },
       setItem: (_, stored) => {
-        const text = JSON.stringify(stored);
-        write((kept) => kept.setItem(name, text));
+        const state = last === undefined ? stored.state : merged(last.raw, last.read, stored.state);
+        const text = JSON.stringify({ ...stored, state });
+        if (write((kept) => kept.setItem(name, text))) last = { raw: state, read: stored.state };
       },
-      removeItem: () => write((kept) => kept.removeItem(name)),
+      removeItem: () => {
+        last = undefined;
+        write((kept) => kept.removeItem(name));
+      },
     },
   };
+}
+
+// An item's state as stored, and as this build read it.
+type Last = { raw: unknown; read: unknown };
+
+const isPlain = (json: unknown): json is Record<string, unknown> => typeof json === "object" && json !== null && !Array.isArray(json);
+
+// [LAW:one-source-of-truth] The state to store when the store holds `next`, of an item stored as `raw` and read as
+// `read`: only the reader's changes are written, and the rest is kept as stored, so a value this build cannot read
+// (a field of a later build's, a value it dropped) is not overwritten by what it read in its place. Where `next` is
+// what was read, what was stored; where all three are objects, each key so, one a change removed gone and one never
+// read kept; and anything else, `next`.
+function merged(raw: unknown, read: unknown, next: unknown): unknown {
+  if (equal(next, read)) return raw;
+  if (!isPlain(raw) || !isPlain(read) || !isPlain(next)) return next;
+  const keys = [...new Set([...Object.keys(raw), ...Object.keys(next)])];
+  return Object.fromEntries(
+    keys.flatMap((key) => {
+      if (Object.hasOwn(next, key)) return [[key, merged(raw[key], read[key], next[key])]];
+      return Object.hasOwn(read, key) ? [] : [[key, raw[key]]];
+    }),
+  );
 }
 
 // [LAW:effects-at-boundaries] A call of the storage, or what it threw. Only the storage's own calls are inside: in a
@@ -117,21 +150,28 @@ function reach<R>(storage: () => Storage, call: (storage: Storage) => R): { ok: 
   }
 }
 
-// [LAW:parse-dont-validate] The item stored under `name`, read: how, and the state it gives persist. Nothing stored,
-// and what is no item, give the store's first state, so a page start and a read again read one item alike. A read that
-// did not reach what is stored gives none, and the state the store holds stays.
-function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read: StoredRead; state: StorageValue<T> | null } {
+// [LAW:parse-dont-validate] The item stored under `name`, read: how, the state it gives persist, and, for an item
+// stored under this build's version, the item as stored and read. Nothing stored, and what is no item, give the
+// store's first state, so a page start and a read again read one item alike. A read that did not reach what is stored
+// gives none, and the state the store holds stays.
+function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read: StoredRead; state: StorageValue<T> | null; last: Last | undefined } {
   const text = reach(storage, (kept) => kept.getItem(name));
-  if ("error" in text) return { read: { stored: "failed", error: text.error }, state: null };
-  if (text.ok === null) return { read: { stored: "none" }, state: { state: initial, version } };
+  if ("error" in text) return { read: { stored: "failed", error: text.error }, state: null, last: undefined };
+  if (text.ok === null) return { read: { stored: "none" }, state: { state: initial, version }, last: undefined };
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
-    return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
+    const dropped = [...droppedOf(envelope), ...droppedOf(state).map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    return {
+      read: { stored: "read", version: envelope.value.version, dropped },
+      state: { state: state.value, version },
+      last: envelope.value.version === version ? { raw: envelope.value.state, read: state.value } : undefined,
+    };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
-    return error instanceof Malformed ? { read: { stored: "unreadable", error }, state: { state: initial, version } } : { read: { stored: "threw", error }, state: null };
+    return error instanceof Malformed
+      ? { read: { stored: "unreadable", error }, state: { state: initial, version }, last: undefined }
+      : { read: { stored: "threw", error }, state: null, last: undefined };
   }
 }
 

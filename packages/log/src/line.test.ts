@@ -12,6 +12,18 @@ describe("parseLogLine", () => {
     });
   });
 
+  it("keeps every field it has no place for as a fact, `__proto__` and `constructor` included", () => {
+    // Written as JSON text: an object literal's `__proto__` sets its prototype, not a field.
+    const data = event({ outcome: "ok", status: 200 }).replace(/}$/, ',"__proto__":{"polluted":true},"constructor":1}');
+    const line = parseLogLine(data, "ab12:9");
+    expect("event" in line && Object.entries(line.event.facts)).toEqual([
+      ["status", 200],
+      ["__proto__", { polluted: true }],
+      ["constructor", 1],
+    ]);
+    expect("event" in line && Object.getPrototypeOf(line.event.facts)).toBe(Object.prototype);
+  });
+
   it("keeps a line whose event does not parse in its place, unread, saying why", () => {
     expect(parseLogLine(event({ outcome: "fine" }), "ab12:4")).toEqual({ run: "ab12", seq: 4, unread: event({ outcome: "fine" }), error: "log line: outcome: is not one of ok, aborted, stopped, error" });
     expect(parseLogLine(event({ outcome: "error" }), "ab12:5")).toMatchObject({ seq: 5, error: "log line: error: is missing" });

@@ -239,7 +239,8 @@ describe("a stored view", () => {
     // A current match as an older build named it, by where it started.
     expect(readView({ ...full, search: { query: "x", current: { key: "t1/request/http", at: "0", start: 4 } } }, 7)).toEqual({
       value: { ...full, search: { query: "x", current: undefined } },
-      dropped: [{ at: ["search", "current"], why: "nth: is missing" }],
+      dropped: [{ at: ["search", "current"], why: "nth: is missing; pattern: is missing" }],
+      unread: [],
     });
   });
 
@@ -247,6 +248,7 @@ describe("a stored view", () => {
     expect(readView({ ...full, opened: { a: true, b: "open", c: false } }, 7)).toEqual({
       value: { ...full, opened: { a: true, c: false } },
       dropped: [{ at: ["opened", "b"], why: "is not a boolean" }],
+      unread: [],
     });
   });
 
@@ -255,16 +257,18 @@ describe("a stored view", () => {
     expect(readView(full, version)).toEqual({
       value: { ...full, opened: {}, position: { at: "end" }, search: { query: "x", current: undefined } },
       dropped: [
+        { at: ["position"], why: `key: ${why}` },
         { at: ["opened", "t1/request/http"], why },
         { at: ["opened", "thread:t1/message.0/content.0"], why },
-        { at: ["position"], why: `key: ${why}` },
         { at: ["search", "current"], why },
       ],
+      unread: [],
     });
     // A place at the start or the end, no folds and no current match name no row, so nothing is dropped.
     expect(readView({ ...full, opened: {}, position: { at: "start" }, search: { query: "x" } }, version)).toEqual({
       value: { ...full, opened: {}, position: { at: "start" }, search: { query: "x", current: undefined } },
       dropped: [],
+      unread: [],
     });
   });
 });

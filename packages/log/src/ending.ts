@@ -1,4 +1,4 @@
-import { kinds, object, value, type Reader } from "./json.ts";
+import { kinds, union, value, whole, type Path, type Reader, type Readers, type Tagged, type Variants } from "./json.ts";
 import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 
 // [LAW:types-are-the-program] How a unit of work ended. An error is carried exactly when the outcome is
@@ -6,16 +6,29 @@ import { isErrorStatus, statusText, type ResponseStatus } from "./status.ts";
 // Its own module, importing nothing that needs node, so code that runs without node (the UI) can name it.
 export type Ending = { outcome: "ok" | "aborted" | "stopped"; error?: never } | { outcome: "error"; error: string };
 
-// Every outcome, keyed by the union, so an outcome added to `Ending` is a compile error here until it is read.
-const outcomes: Record<Ending["outcome"], true> = { ok: true, aborted: true, stopped: true, error: true };
-const outcome = object({ outcome: value(kinds.among(Object.keys(outcomes) as Ending["outcome"][])) });
-const error = object({ error: value(kinds.string) });
+// [LAW:types-are-the-program] The fields `C` of a message holding how its work ended, by each outcome: an error's with
+// its error. Keyed by every outcome, so an outcome added to `Ending` is a compile error at every use until it is read.
+export type Outcomes<C> = { [O in Ending["outcome"]]: O extends "error" ? C & { error: string } : C };
+
+// [LAW:single-enforcer] The readers of a message whose fields `readers` reads, by how its work ended.
+export const outcomes = <C>(readers: Readers<C>): Variants<Outcomes<C>> =>
+  // the error's readers are `readers` and the error's own, which is what `C & { error: string }` holds
+  ({ ok: readers, aborted: readers, stopped: readers, error: { ...readers, error: value(kinds.string) } }) as unknown as Variants<Outcomes<C>>;
+
+// A message holding how its work ended, read whole: its fields and its outcome.
+export function ended<C>(read: Tagged<Outcomes<C>>, at: Path): C & Ending {
+  // [LAW:types-are-the-program] the outcome named the variant whose fields were read
+  return { ...whole(read.fields, at), outcome: read.tag } as C & Ending;
+}
+
+// An ending alone: no fields of the message's own.
+const endings = union<"outcome", Outcomes<Record<never, never>>>("outcome", outcomes<Record<never, never>>({}));
 
 // [LAW:single-enforcer] How a unit of work ended, as a message holding it says (a log line, a recording's `end`): its
 // outcome, and its error, there exactly when the outcome is "error". The message's other fields are its own.
 export const ending: Reader<Ending> = (json, at) => {
-  const ended = outcome(json, at).value;
-  return { value: ended.outcome === "error" ? { outcome: ended.outcome, error: error(json, at).value.error } : { outcome: ended.outcome }, dropped: [] };
+  const read = endings(json, at);
+  return { value: ended(read.value, at), dropped: read.dropped, unread: [] };
 };
 
 // [LAW:single-enforcer] How a request ended, from how its response ended and the status line it was sent with, which a

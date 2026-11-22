@@ -1,7 +1,6 @@
-import { describe } from "./describe.ts";
-import { ending, type Ending } from "./ending.ts";
+import { ended, outcomes, type Ending, type Outcomes } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { jsonObject, kinds, object, parse, parsed, parseJson, value } from "./json.ts";
+import { fromJsonText, kinds, parsed, readShown, union, value, type Reader } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -58,30 +57,30 @@ export function parseLogLine(data: string, id: string): LogLine {
   return lineAt(position, data);
 }
 
-// The line at `position` whose event is `data`. An event that does not parse taints no other line, so it is this
-// one's, unread, in its place among them.
-export function lineAt(position: LinePosition, data: string): LogLine {
-  try {
-    return { ...position, event: parseLoggedEvent(data) };
-  } catch (error) {
-    // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
-    if (!(error instanceof Malformed)) throw error;
-    return { ...position, unread: data, error: describe(error) };
-  }
-}
-
 // The fields an event has a place of its own for, beside how it ended.
-const logged = object<Omit<LoggedEvent, keyof Ending | "facts">>({
-  service: value(kinds.string),
-  event: value(kinds.string),
-  trace_id: parsed(kinds.string, parseTraceId),
-  started_at: value(kinds.string),
-  duration_ms: value(kinds.number),
+type Logged = Omit<LoggedEvent, keyof Ending | "facts">;
+const logged = union<"outcome", Outcomes<Logged>>(
+  "outcome",
+  outcomes<Logged>({
+    service: value(kinds.string),
+    event: value(kinds.string),
+    trace_id: parsed(kinds.string, parseTraceId),
+    started_at: value(kinds.string),
+    duration_ms: value(kinds.number),
+  }),
+);
+
+// [LAW:one-source-of-truth] A log line's event: the fields it has a place for, read whole, and every field no
+// declaration names, by its key, as its facts, which the logs panel shows.
+const line: Reader<LoggedEvent> = fromJsonText((json, at) => {
+  const read = logged(json, at);
+  return { value: { ...ended(read.value, at), facts: Object.fromEntries(read.value.fields.unread.map(({ key, value }) => [key, value])) }, dropped: read.dropped, unread: [] };
 });
 
-function parseLoggedEvent(json: string): LoggedEvent {
-  const event = jsonObject(parseJson(json, "log line"), "log line");
-  const placed = { ...parse(logged, event, "log line"), ...parse(ending, event, "log line") };
-  // The fields the event has a place of its own for are those just read; the rest are its facts.
-  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
+// The line at `position` whose event is `data`. An event that does not read taints no other line, so it is this
+// one's, unread, in its place among them. Only a line the part wrote in a shape this build does not read is unread;
+// any other error is this build's bug, and passes as it is.
+export function lineAt(position: LinePosition, data: string): LogLine {
+  const shown = readShown(line, data);
+  return shown.is === "read" ? { ...position, event: shown.read.value } : { ...position, unread: data, error: `log line: ${shown.why}` };
 }
