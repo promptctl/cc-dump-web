@@ -1,12 +1,12 @@
-import { fieldOf, fromJsonText, kinds, list, object, optional, raw as asSent, readShown, value, type Reader } from "@cc-dump/log/json";
+import { fieldOf, fromJsonText, kinds, list, object, optional, raw as asSent, readShown, tagged, value, type Reader } from "@cc-dump/log/json";
 import { statusText } from "@cc-dump/log/status";
 import type { Header } from "@cc-dump/proxy/format";
 import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type RequestSide, type ResponseSide } from "../exchanges.ts";
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "./equal.ts";
-import { content, formatBlock, formatContent, formatError, raw, restBlock, role, unreadOf, unreadParts, type Block, type BlockOrNone, type Content, type Role } from "./blocks.ts";
+import { content, formatArriving, formatBlock, formatContent, formatError, raw, restBlock, role, unreadParts, type Block, type BlockOrNone, type Content, type Role } from "./blocks.ts";
 import { fieldValue, occurrences, pickedPart, valuePart, type Field, type PartBody } from "./parts.ts";
-import { fitting, Misfit, parseJson, readObject } from "./read.ts";
+import { fieldsOf, messageFields, replyOf, type Message, type Reply } from "./reply.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
 
@@ -212,7 +212,7 @@ function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
 function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
   return blocks.map((block) => ({ ...block, place }));
 }
-// The blocks of a message's content, in `role`: as a request sends it, and as a response replies, the same.
+// The blocks of a message's content a request sends, in `role`, each as a reply's whole block is.
 function messageContent(content: unknown[], role: Role): KeyedBlock[] {
   return content.flatMap((block, index) => contentBlocks(`content.${index}`, formatContent(block, role)));
 }
@@ -269,7 +269,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
   });
   // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
   // previews those a client varies from one request to the next.
-  const rest = Object.fromEntries(read.unread.map(({ at, value }) => [at.join("."), value]));
+  const rest = fieldsOf(read.unread);
   const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied)] };
   // Its line previews where they are.
   const places: PartBody = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
@@ -405,69 +405,52 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
     // The text after the last complete event is the event still arriving until the side is complete, and only then
     // left over, as a stream cut short leaves it: shown earlier, it would come and go as each frame's bytes end.
     const tail = side.completedBy === undefined ? "" : stream.tail;
-    const { own, reply, message } = stream.message === undefined ? none([]) : messageBlocks(stream.message);
+    const { own, reply, message } = stream.reply === undefined ? none([]) : replyBlocks(stream.reply);
     return { own: [...own, ...each("event", stream.blocks), ...one("tail", leftover("stream tail", tail))], reply, errors: each("error", stream.errors), message };
   }
   if (!whole) return none(one("body", leftover("response body so far", text)));
-  return fitting(
-    (): ResponseShown => {
-      const body = readObject(parseJson(text, "response body"), "response body");
-      switch (body.value("type")) {
-        case "message":
-          return messageBlocks(body.rest());
-        case "error":
-          return { ...none([]), errors: one("error", [formatError(body)]) };
-        default:
-          throw new Misfit("response body is neither a message nor an error");
-      }
-    },
-    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", form: "verbatim", text })])),
-  );
+  const read = readShown(responseRead, text);
+  if ("refused" in read) return none(one("body", [raw("http", "response body", read.refused, { kind: "text", form: "verbatim", text })]));
+  const { value: sent, unread } = read;
+  return sent.type === "message" ? replyBlocks(replyOf(sent, unread)) : { ...none([]), errors: one("error", [formatError(sent.error, unread)]) };
 }
+
+// A whole response body: a message, or an error the API returned.
+const responseRead = fromJsonText(tagged<"type", ({ type: "message" } & Message) | { type: "error"; error: unknown }>("type", { message: messageFields, error: { error: asSent } }));
 
 // A response no message was read from: the blocks that are its exchange's own, and no reply.
 const none = (own: KeyedBlock[]): ResponseShown => ({ own, reply: [], errors: [], message: noMessage });
 
-// A response message: its content, which is the reply; what the API reported about it, which is the exchange's own;
-// and, of what it reported, the facts.
-function messageBlocks(message: Record<string, unknown>): ResponseShown {
-  return fitting(
-    (): ResponseShown => {
-      const fields = readObject(message, "message");
-      const reply = messageContent(fields.array("content"), "assistant");
-      const stopReason = fields.value("stop_reason");
-      const stop = { stop_reason: stopReason, stop_sequence: fields.value("stop_sequence") };
-      const usage = fields.value("usage");
-      return {
-        reply,
-        errors: [],
-        own: [
-          // The stop reason is the line's name; the stop sequence, when one stopped it, is its preview.
-          ...one("stop reason", [
-            {
-              category: "usage",
-              name: `stop reason: ${show(stopReason)}`,
-              parts: [{ id: "stop", ...pickedPart(stop, ["stop_reason", "stop_sequence"]) }],
-              preview: [pickedPart(stop, ["stop_sequence"])],
-            },
-          ]),
-          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted)] }]),
-          // Of what else the API reported, the line previews the message's id, which is all of it that varies.
-          ...one("fields", restBlock(unreadOf(fields), "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
-        ],
-        message: {
-          uncached: tokens(usage, "input_tokens"),
-          cacheRead: tokens(usage, "cache_read_input_tokens"),
-          cacheWritten: tokens(usage, "cache_creation_input_tokens"),
-          output: tokens(usage, "output_tokens"),
-          stopReason: typeof stopReason === "string" ? stopReason : undefined,
+// A reply's blocks, each as far as it has come, and what the API reported about it, which is the exchange's own; and,
+// of what it reported, the facts.
+function replyBlocks({ blocks, stop_reason: stopReason, stop_sequence, usage, unread }: Reply): ResponseShown {
+  const stop = { stop_reason: stopReason, stop_sequence };
+  return {
+    reply: blocks.flatMap((block, index) => contentBlocks(`content.${index}`, block.is === "whole" ? formatContent(block.block, "assistant") : formatArriving(block.block, block.input))),
+    errors: [],
+    own: [
+      // The stop reason is the line's name; the stop sequence, when one stopped it, is its preview.
+      ...one("stop reason", [
+        {
+          category: "usage",
+          name: `stop reason: ${show(stopReason)}`,
+          parts: [{ id: "stop", ...pickedPart(stop, ["stop_reason", "stop_sequence"]) }],
+          preview: [pickedPart(stop, ["stop_sequence"])],
         },
-      };
+      ]),
+      ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted)] }]),
+      // Of what else the API reported, the line previews the message's id, which is all of it that varies.
+      ...one("fields", restBlock(unread, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fieldsOf(unread), ["id"])] })),
+    ],
+    message: {
+      uncached: tokens(usage, "input_tokens"),
+      cacheRead: tokens(usage, "cache_read_input_tokens"),
+      cacheWritten: tokens(usage, "cache_creation_input_tokens"),
+      output: tokens(usage, "output_tokens"),
+      stopReason: typeof stopReason === "string" ? stopReason : undefined,
     },
-    (reason) => none(one("message", [raw("http", "message", reason, { kind: "json", value: message })])),
-  );
+  };
 }
-
 // The counts a usage line previews: the tokens read, uncached, from the cache and written to it, and written out, of which
 // the thinking's.
 const counted = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens", "output_tokens_details.thinking_tokens"];

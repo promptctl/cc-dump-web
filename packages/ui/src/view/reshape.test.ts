@@ -1,6 +1,6 @@
 import { eventsWritten } from "@cc-dump/log/testing";
 import { describe, expect, it } from "vitest";
-import { formatBlock, type Block } from "../format/blocks.ts";
+import { formatArriving, formatBlock, type Block } from "../format/blocks.ts";
 import { keyed } from "../format/format.ts";
 import { defaultSettings } from "../settings.ts";
 import { columnOf, standingIn } from "../testing.ts";
@@ -12,8 +12,8 @@ import type { Folded } from "./rendering.ts";
 
 // A block's row as a step shows it, keyed `k`: the formatter's own block, made from a content block as sent, `content`,
 // in a message of the assistant's.
-const rowOf = (content: unknown): BlockRow => {
-  const block: Block = formatBlock(content, "assistant", "markdown");
+const rowOf = (content: unknown): BlockRow => shownRow(formatBlock(content, "assistant", "markdown"));
+const shownRow = (block: Block): BlockRow => {
   const shown = keyed(block, "k");
   return { kind: "block", key: "k", change: "added", versions: [{ step: 1, block: shown, reply: true, rewrote: undefined, previous: undefined }], at: 0, set: undefined, depth: 0, dimmed: false };
 };
@@ -35,9 +35,9 @@ const addressOf = (row: BlockRow, text: string): string => shownTexts(row).find(
 describe("a match and an open section as a tool call's input streams and becomes whole", () => {
   // An Edit call whose input carries an `id` of its own: as it streams, its input so far, then the block's id; whole,
   // its file, its change, its fields no entry reads, among them its own id, then the block's id.
-  const call = (input: unknown) => rowOf({ type: "tool_use", id: "toolu_needle", name: "Edit", input });
-  const soFar = call('{"file_path":"a.ts","id":"needle-7"');
-  const whole = call({ file_path: "a.ts", old_string: "x", new_string: "y", id: "needle-7" });
+  const call = (input: unknown) => ({ type: "tool_use", id: "toolu_needle", name: "Edit", input });
+  const soFar = shownRow(formatArriving(call({}), '{"file_path":"a.ts","id":"needle-7"')[0]!);
+  const whole = rowOf(call({ file_path: "a.ts", old_string: "x", new_string: "y", id: "needle-7" }));
 
   it("adds parts of the block id's kind and label ahead of it as the input becomes whole", () => {
     const shapeOf = (row: BlockRow) => (row.versions[0]!.block as Block).parts.map(({ kind, label }) => [kind, label]);

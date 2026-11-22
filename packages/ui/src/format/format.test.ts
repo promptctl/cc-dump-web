@@ -393,7 +393,7 @@ describe("format", () => {
     // The events it cannot apply are shown too, with the exchange's own, each raw under its event name with why.
     const blocks = group(formatted, "response");
     expect(lines(blocks)).toEqual(expect.arrayContaining(["http content_block_delta event", "http sparkle event"]));
-    expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: "sparkle is not an event this view applies" });
+    expect(blocks.find(({ name }) => name === "sparkle event")!.parts[0]).toEqual({ kind: "text", form: "verbatim", id: "misfit", label: "not applied", text: expect.stringMatching(/^type: is not one of message_start, /) });
   });
 
   it("shows a block of a known type whose fields do not fit as raw JSON, with what does not fit", () => {
@@ -658,6 +658,12 @@ describe("format", () => {
     expect(proto!.parts[0]).toEqual({ id: "input", label: "input", kind: "json", value: JSON.parse('{"__proto__":1}') });
     expect(bash!.parts.map(({ id }) => id)).toEqual(["command", "input", "id"]);
     expect(block!.name).toBe("__proto__");
+    // A streamed event's field of that name lands on its block as a field, not as the block's prototype.
+    const delta = '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi.","__proto__":{"text":7}}}';
+    const events = [messageStart, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }].map((data) => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+    const body = `${events}event: content_block_delta\ndata: ${delta}\n\n`;
+    const [text] = group(one([...request("b", { model: "m", messages: [] }), ...response("b", 200, [["Content-Type", "text/event-stream"]], Buffer.from(body))]), "reply");
+    expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Hi." }, { id: "unread", label: "fields", kind: "rest", fields: [["__proto__", [["text", "7"]]]] }]);
   });
 
   it("shows a block whose type names a property every object has as a block of a type it does not know", () => {
@@ -867,8 +873,13 @@ describe("format", () => {
     expect(notApplied).toEqual([
       expect.stringMatching(/^content_block_stop event: the block's streamed input is not JSON/),
       "content_block_start event: content block 1 has already started",
+      // A block whose stop was refused is still arriving, so the message cannot stop.
+      "message_stop event: content block 1 is still arriving",
     ]);
-    expect(blocks.find(({ name }) => name === "message")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["metrics", [["latency_ms", "812"]]]]) });
+    // A field an applied event carries lands on the message; the refused message_stop's does not.
+    const fields = blocks.find(({ name }) => name === "message")!.parts[0];
+    expect(fields).toEqual({ kind: "rest", id: "unread", label: "fields", fields: expect.arrayContaining([["context_management", [["applied_edits", "[]"]]]]) });
+    expect(JSON.stringify(fields)).not.toContain("metrics");
   });
 
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {

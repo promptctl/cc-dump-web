@@ -1,7 +1,6 @@
 import { fieldOf, kinds, mapped, object, optional, raw as asSent, readShown, tagged, value, type Kind, type Reader, type Readers, type Unread, type Variants } from "@cc-dump/log/json";
 import { split, type Piece } from "./injected.ts";
 import { restParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received, type Source } from "./parts.ts";
-import type { Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
 
@@ -64,13 +63,11 @@ export function raw(category: Category, name: string, reason: string, received: 
   return { category, name, parts: receivedParts(reason, received) };
 }
 
-// An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
-export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: fields.value("error") }, ...unreadParts(unreadOf(fields))] };
+// An error the API returned, as the body of an HTTP error or an event of a stream, and the fields beside it no
+// declaration read: it stands where the reply would have.
+export function formatError(error: unknown, unread: readonly Pick<Unread, "at" | "value">[]): Block {
+  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: error }, ...unreadParts(unread)] };
 }
-
-// The fields of an object `readObject` read that no read asked for, each at its name.
-export const unreadOf = (fields: Fields) => Object.entries(fields.rest()).map(([name, value]) => ({ at: [name], value }));
 
 // The fields of a value no declaration read, as a part, when there are any.
 export const unreadParts = (unread: readonly Pick<Unread, "at" | "value">[]) => restParts(unread, unreadPart);
@@ -135,12 +132,16 @@ type Facts = {
 };
 // How one content block type is shown: its declaration, `fields`; its `name`, where it is not its type; and its `parts`.
 // `form`: how a text block's text reads where the block is: Markdown in a message, verbatim in what a tool or a
-// document returned.
+// document returned. `soFar`: for a block of a reply still arriving, its tool input as the JSON text sent so far.
 type Entry<B extends { type: string }> = Facts & {
   fields: Readers<Omit<B, "type">>;
   name?: (block: B) => string;
-  parts: (block: B, role: Role, form: Form) => Part[];
+  parts: (block: B, role: Role, form: Form, soFar: SoFar) => Part[];
 };
+// [LAW:types-are-the-program] A block's tool input as sent, `whole`, or, for a block still arriving, the JSON text sent
+// so far, which is not yet JSON.
+type SoFar = { is: "whole" } | { is: "arriving"; input: string };
+const whole: SoFar = { is: "whole" };
 
 const byRole = (role: Role) => roleCategory[role];
 const tools = () => "tools" as const;
@@ -159,10 +160,10 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry<ToolUse<
   fields: { id: string, name: string, input: asSent },
   category: tools,
   name: (block) => `${block.type}: ${block.name}`,
-  parts: ({ id, name, input }) => {
-    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is:
-    // the input's deltas' `partial_json`, joined, another text than the input it becomes.
-    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(name, input);
+  parts: ({ id, name, input }, _role, _form, soFar) => {
+    // An input still arriving is shown as the text it is: its deltas' `partial_json`, joined, another text than the
+    // input it becomes.
+    const parts: Part[] = soFar.is === "arriving" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: soFar.input }] : read(name, input);
     return [...parts, { id: "id", kind: "fields", fields: [["id", id]] }];
   },
 });
@@ -280,31 +281,35 @@ const unknownFacts: Facts = { category: byRole };
 // A content block of a message in `role`, as the block the view shows, a text block's text read in `form`.
 // [LAW:no-silent-failure] A type with no entry is shown as its raw JSON under its type name; a block its declaration
 // refuses is shown the same way, with why, and still states what its own fields say.
-export function formatBlock(block: unknown, role: Role, form: Form): Block {
+export const formatBlock = (block: unknown, role: Role, form: Form): Block => blockOf(block, role, form, whole);
+function blockOf(block: unknown, role: Role, form: Form, soFar: SoFar): Block {
   const sent = fieldOf(block, "type");
   const type = typeof sent === "string" ? sent : "block";
   const facts: Facts = types.fits(sent) ? entries[sent] : unknownFacts;
-  const stating: Block = { category: facts.category(role, block), ...shownOf(block, type, role, form), ...facts.stated?.(block, role) };
+  const stating: Block = { category: facts.category(role, block), ...shownOf(block, type, role, form, soFar), ...facts.stated?.(block, role) };
   // A tool's result that says its tool failed is named for it.
   return facts.failed?.(block) ? { ...stating, name: `${stating.name}: error`, failed: true } : stating;
 }
 
 // A block's name and parts: its entry's, its unread fields after them; raw where it has no entry or its entry refuses it.
-function shownOf(block: unknown, type: string, role: Role, form: Form): Pick<Block, "name" | "parts"> {
+function shownOf(block: unknown, type: string, role: Role, form: Form, soFar: SoFar): Pick<Block, "name" | "parts"> {
   const read = readShown(contentBlock, block);
   if ("refused" in read) return { name: type, parts: receivedParts(read.refused, { kind: "json", value: block }) };
   if (read.value === "unknown") return { name: type, parts: [{ id: "block", kind: "json", value: block }] };
   // [LAW:types-are-the-program] The entry of the type `contentBlock` read the block by, so it takes that type's block.
   const entry = entries[read.value.type] as Entry<ContentBlock>;
-  return { name: entry.name?.(read.value) ?? type, parts: [...entry.parts(read.value, role, form), ...unreadParts(read.unread)] };
+  return { name: entry.name?.(read.value) ?? type, parts: [...entry.parts(read.value, role, form, soFar), ...unreadParts(read.unread)] };
 }
 
 // A content block of a message in `role`, as the blocks the view shows: the one block `formatBlock` makes, but for a text
 // block, which is a block for each piece of its text, each named for what it is, so what the harness injected is never
 // shown as what was said (docs/design/01-features.md, F3). A text block's other fields follow its last piece, which states
 // what the text ends with.
-export function formatContent(block: unknown, role: Role): Block[] {
-  const formatted = formatBlock(block, role, "markdown");
+export const formatContent = (block: unknown, role: Role): Block[] => contentOf(block, role, whole);
+// A block of a reply still arriving, as far as it has come: its tool input, where it has one, the JSON text sent so far.
+export const formatArriving = (block: unknown, input: string): Block[] => contentOf(block, "assistant", { is: "arriving", input });
+function contentOf(block: unknown, role: Role, soFar: SoFar): Block[] {
+  const formatted = blockOf(block, role, "markdown", soFar);
   if (!isText(block)) return [formatted];
   const fields = formatted.parts.filter(({ id }) => id !== textId);
   const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };

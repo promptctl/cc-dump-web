@@ -37,7 +37,16 @@ describe("createReassembly", () => {
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
+      reply: {
+        blocks: [
+          { is: "whole", block: { type: "text", text: "Hello, world." } },
+          { is: "whole", block: { type: "tool_use", input: { command: "ls" } } },
+        ],
+        stop_reason: "tool_use",
+        usage: { input_tokens: 2, output_tokens: 9 },
+        unread: expect.arrayContaining([expect.objectContaining({ at: ["metrics"], value: { ms: 1 } })]),
+      },
+      blocks: [],
       tail: "",
     });
     for (let at = 0; at <= text.length; at++) {
@@ -57,10 +66,67 @@ describe("createReassembly", () => {
     expect(early).toEqual(copy);
   });
 
-  it("shows a tool's input as its text until its block stops", () => {
+  it("holds a tool's input as the text sent so far until its block stops, and the block as its start sent it", () => {
     const text = stream("\n");
     const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: '{"command": "ls"}' });
+    expect(sofar.reply!.blocks[1]).toEqual({ is: "arriving", block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} }, input: '{"command": "ls"}' });
+  });
+
+  // The events a stream with one text block sends, `last` among them after its stop.
+  const texted = (...last: object[]) =>
+    [messageStart, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }, { type: "content_block_stop", index: 0 }, ...last].map((data) => event(data)).join("");
+  const notApplied = ({ blocks }: { blocks: { name: string; parts: unknown[] }[] }) => blocks.map(({ name, parts }) => [name, (parts[0] as { text: string }).text]);
+
+  it("shows an event that does not follow the events before it, with why, and changes nothing", () => {
+    const text = texted({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "late" } }, { type: "message_stop" }, { type: "message_stop" }, { type: "error", error: { type: "overloaded_error" } });
+    const stream = reassemble(text, true);
+    expect(notApplied(stream)).toEqual([
+      ["content_block_delta event", "content block 0 has stopped"],
+      ["message_stop event", "the message has stopped"],
+      ["error event", "the message has stopped"],
+    ]);
+    expect(stream.reply!.blocks).toEqual([{ is: "whole", block: { type: "text", text: "" } }]);
+    expect(stream.errors).toEqual([]);
+  });
+
+  it("refuses a message_stop while a block is still arriving, and a tool's input that is not JSON at its stop", () => {
+    const tool = { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "Bash", input: {} } };
+    const half = { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command":' } };
+    const stream = reassemble(texted(tool, half, { type: "message_stop" }, { type: "content_block_stop", index: 1 }), true);
+    expect(notApplied(stream)).toEqual([
+      ["message_stop event", "content block 1 is still arriving"],
+      ["content_block_stop event", expect.stringMatching(/^the block's streamed input is not JSON: /)],
+    ]);
+    expect(stream.reply!.blocks[1]).toEqual({ is: "arriving", block: tool.content_block, input: '{"command":' });
+  });
+
+  it("builds a reply from a message_start whose usage is null, and counts what message_delta reports", () => {
+    const start = { ...messageStart, message: { ...messageStart.message, usage: null } };
+    const stream = reassemble([start, { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } }].map((data) => event(data)).join(""), true);
+    expect(stream.reply).toMatchObject({ stop_reason: "end_turn", usage: { output_tokens: 3 } });
+    expect(stream.blocks).toEqual([]);
+  });
+
+  it("lands the fields an event carries that no declaration reads on what it builds, and a ping's, which builds nothing, on its event block", () => {
+    const text = [
+      messageStart,
+      { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Hm.", estimated_tokens: 5 } },
+      { type: "content_block_stop", index: 0 },
+      { type: "ping", sent: 1 },
+      { type: "message_delta", delta: { stop_reason: "end_turn", container: { id: "c" } }, usage: {}, context_management: { applied_edits: [] } },
+    ]
+      .map((data) => event(data))
+      .join("");
+    const stream = reassemble(text, true);
+    expect(stream.reply!.blocks).toEqual([{ is: "whole", block: { type: "thinking", thinking: "Hm.", estimated_tokens: 5 } }]);
+    expect(stream.reply!.unread.map(({ at, value }) => [at, value])).toEqual([
+      [["id"], "msg_1"],
+      [["role"], "assistant"],
+      [["context_management"], { applied_edits: [] }],
+      [["container"], { id: "c" }],
+    ]);
+    expect(stream.blocks).toEqual([{ category: "http", name: "ping event", parts: [{ id: "unread", label: "fields", kind: "rest", fields: [["sent", "1"]] }] }]);
   });
 
   it("refuses text that does not extend the text it reassembled", () => {
