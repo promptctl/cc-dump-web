@@ -31,8 +31,10 @@ describe("failuresOf", () => {
       { ...at(trace), type: "end", outcome },
     ];
     const failed: RecordedEvent[] = [...request("t3", [ask]), { ...at("t3"), type: "end", outcome: "error", error: "connect ECONNREFUSED" }];
-    const failures = failuresOf(segmentsOf([...answered("t1", "ok"), ...answered("t2", "aborted"), ...failed, ...request("t4", [ask])]));
-    expect(failures.map(({ exchange }) => exchange)).toEqual([true, false, true, false]);
+    // Still open, its error status read: its request has not ended, so has not failed, as its log has no event yet.
+    const open: RecordedEvent[] = [...request("t4", [ask]), { ...at("t4"), type: "response", status: 529, reason: "Overloaded", http_version: "1.1", headers: [] }];
+    const failures = failuresOf(segmentsOf([...answered("t1", "ok"), ...answered("t2", "aborted"), ...failed, ...open, ...request("t5", [ask])]));
+    expect(failures.map(({ exchange }) => exchange)).toEqual([true, false, true, false, false]);
   });
 
   it("marks the step that brought a failed result as the next version of one its line already holds", () => {

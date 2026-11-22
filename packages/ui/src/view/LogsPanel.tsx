@@ -87,7 +87,7 @@ export const LogRow = memo(function LogRow({ listed: { part, line, ended }, rest
   const level = lineLevel(line);
   const { service, event, facts, error, opened } =
     "event" in line
-      ? { ...line.event, facts: factsOf(line.event), opened: JSON.stringify({ trace_id: line.event.trace_id, started_at: line.event.started_at, duration_ms: line.event.duration_ms, outcome: line.event.outcome, ...line.event.facts }, null, 2) }
+      ? shownOf(line.event)
       : { service: named[part], event: "unread", facts: "", error: line.error, opened: line.unread };
   const headline = error?.split("\n")[0];
   return (
@@ -101,11 +101,11 @@ export const LogRow = memo(function LogRow({ listed: { part, line, ended }, rest
           <span className="shrink-0">{event}</span>
           <span className="flex min-w-0 flex-1 gap-2">
             {headline === undefined ? null : (
-              <span className={`max-w-[50%] shrink-0 truncate ${level === "error" ? "text-error" : "text-foreground-muted"}`} title={headline}>
+              <span data-log-error className={`max-w-[50%] shrink-0 truncate ${level === "error" ? "text-error" : "text-foreground-muted"}`} title={headline}>
                 {headline}
               </span>
             )}
-            <span className="min-w-0 truncate text-foreground-muted">{facts}</span>
+            <span data-log-facts className="min-w-0 truncate text-foreground-muted">{facts}</span>
           </span>
         </summary>
         <div className="py-1 pl-4 *:break-all *:whitespace-pre-wrap">
@@ -118,7 +118,11 @@ export const LogRow = memo(function LogRow({ listed: { part, line, ended }, rest
   );
 });
 
-// An event's facts as its row says them, each by its name.
-const factsOf = ({ facts }: LoggedEvent) => Object.entries(facts).map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" ");
+// An event as its row shows it: its facts on its line, each by its name, and, opened, every field the line has no
+// place of its own for, its facts among them.
+function shownOf({ service, event, error, facts, ...rest }: LoggedEvent) {
+  const said = Object.entries(facts).map(([name, value]) => `${name}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  return { service, event, error, facts: said.join(" "), opened: JSON.stringify({ ...rest, ...facts }, null, 2) };
+}
 
 const levelStyle: Record<Level, string> = { error: "text-error font-semibold", warn: "font-semibold", info: "text-foreground-muted" };

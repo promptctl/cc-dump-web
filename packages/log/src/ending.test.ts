@@ -8,7 +8,7 @@ describe("requestEnding", () => {
     expect(requestEnding({ outcome: "ok" }, overloaded)).toEqual({ outcome: "error", error: "529 Overloaded" });
   });
 
-  it("is the response's ending for any other: a success, a failure reported, a cut response whatever its status, a response with no head", () => {
+  it("is the response's ending for any other: a success, a failure reported, a cut response whatever its status, a recorded one whose head is not, which has no status to judge by", () => {
     expect(requestEnding({ outcome: "ok" }, { status: 200, reason: "OK" })).toEqual({ outcome: "ok" });
     expect(requestEnding({ outcome: "error", error: "Refused" }, overloaded)).toEqual({ outcome: "error", error: "Refused" });
     expect(requestEnding({ outcome: "aborted" }, overloaded)).toEqual({ outcome: "aborted" });

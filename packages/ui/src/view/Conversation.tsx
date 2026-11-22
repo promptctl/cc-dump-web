@@ -548,7 +548,7 @@ function ExchangeLine({ exchange: { exchange, facts, sender }, step, reading }: 
       {/* The response's status, an HTTP error's reading as one, its reason phrase on hover. Whether its request failed
           is the turn strip's mark (`requestEnding`): a response cut short failed no request by its status. */}
       <span className={head !== undefined && isErrorStatus(head.status) ? "text-error" : undefined} title={head?.reason}>
-        {facts.status}
+        {head?.status}
       </span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended, which leads, so an
           ellipsis never takes it; then why the model stopped. */}

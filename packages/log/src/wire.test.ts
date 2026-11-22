@@ -60,7 +60,6 @@ describe("the wire's names", () => {
   it("derives a status line from the status", () => {
     expect(statusLine(404)).toBe("404 Not Found");
   });
-
 });
 
 describe("ask", () => {

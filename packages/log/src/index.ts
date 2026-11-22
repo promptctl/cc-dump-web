@@ -217,17 +217,16 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       const cut = server.listening ? "aborted" : "stopped";
       const ending: Ending =
         failure === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error: failure };
-      // The status line the handler set; on a cut response the client may not have received it.
-      const head = res.headersSent ? { status: res.statusCode, reason: res.statusMessage } : undefined;
       inFlight.delete(ended);
       end(ending);
       log({
         event: "request",
         ...span.end(),
-        ...requestEnding(ending, head),
+        ...requestEnding(ending, { status: res.statusCode, reason: res.statusMessage }),
         method: req.method,
         url: req.url,
-        status: head?.status ?? null,
+        // The status the handler set; on a cut response the client may not have received it.
+        status: res.headersSent ? res.statusCode : null,
         ...client,
       });
     });

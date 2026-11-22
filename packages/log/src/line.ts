@@ -47,9 +47,6 @@ export function positionOf(id: string): LinePosition | undefined {
   return run === undefined ? undefined : { run, seq: Number(seq) };
 }
 
-// The fields a logged event has a place of its own for; the rest are its facts.
-const named = new Set(["service", "event", "trace_id", "started_at", "duration_ms", "outcome", "error"]);
-
 // [LAW:parse-dont-validate] The line whose event is `data` and whose id is `id`. An id that names no line is no log's,
 // and throws; an event that does not parse taints no other line, so it is this one's, unread, in its place among them.
 export function parseLogLine(data: string, id: string): LogLine {
@@ -71,8 +68,9 @@ function parseLoggedEvent(json: string): LoggedEvent {
     trace_id: f.parsed("trace_id", parseTraceId),
     started_at: f.string("started_at"),
     duration_ms: f.read("duration_ms", (value) => typeof value === "number", "a number"),
-    facts: Object.fromEntries(Object.entries(event).filter(([name]) => !named.has(name))),
   };
   const ending = f.oneOf("outcome", outcomes);
-  return ending === "error" ? { ...logged, outcome: ending, error: f.string("error") } : { ...logged, outcome: ending };
+  const placed = ending === "error" ? { ...logged, outcome: ending, error: f.string("error") } : { ...logged, outcome: ending };
+  // The fields the event has a place of its own for are those just read; the rest are its facts.
+  return { ...placed, facts: Object.fromEntries(Object.entries(event).filter(([name]) => !Object.hasOwn(placed, name))) };
 }
