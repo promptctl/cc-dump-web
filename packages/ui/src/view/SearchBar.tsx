@@ -1,5 +1,5 @@
 import type { Ref } from "react";
-import { useSettings, type SearchOptions } from "../settings.ts";
+import { settings, useSettings, type SearchOptions } from "../settings.ts";
 import { conversationKeys, fieldKeys, heard, press, withKeys } from "./keyboard.ts";
 import type { Direction } from "./search.ts";
 import { useView, view } from "./state.ts";
@@ -49,7 +49,7 @@ export function SearchBar({
             pressed={chosen[option]}
             title={`${name}: ${chosen[option] ? "on" : "off"}. Click to turn it ${chosen[option] ? "off" : "on"}.`}
             className="rounded px-1.5 py-0.5 font-mono aria-pressed:bg-panel aria-[pressed=false]:text-foreground-muted aria-[pressed=false]:hover:bg-hover"
-            onClick={() => view.searchOption(option, !chosen[option])}
+            onClick={() => settings.setSearchOption(option, !chosen[option])}
           >
             {label}
           </Toggle>

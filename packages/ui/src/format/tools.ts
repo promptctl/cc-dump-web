@@ -1,5 +1,5 @@
 import type { Header } from "@cc-dump/proxy/format";
-import { doesNotFit, type Part } from "./parts.ts";
+import { doesNotFit, labelled, type Part } from "./parts.ts";
 import { fitting, readObject, type Fields } from "./read.ts";
 
 // A tool call's input, shown as the tool's work: a command as the shell line it is, an edit as the change it makes, a
@@ -10,7 +10,7 @@ import { fitting, readObject, type Fields } from "./read.ts";
 // it arranges; the fields it does not read follow (`unreadInputParts`). An input all of whose fields read as fields has an entry
 // that reads none of them.
 const entries = new Map<string, (input: Fields) => Part[]>([
-  ["Bash", (input) => [{ id: "command", kind: "text", form: "verbatim", label: "command", text: input.string("command") }]],
+  ["Bash", (input) => [{ ...labelled("command"), kind: "text", form: "verbatim", text: input.string("command") }]],
   [
     "Edit",
     (input) => [
@@ -22,7 +22,7 @@ const entries = new Map<string, (input: Fields) => Part[]>([
     "Write",
     (input) => [
       { id: "file_path", kind: "fields", fields: [["file_path", input.string("file_path")]] },
-      { id: "content", kind: "text", form: "verbatim", label: "content", text: input.string("content") },
+      { ...labelled("content"), kind: "text", form: "verbatim", text: input.string("content") },
     ],
   ],
   ["Read", () => []],

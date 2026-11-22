@@ -10,9 +10,9 @@ import { request as fixtureRequest } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { blockOf, createLayout, type BlockRow, type Keys, type Layout, type Row } from "./rows.ts";
 import { formatBlock } from "../format/blocks.ts";
-import { matchJudged, matchMove } from "./moves.ts";
+import { matchMove } from "./moves.ts";
 import type { Position } from "./position.ts";
-import { address, carried, createSearch, find, ordinal, partKey, patternOf, rangesIn, shownTexts, textAt, whole, type Direction, type Found, type Match, type Searched } from "./search.ts";
+import { address, createSearch, find, inText, type Current, ordinal, partKey, patternOf, rangesIn, shownTexts, textAt, whole, type Direction, type Found, type Match, type Searched } from "./search.ts";
 
 // A request whose header holds what a search can find.
 const request = (trace_id: string, body: unknown): RecordedEvent[] => fixtureRequest(trace_id, body, { headers: [["x-probe", "needle in a header"]] });
@@ -174,7 +174,8 @@ describe("search", () => {
     expect(seen[10]).toEqual(seen[0]);
     expect(adjacent(found, seen[0], top, "previous", pattern, keys)!.match).toEqual(seen[9]);
     expect(adjacent(found, undefined, top, "previous", pattern, keys)!.match).toEqual(seen[9]);
-    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10 });
+    // A step's match says where it ends, the text it is in, and the pattern it is a match of, which the view judges it by.
+    expect(seen[2]).toEqual({ key: "thread:a/message.1/content.0", at: address.name, start: 10, end: 16, text: "tool_use: Needle", pattern: String(pattern) });
     const absent = read("absent").pattern;
     expect(adjacent(createSearch()(every.rows, absent), undefined, top, "next", absent, keys)).toBeUndefined();
   });
@@ -261,8 +262,8 @@ describe("search", () => {
     const content = address.part({ id: "content" });
     const result = adjacent(found, { key: "thread:a/message.2/content.0", at: content, start: -1 }, top, "next", pattern, keys)!;
     const part = partKey("thread:a/message.2/content.0", content);
-    expect(result).toEqual({
-      match: { key: "thread:a/message.2/content.0", at: content, start: result.match.start },
+    expect(result).toMatchObject({
+      match: { key: "thread:a/message.2/content.0", at: content },
       folds: ["thread:a/message.2/content.0", regionKey(part, 1), regionKey(part, 3)],
     });
     const name = adjacent(found, { key: "thread:a/message.1/content.0", at: address.name, start: -1 }, top, "next", pattern, keys)!;
@@ -315,13 +316,16 @@ describe("search", () => {
 });
 
 describe("the current match as its text changes", () => {
-  // Where the current match, the first of `query` in the Markdown text `before`, starts once the text has become
-  // `after`; none when it is no longer current.
+  // A streaming reply's text block, its Markdown `text` so far.
+  const said = (text: string) => added(formatBlock({ type: "text", text }, "assistant", "markdown"));
+  // The current match, the first of `query` the search steps to in the text `before`, judged in its text once that has
+  // become `after`: where it starts then, or why it is gone.
   const carriedIn = (before: string, after: string, query = "needle") => {
     const { pattern } = read(query);
-    const was = render(before, "markdown");
-    const current: Match = { key: "k", at: address.part({ id: "text" }), start: find(pattern, was)[0]!.start };
-    return carried(current, was.text, render(after, "markdown"), pattern)?.start;
+    const was = said(before);
+    const current = adjacent(createSearch()([was], pattern), undefined, top, "next", pattern, keysOf([was]))!.match;
+    const standing = inText(current, said(after), pattern);
+    return standing.at === "gone" ? standing.why : standing.at === "carried" ? standing.to.start : current.start;
   };
 
   it("stays on its characters as a streaming Markdown text grows after it or closes markup before it", () => {
@@ -333,11 +337,16 @@ describe("the current match as its text changes", () => {
     expect(carriedIn("`a\nb c` needle", "`a\nb c` needle x")).toBe(6);
     expect(carriedIn("see http://x.com/%41 needle", "see http://x.com/%41 needle A")).toBe(19);
     expect(carriedIn("a &#x1F642; needle", "a &#x1F642; needle more")).toBe(5);
+    // A character like its first, written just ahead of it: a shortest script may keep either, and the match is the one
+    // holding the characters it kept.
+    expect(carriedIn("xneedle", "xnneedle", "needle")).toBe(2);
   });
 
-  it("is current no longer once the change takes its characters, or leaves no match where they went", () => {
-    expect(carriedIn("**a needle", "**a needle**", "\\*\\*a")).toBeUndefined();
-    expect(carriedIn("the needle", "the noodle")).toBeUndefined();
+  it("is current no longer once the change keeps none of its characters in a match, or is too large to follow", () => {
+    expect(carriedIn("**a needle", "**a needle**", "\\*\\*a")).toBe("text_changed");
+    expect(carriedIn("the needle", "the noodle")).toBe("text_changed");
+    const around = (filler: string) => `x${filler.repeat(600)} needle ${filler.repeat(600)}x`;
+    expect(carriedIn(around("a"), around("b"))).toBe("text_rewritten");
   });
 
   // A tool's call whose input streams as text, then is read whole by the tool's entry, its fields ahead of the
@@ -351,21 +360,19 @@ describe("the current match as its text changes", () => {
       const after = call(input);
       const current = adjacent(createSearch()([before], pattern), undefined, top, "next", pattern, keysOf([before]))!.match;
       expect(blockOf(after).parts.map(({ id }) => id)).toEqual(["input fields", "id"]);
-      const judged = matchJudged({ rows: [after], keys: keysOf([after]) }, current, { match: current, text: textAt(before, current.at)!.text }, pattern);
-      expect(judged).toEqual({ match: current, text: "t1" });
+      expect(inText(current, after, pattern)).toEqual({ at: "standing" });
       // A section or region opened in its text is kept under the same key, the text's address.
       expect(textAt(after, current.at)).toEqual(textAt(before, current.at));
     }
   });
 
-  it("is cleared as `text_changed` when its block no longer shows the text it was in", () => {
+  it("is gone as `text_gone` when its block no longer shows the text it was in", () => {
     const { pattern } = read("Read");
     const before = call('{"file_path": "/Read');
-    const after = call({ file_path: "/a" });
     const at = address.part({ id: "input so far" });
-    const current = { key: "k", at, start: find(pattern, textAt(before, at)!)[0]!.start };
-    expect(matchJudged({ rows: [after], keys: keysOf([after]) }, current, undefined, pattern)).toEqual({ at: "gone", why: "text_changed" });
-    // Its row not among every row is the read's to judge, not its text's.
-    expect(matchJudged({ rows: [], keys: keysOf([]) }, current, undefined, pattern)).toBeUndefined();
+    const was = textAt(before, at)!;
+    const { start, end } = find(pattern, was)[0]!;
+    const current: Current = { key: "k", at, start, end, text: was.text, pattern: String(pattern) };
+    expect(inText(current, call({ file_path: "/a" }), pattern)).toEqual({ at: "gone", why: "text_gone" });
   });
 });

@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { doesNotFit, fieldsParts, fieldValue, within, type Field, type Form, type Medium, type Part } from "./parts.ts";
+import { doesNotFit, fieldsParts, fieldValue, labelled, within, type Field, type Form, type Medium, type Part } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
@@ -58,10 +58,10 @@ const pieces: Record<Role, (text: string) => Piece[]> = {
 // reply's by it (view/history.ts).
 export const unreadLabel = "fields";
 
-// A value shown as it was received, its JSON or its text, the part `received`, with why it is not shown as what it was
-// read as.
-export function raw(category: Category, name: string, reason: string, received: Part & { id: "received" }): Block {
-  return { category, name, parts: [doesNotFit(reason), received] };
+// A value shown as it was received, its JSON or its text verbatim, with why it is not shown as what it was read as.
+export function raw(category: Category, name: string, reason: string, received: { kind: "json"; value: unknown } | { kind: "text"; text: string }): Block {
+  const shown: Part = received.kind === "json" ? { id: "received", ...received } : { id: "received", ...received, form: "verbatim" };
+  return { category, name, parts: [doesNotFit(reason), shown] };
 }
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
@@ -70,7 +70,7 @@ export function formatError(fields: Fields): Block {
 }
 
 // The fields of an object no read asked for, as a part, when there are any.
-export const unreadParts = (fields: Fields) => fieldsParts("unread", fields.rest(), unreadLabel);
+export const unreadParts = (fields: Fields) => fieldsParts({ id: "unread", label: unreadLabel }, fields.rest());
 
 // The fields of an object no read asked for, as a block of their own in `category`, when there are any.
 export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
@@ -114,7 +114,7 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   parts: (fields) => {
     const input = fields.value("input");
     // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is.
-    const parts: Part[] = typeof input === "string" ? [{ id: "input so far", kind: "text", form: "verbatim", label: "input so far", text: input }] : read(fields.string("name"), input);
+    const parts: Part[] = typeof input === "string" ? [{ ...labelled("input so far"), kind: "text", form: "verbatim", text: input }] : read(fields.string("name"), input);
     return [...parts, { id: "id", kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
@@ -176,7 +176,7 @@ const serverToolResult: Entry = {
   category: tools,
   failed: (block) => String(sentField(sentField(block, "content"), "type")).endsWith("_error"),
   parts: (fields) => [
-    { id: "content", kind: "json", label: "content", value: fields.value("content") },
+    { ...labelled("content"), kind: "json", value: fields.value("content") },
     { id: "id", kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
   ],
 };
@@ -242,7 +242,7 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
       const parts = entry.parts(fields, role, form);
       return { category: entry.category(role, block), name: entry.name?.(fields, role) ?? type, parts: [...parts, ...unreadParts(fields)] };
     },
-    (reason) => raw(entry.category(role, block), type, reason, { id: "received", kind: "json", value: block }),
+    (reason) => raw(entry.category(role, block), type, reason, { kind: "json", value: block }),
   );
   const stating = { ...shown, ...entry.stated?.(block, role) };
   // A tool's result that says its tool failed is named for it.
@@ -256,7 +256,7 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
-  const [, ...fields] = formatted.parts;
+  const fields = formatted.parts.filter(({ id }) => id !== "text");
   const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
@@ -322,8 +322,8 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
         return contentParts(fields.value("content"), role);
       // A source of a type not here: its other fields follow.
       default:
-        return [{ id: "source", kind: "fields", label: "source", fields: [["type", type]] }];
+        return [{ ...labelled("source"), kind: "fields", fields: [["type", type]] }];
     }
   })();
-  return [...parts, ...fieldsParts("source fields", fields.rest(), "source fields")];
+  return [...parts, ...fieldsParts(labelled("source fields"), fields.rest())];
 }

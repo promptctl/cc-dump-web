@@ -2,7 +2,7 @@ import { forkAbove } from "./forks.ts";
 import { injectedFrom } from "./injected.ts";
 import { presence, type At, type Position, type Presence } from "./position.ts";
 import type { ForkRow, Gone, Layout, MomentStanding, Pending } from "./rows.ts";
-import { adjacent, carried, textAt, type Direction, type Found, type Match, type Step } from "./search.ts";
+import { adjacent, inText, type Current, type Direction, type Found, type InText, type Match, type Step } from "./search.ts";
 
 // The moves through the conversation (docs/design/02-design.md, "Keys"), each counting from the reader's place as the
 // view's store holds it: what each would go to, decided apart from carrying it out (Conversation.tsx).
@@ -52,26 +52,17 @@ export function waitingOf(column: ColumnState, position: Position, current: Matc
   return match?.at === "pending" ? { held: "match", read: match.read } : undefined;
 }
 
-// The current match nothing will bring, by its block's key, with the judgement that says so, which the view then no
-// longer holds as current; none while it can still come, or none is current.
-export function matchGone(column: ColumnState, current: Match | undefined): (Gone & { key: string }) | undefined {
-  if (current === undefined) return undefined;
+// [LAW:single-enforcer] The one judgement of where the current match stands as the column shows it now, which the view
+// takes at each commit and carries out: gone when the pattern is another than the one it is a match of, or when
+// nothing will bring its row; judged in its text while its row is among every row (search.ts `inText`); and standing
+// while its row is not read yet, which the line says, or while it stands in a row its own is inside, as a block the
+// formatter replaced stands at its group, so the steps go on from where it was.
+export type MatchStanding = InText | Gone<Gone["why"] | "pattern_changed">;
+
+export function matchStanding(column: ColumnState, current: Current, pattern: RegExp): MatchStanding {
+  if (current.pattern !== String(pattern)) return { at: "gone", why: "pattern_changed" };
   const at = matchAt(column, current);
-  return at.at === "gone" ? { ...at, key: current.key } : undefined;
-}
-
-// A judgement of the current match in its text: the match as it was judged, and the characters of the text it stood in.
-export type Judged = { match: Match; text: string };
-
-// The current match as its row among every row shows its text now, `last` the judgement before: carried through what
-// changed in the text since `last`, when that judged this match, or judged where it stands, when it did not (search.ts
-// `carried`); or gone, `text_changed`, when the change took it or its block no longer shows the text it was in. None
-// while its row is not among them: whether that row comes is the read's to judge (`matchGone`).
-export function matchJudged(every: ColumnState["every"], current: Match, last: Judged | undefined, pattern: RegExp): Judged | Gone<"text_changed"> | undefined {
-  const index = every.keys.indexOf(current.key);
-  const row = index === undefined ? undefined : every.rows[index];
-  if (row?.kind !== "block") return undefined;
-  const now = textAt(row, current.at);
-  const match = now && carried(current, last?.match === current ? last.text : now.text, now, pattern);
-  return now === undefined || match === undefined ? { at: "gone", why: "text_changed" } : { match, text: now.text };
+  if (at.at === "gone") return at;
+  const row = at.at === "row" ? column.every.rows[at.index]! : undefined;
+  return row?.kind === "block" ? inText(current, row, pattern) : { at: "standing" };
 }

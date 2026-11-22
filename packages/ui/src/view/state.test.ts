@@ -5,7 +5,11 @@ import { createFormatter, type KeyedBlock } from "../format/format.ts";
 import { parseSettings, useSettings } from "../settings.ts";
 import { recording, useExchanges } from "../store.ts";
 import type { BlockRow } from "./rows.ts";
+import type { Current } from "./search.ts";
 import { useView, view } from "./state.ts";
+
+// A current match of `x` at the start of the text `at` of the row `key`.
+const matchIn = (key: string, at = "text"): Current => ({ key, at, start: 0, end: 1, text: "x", pattern: "/x/giu" });
 
 const agent = "20261113T080000.000Z.jsonl";
 // A tool definition's row, in no set.
@@ -23,7 +27,7 @@ describe("opening a recording", () => {
   });
 
   it("opens it by its name, at its end with no current match, keeping the reader's choices", () => {
-    const match = { key: "t1/request/http", at: "text", start: 0 };
+    const match = matchIn("t1/request/http");
     useView.setState({ opened: { "t1/request/http": true }, position: { at: "row", key: "t1", offset: 12 }, search: { query: "x", current: match } });
     view.open(agent);
     expect(useView.getState()).toMatchObject({
@@ -92,28 +96,23 @@ describe("a launch", () => {
 });
 
 describe("the search", () => {
-  const match = { key: "t1/request/http", at: "text", start: 0 };
+  const match = matchIn("t1/request/http");
   beforeEach(() => {
     useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
     useSettings.setState(parseSettings(undefined));
   });
 
-  it("has no current match after a change of query, or of how the query is read", () => {
-    useView.setState({ search: { query: "x", current: match } });
-    view.search("xy");
-    expect(useView.getState().search).toEqual({ query: "xy", current: undefined });
-
-    useView.setState({ search: { query: "x", current: match } });
-    view.searchOption("wholeWord", true);
-    expect(useView.getState().search).toEqual({ query: "x", current: undefined });
-    expect(useSettings.getState().search.wholeWord).toBe(true);
-  });
-
-  it("has no current match once it is one nothing will bring, and keeps the query and the place", () => {
+  it("holds the current match as the view judged it stands: the same while it stands, carried, or none once gone, keeping the query and the place", () => {
     const place = { at: "row", key: "t1", offset: 12 } as const;
     useView.setState({ position: place, search: { query: "x", current: match } });
-    view.matchGone();
+    const before = useView.getState();
+    view.matchStood({ at: "standing" });
+    expect(useView.getState()).toBe(before);
+    const carried = { ...match, start: 2, end: 3, text: "a x" };
+    view.matchStood({ at: "carried", to: carried });
+    expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: carried } });
+    view.matchStood({ at: "gone", why: "text_changed" });
     expect(useView.getState()).toMatchObject({ position: place, search: { query: "x", current: undefined } });
   });
 
@@ -136,7 +135,7 @@ describe("a click on an entry of a text's contents", () => {
   beforeEach(() => useView.setState(useView.getInitialState(), true));
 
   it("opens the folds that show its heading, one the reader closed with them, and moves to its block's row, leaving now and the search as it was", () => {
-    const search = { query: "x", current: { key: "elsewhere", at: "name", start: 0 } };
+    const search = { query: "x", current: matchIn("elsewhere", "name") };
     useView.setState({ opened: { "p/2": false, other: false }, search });
     view.toHeading(row.key, ["p/2", "p/6"], "t4");
     expect(useView.getState()).toMatchObject({
@@ -193,12 +192,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
+    view.goTo({ match: matchIn(row.key, "name"), folds: [] }, "t10");
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
+    view.goTo({ match: matchIn(row.key, "name"), folds: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();

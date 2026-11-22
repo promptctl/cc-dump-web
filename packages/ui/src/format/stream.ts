@@ -1,5 +1,6 @@
 import { serverSentEvents } from "@cc-dump/log/wire";
 import { formatError, restBlock, type Block } from "./blocks.ts";
+import { labelled } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 
 // A streamed Messages response, reassembled: the message as far as its events have built it (undefined before
@@ -115,8 +116,8 @@ export function createReassembly(): Reassembly {
               category: "http",
               name: `${event} event`,
               parts: [
-                { id: "not applied", kind: "text", form: "verbatim", label: "not applied", text: reason },
-                { id: "data", kind: "text", form: "verbatim", label: "data", text: data },
+                { ...labelled("not applied"), kind: "text", form: "verbatim", text: reason },
+                { ...labelled("data"), kind: "text", form: "verbatim", text: data },
               ],
             }),
         );

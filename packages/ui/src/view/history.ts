@@ -490,13 +490,13 @@ function content({ category, name, parts, injected }: Block): unknown {
   return { category, name, parts, injected };
 }
 
-// A reply's block with, of its fields no read asked for, only those `resent` has.
+// A reply's block with, of each part of its fields no read asked for, only those the part of that id `resent` has.
 function asResent(reply: Block, resent: Block): Block {
-  const kept = new Set(resent.parts.find(isUnread)?.fields.map(([name]) => name));
   return {
     ...reply,
     parts: reply.parts.flatMap((part): Part[] => {
       if (!isUnread(part)) return [part];
+      const kept = new Set(resent.parts.filter(isUnread).find(({ id }) => id === part.id)?.fields.map(([name]) => name));
       const fields = part.fields.filter(([name]) => kept.has(name));
       return fields.length === 0 ? [] : [{ ...part, fields }];
     }),

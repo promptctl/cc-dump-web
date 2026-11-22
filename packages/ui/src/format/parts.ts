@@ -40,12 +40,12 @@ export type Field = [name: string, value: string | Field[]];
 // sent (RFC 9110, 5.3): what names the line whatever fields are added beside it.
 export type FieldLine = { name: string; value: string | undefined; depth: number; path: FieldPath };
 export type FieldPath = [name: string, repeat: number][];
-export function fieldLines(fields: Field[], within: FieldPath = []): FieldLine[] {
+export function fieldLines(fields: Field[], holding: FieldPath = []): FieldLine[] {
   const seen = new Map<string, number>();
   return fields.flatMap(([name, value]) => {
     const repeat = seen.get(name) ?? 0;
     seen.set(name, repeat + 1);
-    const line = { name, depth: within.length, path: [...within, [name, repeat]] satisfies FieldPath };
+    const line = { name, depth: holding.length, path: [...holding, [name, repeat]] satisfies FieldPath };
     return typeof value === "string" ? [{ ...line, value }] : [{ ...line, value: undefined }, ...fieldLines(value, line.path)];
   });
 }
@@ -85,14 +85,17 @@ export function pickedPart(id: string, value: unknown, paths: string[]): Extract
   return { id, kind: "fields", fields: held.filter(([, member]) => member !== undefined).map(([path, member]) => [path, fieldValue(member)]) };
 }
 
-// An object's fields as the part `id`, labelled `label` where one is given, when it has any.
-export function fieldsParts(id: string, object: Record<string, unknown>, label?: string): Extract<Part, { kind: "fields" }>[] {
+// [LAW:one-source-of-truth] The id and label of a part named among its block's parts by the label it shows.
+export const labelled = (name: string) => ({ id: name, label: name });
+
+// An object's fields as the part `named`, by its id and label, when it has any.
+export function fieldsParts(named: { id: string; label: string }, object: Record<string, unknown>): Extract<Part, { kind: "fields" }>[] {
   const fields = Object.entries(object).map(([name, value]): Field => [name, fieldValue(value)]);
-  return fields.length === 0 ? [] : [{ id, kind: "fields", ...(label === undefined ? {} : { label }), fields }];
+  return fields.length === 0 ? [] : [{ ...named, kind: "fields", fields }];
 }
 
 // Why a value is not shown as what it was read as, set before the value as it was received.
-export const doesNotFit = (reason: string): Part => ({ id: "does not fit", kind: "text", form: "verbatim", label: "does not fit", text: reason });
+export const doesNotFit = (reason: string): Part => ({ ...labelled("does not fit"), kind: "text", form: "verbatim", text: reason });
 
 // The text a JSON part shows. [LAW:one-source-of-truth] Serialized once per part, which the formatter keeps the same
 // object while its side of the exchange is unchanged, for the block's size, its view and the search; the cache is this

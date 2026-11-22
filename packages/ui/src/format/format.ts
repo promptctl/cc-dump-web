@@ -5,7 +5,7 @@ import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type Re
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "./equal.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
-import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
+import { fieldValue, labelled, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
@@ -197,12 +197,14 @@ function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
   return blocks.length === 1 ? blocks.map((block) => keyed(block, key)) : each(key, blocks);
 }
 // [LAW:single-enforcer] A block keyed `key`, as every block the view gets is: here no two of its parts share an id,
-// since the view names a part's texts by it (format/parts.ts). Two that do are the formatter's error, not the traffic's.
+// since the view names a part's texts by it (format/parts.ts). Two that do are the formatter's error, not the traffic's,
+// and the block is shown as its parts were made, saying so, as a block that does not fit is, so the rest of the
+// recording reads on.
 function keyed(block: Block, key: string): KeyedBlock {
   const ids = block.parts.map(({ id }) => id);
   const twice = ids.filter((id, index) => ids.indexOf(id) !== index);
-  if (twice.length > 0) throw new Error(`the block ${key}, ${block.name}, has two parts of each id: ${twice.join(", ")}`);
-  return { ...block, key };
+  const shown = twice.length === 0 ? block : raw(block.category, block.name, `the formatter made two parts of each id: ${twice.join(", ")}`, { kind: "json", value: block.parts });
+  return { ...shown, key };
 }
 // Blocks standing at `place` in their thread.
 function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
@@ -276,7 +278,7 @@ function requestBody(text: string, whole: boolean): RequestShown {
         session: sessionOf(rest.metadata),
       };
     },
-    (reason) => ({ own: one("body", [raw("http", "request body", reason, { id: "received", kind: "text", form: "verbatim", text })]), sent: [], messages: 0, ...unsaid }),
+    (reason) => ({ own: one("body", [raw("http", "request body", reason, { kind: "text", text })]), sent: [], messages: 0, ...unsaid }),
   );
 }
 
@@ -324,7 +326,7 @@ function messageGroup(message: unknown, key: string, place: Place): Group {
       if (!Array.isArray(blocks)) throw new Misfit("message's content is neither a string nor a list of blocks");
       return { key, title: role, blocks: [...messageContent(blocks, role, place), ...placed(place, one("fields", restBlock(fields, "parameters", "message")))] };
     },
-    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("http", "message", reason, { id: "received", kind: "json", value: message })])) }),
+    (reason) => ({ key, title: "message", blocks: placed(place, one("message", [raw("http", "message", reason, { kind: "json", value: message })])) }),
   );
 }
 
@@ -375,7 +377,7 @@ function toolBlock(tool: unknown, name: string): Block {
         parts: [...(description === undefined ? [] : [{ id: "description", kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
       };
     },
-    (reason) => raw("tools", name, reason, { id: "received", kind: "json", value: tool }),
+    (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
   );
 }
 
@@ -425,7 +427,7 @@ function responseBody(sides: Sides, side: ResponseSide, body: Body, whole: boole
           throw new Misfit("response body is neither a message nor an error");
       }
     },
-    (reason) => none(one("body", [raw("http", "response body", reason, { id: "received", kind: "text", form: "verbatim", text })])),
+    (reason) => none(one("body", [raw("http", "response body", reason, { kind: "text", text })])),
   );
 }
 
@@ -467,7 +469,7 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
         },
       };
     },
-    (reason) => none(one("message", [raw("http", "message", reason, { id: "received", kind: "json", value: message })])),
+    (reason) => none(one("message", [raw("http", "message", reason, { kind: "json", value: message })])),
   );
 }
 
@@ -501,8 +503,8 @@ function ending(end: Of<"end"> | undefined): Ending {
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
-  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ id: "trailers", kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { id: "headers", kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ ...labelled("trailers"), kind: "fields" as const, fields: trailers.headers }];
+  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { ...labelled("headers"), kind: "fields", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {

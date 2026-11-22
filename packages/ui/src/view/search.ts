@@ -6,15 +6,20 @@ import { rankBefore, rankOf, type At } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import { blockOf, nestsOf, type BlockRow, type Row } from "./rows.ts";
+import { blockOf, nestsOf, type BlockRow, type Gone, type Row } from "./rows.ts";
 
 // Search (docs/design/01-features.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
 
 // A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text as the
-// reader sees it. A text that changes at its address, as a streaming Markdown text does when its text grows or a
-// closing backtick or asterisk arrives, carries the match to where its characters went (`carried`).
+// reader sees it.
 export type Match = { key: string; at: string; start: number };
+
+// The current match: a match, where it ends, the text it stands in as the view last judged it, and the pattern it is a
+// match of, written as the pattern's literal. A text that changes at its address, as a streaming Markdown text does
+// when its text grows or a closing backtick or asterisk arrives, carries the match to where its characters went
+// (`inText`), and a change of pattern finds other matches, so none is current (moves.ts).
+export type Current = Match & { end: number; text: string; pattern: string };
 
 // [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON by the part's id,
 // the name or value of a field by the part's id and the field line's path. The search and the view both name a text by
@@ -152,9 +157,11 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
   };
 }
 
-// The matches of a block, in the order it shows them, each with the text it is in.
-function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+// The matches of a block, in the order it shows them, each with where it ends, the text it is in, and that text's place
+// among those the block shows.
+type InBlock = { match: Match; end: number; shown: Shown; order: number };
+function matchesIn(row: BlockRow, pattern: RegExp): InBlock[] {
+  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start, end }) => ({ match: { key: row.key, at: shown.at, start }, end, shown, order })));
 }
 
 const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
@@ -162,14 +169,21 @@ const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start
 // The text at `at` among those a block's row shows; none when it shows none there.
 export const textAt = (row: BlockRow, at: string): Searched | undefined => shownTexts(row).find((shown) => shown.at === at)?.searched;
 
-// The match `current` in its text as it shows now, `now`, which showed `before` when the match was last judged: its
-// start carried to where that character went (format/diff.ts), so a match stays on its characters as the text grows
-// after it or closes markup before it. It is current while a match of `pattern` starts there; none when the change took
-// its first character, or no match starts there now. Where nothing moved it, it is `current` itself.
-export function carried(current: Match, before: string, now: Searched, pattern: RegExp): Match | undefined {
-  const start = carriedTo(before, now.text, current.start);
-  if (start === undefined || !find(pattern, now).some((found) => found.start === start)) return undefined;
-  return start === current.start ? current : { ...current, start };
+// [LAW:types-are-the-program] Where the current match stands in its text as its block's row shows it now: as it was,
+// while the text is; carried to the match of `pattern` that holds a character of it the change kept (format/diff.ts),
+// so a match stays on its characters as the text grows after it or closes markup before it; or gone, why: the block
+// shows no text at its address (`text_gone`), the change kept none of its characters in a match (`text_changed`), or
+// the change was too large to follow (`text_rewritten`).
+export type InText = { at: "standing" } | { at: "carried"; to: Current } | Gone<"text_gone" | "text_changed" | "text_rewritten">;
+
+export function inText(current: Current, row: BlockRow, pattern: RegExp): InText {
+  const now = textAt(row, current.at);
+  if (now === undefined) return { at: "gone", why: "text_gone" };
+  if (now.text === current.text) return { at: "standing" };
+  const carried = carriedTo(current.text, now.text, current);
+  if (carried.at === "rewritten") return { at: "gone", why: "text_rewritten" };
+  const match = find(pattern, now).find(({ start, end }) => carried.places.some((place) => start <= place && place < end));
+  return match === undefined ? { at: "gone", why: "text_changed" } : { at: "carried", to: { ...current, ...match, text: now.text } };
 }
 
 // Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
@@ -184,7 +198,7 @@ export function ordinal(found: Found, current: Match | undefined, pattern: RegEx
 // [LAW:types-are-the-program] A step to a match, and the `folds` that must show open for it to be on screen, by key:
 // the nests its block is inside, innermost first, and the set it is in, so its block is listed; then, for a match in
 // the block's content, not on its line, the block, and the regions and the headings' sections holding the match.
-export type Step = { match: Match; folds: string[] };
+export type Step = { match: Current; folds: string[] };
 
 export type Direction = "next" | "previous";
 
@@ -207,7 +221,7 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
     const { at, start } = from.match!;
     const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
     const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
-    if (past !== undefined) return stepTo(found, own, past);
+    if (past !== undefined) return stepTo(found, own, past, pattern);
   }
   // Where the step starts among the rows (position.ts): after the current match's place, or before the reader's, so the
   // matches of the row at the view's top are ahead.
@@ -215,10 +229,11 @@ export function adjacent(found: Found, from: From, direction: Direction, pattern
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
-  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);
+  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!, pattern);
 }
 
-function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown }: { match: Match; shown: Shown }): Step {
+function stepTo({ rows }: Found, { row, index }: FoundBlock, { match: { key, at, start }, end, shown }: InBlock, pattern: RegExp): Step {
+  const match: Current = { key, at, start, end, text: shown.searched.text, pattern: String(pattern) };
   const listed = [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set])];
   switch (shown.in) {
     case "line":

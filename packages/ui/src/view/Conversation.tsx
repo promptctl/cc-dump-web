@@ -13,7 +13,7 @@ import { Minimap } from "./Minimap.tsx";
 import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
-import { forkMove, inListed, injectedMove, matchGone, matchJudged, matchMove, waitingOf, type ColumnState, type Judged } from "./moves.ts";
+import { forkMove, inListed, injectedMove, matchMove, matchStanding, waitingOf, type ColumnState } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
@@ -105,6 +105,12 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   const control = followStates[following];
   // What holds the moves, which the line under the rows says.
   const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
+  // The search (docs/design/01-features.md, F6): its matches among every row, in the hidden categories as well.
+  const query = useView((state) => state.search.query);
+  const options = useSettings(useShallow((state) => state.search));
+  const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
+  const search = useMemo(() => createSearch(), []);
+  const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
 
   // What the view keeps between steps that is the scroller's, made with it; the position is the store's (scroll.ts `Kept`).
   const scrollerKept = useRef<Omit<Kept, "position">>({ written: 0, scrolled: false });
@@ -124,10 +130,13 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
-    const cleared = matchGone(column, useView.getState().search.current);
-    if (cleared !== undefined) {
-      decisions.matchCleared(cleared);
-      view.matchGone();
+    // The current match judged in this render's column, before the commit is painted, so the counter, the highlight and
+    // the steps never show a match the column has moved or lost.
+    const judged = live.search.current;
+    if (judged !== undefined) {
+      const standing = matchStanding(column, judged, pattern);
+      decisions.matchStood(judged, standing);
+      view.matchStood(standing);
     }
     // The moment replaced is the one the column judged gone, this render's.
     if (column.moment.at === "gone") {
@@ -173,31 +182,6 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
-  // The search (docs/design/01-features.md, F6): its matches among every row, in the hidden categories as well.
-  const query = useView((state) => state.search.query);
-  const options = useSettings(useShallow((state) => state.search));
-  const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
-  const search = useMemo(() => createSearch(), []);
-  const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
-  // [LAW:effects-at-boundaries] The current match judged in its text as this commit shows it (moves.ts `matchJudged`),
-  // against the judgement before, which this effect alone keeps: carried as the text changes, or cleared once it no
-  // longer holds it. A commit's layout effects run before it is painted, so the counter, the highlight and the steps
-  // never show a match the text has moved or lost.
-  const judged = useRef<Judged | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (current === undefined) return;
-    const judgement = matchJudged(every, current, judged.current, pattern);
-    if (judgement === undefined) return;
-    if ("why" in judgement) {
-      decisions.matchCleared({ ...judgement, key: current.key });
-      view.matchGone();
-      return;
-    }
-    judged.current = judgement;
-    if (judgement.match === current) return;
-    decisions.matchCarried(current, judgement.match);
-    view.matchCarried(judgement.match);
-  }, [decisions, every, current, pattern]);
   const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
   // [LAW:single-enforcer] The view put at `target`, drawn in the element `text` of the row `key`, a few of the text's
   // lines below the top: what ends a move to something a commit has just shown, a match or a heading.
@@ -795,7 +779,7 @@ function PartContent({ part, blockKey }: { part: Part; blockKey: string }): Reac
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
           {fieldLines(part.fields).map((line) => (
-            <div key={JSON.stringify(line.path)} className="contents">
+            <div key={address.field(part, line, "name")} className="contents">
               <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${line.depth * 2}ch` }}>
                 <HighlightedText blockKey={blockKey} at={address.field(part, line, "name")} text={line.name} />
               </dt>
