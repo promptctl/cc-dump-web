@@ -181,6 +181,19 @@ describe("history", () => {
     expect(arrived(read([...process.slice(0, 14), ...request("t2", { ...main, messages: [hi, assistant(...hello)] })]))[2]).toEqual({ request: ["t2/request/http"] });
   });
 
+  it("places no reply of a request whose messages do not read: its blocks are its exchange's own, on no thread", () => {
+    const steps = arrived(history([...request("a", { ...main, messages: "Hi." }), ...reply("a", hello)]));
+    expect(steps).toEqual([
+      {
+        request: ["a/request/http", "a/request/parameters", "a/request/messages"],
+        response: ["a/response/http", "a/response/stop reason", "a/response/usage", "a/response/fields"],
+        tools: ["a/tools/tools.Read.0"],
+        system: ["a/system/system.0"],
+        reply: ["a/reply/content.0"],
+      },
+    ]);
+  });
+
   it("says two objects say the same when they have the same fields with the same values, a field that holds undefined not standing for one the other lacks", () => {
     const block = {};
     expect(sameFields({ step: 1, block }, { block, step: 1 })).toBe(true);

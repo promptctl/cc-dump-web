@@ -125,7 +125,7 @@ type Location = { step: number; group: number; index: number };
 // A step read: its exchange, its thread, where it leaves the requests before it, and what undoes what reading it did to
 // the threads. A step folded: its segment as it now stands, its chain, and what undoes what folding it did, in the
 // order it did it.
-type Read = { formatted: FormattedExchange; thread: Thread | undefined; fact: Fact | undefined; undo: (() => void)[] };
+type Read = { formatted: FormattedExchange; undo: (() => void)[] } & ({ thread: undefined; fact: undefined } | { thread: Thread; fact: Fact });
 type Folded = { segment: Segment; chain: Chain | undefined; undo: (() => void)[] };
 
 // The history of the exchanges. [LAW:no-shared-mutable-globals] Its state is its own, and what it returns is never
@@ -155,9 +155,11 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   };
 
   // Reading a step walks its path down its thread's tree as far as an earlier request sent the same, which is where it
-  // leaves them, and adds the rest of its path, as its own.
+  // leaves them, and adds the rest of its path, as its own. A request whose messages did not read is part of no thread.
   const readStep = (formatted: FormattedExchange, step: number): Read => {
     const undo: (() => void)[] = [];
+    const { messages } = formatted;
+    if (messages === undefined) return { formatted, thread: undefined, fact: undefined, undo };
     const thread = threadOf(formatted, levelOf(formatted.sender), threads, alike, step, undo);
     if (thread === undefined) return { formatted, thread, fact: undefined, undo };
     const begun = thread.root.owner === step;
@@ -170,7 +172,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       if (next === undefined) break;
       node = next;
     }
-    const message = path[index]?.message ?? formatted.messages;
+    const message = path[index]?.message ?? messages;
     const left = begun ? undefined : node.ends.length > 0 ? { step: node.ends.at(-1)!, whole: true, message } : { step: node.owner, whole: false, message };
     for (const { at, held } of path.slice(index)) {
       const added: Node = { at, held, owner: step, children: [], ends: [] };
@@ -182,7 +184,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const end = node;
     end.ends.push(step);
     undo.push(() => end.ends.pop());
-    return { formatted, thread, fact: { step, left, messages: formatted.messages }, undo };
+    return { formatted, thread, fact: { step, left, messages }, undo };
   };
 
   // The chain of a step that follows `followed`: that step's, while it is its last, or one begun on it.
@@ -207,15 +209,17 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
   // version, where the item stands; at a place the path has not held, it is a new item, in the step's own segment; and
   // a place the path holds that the step does not send is gone from it. [LAW:dataflow-not-control-flow] Every step is
   // folded the same, whatever it follows: a sibling's versions of an item are off the path, so they are not what the
-  // step's blocks are compared with.
-  const fold = ({ formatted, thread }: Read, follows: ReadonlyMap<number, number | undefined>, step: number): Folded => {
+  // step's blocks are compared with. A step with no thread places none of its blocks; one with a thread places them by
+  // its chain, its reply at the message after those its request sends.
+  const fold = (read: Read, follows: ReadonlyMap<number, number | undefined>, step: number): Folded => {
+    const { formatted, thread } = read;
     const undo: (() => void)[] = [];
     const trace = formatted.exchange.trace_id;
     const level = levelOf(formatted.sender);
     const levelName = levelKey(level);
     const followed = follows.get(step);
     const after: After | undefined = followed !== undefined ? { step: followed, on: "step" } : thread === undefined ? undefined : hungOn(thread);
-    const chain = thread === undefined ? undefined : chainOf(followed, step, undo);
+    const placing = read.thread === undefined ? undefined : { chain: chainOf(followed, step, undo), messages: read.fact.messages };
     const path = new Set<number>();
     for (let on: number | undefined = step; on !== undefined; on = follows.get(on)) path.add(on);
     // What the step reaches: its path, and past the thread its path begins with, the path of the step whose summary that
@@ -272,20 +276,20 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       const items: Item[] = [];
       for (const block of group.blocks) {
         const arrived = (key: string, reply: boolean): Item => ({ key, versions: [{ step, block, reply, rewrote: undefined, previous: undefined }] });
-        if (block.place === undefined || chain === undefined) {
+        if (block.place === undefined || placing === undefined) {
           const key = `${trace}/${group.key}/${block.key}`;
           items.push(arrived(key, false));
           state(block, key);
           continue;
         }
-        const at = `${placeName(block.place, formatted.messages)}/${block.key}`;
+        const at = `${placeName(block.place, placing.messages)}/${block.key}`;
         const reply = block.place.in === "reply";
         sent.add(at);
-        const location = find(chain, at);
+        const location = find(placing.chain, at);
         if (location === undefined) {
           const key = `${threadPrefix}${trace}/${at}`;
-          chain.places.set(at, { step, group: groupIndex, index: items.length });
-          undo.push(() => chain.places.delete(at));
+          placing.chain.places.set(at, { step, group: groupIndex, index: items.length });
+          undo.push(() => placing.chain.places.delete(at));
           items.push(arrived(key, reply));
           state(block, key);
           continue;
@@ -303,7 +307,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     });
     // A request resends what its path holds at each place, its tools, prompt, parameters and messages, so one there it
     // did not send is gone from the step on.
-    for (const { at, location } of chain === undefined ? [] : resent(chain)) {
+    for (const { at, location } of placing === undefined ? [] : resent(placing.chain)) {
       if (sent.has(at)) continue;
       const item = itemAt(location);
       const previous = current(item);
@@ -321,7 +325,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
       begun.add(levelName);
       undo.push(() => begun.delete(levelName));
     }
-    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, did } }, chain, undo };
+    return { segment: { formatted, groups, after, wire: { level, opens, ties, stops, answers, waits, did } }, chain: placing?.chain, undo };
   };
 
   return (formatted) => {

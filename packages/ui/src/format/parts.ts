@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { fieldOf, type Path, type Unread } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -104,6 +104,13 @@ export function pickedPart(value: unknown, paths: string[]): Extract<PartBody, {
 // The fields of an object no read asked for, `rest`, as the part `named`, its id and its label, when there are any.
 export function restParts(rest: Record<string, unknown>, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
   const fields = Object.entries(rest).map(([name, value]): Field => [name, fieldValue(value)]);
+  return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
+}
+
+// The fields no declaration names, `unread`, of the object at `at`, as the part `named`, each by its path from that
+// object, when there are any.
+export function unreadParts(unread: readonly Unread[], at: Path, named: { id: string; label: string }): Extract<Part, { kind: "rest" }>[] {
+  const fields = unread.map(({ of, key, value }): Field => [[...of.slice(at.length), key].join("."), fieldValue(value)]);
   return fields.length === 0 ? [] : [{ ...named, kind: "rest", fields }];
 }
 

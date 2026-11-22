@@ -251,6 +251,11 @@ describe("the leaf readers", () => {
     expect(tools({ tools: ["a"] }, []).value).toEqual({ tools: { is: "read", read: { value: ["a"], dropped: [], unread: [] } } });
   });
 
+  it("a held value names its fields from itself, wherever it is held", () => {
+    const read = object({ window: held(fields<Window>({ id: string, panes: integer })) })({ window: { id: 1, panes: 2, zoomed: true } }, ["session"]).value.window;
+    expect(read.is === "read" && read.read.value).toMatchObject({ refused: [{ at: ["id"], is: "refused" }], unread: [{ of: [], key: "zoomed" }] });
+  });
+
   it("JSON text is read by its reader, or refused", () => {
     const text = fromJsonText(session);
     expect(text(JSON.stringify(sent), []).value).toEqual({ name: "s", window: { id: "@1", panes: 2 } });

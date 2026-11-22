@@ -165,11 +165,12 @@ export const list =
   };
 
 // [LAW:single-enforcer] A value that holds its own refusal: never refused, it is what `reader` read, or why not and
-// what was sent, so a part that does not read costs only itself.
+// what was sent, so a part that does not read costs only itself. It is the root of the paths it names, since what it
+// holds is said of itself.
 export const held =
   <T>(reader: Reader<T>): Reader<Shown<T>> =>
-  (json, at) => {
-    const read = attempt(() => reader(json, at));
+  (json) => {
+    const read = attempt(() => reader(json, []));
     return leaf(read.is === "read" ? read : { ...read, sent: json });
   };
 
