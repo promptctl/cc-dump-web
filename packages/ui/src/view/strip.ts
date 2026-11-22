@@ -1,13 +1,14 @@
+import { requestEnding } from "@cc-dump/log/ending";
 import type { FormattedExchange } from "../format/format.ts";
 import type { History, Segment } from "./history.ts";
-import { clockTime, compact, countsOf, modelName, seconds, statusFailed } from "./rows.ts";
+import { clockTime, compact, countsOf, modelName, seconds } from "./rows.ts";
 
 // The turn strip's marks (docs/design/02-design.md, "Layout"), the horizontal navigator: each step's stack and what it
 // says on hover, pure.
 
-// What went wrong at a step: its exchange failed (its recording ended in error, or its response has an HTTP error
-// status, the API's answer whether or not it was relayed in full, which is not what the proxy's log judges by), or what
-// it brought into the conversation, an item or an item's next version, holds a tool's result that says its tool failed.
+// What went wrong at a step: its exchange's request failed once it ended, as the proxy's log says too
+// (`requestEnding`), or what it brought into the conversation, an item or an item's next version, holds a tool's result
+// that says its tool failed.
 export type Failure = { exchange: boolean; tool: boolean };
 
 // Each step's failure, in the order of the steps: one walk over every item's versions, each of them brought by its step.
@@ -15,8 +16,8 @@ export function failuresOf(segments: readonly Segment[]): Failure[] {
   const toolFailed = new Set(
     segments.flatMap(({ groups }) => groups.flatMap(({ items }) => items.flatMap(({ versions }) => versions.flatMap(({ step, block }) => (block?.failed ? [step] : []))))),
   );
-  return segments.map(({ formatted: { exchange, facts } }, index) => ({
-    exchange: exchange.end?.outcome === "error" || statusFailed(facts.status),
+  return segments.map(({ formatted: { exchange } }, index) => ({
+    exchange: exchange.end !== undefined && requestEnding(exchange.end, exchange.response.head).outcome === "error",
     tool: toolFailed.has(index + 1),
   }));
 }

@@ -3,7 +3,7 @@ import { LOOPBACK } from "./address.ts";
 import { json, Refused, routes } from "./answer.ts";
 import { DependencyFailed } from "./failure.ts";
 import { serving } from "./testing.ts";
-import { ask, frame, isErrorStatus, parseFailure, recordingPath, ROUTES, serverSentEvents, statusLine } from "./wire.ts";
+import { ask, frame, parseFailure, recordingPath, ROUTES, serverSentEvents, statusLine } from "./wire.ts";
 
 describe("serverSentEvents", () => {
   const read = (text: string) => serverSentEvents(text, true).events;
@@ -61,14 +61,6 @@ describe("the wire's names", () => {
     expect(statusLine(404)).toBe("404 Not Found");
   });
 
-  it.each([
-    [399, false],
-    [400, true],
-    [599, true],
-    [600, false],
-  ])("judges %i an error status exactly when it is a 4xx or 5xx: %s", (status, error) => {
-    expect(isErrorStatus(status)).toBe(error);
-  });
 });
 
 describe("ask", () => {

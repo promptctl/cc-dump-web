@@ -1,12 +1,13 @@
 import type { LogLine } from "@cc-dump/log/line";
+import { parseTraceId } from "@cc-dump/log/trace";
 import { describe, expect, it } from "vitest";
-import { logsChanged, noLogs, summary, type Logs, type LogsChange } from "./logs.ts";
+import { logsChanged, noLogs, type Logs, type LogsChange } from "./logs.ts";
 
 // Line `seq` of process `run`, whose work started at second `at` and took `ms`.
 const line = (run: string, seq: number, at: number, ms = 0): LogLine => ({
   run,
   seq,
-  event: { service: "proxy", event: `${run}${seq}`, started_at: new Date(Date.UTC(2026, 10, 16, 9, 0, at)).toISOString(), duration_ms: ms, outcome: "ok", facts: {} },
+  event: { service: "proxy", event: `${run}${seq}`, trace_id: parseTraceId("t"), started_at: new Date(Date.UTC(2026, 10, 16, 9, 0, at)).toISOString(), duration_ms: ms, outcome: "ok", facts: {} },
 });
 
 const after = (...changes: LogsChange[]): Logs => changes.reduce(logsChanged, noLogs);
@@ -61,18 +62,5 @@ describe("logsChanged", () => {
     const error = new Error("GET http://127.0.0.1:3346/logs: not served");
     expect(after({ part: "proxy", connection: { state: "dropped" } }).connections.proxy).toEqual({ state: "dropped" });
     expect(after({ part: "server", connection: { state: "failed", error } }).connections).toEqual({ proxy: { state: "connecting" }, server: { state: "failed", error } });
-  });
-});
-
-describe("summary", () => {
-  const event = { service: "proxy", event: "request", started_at: "2026-11-16T09:00:00.000Z", duration_ms: 1 };
-
-  it("says a failed request's error first, then the facts that tell it from another", () => {
-    const failed = { ...event, outcome: "error" as const, error: "Refused: Nothing is served at /elsewhere\n    at resolve", facts: { method: "GET", url: "/elsewhere", status: 404 } };
-    expect(summary(failed)).toBe("Refused: Nothing is served at /elsewhere method=GET url=/elsewhere status=404");
-  });
-
-  it("says an event that ended as it should by its facts, its trace's id left to the event", () => {
-    expect(summary({ ...event, outcome: "ok", facts: { trace_id: "t", url: "/logs", status: 200 } })).toBe("url=/logs status=200");
   });
 });

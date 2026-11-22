@@ -19,10 +19,6 @@ export const FAILED = { 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 
 export type FailedStatus = keyof typeof FAILED;
 export const statusLine = (status: FailedStatus) => `${status} ${FAILED[status]}`;
 
-// [LAW:single-enforcer] The one rule for a status that says its request failed, whoever answered it (a part, or an
-// upstream a part relays): RFC 9110's client error (4xx) and server error (5xx) classes.
-export const isErrorStatus = (status: number): boolean => status >= 400 && status <= 599;
-
 // [LAW:one-source-of-truth] The paths the parts answer, which each part's route table and every client of it name. A
 // segment with a colon is the route's parameter, one whole path segment.
 export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name", status: "/status", info: "/info", logs: "/logs", launch: "/launch" } as const;
@@ -31,7 +27,7 @@ export const ROUTES = { recordings: "/recordings", recording: "/recordings/:name
 export const recordingPath = (name: string) => ROUTES.recording.replace(":name", () => encodeURIComponent(name));
 
 // [LAW:single-enforcer] The one way a client asks a part: its answer to one request, parsed. The part failing to answer
-// is the asker's `DependencyFailed`: an answer with an error status, in the part's own words, which are the user's to
+// is the asker's `DependencyFailed`: an answer that is no success (2xx), the only answer parsed, in the part's own words, which are the user's to
 // read as they are, or, when its body is no `Failure` (a proxy's, node's own refusal of a malformed request), in the
 // request and the status line; a connection that failed, or an answer its parse finds `Malformed`, naming the request,
 // with the failure its `cause`. Any other error of the parse is the asker's own bug, and passes as it is.

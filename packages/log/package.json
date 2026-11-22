@@ -13,6 +13,7 @@
     "./testing": "./src/testing.ts",
     "./line": "./src/line.ts",
     "./lines": "./src/lines.ts",
+    "./status": "./src/status.ts",
     "./trace": "./src/trace.ts",
     "./wire": "./src/wire.ts"
   },

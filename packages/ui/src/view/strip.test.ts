@@ -2,7 +2,7 @@ import { exchanges } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
-import { assistant, replied, call as toolCall, request as fixtureRequest, text, user } from "../../test/fixtures.ts";
+import { assistant, at, replied, call as toolCall, request as fixtureRequest, text, user } from "../../test/fixtures.ts";
 import { createHistory } from "./history.ts";
 import { failuresOf, mostOf, partedOf, stackOf, titleOf, wheelPixels } from "./strip.ts";
 
@@ -22,6 +22,17 @@ describe("failuresOf", () => {
   it("marks no step whose tool's result did not fail", () => {
     const failures = failuresOf(segmentsOf([...request("t1", [ask]), ...request("t2", [ask, call, result({ content: "ok" })])]));
     expect(failures[1]).toEqual({ exchange: false, tool: false });
+  });
+
+  it("marks a step whose request failed as the proxy's log says: answered in full with an error status, or failed, and not cut short", () => {
+    const answered = (trace: string, outcome: "ok" | "aborted"): RecordedEvent[] => [
+      ...request(trace, [ask]),
+      { ...at(trace), type: "response", status: 529, reason: "Overloaded", http_version: "1.1", headers: [] },
+      { ...at(trace), type: "end", outcome },
+    ];
+    const failed: RecordedEvent[] = [...request("t3", [ask]), { ...at("t3"), type: "end", outcome: "error", error: "connect ECONNREFUSED" }];
+    const failures = failuresOf(segmentsOf([...answered("t1", "ok"), ...answered("t2", "aborted"), ...failed, ...request("t4", [ask])]));
+    expect(failures.map(({ exchange }) => exchange)).toEqual([true, false, true, false]);
   });
 
   it("marks the step that brought a failed result as the next version of one its line already holds", () => {

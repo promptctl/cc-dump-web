@@ -4,9 +4,8 @@ import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { inspect } from "node:util";
 import { LOOPBACK } from "./address.ts";
-import type { Ending } from "./ending.ts";
+import { requestEnding, type Ending } from "./ending.ts";
 import { mintTraceId, type TraceId } from "./trace.ts";
-import { isErrorStatus } from "./wire.ts";
 
 export type { Ending, TraceId };
 
@@ -87,8 +86,7 @@ function endEvent(log: Log, event: string, facts: Facts, span: Pick<ReturnType<t
 // The request's unit of work as its event records it. A handler reports a failure through `fail`;
 // what the client is sent when that happens is the handler's decision, made before or after `fail`.
 // `ended` resolves when the response closes, with how its response ended: sent in full, cut, or failed as the handler
-// reported. That is not always how the request ended, which its event records: a response sent in full with an error
-// status ended ok, and failed its request (`answered`).
+// reported. How the request ended, which its event records, is judged from that and its status (`requestEnding`).
 // [LAW:no-ambient-temporal-coupling] A promise's callbacks are queued together when it resolves, so what
 // a handler subscribes to `ended` before the request ends runs before its server's `close` resolves.
 export type Work = { trace_id: TraceId; fail: (error: unknown) => void; ended: Promise<Ending> };
@@ -203,12 +201,11 @@ function clientOf(socket: Socket) {
   return { client_address: socket.remoteAddress, client_port: socket.remotePort };
 }
 
-// The event is written once, when the response closes: an error reported before then is its
-// outcome, the first one if there were several. A response cut short was stopped if its server had stopped
-// listening by then, which only `close` does, and was left by its client otherwise.
+// The event is written once, when the response closes. The response's ending is an error reported before then, the
+// first one if there were several; or, for a response cut short, stopped if its server had stopped listening by then,
+// which only `close` does, and left by its client otherwise; or ok.
 // [LAW:one-source-of-truth] This is the one place that decides how a request's response ended, which the handler reads
-// from `ended`, and how the request ended, which its event records. The request is in flight, for `close` to wait on,
-// until they are decided.
+// from `ended` and the event's outcome is judged from. The request is in flight, for `close` to wait on, until it is.
 function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: Set<Promise<Ending>>): RequestListener {
   return (req, res) => {
     const span = startTrace();
@@ -220,16 +217,17 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       const cut = server.listening ? "aborted" : "stopped";
       const ending: Ending =
         failure === undefined ? { outcome: res.writableFinished ? "ok" : cut } : { outcome: "error", error: failure };
+      // The status line the handler set; on a cut response the client may not have received it.
+      const head = res.headersSent ? { status: res.statusCode, reason: res.statusMessage } : undefined;
       inFlight.delete(ended);
       end(ending);
       log({
         event: "request",
         ...span.end(),
-        ...answered(ending, res),
+        ...requestEnding(ending, head),
         method: req.method,
         url: req.url,
-        // The status the handler set; on a cut response the client may not have received it.
-        status: res.headersSent ? res.statusCode : null,
+        status: head?.status ?? null,
         ...client,
       });
     });
@@ -242,15 +240,6 @@ function withRequestEvent(log: Log, handler: Handler, server: Server, inFlight: 
       res.destroy();
     }
   };
-}
-
-// [LAW:single-enforcer] The one place a request's status is judged: how a request ended, from how its response did. A
-// response sent in full with an error status failed its request, by the status line it was sent with, whoever wrote it,
-// the part or an upstream the part relays. A failure the part reported is already the response's ending and stands, and
-// a cut response is aborted or stopped whatever its status. The response's ending is not judged: it is also what the
-// proxy records as an exchange's end, where an upstream's error status is the response's, not the exchange's.
-function answered(response: Ending, res: ServerResponse): Ending {
-  return response.outcome === "ok" && isErrorStatus(res.statusCode) ? { outcome: "error", error: `${res.statusCode} ${res.statusMessage}` } : response;
 }
 
 // The upgrade's event is written once, when its socket closes: an error the part reported is its outcome; otherwise a

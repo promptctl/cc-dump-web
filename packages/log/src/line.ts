@@ -2,6 +2,7 @@ import { describe } from "./describe.ts";
 import { outcomes, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
 import { fields, jsonObject, parseJson } from "./json.ts";
+import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
 // parser is this one.
@@ -11,8 +12,8 @@ import { fields, jsonObject, parseJson } from "./json.ts";
 export const levels = ["error", "warn", "info"] as const;
 export type Level = (typeof levels)[number];
 
-// [LAW:one-source-of-truth] Every event carries how its unit of work ended, a request's judged by its status too
-// (`answered`), so its level is read off that, never written beside it.
+// [LAW:one-source-of-truth] Every event carries how its unit of work ended (a request's, `requestEnding`), so its level
+// is read off that, never written beside it.
 export function levelOf(outcome: Ending["outcome"]): Level {
   switch (outcome) {
     case "error":
@@ -25,9 +26,9 @@ export function levelOf(outcome: Ending["outcome"]): Level {
   }
 }
 
-// A logged event: the part that wrote it, the unit of work, when it started and how long it took, how it ended, and
-// every other fact on it.
-export type LoggedEvent = Ending & { service: string; event: string; started_at: string; duration_ms: number; facts: Record<string, unknown> };
+// A logged event: the part that wrote it, the unit of work and its trace, when it started and how long it took, how it
+// ended, and every other fact on it.
+export type LoggedEvent = Ending & { service: string; event: string; trace_id: TraceId; started_at: string; duration_ms: number; facts: Record<string, unknown> };
 
 // Where a line is: line `seq` of the part's process `run`, numbered from 0 as the process writes them.
 export type LinePosition = { run: string; seq: number };
@@ -47,7 +48,7 @@ export function positionOf(id: string): LinePosition | undefined {
 }
 
 // The fields a logged event has a place of its own for; the rest are its facts.
-const named = new Set(["service", "event", "started_at", "duration_ms", "outcome", "error"]);
+const named = new Set(["service", "event", "trace_id", "started_at", "duration_ms", "outcome", "error"]);
 
 // [LAW:parse-dont-validate] The line whose event is `data` and whose id is `id`. An id that names no line is no log's,
 // and throws; an event that does not parse taints no other line, so it is this one's, unread, in its place among them.
@@ -67,6 +68,7 @@ function parseLoggedEvent(json: string): LoggedEvent {
   const logged = {
     service: f.string("service"),
     event: f.string("event"),
+    trace_id: f.parsed("trace_id", parseTraceId),
     started_at: f.string("started_at"),
     duration_ms: f.read("duration_ms", (value) => typeof value === "number", "a number"),
     facts: Object.fromEntries(Object.entries(event).filter(([name]) => !named.has(name))),

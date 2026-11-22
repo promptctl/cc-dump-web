@@ -2,6 +2,7 @@ import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from "@tansta
 import { memo, useCallback, useContext, useLayoutEffect, useMemo, useRef, type ReactElement, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
+import { isErrorStatus } from "@cc-dump/log/status";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
 import { fieldLines, jsonText, type Part } from "../format/parts.ts";
@@ -15,7 +16,7 @@ import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
 import { positionAt, rowIndex, type Placed, type Position } from "./position.ts";
-import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, statusFailed, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
+import { blockOf, categoryOf, changeColors, clockTime, compact, countsOf, createLayout, describeSize, estimateHeight, isGone, modelName, nestStartsOpen, pastKey, pastOf, preview, seconds, sectionsStartOpen, setStartsOpen, sizeOf, startsExpanded, summaryOf, type BlockRow, type Doing, type Event, type ForkRow, type NestRow, type Parent, type Row, type SetRow, type Stands } from "./rows.ts";
 import { readAt, step, type Cause } from "./scroll.ts";
 import { FilterBar } from "./FilterBar.tsx";
 import { SearchBar } from "./SearchBar.tsx";
@@ -516,8 +517,10 @@ function Lineage({ parent, doing }: { parent: Parent; doing: Doing }) {
 // chrome's ground, so an exchange's start is seen without a line drawn. `reading`: whether the read can still bring this
 // exchange its end.
 function ExchangeLine({ exchange: { exchange, facts, sender }, step, reading }: { exchange: FormattedExchange; step: number; reading: boolean }) {
-  const { end } = exchange;
-  const reason = exchange.response.head?.reason;
+  const {
+    end,
+    response: { head },
+  } = exchange;
   return (
     <div className="mt-3 grid grid-cols-[4ch_8ch_minmax(8ch,1fr)_7ch_3ch_14ch] items-baseline gap-x-3 bg-surface px-4 py-1 font-sans tabular-nums *:truncate">
       <span className="text-right text-foreground-muted">{step}</span>
@@ -542,8 +545,9 @@ function ExchangeLine({ exchange: { exchange, facts, sender }, step, reading }: 
         </span>
       )}
       <span className="text-right">{facts.duration === undefined ? "" : seconds(facts.duration)}</span>
-      {/* An HTTP error reads as one, its reason phrase on hover. */}
-      <span className={statusFailed(facts.status) ? "text-error" : undefined} title={reason}>
+      {/* The response's status, an HTTP error's reading as one, its reason phrase on hover. Whether its request failed
+          is the turn strip's mark (`requestEnding`): a response cut short failed no request by its status. */}
+      <span className={head !== undefined && isErrorStatus(head.status) ? "text-error" : undefined} title={head?.reason}>
         {facts.status}
       </span>
       {/* How it ended: a response that began can still be cut, and one streaming has not ended, which leads, so an
