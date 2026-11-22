@@ -1,6 +1,6 @@
 import type { Block } from "../format/blocks.ts";
 import { beyondContext, diffOf, lineDiff, marks, wordDiff, type Edit } from "../format/diff.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { depthOf, fieldLines, jsonText, type Part } from "../format/parts.ts";
 
 // What a step rewrote in a block (docs/design/02-design.md, "Two axes"): the block before against the block after as
 // a unified diff, the lines a change removed above the lines it added, a line replaced by another marked word by word,
@@ -28,8 +28,9 @@ function partText(part: Part): string {
     case "json":
       return jsonText(part);
     case "fields":
+    case "rest":
       return fieldLines(part.fields)
-        .map(({ name, value, depth }) => `${"  ".repeat(depth)}${name}:${value === undefined ? "" : ` ${value}`}`)
+        .map((line) => `${"  ".repeat(depthOf(line))}${line.name}:${line.value === undefined ? "" : ` ${line.value}`}`)
         .join("\n");
     case "diff":
       return diffOf(part)

@@ -1,5 +1,5 @@
 import { split, type Piece } from "./injected.ts";
-import { doesNotFit, fieldsParts, fieldValue, type Field, type Form, type Medium, type Part } from "./parts.ts";
+import { restParts, fieldValue, receivedParts, type Field, type Form, type Medium, type Part, type PartBody, type Received } from "./parts.ts";
 import { fitting, Misfit, readObject, type Fields } from "./read.ts";
 import { inputParts, jsonInput } from "./tools.ts";
 import { namedIn, type Notice } from "./wire.ts";
@@ -23,7 +23,7 @@ export type Category = (typeof categories)[number];
 // its parts: `call`, a client tool's call; `result`, a client tool's result; `notice`, the harness's notification that an
 // agent stopped (format/wire.ts); `summary`, the summary an assistant's text ends with, as the reply to a compaction
 // does, which the thread that carries it on begins with.
-export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: Part[]; failed?: true } & Stated;
+export type Block = { category: Category; name: string; parts: Part[]; injected?: true; preview?: PartBody[]; failed?: true } & Stated;
 export type Stated = { call?: Call; result?: Answer; notice?: Notice; summary?: string };
 
 // [LAW:types-are-the-program] A client tool's call: its `id`, which its result answers; what it `launches`, for a tool
@@ -54,23 +54,21 @@ const pieces: Record<Role, (text: string) => Piece[]> = {
   system: (text) => split(text, "harness"),
 };
 
-// The label of the part holding a block's fields no read asked for. [LAW:one-source-of-truth] The history reads a
-// reply's by it (view/history.ts).
-export const unreadLabel = "fields";
+// The part holding a block's fields no read asked for.
+const unreadPart = { id: "unread", label: "fields" };
 
 // A value shown as it was received, its JSON or its text, with why it is not shown as what it was read as.
-export function raw(category: Category, name: string, reason: string, received: Part): Block {
-  return { category, name, parts: [doesNotFit(reason), received] };
+export function raw(category: Category, name: string, reason: string, received: Received): Block {
+  return { category, name, parts: receivedParts(reason, received) };
 }
 
 // An error the API returned, as the body of an HTTP error or an event of a stream: it stands where the reply would have.
 export function formatError(fields: Fields): Block {
-  return { category: "assistant", name: "error", parts: [{ kind: "json", value: fields.value("error") }, ...unreadParts(fields)] };
+  return { category: "assistant", name: "error", parts: [{ id: "error", kind: "json", value: fields.value("error") }, ...unreadParts(fields)] };
 }
 
-
 // The fields of an object no read asked for, as a part, when there are any.
-export const unreadParts = (fields: Fields) => fieldsParts(fields.rest(), { label: unreadLabel });
+export const unreadParts = (fields: Fields) => restParts(fields.rest(), unreadPart);
 
 // The fields of an object no read asked for, as a block of their own in `category`, when there are any.
 export function restBlock(fields: Fields, category: Category, name: string): BlockOrNone {
@@ -113,9 +111,10 @@ const toolUse = (read: (name: string, input: unknown) => Part[]): Entry => ({
   name: (fields) => `${fields.string("type")}: ${fields.string("name")}`,
   parts: (fields) => {
     const input = fields.value("input");
-    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is.
-    const parts: Part[] = typeof input === "string" ? [{ kind: "text", form: "verbatim", label: "input so far", text: input }] : read(fields.string("name"), input);
-    return [...parts, { kind: "fields", fields: [["id", fields.string("id")]] }];
+    // The API sends an object, so a string is the JSON a stream has sent so far, not yet JSON, shown as the text it is:
+    // the input's deltas' `partial_json`, joined, another text than the input it becomes.
+    const parts: Part[] = typeof input === "string" ? [{ id: "partial_json", label: "input so far", kind: "text", form: "verbatim", text: input }] : read(fields.string("name"), input);
+    return [...parts, { id: "id", kind: "fields", fields: [["id", fields.string("id")]] }];
   },
 });
 // What a client tool's call states, by the tool, as seen on Claude Code's traffic, 2026-11-17. Its Agent tool launches
@@ -167,7 +166,7 @@ const toolResult: Entry = {
     const content = fields.value("content");
     const failed = fields.value("is_error");
     const id: Field[] = [["tool_use_id", fields.string("tool_use_id")], ...(failed === undefined ? [] : [["is_error", fieldValue(failed)] satisfies Field])];
-    return [...(content === undefined ? [] : contentParts(content, role)), { kind: "fields", fields: id }];
+    return [...(content === undefined ? [] : contentParts(content, role)), { id: "tool_use_id", kind: "fields", fields: id }];
   },
 };
 // A server tool's result says its tool failed by its content's type, the tool's error type (`web_search_tool_result_error`,
@@ -176,16 +175,21 @@ const serverToolResult: Entry = {
   category: tools,
   failed: (block) => String(sentField(sentField(block, "content"), "type")).endsWith("_error"),
   parts: (fields) => [
-    { kind: "json", label: "content", value: fields.value("content") },
-    { kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
+    { id: "content", label: "content", kind: "json", value: fields.value("content") },
+    { id: "tool_use_id", kind: "fields", fields: [["tool_use_id", fields.string("tool_use_id")]] },
   ],
 };
 const ofSource = (of: Medium): Entry => ({ category: byRole, parts: (fields, role) => sourceParts(fields.value("source"), of, role) });
 
+// [LAW:one-source-of-truth] A text block's text as a part, the one name it has wherever it is made: in the text's block,
+// and in each piece of it and that piece's preview (`formatContent`).
+const textId = "text";
+const textPart = (text: string, form: Form): Part => ({ id: textId, kind: "text", form, text });
+
 // [LAW:one-type-per-behavior] Every content block type the Messages API documents, one entry each. A type not here is
 // shown as its raw JSON under its type name.
 const entries = new Map<string, Entry>([
-  ["text", { category: byRole, parts: (fields, _, form) => [{ kind: "text", form, text: fields.string("text") }], stated: summarized }],
+  ["text", { category: byRole, parts: (fields, _, form) => [textPart(fields.string("text"), form)], stated: summarized }],
   // A streamed thinking block has no signature until its signature delta, just before its stop.
   [
     "thinking",
@@ -195,13 +199,13 @@ const entries = new Map<string, Entry>([
         const text = fields.string("thinking");
         const signature = fields.optionalString("signature");
         return [
-          { kind: "text", form: "markdown", text },
-          { kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
+          { id: "thinking", kind: "text", form: "markdown", text },
+          { id: "signature", kind: "fields", fields: [["signature", signature === undefined ? "none" : `${signature.length} characters`]] },
         ];
       },
     },
   ],
-  ["redacted_thinking", { category: thought, parts: (fields) => [{ kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
+  ["redacted_thinking", { category: thought, parts: (fields) => [{ id: "data", kind: "fields", fields: [["data", `${fields.string("data").length} characters`]] }] }],
   ["tool_use", { ...toolUse(inputParts), stated: called }],
   ["server_tool_use", toolUse((_, input) => jsonInput(input))],
   ["mcp_tool_use", toolUse((_, input) => jsonInput(input))],
@@ -221,7 +225,7 @@ const entries = new Map<string, Entry>([
     {
       category: byRole,
       parts: (fields, role) => [
-        { kind: "fields", fields: [["source", fields.string("source")], ["title", fields.string("title")]] },
+        { id: "search result", kind: "fields", fields: [["source", fields.string("source")], ["title", fields.string("title")]] },
         ...contentParts(fields.value("content"), role),
       ],
     },
@@ -234,7 +238,7 @@ const entries = new Map<string, Entry>([
 export function formatBlock(block: unknown, role: Role, form: Form): Block {
   const type = typeof block === "object" && block !== null && "type" in block && typeof block.type === "string" ? block.type : "block";
   const entry = entries.get(type);
-  if (entry === undefined) return { category: byRole(role), name: type, parts: [{ kind: "json", value: block }] };
+  if (entry === undefined) return { category: byRole(role), name: type, parts: [{ id: "block", kind: "json", value: block }] };
   const shown = fitting(
     (): Block => {
       const fields = readObject(block, type);
@@ -256,16 +260,16 @@ export function formatBlock(block: unknown, role: Role, form: Form): Block {
 export function formatContent(block: unknown, role: Role): Block[] {
   const formatted = formatBlock(block, role, "markdown");
   if (!isText(block)) return [formatted];
-  const [, ...fields] = formatted.parts;
+  const fields = formatted.parts.filter(({ id }) => id !== textId);
   const stated: Stated = formatted.summary === undefined ? {} : { summary: formatted.summary };
   const textPieces = pieces[role](block.text);
   return textPieces.map((piece, index) => {
     const form = pieceForm[piece.kind];
     const last = index === textPieces.length - 1;
     const rest = last ? fields : [];
-    const parts: Part[] = [{ kind: "text", form, text: piece.text }, ...rest];
+    const parts: Part[] = [textPart(piece.text, form), ...rest];
     // Its line previews what it holds, not the tag or line that marks it as what its name says.
-    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [{ kind: "text", form, text: piece.content }, ...rest], ...(last ? stated : {}) };
+    return { ...pieceBlock(piece, formatted.category, formatted.name, parts), preview: [textPart(piece.content, form), ...rest], ...(last ? stated : {}) };
   });
 }
 
@@ -295,11 +299,12 @@ function pieceBlock(piece: Piece, category: Category, said: string, parts: Part[
   }
 }
 
-// The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows. Its
-// text is what the tool or the source returned, read verbatim.
+// The content of a tool result, a document or a search result: a string, or content blocks, whose parts it shows, each
+// named under its block's index in the list, which only grows at its end. Its text is what the tool or the source
+// returned, read verbatim.
 function contentParts(content: unknown, role: Role): Part[] {
-  if (typeof content === "string") return [{ kind: "text", form: "verbatim", text: content }];
-  if (Array.isArray(content)) return content.flatMap((block) => formatBlock(block, role, "verbatim").parts);
+  if (typeof content === "string") return [{ id: "content", kind: "text", form: "verbatim", text: content }];
+  if (Array.isArray(content)) return content.flatMap((block, index) => formatBlock(block, role, "verbatim").parts.map((part) => ({ ...part, id: `${index}/${part.id}` })));
   throw new Misfit("content is neither a string nor a list of blocks");
 }
 
@@ -311,19 +316,19 @@ function sourceParts(source: unknown, of: Medium, role: Role): Part[] {
   const parts = ((): Part[] => {
     switch (type) {
       case "base64":
-        return [{ kind: "media", of, source: { type, media_type: fields.string("media_type"), data: fields.string("data") } }];
+        return [{ id: "source", kind: "media", of, source: { type, media_type: fields.string("media_type"), data: fields.string("data") } }];
       case "url":
-        return [{ kind: "media", of, source: { type, url: fields.string("url") } }];
+        return [{ id: "source", kind: "media", of, source: { type, url: fields.string("url") } }];
       case "file":
-        return [{ kind: "media", of, source: { type, file_id: fields.string("file_id") } }];
+        return [{ id: "source", kind: "media", of, source: { type, file_id: fields.string("file_id") } }];
       case "text":
-        return [{ kind: "text", form: "verbatim", text: fields.string("data") }];
+        return [{ id: "source", kind: "text", form: "verbatim", text: fields.string("data") }];
       case "content":
         return contentParts(fields.value("content"), role);
       // A source of a type not here: its other fields follow.
       default:
-        return [{ kind: "fields", label: "source", fields: [["type", type]] }];
+        return [{ id: "source", label: "source", kind: "fields", fields: [["type", type]] }];
     }
   })();
-  return [...parts, ...fieldsParts(fields.rest(), { label: "source fields" })];
+  return [...parts, ...restParts(fields.rest(), { id: "source/unread", label: "source fields" })];
 }

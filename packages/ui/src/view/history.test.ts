@@ -79,8 +79,8 @@ describe("history", () => {
     const after = read(edited);
     const system = () => after.segments[1]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/system/system.0")!;
     expect(system().versions.map(({ step, block }) => [step, block?.parts])).toEqual([
-      [2, [{ kind: "text", form: "markdown", text: "You are Claude Code." }]],
-      [5, [{ kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
+      [2, [{ id: "text", kind: "text", form: "markdown", text: "You are Claude Code." }]],
+      [5, [{ id: "text", kind: "text", form: "markdown", text: "You are Claude Code, edited." }]],
     ]);
     expect(arrived(after)[4]).toEqual({ request: ["t3/request/http"], "message.4": ["thread:t3/message.4/content.0"] });
     // Read without the last step, the history is as it was before it.
@@ -112,6 +112,21 @@ describe("history", () => {
     // A field the client sends back is compared.
     const changed = history([...events.slice(0, 7), ...request("t2", { ...main, messages: [hi, assistant(thinking, { ...read, caller: { type: "other" } })] })]);
     expect(changed.segments[0]!.groups.flatMap(({ items }) => items).find(({ key }) => key === "thread:t1/message.1/content.1")!.versions).toHaveLength(2);
+  });
+
+  it("compares a reply's block holding content blocks as it is resent: the fields the API reported of a block inside it and the client drops do not change it", () => {
+    const result = (said: object) => ({ type: "mcp_tool_result", tool_use_id: "mcptoolu_1", is_error: false, content: [{ type: "text", text: "a", ...said }] });
+    const versions = (resent: object) =>
+      history([
+        ...request("t1", { ...main, messages: [hi] }),
+        ...reply("t1", [result({ reported: true })]),
+        ...request("t2", { ...main, messages: [hi, assistant(result(resent)), user(text("More."))] }),
+      ])
+        .segments[0]!.groups.flatMap(({ items }) => items)
+        .find(({ key }) => key === "thread:t1/message.1/content.0")!.versions;
+    expect(versions({})).toHaveLength(1);
+    // A field of the block inside that the client sends back otherwise is compared.
+    expect(versions({ reported: false })).toHaveLength(2);
   });
 
   it("says of a version what it rewrote: nothing for a reply's block a request took away and a later one resends as a client does, the block it was for one sent with other content", () => {

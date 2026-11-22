@@ -5,7 +5,7 @@ import { latest, trailersOf, type Exchange, type ExchangeShown, type Of, type Re
 import { createDecoding, headerValues, type Body, type Decoding } from "./body.ts";
 import { equal } from "./equal.ts";
 import { formatBlock, formatContent, formatError, raw, restBlock, roleCategory, unreadParts, type Block, type BlockOrNone, type Role } from "./blocks.ts";
-import { fieldValue, pickedPart, valuePart, type Field, type Part } from "./parts.ts";
+import { fieldValue, occurrences, pickedPart, valuePart, type Field, type PartBody } from "./parts.ts";
 import { fitting, Misfit, parseJson, readObject } from "./read.ts";
 import { senderOf, type Sender } from "./wire.ts";
 import { createReassembly, type Reassembly, type Stream } from "./stream.ts";
@@ -183,18 +183,28 @@ function growing<T>(cache: WeakMap<object, T>, side: RequestSide | ResponseSide,
   return value;
 }
 
+// [LAW:single-enforcer] The one maker of a keyed block, and so the one place a block's parts are held to having a name
+// each (parts.ts, Part's `id`). [LAW:no-silent-failure] Every id is the formatter's own, so two parts of one name are its
+// error, never the traffic's, and it throws.
+export function keyed(block: Block, key: string): KeyedBlock {
+  const ids = block.parts.map(({ id }) => id);
+  const twice = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (twice !== undefined) throw new Error(`The formatter made the block ${key} with two parts named ${JSON.stringify(twice)}`);
+  return { ...block, key };
+}
+
 // The blocks of one source, each keyed by it: a source of at most one block, or a list, whose blocks are keyed by their
 // place in it, since a list only grows at its end.
 function one(key: string, blocks: BlockOrNone): KeyedBlock[] {
-  return blocks.map((block) => ({ ...block, key }));
+  return blocks.map((block) => keyed(block, key));
 }
 function each(key: string, blocks: Block[]): KeyedBlock[] {
-  return blocks.map((block, index) => ({ ...block, key: `${key}.${index}` }));
+  return blocks.map((block, index) => keyed(block, `${key}.${index}`));
 }
 // The blocks of one content block of a message: the one block keeps the content block's key, so a text nothing was
 // injected into is keyed as it always was, and a text split into several is keyed by the place of each piece in it.
 function contentBlocks(key: string, blocks: Block[]): KeyedBlock[] {
-  return blocks.length === 1 ? blocks.map((block) => ({ ...block, key })) : each(key, blocks);
+  return blocks.length === 1 ? blocks.map((block) => keyed(block, key)) : each(key, blocks);
 }
 // Blocks standing at `place` in their thread.
 function placed(place: Place, blocks: KeyedBlock[]): KeyedBlock[] {
@@ -252,10 +262,11 @@ function requestBody(text: string, whole: boolean): RequestShown {
       // Every other field is a parameter, so one the API adds is shown with the rest; the model stays among them. Its line
       // previews those a client varies from one request to the next.
       const rest = body.rest();
-      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest)], preview: [pickedPart(rest, varied)] };
+      const parameters: Block = { category: "parameters", name: "parameters", parts: [valuePart(rest, "parameters")], preview: [pickedPart(rest, varied)] };
       // Its line previews where they are.
-      const places: Part = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
-      const cache: BlockOrNone = breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ kind: "fields", fields: breakpoints }], preview: [places] }];
+      const places: PartBody = { kind: "text", form: "verbatim", text: breakpoints.map(([place]) => place).join("  ") };
+      const cache: BlockOrNone =
+        breakpoints.length === 0 ? [] : [{ category: "parameters", name: `cache breakpoints: ${breakpoints.length}`, parts: [{ id: "breakpoints", kind: "fields", fields: breakpoints }], preview: [places] }];
       return {
         own: [...placed({ in: "parameters" }, one("parameters", [parameters])), ...one("cache", cache)],
         sent: [
@@ -340,18 +351,14 @@ function toolBlocks(tools: unknown): KeyedBlock[] {
   if (tools === undefined) return [];
   if (!Array.isArray(tools)) throw new Misfit("tools is not a list");
   const keys = toolKeys(tools);
-  return tools.map((tool, index) => ({ ...toolBlock(tool, toolName(tool)), key: keys[index]! }));
+  return tools.map((tool, index) => keyed(toolBlock(tool, toolName(tool)), keys[index]!));
 }
 
 // Each tool's key, its name's `%` and `/` escaped as a URI's are.
 function toolKeys(tools: unknown[]): string[] {
-  const seen = new Map<string, number>();
-  return tools.map((tool) => {
-    const name = toolName(tool);
-    const occurrence = seen.get(name) ?? 0;
-    seen.set(name, occurrence + 1);
-    return `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${occurrence}`;
-  });
+  const names = tools.map(toolName);
+  const counted = occurrences(names, (name) => name);
+  return names.map((name, index) => `tools.${name.replaceAll("%", "%25").replaceAll("/", "%2F")}.${counted[index]}`);
 }
 
 function toolBlock(tool: unknown, name: string): Block {
@@ -364,7 +371,7 @@ function toolBlock(tool: unknown, name: string): Block {
       return {
         category: "tools",
         name,
-        parts: [...(description === undefined ? [] : [{ kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
+        parts: [...(description === undefined ? [] : [{ id: "description", kind: "text", form: "markdown", text: description } as const]), ...unreadParts(fields)],
       };
     },
     (reason) => raw("tools", name, reason, { kind: "json", value: tool }),
@@ -442,11 +449,11 @@ function messageBlocks(message: Record<string, unknown>): ResponseShown {
             {
               category: "usage",
               name: `stop reason: ${show(stopReason)}`,
-              parts: [pickedPart(stop, ["stop_reason", "stop_sequence"])],
+              parts: [{ id: "stop", ...pickedPart(stop, ["stop_reason", "stop_sequence"]) }],
               preview: [pickedPart(stop, ["stop_sequence"])],
             },
           ]),
-          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage)], preview: [pickedPart(usage, counted)] }]),
+          ...one("usage", [{ category: "usage", name: "usage", parts: [valuePart(usage, "usage")], preview: [pickedPart(usage, counted)] }]),
           // Of what else the API reported, the line previews the message's id, which is all of it that varies.
           ...one("fields", restBlock(fields, "usage", "message")).map((block) => ({ ...block, preview: [pickedPart(fields.rest(), ["id"])] })),
         ],
@@ -477,14 +484,14 @@ function tokens(usage: unknown, name: string): number | undefined {
 // has not ended.
 type Ending = { own: BlockOrNone; reply: BlockOrNone };
 function ending(end: Of<"end"> | undefined): Ending {
-  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }], reply: [] });
+  const cut = (name: string, text: string): Ending => ({ own: [{ category: "http", name, parts: [{ id: "end", kind: "text", form: "verbatim", text }] }], reply: [] });
   switch (end?.outcome) {
     case undefined:
     case "ok":
       return { own: [], reply: [] };
     // A failure stands where the reply would have been, as an error the API returned does.
     case "error":
-      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ kind: "text", form: "verbatim", text: end.error }] }] };
+      return { own: [], reply: [{ category: "assistant", name: "error", parts: [{ id: "error", kind: "text", form: "verbatim", text: end.error }] }] };
     case "aborted":
       return cut("aborted", "The agent left the exchange before it completed.");
     case "stopped":
@@ -493,12 +500,12 @@ function ending(end: Of<"end"> | undefined): Ending {
 }
 
 function httpBlock(name: string, line: string, headers: Header[], trailers: { headers: Header[] } | undefined): Block {
-  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ kind: "fields" as const, label: "trailers", fields: trailers.headers }];
-  return { category: "http", name, parts: [{ kind: "text", form: "verbatim", text: line }, { kind: "fields", label: "headers", fields: headers }, ...trailerParts] };
+  const trailerParts = trailers === undefined || trailers.headers.length === 0 ? [] : [{ id: "trailers", label: "trailers", kind: "fields" as const, fields: trailers.headers }];
+  return { category: "http", name, parts: [{ id: "line", kind: "text", form: "verbatim", text: line }, { id: "headers", label: "headers", kind: "fields", fields: headers }, ...trailerParts] };
 }
 
 function notRecorded(side: "request" | "response"): Block {
-  return { category: "http", name: `HTTP ${side}`, parts: [{ kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
+  return { category: "http", name: `HTTP ${side}`, parts: [{ id: "head", kind: "text", form: "verbatim", text: `The ${side}'s head was not recorded, and with it its content type and coding.` }] };
 }
 
 // A side's body, decoded, and whether it is whole: complete, and decoded to the end. Only a whole body is parsed; any
@@ -511,10 +518,10 @@ function decodeSide(decoding: Decoding, side: RequestSide | ResponseSide): { bod
 
 // [LAW:dataflow-not-control-flow] What a stage could not turn into blocks, shown raw: nothing, when nothing is left.
 function undecoded(body: Body): BlockOrNone {
-  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ kind: "text", form: "verbatim", text: body.error }] }];
+  return body.error === undefined ? [] : [{ category: "http", name: "body not decoded", parts: [{ id: "error", kind: "text", form: "verbatim", text: body.error }] }];
 }
 function leftover(name: string, text: string): BlockOrNone {
-  return text === "" ? [] : [{ category: "http", name, parts: [{ kind: "text", form: "verbatim", text }] }];
+  return text === "" ? [] : [{ category: "http", name, parts: [{ id: "text", kind: "text", form: "verbatim", text }] }];
 }
 
 function show(value: unknown): string {

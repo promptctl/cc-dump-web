@@ -6,14 +6,14 @@ import type { Log } from "@cc-dump/log/event";
 import { isErrorStatus } from "@cc-dump/log/status";
 import { diffOf, marks, type Edit } from "../format/diff.ts";
 import { blockDiff, type DiffLine, type LineFold } from "./change.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { depthOf, fieldLines, jsonText, type Part } from "../format/parts.ts";
 import type { FormattedExchange } from "../format/format.ts";
 import { categoryVars, type Theme } from "../theme/theme.ts";
 import { Minimap } from "./Minimap.tsx";
 import { viewLog } from "./decisions.ts";
 import { siblingFrom } from "./forks.ts";
 import { createHistory, sameFields } from "./history.ts";
-import { forkMove, inListed, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
+import { forkMove, inListed, injectedMove, currentOf, judge, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import { lineHeightOf } from "./lineHeight.ts";
 import { conversationKeys, heard, useKeys, withKeys } from "./keyboard.ts";
 import { inMotion } from "./motion.ts";
@@ -61,7 +61,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   // How the moment stands, which holds every move while its step is not read and, once nothing can bring it, is
   // replaced with now by the view's sync; and the column the moves count in.
   const standing = useMemo(() => standingOf(conversation, read, momentStep, listed), [conversation, read, momentStep, listed]);
-  const column: ColumnState = { rows, keys, every, moment: standing };
+  const column: ColumnState = useMemo(() => ({ rows, keys, every, moment: standing }), [rows, keys, every, standing]);
   // The position's row, which is always mounted: a step to a match commits with that row on screen.
   const anchorKey = useView((state) => (state.position.at === "row" ? state.position.key : undefined));
   const scroller = useRef<HTMLElement>(null);
@@ -103,8 +103,20 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   const chosen = useView((state) => state.moment.at === "chosen");
   const following = !follow ? "off" : atEnd ? "on" : chosen ? "chosen" : "paused";
   const control = followStates[following];
+  // The search (docs/design/01-features.md, F6): its matches among every row, in the hidden categories as well.
+  const query = useView((state) => state.search.query);
+  const options = useSettings(useShallow((state) => state.search));
+  const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
+  const search = useMemo(() => createSearch(), []);
+  const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
+  // [LAW:one-source-of-truth] The current match as the column's judge finds it, once for this render, and the match it
+  // finds standing: the one every reader of the current match takes.
+  const judged = useMemo(() => judge(column, current, pattern), [column, current, pattern]);
+  const standingMatch = currentOf(judged);
+  const currentOrdinal = useMemo(() => ordinal(found, standingMatch), [found, standingMatch]);
+  const paint = useMemo(() => ({ pattern, current: standingMatch }), [pattern, standingMatch]);
   // What holds the moves, which the line under the rows says.
-  const waiting = useView(useShallow((state) => waitingOf(column, state.position, state.search.current)));
+  const waiting = useView(useShallow((state) => waitingOf(column, state.position, standingMatch)));
 
   // What the view keeps between steps that is the scroller's, made with it; the position is the store's (scroll.ts `Kept`).
   const scrollerKept = useRef<Omit<Kept, "position">>({ written: 0, scrolled: false });
@@ -124,11 +136,6 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     scrollerKept.current = { written: next.written, scrolled: next.scrolled };
     decisions.stepped({ cause, offset, end, kept, next });
     if (next.position !== kept.position) view.place(next.position, next.by, now);
-    const cleared = matchGone(column, useView.getState().search.current);
-    if (cleared !== undefined) {
-      decisions.matchCleared(cleared);
-      view.matchGone();
-    }
     // The moment replaced is the one the column judged gone, this render's.
     if (column.moment.at === "gone") {
       decisions.momentReplaced(moment, column.moment);
@@ -151,6 +158,13 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   });
   // A hold of the moves in force as the view goes ends with it.
   useLayoutEffect(() => decisions.close, [decisions]);
+  // [LAW:effects-at-boundaries] A current match the judge cleared is logged, with why, and no longer held as current,
+  // once for each judgement.
+  useLayoutEffect(() => {
+    if (judged.is !== "cleared") return;
+    decisions.matchCleared(judged.cleared);
+    view.clearMatch();
+  }, [decisions, judged]);
   useLayoutEffect(() => {
     const element = scroller.current!;
     const onScroll = () => latest.current("scroll");
@@ -173,13 +187,6 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
     if (following !== "on") view.place({ at: "end" }, "reader", now);
     latest.current("choose");
   };
-  // The search (docs/design/01-features.md, F6): its matches among every row, in the hidden categories as well.
-  const query = useView((state) => state.search.query);
-  const options = useSettings(useShallow((state) => state.search));
-  const { pattern, error } = useMemo(() => patternOf(query, options), [query, options]);
-  const search = useMemo(() => createSearch(), []);
-  const found = useMemo(() => search(every.rows, pattern), [search, every.rows, pattern]);
-  const currentOrdinal = useMemo(() => ordinal(found, current, pattern), [found, current, pattern]);
   // [LAW:single-enforcer] The view put at `target`, drawn in the element `text` of the row `key`, a few of the text's
   // lines below the top: what ends a move to something a commit has just shown, a match or a heading.
   const putAt = (key: string, text: HTMLElement, target: Range | HTMLElement) => {
@@ -194,7 +201,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
   // A step to a match, as one act: it is committed with the folds holding it open and its row mounted, then the view is
   // put at the match's line.
   const stepTo = (direction: Direction) => {
-    const next = matchMove(column, found, current, useView.getState().position, direction, pattern);
+    const next = matchMove(column, found, standingMatch, useView.getState().position, direction, pattern);
     if (next === undefined) return;
     flushSync(() => view.goTo(next, now));
     const match = currentMatch();
@@ -337,7 +344,7 @@ export function Conversation({ formatted, read, theme, log }: { formatted: Forma
             <Hold.Provider value={onHold}>
               <ToHeading.Provider value={onHeading}>
                 <ToSibling.Provider value={onSibling}>
-                  <Painted.Provider value={pattern}>
+                  <Painted.Provider value={paint}>
                     <div className="relative shrink-0 font-mono text-xs" style={{ height: total }}>
                       {virtualizer.getVirtualItems().map((item) => (
                         <ListedRow key={keys.at(item.index)} item={item} measure={virtualizer.measureElement}>
@@ -655,8 +662,8 @@ function BlockView({ row }: { row: BlockRow }) {
       {open && (
         <div className="max-w-[110ch] pb-1 pl-6">
           <Sections.Provider value={sectionsStartOpen(block)}>
-            {block.parts.map((part, index) => (
-              <PartView key={index} part={part} blockKey={row.key} index={index} />
+            {block.parts.map((part) => (
+              <PartView key={part.id} part={part} blockKey={row.key} />
             ))}
           </Sections.Provider>
         </div>
@@ -753,43 +760,43 @@ function DiffLineView({ change, children }: { change: Edit["change"]; children: 
   );
 }
 
-// `index`: the part's place among its block's parts.
-function PartView({ part, blockKey, index }: { part: Part; blockKey: string; index: number }) {
+function PartView({ part, blockKey }: { part: Part; blockKey: string }) {
   return (
     <div className="py-0.5">
       {part.label !== undefined && <div className="text-foreground-muted">{part.label}</div>}
-      <PartContent part={part} blockKey={blockKey} index={index} />
+      <PartContent part={part} blockKey={blockKey} />
     </div>
   );
 }
 
 // [LAW:types-are-the-program] Its return type is the switch's exhaustiveness check: a Part kind it misses leaves a path
 // returning nothing, which tsc refuses.
-function PartContent({ part, blockKey, index }: { part: Part; blockKey: string; index: number }): ReactElement {
+function PartContent({ part, blockKey }: { part: Part; blockKey: string }): ReactElement {
   switch (part.kind) {
     case "text":
-      return <TextView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <TextView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "json":
-      return <JsonView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <JsonView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "fields":
+    case "rest":
       return (
         // A name is as wide as it is up to 40% of the width, wrapping past it, so a long one leaves its value in view; a
         // field a field holds is indented under it.
         <dl className="grid grid-cols-[fit-content(40%)_1fr] gap-x-3">
-          {fieldLines(part.fields).map(({ name, value, depth }, field) => (
-            <div key={field} className="contents">
-              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depth * 2}ch` }}>
-                <HighlightedText blockKey={blockKey} at={address.field(index, field, "name")} text={name} />
+          {fieldLines(part.fields).map((line) => (
+            <div key={address.field(part, line.path, "name")} className="contents">
+              <dt className="break-all text-foreground-muted" style={{ paddingLeft: `${depthOf(line) * 2}ch` }}>
+                <HighlightedText blockKey={blockKey} at={address.field(part, line.path, "name")} text={line.name} />
               </dt>
               <dd className="break-all whitespace-pre-wrap">
-                {value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(index, field, "value")} text={value} />}
+                {line.value !== undefined && <HighlightedText blockKey={blockKey} at={address.field(part, line.path, "value")} text={line.value} />}
               </dd>
             </div>
           ))}
         </dl>
       );
     case "diff":
-      return <DiffView part={part} blockKey={blockKey} at={address.part(index)} />;
+      return <DiffView part={part} blockKey={blockKey} at={address.part(part)} />;
     case "media": {
       const { of, source } = part;
       switch (source.type) {
@@ -824,14 +831,18 @@ const diffMarks: Record<Edit["change"], { ground: string; color: string; weight:
 function DiffView({ part, blockKey, at }: { part: Extract<Part, { kind: "diff" }>; blockKey: string; at: string }) {
   const diff = diffOf(part);
   const where = useWhere(blockKey, at, diff);
-  return (
-    <div className="font-mono break-words whitespace-pre-wrap">
-      {diff.lines.map((line, index) => (
-        <DiffLineView key={index} change={line.change}>
-          <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
-        </DiffLineView>
-      ))}
-    </div>
+  // The same element while `where` is, so a step draws again only the texts it leaves and enters.
+  return useMemo(
+    () => (
+      <div className="font-mono break-words whitespace-pre-wrap">
+        {diff.lines.map((line, index) => (
+          <DiffLineView key={index} change={line.change}>
+            <Highlighted slice={line.text} from={diff.passages[index]!.start} where={where} />
+          </DiffLineView>
+        ))}
+      </div>
+    ),
+    [diff, where],
   );
 }
 

@@ -1,7 +1,9 @@
 import { parseTraceId } from "@cc-dump/log/trace";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { add, type ByTrace, type Exchange } from "./exchanges.ts";
-import type { MomentStanding, Pending } from "./view/rows.ts";
+import { currentOf, judge, type ColumnState } from "./view/moves.ts";
+import type { Keys, MomentStanding, Pending, Row } from "./view/rows.ts";
+import type { Current, Standing } from "./view/search.ts";
 
 // A moment read, in which `comes` says what can still bring a key not among its rows, and nothing brings one it says
 // nothing of, the read having ended.
@@ -12,6 +14,30 @@ export const readWith = (comes: (key: string) => Pending | undefined): MomentSta
     return read === undefined ? { at: "gone", why: "read_ended" } : { at: "pending", read };
   },
 });
+
+// The keys of `rows`, each at its place among them.
+export const keysOf = (rows: readonly Row[]): Keys => ({
+  at: (index) => rows[index]!.key,
+  indexOf: (key) => {
+    const index = rows.findIndex((row) => row.key === key);
+    return index === -1 ? undefined : index;
+  },
+});
+
+// The column of `rows`, every one listed, its moment standing as `moment` says: read, with nothing left to bring, unless
+// it says otherwise.
+export function columnOf(rows: Row[], moment: MomentStanding = readWith(() => undefined)): ColumnState {
+  const keys = keysOf(rows);
+  return { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment };
+}
+
+// `current` as the column's judge finds it standing under `pattern`, or an error saying how it found it instead.
+export function standingIn(column: ColumnState, current: Current, pattern: RegExp): Standing {
+  const judged = judge(column, current, pattern);
+  const standing = currentOf(judged);
+  if (standing === undefined) throw new Error(`${JSON.stringify(current)} does not stand: ${JSON.stringify(judged)}`);
+  return standing;
+}
 
 // The fields every recorded event of a test's trace carries, recorded at `timestamp`: `at(trace)` for an event of the
 // trace labelled `trace`.

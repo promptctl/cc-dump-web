@@ -1,27 +1,45 @@
 import { diffOf } from "../format/diff.ts";
-import { fieldLines, jsonText, type Part } from "../format/parts.ts";
+import { fieldLines, jsonText, type FieldPath, type Part } from "../format/parts.ts";
 import type { KeyedBlock } from "../format/format.ts";
 import type { SearchOptions } from "../settings.ts";
 import { rankBefore, rankOf, type At } from "./position.ts";
 import type { Range } from "./range.ts";
 import { regionKey } from "./regions.ts";
 import { regionsAround, renderingOf, type Folded } from "./rendering.ts";
-import { blockOf, nestsOf, type BlockRow, type Row } from "./rows.ts";
+import { blockOf, nestsOf, type BlockRow, type Pending, type Row } from "./rows.ts";
 
 // Search (docs/design/01-features.md, F6): the matches of a query in the texts every block shows, whichever category it is
 // in, counted, stepped through in order, and found in each text shown for highlighting.
 
-// A match: the block's row key, the address of the text it is in (`address`), and where it starts in that text. A text
-// that changes at its address names by that offset whichever match starts there now, or none: a tool's input so far
-// replaced by its JSON once whole, or a streaming Markdown text whose rendering a closing backtick or asterisk shortens.
-export type Match = { key: string; at: string; start: number };
+// A match: the block's row key, the address of the text it is in (`address`), and which of the pattern's matches in
+// that text it is, `nth`, counting from 0. [LAW:types-are-the-program] The view sees a text only as one snapshot after
+// another, so an offset is true only of the text it was measured in; which match it is, the text decides again as it
+// is now, and every render finds its range from that (`resolve`).
+export type Match = { key: string; at: string; nth: number };
 
-// [LAW:one-source-of-truth] The addresses of the texts a block shows: its name, a part's text or JSON, the name or value
-// of a part's field. The search and the view both name a text by them.
+// The current match: a match, and the literal of the pattern it was taken under, so a match taken under another
+// pattern than the search's now is none (moves.ts `judge`).
+export type Current = Match & { pattern: string };
+
+// [LAW:one-source-of-truth] A pattern's identity, as a current match keeps it: its source and flags, so one query read
+// one way is one pattern, whichever render or tab compiled it.
+export const literal = (pattern: RegExp): string => String(pattern);
+
+// [LAW:parse-dont-validate] A current match the column's judge found standing (moves.ts `judge`), taken under the
+// search's pattern, with what it found: its row not read yet, by what can still bring it (`read`); or found, its row
+// at `place` among every row, and the match there, which of its block's matches it is (`index`) and its characters
+// (`range`). The counter, the highlight, the steps and the line under the rows each read what it found, so none
+// looks for the match again.
+export type Standing = { is: "pending"; match: Current; read: Pending } | FoundMatch;
+export type FoundMatch = { is: "found"; match: Current; place: At; index: number; range: Range };
+
+// [LAW:one-source-of-truth] The addresses of the texts a block shows, each one JSON tuple, so no two collide whatever
+// names a part or a field has: its name; a part's text or JSON, by the part's id; the name or value of a part's field,
+// by the part's id and the field's path. The search and the view both name a text by them.
 export const address = {
-  name: "name",
-  part: (part: number) => String(part),
-  field: (part: number, field: number, side: "name" | "value") => `${part}/${field}/${side}`,
+  name: JSON.stringify(["name"]),
+  part: ({ id }: Pick<Part, "id">) => JSON.stringify(["part", id]),
+  field: ({ id }: Pick<Part, "id">, path: FieldPath, side: "name" | "value") => JSON.stringify(["field", id, path, side]),
 };
 
 // The key of a block's part, under which its regions are kept: the block's row key and the part's address.
@@ -54,22 +72,23 @@ export type Shown = { at: string } & ({ in: "line" | "content"; searched: Search
 // say its headings again (contents.ts), so none is searched.
 export function shownTexts(row: BlockRow): Shown[] {
   const block = blockOf(row);
-  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap((part, index) => partTexts(part, index))];
+  return [{ at: address.name, searched: whole(block.name), in: "line" }, ...block.parts.flatMap(partTexts)];
 }
 
-function partTexts(part: Part, index: number): Shown[] {
+function partTexts(part: Part): Shown[] {
   switch (part.kind) {
     case "text":
-      return [{ at: address.part(index), searched: renderingOf(part), in: "regions" }];
+      return [{ at: address.part(part), searched: renderingOf(part), in: "regions" }];
     case "json":
-      return [{ at: address.part(index), searched: whole(jsonText(part)), in: "content" }];
+      return [{ at: address.part(part), searched: whole(jsonText(part)), in: "content" }];
     case "fields":
-      return fieldLines(part.fields).flatMap(({ name, value }, field): Shown[] => [
-        { at: address.field(index, field, "name"), searched: whole(name), in: "content" },
-        ...(value === undefined ? [] : [{ at: address.field(index, field, "value"), searched: whole(value), in: "content" } as const]),
+    case "rest":
+      return fieldLines(part.fields).flatMap(({ name, value, path }): Shown[] => [
+        { at: address.field(part, path, "name"), searched: whole(name), in: "content" },
+        ...(value === undefined ? [] : [{ at: address.field(part, path, "value"), searched: whole(value), in: "content" } as const]),
       ]);
     case "diff":
-      return [{ at: address.part(index), searched: diffOf(part), in: "content" }];
+      return [{ at: address.part(part), searched: diffOf(part), in: "content" }];
     case "media":
       return [];
   }
@@ -151,68 +170,87 @@ export function createSearch(): (rows: Row[], pattern: RegExp) => Found {
   };
 }
 
-// The matches of a block, in the order it shows them, each with the text it is in.
-function matchesIn(row: BlockRow, pattern: RegExp): { match: Match; shown: Shown; order: number }[] {
-  return shownTexts(row).flatMap((shown, order) => find(pattern, shown.searched).map(({ start }) => ({ match: { key: row.key, at: shown.at, start }, shown, order })));
+// A match of a block, with the text it is in and its characters there.
+type Located = { match: Match; shown: Shown; range: Range };
+
+// The matches of a block, in the order it shows them.
+function matchesIn(row: BlockRow, pattern: RegExp): Located[] {
+  return shownTexts(row).flatMap((shown) => find(pattern, shown.searched).map((range, nth) => ({ match: { key: row.key, at: shown.at, nth }, shown, range })));
 }
 
-const same = (a: Match, b: Match) => a.key === b.key && a.at === b.at && a.start === b.start;
+// Why a match names no characters in its block's row as it shows now: the row shows no text at its address
+// (`text_gone`), or the text holds fewer of the pattern's matches than it names (`text_changed`).
+export type Unresolved = "text_gone" | "text_changed";
 
-// Which match `current` is, counting from 1, among the matches found: undefined when it is none of them, as when its
-// block is one the formatter replaced.
-export function ordinal(found: Found, current: Match | undefined, pattern: RegExp): number | undefined {
-  const block = current === undefined ? undefined : found.byKey.get(current.key);
-  if (block === undefined) return undefined;
-  const index = matchesIn(block.row, pattern).findIndex(({ match }) => same(match, current!));
-  return index === -1 ? undefined : block.before + index + 1;
+// [LAW:single-enforcer] The one place a match is found in its row as the row shows it now: which of the block's
+// matches it is, the text it is in and its characters there, or why there are none. A row other than a block's shows
+// no text.
+export type Resolved = { resolved: true; index: number; shown: Shown; range: Range } | { resolved: false; why: Unresolved };
+export function resolve(row: Row, { at, nth }: Match, pattern: RegExp): Resolved {
+  if (row.kind !== "block") return { resolved: false, why: "text_gone" };
+  const matches = matchesIn(row, pattern);
+  const index = matches.findIndex(({ match }) => match.at === at && match.nth === nth);
+  const located = matches[index];
+  if (located !== undefined) return { resolved: true, index, shown: located.shown, range: located.range };
+  return { resolved: false, why: shownTexts(row).some((text) => text.at === at) ? "text_changed" : "text_gone" };
 }
 
-// [LAW:types-are-the-program] A step to a match, and the `folds` that must show open for it to be on screen, by key:
-// the nests its block is inside, innermost first, and the set it is in, so its block is listed; then, for a match in
-// the block's content, not on its line, the block, and the regions and the headings' sections holding the match.
-export type Step = { match: Match; folds: string[] };
+// Which match `current` is, counting from 1, among the matches found: undefined when none is current, or its row is
+// not read yet.
+export function ordinal(found: Found, current: Standing | undefined): number | undefined {
+  if (current?.is !== "found") return undefined;
+  const block = found.byKey.get(current.match.key);
+  return block === undefined ? undefined : block.before + current.index + 1;
+}
+
+// [LAW:types-are-the-program] A step to a match, taken under the pattern it was found with, and the `folds` that must
+// show open for it to be on screen, by key: the nests its block is inside, innermost first, and the set it is in, so
+// its block is listed; then, for a match in the block's content, not on its line, the block, and the regions and the
+// headings' sections holding the match.
+export type Step = { match: Current; folds: string[] };
 
 export type Direction = "next" | "previous";
 
-// Where a step of the search counts from: the current match, `match`, while there is one, or the reader's place; `at`:
-// where that stands, in the order of every row, hidden or not, which `found` was made from (position.ts).
-export type From = { match: Match | undefined; at: At };
+// Where a step of the search counts from: the current match, found, or, with none, the reader's place, `place`; each
+// where it stands in the order of every row, hidden or not, which `found` was made from (position.ts).
+export type From = FoundMatch | { is: "place"; place: At };
 
 // The match after or before the one `from` names, in the order the conversation shows them, wrapping at either end;
-// undefined when there is no match. A current whose block is not among the rows stands at the end of the row standing
-// in for it: the row it was inside when the formatter replaced it. So the steps go on from where it was. With no
-// current, the steps start from the reader's place: its top row's matches first going on, and the matches above it
-// going back.
+// undefined when there is no match. With no current, the steps start from the reader's place: its top row's matches
+// first going on, and the matches above it going back.
 export function adjacent(found: Found, from: From, direction: Direction, pattern: RegExp): Step | undefined {
   const forward = direction === "next";
   const pick = <T>(list: T[], is: (item: T) => boolean) => (forward ? list.find(is) : list.findLast(is));
   const ahead = (by: number) => (forward ? by > 0 : by < 0);
-  // In its own block, the first match past it in the direction of the step.
-  const own = from.match === undefined ? undefined : found.byKey.get(from.match.key);
-  if (own !== undefined) {
-    const { at, start } = from.match!;
-    const text = shownTexts(own.row).findIndex((shown) => shown.at === at);
-    const past = pick(matchesIn(own.row, pattern), ({ match, order }) => ahead(order - text || match.start - start));
-    if (past !== undefined) return stepTo(found, own, past);
+  // In its own block, the match next to it in the direction of the step.
+  if (from.is === "found") {
+    const own = found.byKey.get(from.match.key);
+    const past = own === undefined ? undefined : matchesIn(own.row, pattern)[from.index + (forward ? 1 : -1)];
+    if (own !== undefined && past !== undefined) return stepTo(found, own, past, pattern);
   }
   // Where the step starts among the rows (position.ts): after the current match's place, or before the reader's, so the
   // matches of the row at the view's top are ahead.
-  const place = from.match === undefined ? rankBefore(from.at) : rankOf(from.at);
+  const place = from.is === "place" ? rankBefore(from.place) : rankOf(from.place);
   const block = pick(found.blocks, (block) => ahead(block.index - place)) ?? (forward ? found.blocks[0] : found.blocks.at(-1));
   if (block === undefined) return undefined;
   const matches = matchesIn(block.row, pattern);
-  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!);
+  return stepTo(found, block, (forward ? matches[0] : matches.at(-1))!, pattern);
 }
 
-function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown }: { match: Match; shown: Shown }): Step {
-  const listed = [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set])];
+function stepTo({ rows }: Found, { row, index }: FoundBlock, { match, shown, range }: Located, pattern: RegExp): Step {
+  return { match: { ...match, pattern: literal(pattern) }, folds: [...nestsOf(rows, index), ...(row.set === undefined ? [] : [row.set]), ...foldsIn(row, shown, range)] };
+}
+
+// The folds of a block's row that hold a match of the text `shown`, at `range`: none on the block's line; the block, in
+// its content; and the regions and the headings' sections around it, in a text's rendering.
+function foldsIn(row: BlockRow, shown: Shown, range: Range): string[] {
   switch (shown.in) {
     case "line":
-      return { match, folds: listed };
+      return [];
     case "content":
-      return { match, folds: [...listed, row.key] };
+      return [row.key];
     case "regions":
-      return { match, folds: [...listed, row.key, ...regionsAround(shown.searched, match.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line))] };
+      return [row.key, ...regionsAround(shown.searched, range.start).map((line) => keyAt({ blockKey: row.key, at: shown.at }, line))];
   }
 }
 

@@ -67,6 +67,7 @@ cc-dump is a web application that launches Claude Code in tmux, captures its Ant
 - The query is a regular expression, matched without regard to case, by default. Each of case, whole word and regular expression can be switched.
 - Next and previous move through the matches in order. Moving to a match inside a collapsed block or region expands it, moving to a match under a closed heading opens it, moving to a match in a set opens the set as the user's choice (F4), and moving to a match in a hidden category shows its block. Every fold holding the match moved to is then open as the user's choice, so it stays open when a level changes, and the user's closing any of them hides it.
 - A text's contents (F4) are not searched: a match in a heading is counted once, where the heading is.
+- The match moved to, and every region and section the user opened, stay on their text as its block changes shape and its text streams in. Once that text no longer holds the match, the query changes, or how the search reads a query changes, in this tab or another, no match is current, and the next move counts from the user's place.
 
 ### F7. Record and reopen
 - Every exchange is written to its process's recording as it happens, with no action from the user.

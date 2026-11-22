@@ -174,7 +174,7 @@ describe("readRecording", () => {
     frames.run();
     expect(shown[1]).toEqual(formatted(before));
     expect(shown[2]).toEqual(formatted([...before, models]));
-    expect(shown[2]![0]!.groups.at(-2)!.blocks.map(({ parts }) => parts)).toEqual([[{ kind: "text", form: "markdown", text: "Hi." }]]);
+    expect(shown[2]![0]!.groups.at(-2)!.blocks.map(({ parts }) => parts)).toEqual([[{ id: "text", kind: "text", form: "markdown", text: "Hi." }]]);
   });
 
   // [LAW:verifiable-goals] The ticket's goal, a recording's memory growing with what its history holds: a body event the
