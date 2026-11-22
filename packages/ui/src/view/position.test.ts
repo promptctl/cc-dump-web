@@ -1,3 +1,4 @@
+import { readWith } from "../testing.ts";
 import { describe, expect, it } from "vitest";
 import { positionAt, presence, rankBefore, rankOf, resolve, type At, type Placed, type Position } from "./position.ts";
 import type { Keys, Pending } from "./rows.ts";
@@ -24,7 +25,7 @@ const everyIndexOf = (key: string) => {
 };
 const at = (key: string, offset = 0): Position => ({ at: "row", key, offset });
 // Where `position` stands among the listed rows, with `pending` saying what can still bring a key.
-const judged = (position: Position, pending: (key: string) => Pending | undefined = () => undefined) => presence(position, listed, everyIndexOf, { at: "read", pending });
+const judged = (position: Position, pending: (key: string) => Pending | undefined = () => undefined) => presence(position, listed, everyIndexOf, readWith(pending));
 
 describe("where a position stands", () => {
   it("is the start or the end as it is", () => {
@@ -52,20 +53,20 @@ describe("where a position stands", () => {
   it("is pending, inside no row, by what can still bring it, and gone when nothing will", () => {
     expect(judged(at("d/body"), (key) => (key === "d/body" ? "reading" : undefined))).toEqual({ at: "pending", read: "reading" });
     expect(judged(at("d/body"), () => "failed")).toEqual({ at: "pending", read: "failed" });
-    expect(judged(at("d/body"), () => undefined)).toEqual({ at: "gone" });
+    expect(judged(at("d/body"), () => undefined)).toEqual({ at: "gone", why: "read_ended" });
   });
 
   it("stands as its moment does while the moment's step is not read, wherever it is: the column shown is another's", () => {
     for (const position of [at("c", 20), { at: "end" } as const, { at: "start" } as const]) {
       expect(presence(position, listed, everyIndexOf, { at: "pending", read: "reading" })).toEqual({ at: "pending", read: "reading" });
-      expect(presence(position, listed, everyIndexOf, { at: "gone" })).toEqual({ at: "gone" });
+      expect(presence(position, listed, everyIndexOf, { at: "gone", why: "read_ended" })).toEqual({ at: "gone", why: "read_ended" });
     }
     expect(presence(at("c"), listed, everyIndexOf, { at: "pending", read: "failed" })).toEqual({ at: "pending", read: "failed" });
   });
 
   it("ends on every key, one starting with a slash among them, and a prefix needs its slash: `ab` is not inside `a`", () => {
     for (const key of ["//", "/request/http", "", "ab/c", "a//"]) expect(judged(at(key)).at).not.toBe("pending");
-    expect(judged(at("ab/c"))).toEqual({ at: "gone" });
+    expect(judged(at("ab/c"))).toEqual({ at: "gone", why: "read_ended" });
     expect(judged(at("a//"))).toEqual({ at: "past", index: 0 });
   });
 });
@@ -79,7 +80,7 @@ describe("the offset a position is at", () => {
 
   it("is none for a place not among the rows, read yet or not", () => {
     expect(resolve({ at: "pending", read: "reading" }, placed)).toBeUndefined();
-    expect(resolve({ at: "gone" }, placed)).toBeUndefined();
+    expect(resolve({ at: "gone", why: "read_ended" }, placed)).toBeUndefined();
   });
 
   it("is the end of a row shorter than the offset into it", () => {

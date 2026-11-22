@@ -1,4 +1,5 @@
 import { positionAt, resolve, type Placed, type Position, type Presence } from "./position.ts";
+import type { Gone } from "./rows.ts";
 
 // Where the rows are: where a position stands among them (position.ts `presence`), a row by its index, and the row at
 // an offset.
@@ -19,10 +20,14 @@ export type Cause = "scroll" | "change" | "choose";
 // Who moved the position: the reader, by a scroll or a click, or the view, placing it as the layout changed.
 export type By = "reader" | "view";
 
+// Why the view gave a kept place up for the place under it: nothing will bring it (rows.ts `Gone`), or it was the end,
+// which no longer follows.
+export type GaveUp = Gone["why"] | "end_unfollowed";
+
 // [LAW:no-ambient-temporal-coupling] The view's one step between the scroller's offset and the position, run whatever
 // the order its causes come in. Given the offset and the largest one, `end`, and whether the moment shown resumes
 // following at the end (`resumable`, view/state.ts), it gives what to keep, the offset to write, if the position moved,
-// and who moved it: the reader, or the view's own placing.
+// who moved it: the reader, or the view's own placing, and, when the view gave the kept place up, why (`replaced`).
 export function step(
   cause: Cause,
   offset: number,
@@ -31,7 +36,7 @@ export function step(
   follow: boolean,
   resumable: boolean,
   rows: Rows,
-): Kept & { write: number | undefined; by: By } {
+): Kept & { write: number | undefined; by: By; replaced: GaveUp | undefined } {
   // [LAW:one-source-of-truth] The offset is the view's own when it is the one the view last wrote or took, or the end
   // the browser moved it to when the content got shorter or the scroller taller (a clamp). A clamp is the layout
   // changing, not a reader, so the position survives it. A reader's scroll reaches the end from below, so it is never a
@@ -43,17 +48,20 @@ export function step(
   // listener, and a clamp's event can come after a render, so a render that took an offset for the reader's could take
   // a clamp for a scroll. Until its event runs, a reader's offset is left as it is.
   const by: By = own ? "view" : "reader";
-  if (!own && cause === "change") return { position, written, write: undefined, by };
+  if (!own && cause === "change") return { position, written, write: undefined, by, replaced: undefined };
   // The position the step keeps, judged among the rows: the view's own, unless the end it holds no longer follows.
   const kept = own && (position.at !== "end" || follow) ? rows.judge(position) : undefined;
   // A reader's offset, or a kept place nothing will bring, gives way to the place under the view, which is where the
   // view already is, so nothing is written.
-  if (kept === undefined || kept.at === "gone") return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: offset, write: undefined, by };
+  if (kept === undefined || kept.at === "gone") {
+    const replaced = !own ? undefined : kept === undefined ? "end_unfollowed" : kept.why;
+    return { position: readAt(offset, end, follow, resumable, rows.rowAt), written: offset, write: undefined, by, replaced };
+  }
   // A kept place is resolved against where the rows now are, within reach, and written when it moved; one not read yet,
   // or whose row is not placed yet, writes nothing until it is, so the moves wait for it.
   const resolved = resolve(kept, rows.placed);
   const target = resolved === undefined ? undefined : Math.min(resolved, end);
-  return { position, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by };
+  return { position, written: offset, write: target === undefined || Math.abs(target - offset) < 1 ? undefined : target, by, replaced: undefined };
 }
 
 // The position a reader's offset reads as, by a scroll or a press on the minimap. Following, an offset within a pixel of

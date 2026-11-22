@@ -1,4 +1,4 @@
-import { exchanges } from "../testing.ts";
+import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { categories, type Block, type Category } from "../format/blocks.ts";
@@ -42,7 +42,7 @@ const top = { at: "start" } as const;
 // `keys`, none of them still to be read.
 const adjacent = (found: Found, current: Match | undefined, position: Position, direction: Direction, pattern: RegExp, keys: Keys) => {
   const rows = [...found.rows];
-  return matchMove({ rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: { at: "read", pending: () => undefined } }, found, current, position, direction, pattern);
+  return matchMove({ rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: readWith(() => undefined) }, found, current, position, direction, pattern);
 };
 // The keys of `rows`, in order.
 const keysOf = (rows: readonly Row[]): Keys => ({ at: (index) => rows[index]!.key, indexOf: (key) => { const index = rows.findIndex((row) => row.key === key); return index === -1 ? undefined : index; } });
@@ -243,7 +243,7 @@ describe("search", () => {
     const hidden = layOut({ ...shown, http: "hidden", tools: "hidden" });
     const found = createSearch()(hidden.every.rows, pattern);
     // The column as the view holds it: its listed rows, fewer than every row, the hidden HTTP blocks among them.
-    const column = { ...hidden, moment: { at: "read", pending: () => undefined } } as const;
+    const column = { ...hidden, moment: readWith(() => undefined) } as const;
     const at = { at: "row", key: "thread:b/message.0/content.0", offset: 40 } as const;
     expect(hidden.keys.indexOf(at.key)).not.toBe(hidden.every.keys.indexOf(at.key));
     expect(matchMove(column, found, undefined, at, "next", pattern)!.match.key).toBe("thread:b/message.0/content.0");

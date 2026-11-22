@@ -1,4 +1,4 @@
-import { exchanges } from "../testing.ts";
+import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
@@ -150,7 +150,7 @@ describe("history", () => {
     // Inside none of the exchange's rows, a thread's item not among them stands nowhere: with nothing more to read, gone.
     for (const { groups } of history(process).segments) {
       for (const { key } of groups.flatMap(({ items }) => items).filter(({ key }) => key.startsWith("thread:"))) {
-        expect(presence({ at: "row", key, offset: 0 }, keys, indexOf, { at: "read", pending: () => undefined })).toEqual({ at: "gone" });
+        expect(presence({ at: "row", key, offset: 0 }, keys, indexOf, readWith(() => undefined))).toEqual({ at: "gone", why: "read_ended" });
       }
     }
   });

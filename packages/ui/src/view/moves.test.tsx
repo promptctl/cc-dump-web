@@ -1,3 +1,4 @@
+import { readWith } from "../testing.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { forkMove, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
@@ -38,8 +39,8 @@ const keys: Keys = {
 };
 // The column, every row listed, in which a key starting `later` is one the read can still bring, and any other not
 // among the rows one nothing will; and the same column after the read failed.
-const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: { at: "read", pending: (key) => (key.startsWith("later") ? "reading" : undefined) } };
-const failed: ColumnState = { ...column, moment: { at: "read", pending: (key) => (key.startsWith("later") ? "failed" : undefined) } };
+const column: ColumnState = { rows, keys: { ...keys, measuredBy: keys.at }, every: { rows, keys }, moment: readWith((key) => (key.startsWith("later") ? "reading" : undefined)) };
+const failed: ColumnState = { ...column, moment: readWith((key) => (key.startsWith("later") ? "failed" : undefined)) };
 const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
@@ -88,7 +89,7 @@ describe("a move from the reader's place", () => {
   });
 
   it("finds a current match gone only when nothing will bring it", () => {
-    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([true, false, false, false]);
+    expect([match("z/said"), match("later/said"), match("a/said"), undefined].map((current) => matchGone(column, current))).toEqual([{ at: "gone", why: "read_ended" }, undefined, undefined, undefined]);
   });
 });
 

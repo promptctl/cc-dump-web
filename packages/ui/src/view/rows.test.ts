@@ -1,4 +1,4 @@
-import { exchanges } from "../testing.ts";
+import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { beforeEach, describe, expect, it } from "vitest";
 import { agentCall, assistant, at, call, launched, notification, reply, request, result, returned, streaming, text, user } from "../../test/fixtures.ts";
@@ -32,12 +32,16 @@ function layouts(events: RecordedEvent[], visibility: Record<Category, Visibilit
 // The block's row at `key` among a layout's.
 const blockAt = ({ rows }: { rows: Row[] }, key: string) => rows.find((row): row is BlockRow => row.kind === "block" && row.key === key)!;
 const listed = ({ rows }: { rows: Row[] }) => rows.map((row) => (row.kind === "block" ? `${row.key} ${row.change}` : row.key));
-// What can still bring a row by key into the column of `moment` listing `steps`, whose step is read.
+// What can still bring a row by key into the column of `moment` listing `steps`, whose step is read, or, when nothing
+// will, why.
 const now: MomentStep = { at: "now" };
 function pendingIn(history: History, read: Read, moment: MomentStep, steps: ReadonlySet<number>) {
   const standing = standingOf(history, read, moment, steps);
   if (standing.at !== "read") throw new Error(`the moment's step is not read: ${standing.at}`);
-  return standing.pending;
+  return (key: string) => {
+    const unread = standing.pending(key);
+    return unread.at === "pending" ? unread.read : unread.why;
+  };
 }
 
 describe("layout", () => {
@@ -324,7 +328,7 @@ describe("a set", () => {
     // whatever the levels, and the step reads none.
     const step = () => {
       const layout = layouts(events)(1);
-      const to = matchMove({ ...layout, moment: { at: "read", pending: () => undefined } }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
+      const to = matchMove({ ...layout, moment: readWith(() => undefined) }, createSearch()(layout.every.rows, pattern), undefined, { at: "start" }, "next", pattern);
       if (to === undefined) throw new Error(`no match for ${pattern} among the tools`);
       view.goTo(to, "t1");
     };
@@ -834,33 +838,34 @@ describe("the column", () => {
       const pending = pendingIn(history, "reading", now, steps);
       const running = new Set<string>(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
       const keys = every.rows.map(({ key }) => key);
-      expect(keys.filter((key) => pending(key) !== undefined)).toEqual(keys.filter((key) => running.has(traceOf(key))));
+      expect(keys.filter((key) => pending(key) === "reading")).toEqual(keys.filter((key) => running.has(traceOf(key))));
     }
     // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));
-    expect([outer, inner, "nest:agent:z"].map(pendingIn(nests, "reading", now, new Set([1, 2, 3])))).toEqual([undefined, undefined, "reading"]);
+    expect([outer, inner, "nest:agent:z"].map(pendingIn(nests, "reading", now, new Set([1, 2, 3])))).toEqual(["step_ended", "step_ended", "reading"]);
   });
 
-  it("says what can still bring a row into the column, by key: its step while the column lists it and it still runs, a step not read only into now's; the read, or after it failed a new read; nothing once it ended", () => {
+  it("says what can still bring a row into the column, by key: its step while the column lists it and it still runs, a step not read only into now's; the read, or after it failed a new read; nothing once it ended, and which judgement says so", () => {
     const events = [...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")]), ...request("t2", { ...main, messages: more }), ...streaming("t2", [text("More")])];
     const history = createHistory()(createFormatter()(exchanges(events)));
     // A row of the step that ended, of the step still running, of an agent with no step read, and of an exchange not read.
     const keys = ["t1/reply/x", "thread:t2/message.3/content.0", "nest:agent:a9", "z/x"];
     const can = (read: Read, moment: MomentStep = now, steps = new Set([1, 2])) => keys.map(pendingIn(history, read, moment, steps));
-    expect(can("reading")).toEqual([undefined, "reading", "reading", "reading"]);
+    expect(can("reading")).toEqual(["step_ended", "reading", "reading", "reading"]);
     // A row of a step that ended is gone after a failed read as after one that goes on.
-    expect(can("failed")).toEqual([undefined, "failed", "failed", "failed"]);
-    expect(can("ended")).toEqual(keys.map(() => undefined));
+    expect(can("failed")).toEqual(["step_ended", "failed", "failed", "failed"]);
+    // Once the read ended, a row its step's end did not already rule out is gone for that.
+    expect(can("ended")).toEqual(["step_ended", "read_ended", "read_ended", "read_ended"]);
     // The column of step 1 can never hold step 2's rows, though step 2 still runs, nor a step not read yet.
-    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(keys.map(() => undefined));
-    expect(can("reading", { at: "held", step: 2 })).toEqual([undefined, "reading", undefined, undefined]);
+    expect(can("reading", { at: "held", step: 1 }, new Set([1]))).toEqual(["step_ended", "step_unlisted", "step_unlisted", "step_unlisted"]);
+    expect(can("reading", { at: "held", step: 2 })).toEqual(["step_ended", "reading", "step_unlisted", "step_unlisted"]);
     // Nor can now's column hold the rows of a running step it does not list, as a fork's sibling not chosen.
-    expect(can("reading", now, new Set([1]))).toEqual([undefined, undefined, "reading", "reading"]);
+    expect(can("reading", now, new Set([1]))).toEqual(["step_ended", "step_unlisted", "reading", "reading"]);
   });
 
   it("holds a moment whose step is not read by what can still bring it, and lets it go once nothing can", () => {
     const history = createHistory()(createFormatter()(exchanges([...request("t1", { ...main, messages: [hi] }), ...reply("t1", [text("Hello.")])])));
     const unread: MomentStep = { at: "held", step: undefined };
-    expect((["reading", "failed", "ended"] as const).map((read) => standingOf(history, read, unread, new Set([1])))).toEqual([{ at: "pending", read: "reading" }, { at: "pending", read: "failed" }, { at: "gone" }]);
+    expect((["reading", "failed", "ended"] as const).map((read) => standingOf(history, read, unread, new Set([1])))).toEqual([{ at: "pending", read: "reading" }, { at: "pending", read: "failed" }, { at: "gone", why: "read_ended" }]);
   });
 });

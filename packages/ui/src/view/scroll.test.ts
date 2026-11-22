@@ -1,3 +1,4 @@
+import { readWith } from "../testing.ts";
 import { describe, expect, it } from "vitest";
 import { presence, type Placed } from "./position.ts";
 import { step, type Rows } from "./scroll.ts";
@@ -14,7 +15,7 @@ const indexOf = (key: string) => {
 };
 // The rows, every one listed; a row `d` the read can still bring, and any other not among them that nothing will.
 const rows: Rows = {
-  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, { at: "read", pending: (key) => (key.startsWith("d") ? "reading" : undefined) }),
+  judge: (position) => presence(position, { at: (index) => placed[index]!.key, indexOf }, indexOf, readWith((key) => (key.startsWith("d") ? "reading" : undefined))),
   placed: (index) => placed[index],
   rowAt: (offset) => placed.findLast((row) => row.start <= offset),
 };
@@ -55,6 +56,7 @@ describe("step", () => {
       written: 120,
       write: undefined,
       by: "view",
+      replaced: "end_unfollowed",
     });
   });
 
@@ -70,9 +72,9 @@ describe("step", () => {
   it("with follow off, takes the end as a place: a scroll to it, and the end the view was following, where it stands", () => {
     const atEnd = { at: "row", key: "c", offset: 100 };
     expect(step("scroll", 250, 250, { position: inC, written: 170 }, false, true, rows)).toEqual({ position: atEnd, written: 250, write: undefined, by: "reader" });
-    expect(step("change", 250, 250, { position: end, written: 250 }, false, true, rows)).toEqual({ position: atEnd, written: 250, write: undefined, by: "view" });
+    expect(step("change", 250, 250, { position: end, written: 250 }, false, true, rows)).toEqual({ position: atEnd, written: 250, write: undefined, by: "view", replaced: "end_unfollowed" });
     // Before any row has arrived, the end is the start.
-    expect(step("change", 0, 0, { position: end, written: 0 }, false, true, rows)).toEqual({ position: { at: "start" }, written: 0, write: undefined, by: "view" });
+    expect(step("change", 0, 0, { position: end, written: 0 }, false, true, rows)).toEqual({ position: { at: "start" }, written: 0, write: undefined, by: "view", replaced: "end_unfollowed" });
   });
 
   it("takes the end of a step chosen in time for a place, with follow on: only a moment that resumes follows there", () => {
@@ -93,8 +95,8 @@ describe("step", () => {
 
   it("replaces a place nothing will bring with the place under the view, as the view's own, on a render and on a scroll that is its own", () => {
     const gone = { at: "row", key: "z", offset: 5 } as const;
-    expect(step("change", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view" });
-    expect(step("scroll", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view" });
+    expect(step("change", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view", replaced: "read_ended" });
+    expect(step("scroll", 170, 250, { position: gone, written: 170 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "view", replaced: "read_ended" });
     // Under a reader's offset, the place is left as it is for the scroll event, which takes the reader's.
     expect(step("change", 170, 250, { position: gone, written: 0 }, true, true, rows)).toEqual({ position: gone, written: 0, write: undefined, by: "reader" });
     expect(step("scroll", 170, 250, { position: gone, written: 0 }, true, true, rows)).toEqual({ position: inC, written: 170, write: undefined, by: "reader" });
