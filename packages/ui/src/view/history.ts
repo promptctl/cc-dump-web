@@ -1,3 +1,4 @@
+import { isTraceId, type TraceId } from "@cc-dump/log/trace";
 import type { Block } from "../format/blocks.ts";
 import type { Launch } from "../format/tools.ts";
 import { equal } from "../equal.ts";
@@ -69,9 +70,12 @@ export type Tie = { agent: string; call: string } & ({ found: true; key: string;
 export type Item = { key: string; versions: readonly Version[] };
 // [LAW:one-source-of-truth] What a thread's item's key starts with, before its exchange's trace.
 const threadPrefix = "thread:";
-// The trace of the exchange an item's or a row's key starts with, as the keys are made here: after a thread's prefix,
-// up to its first `/`. A key no exchange's trace begins, as a nest's line's, gives a trace no step has.
-export const traceOf = (key: string): string => (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0]!;
+// [LAW:parse-dont-validate] The trace of the exchange an item's or a row's key starts with, as the keys are made here:
+// after a thread's prefix, up to its first `/`. A key no trace begins, as a nest's line's, gives none.
+export function traceOf(key: string): TraceId | undefined {
+  const head = (key.startsWith(threadPrefix) ? key.slice(threadPrefix.length) : key).split("/", 1)[0];
+  return isTraceId(head) ? head : undefined;
+}
 
 // A step's part of the conversation: its exchange, each of its groups with the items that first arrived in it, what it
 // stands `after`, and what it says of its level's agents (StepWire).
@@ -102,11 +106,10 @@ export function forksOf(segments: readonly Segment[]): Map<string, number[]> {
 }
 
 // The conversation's history: each step's segment, step k's at k - 1, the step of an exchange, by its trace_id, and the
-// recording's forks (forksOf), derived once per history for the column and the strip alike.
-// [LAW:parse-dont-validate] exception: `stepOf` takes any string, since a row's key names its trace as text (traceOf),
-// a key stored with the view's position among them. A trace it does not hold is a miss, which the conversation shows
-// as its latest step while the read can still bring it, and replaces with now once nothing can (Conversation.tsx).
-export type History = { segments: readonly Segment[]; stepOf: (trace: string) => number | undefined; forks: ReadonlyMap<string, number[]> };
+// recording's forks (forksOf), derived once per history for the column and the strip alike. A trace it does not hold
+// is a miss, which the conversation shows as its latest step while the read can still bring it, and replaces with now
+// once nothing can (Conversation.tsx).
+export type History = { segments: readonly Segment[]; stepOf: (trace: TraceId) => number | undefined; forks: ReadonlyMap<string, number[]> };
 
 // A thread: its level, the first message every request of it sends, what that message says, and the tree of the paths
 // its requests have sent.
@@ -337,7 +340,7 @@ export function createHistory(): (formatted: FormattedExchange[]) => History {
     const facts = read.flatMap(({ fact }) => (fact === undefined ? [] : [fact]));
     const follows = new Map(followsOf(facts).map((followed, index) => [facts[index]!.step, followed]));
     for (let index = from; index < read.length; index++) folded.push(fold(read[index]!, follows, index + 1));
-    const steps = new Map<string, number>(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
+    const steps = new Map<TraceId, number>(read.map(({ formatted }, index) => [formatted.exchange.trace_id, index + 1]));
     const made = folded.map(({ segment }) => segment);
     const segments = keptEach(last.segments, made, keptSegment);
     // [LAW:one-source-of-truth] A step's segment is the one handed out, not another like it, so the next read compares

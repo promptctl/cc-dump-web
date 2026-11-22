@@ -6,7 +6,7 @@ import { Malformed } from "./failure.ts";
 declare const traceId: unique symbol;
 export type TraceId = string & { readonly [traceId]: true };
 
-const isTraceId = (value: unknown): value is TraceId => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value);
+export const isTraceId = (value: unknown): value is TraceId => typeof value === "string" && /^[A-Za-z0-9_-]+$/.test(value);
 
 export function parseTraceId(value: unknown): TraceId {
   if (!isTraceId(value)) throw new Malformed(`${JSON.stringify(value)} is not a word: one or more letters, digits, '-' or '_'`);

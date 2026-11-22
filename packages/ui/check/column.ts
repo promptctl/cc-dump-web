@@ -221,9 +221,9 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       taken.add(place);
     }
     const lines = rows.filter(kindOf("exchange"));
-    if (!sameList(lines.map(({ key }) => stepOf(key)).sort((a, b) => a! - b!), listed)) say("the exchanges' lines are not the listed steps', one each");
+    if (!sameList(lines.map(({ exchange }) => stepOf(exchange.exchange.trace_id)).sort((a, b) => a! - b!), listed)) say("the exchanges' lines are not the listed steps', one each");
     for (const line of lines) {
-      const own = stepOf(line.key)!;
+      const own = stepOf(line.exchange.exchange.trace_id)!;
       if ((line.change === "added") !== (own === step)) say(`${line.key}'s line is ${line.change}`);
       if (line.depth !== depthOf(levelAt(own))) say(`${line.key}'s line is ${line.depth} in where its level is ${depthOf(levelAt(own))} in`);
       if (line.dimmed !== isDimmed(own)) say(`${line.key}'s line is ${line.dimmed ? "" : "not "}dimmed`);
@@ -288,7 +288,7 @@ function check(history: History, layoutAt: (step: number) => Layout): { found: F
       if (nest.change !== (own === step ? "added" : chain.includes(key) ? "changed" : "same")) say(`${nest.key} is ${nest.change}`);
       const next = rows.findIndex((row, index) => index > at && row.depth <= nest.depth);
       const end = next === -1 ? rows.length : next;
-      const inside = rows.slice(at + 1, end).filter((row) => row.kind === "exchange" && row.depth === nest.depth + 1).map(({ key }) => stepOf(key));
+      const inside = rows.slice(at + 1, end).filter(kindOf("exchange")).filter((row) => row.depth === nest.depth + 1).map(({ exchange }) => stepOf(exchange.exchange.trace_id));
       const holds = [...path].filter((one) => levelAt(one) === key);
       if (!sameList(inside, holds)) say(`${nest.key} holds steps ${inside.join(" ")} where its level's listed are ${holds.join(" ")}`);
       if (nest.count !== holds.length) say(`${nest.key} counts ${nest.count} steps of ${holds.length}`);

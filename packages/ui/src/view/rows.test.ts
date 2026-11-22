@@ -837,9 +837,9 @@ describe("the column", () => {
       const history = createHistory()(createFormatter()(exchanges(events)));
       const { every, steps } = layouts(events)(history.segments.length, undefined, { [outer]: true, [inner]: true });
       const pending = pendingIn(history, "reading", now, steps);
-      const running = new Set<string>(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
+      const running = new Set(history.segments.filter(({ formatted }) => formatted.exchange.end === undefined).map(({ formatted }) => formatted.exchange.trace_id));
       const keys = every.rows.map(({ key }) => key);
-      expect(keys.filter((key) => pending(key) === "reading")).toEqual(keys.filter((key) => running.has(traceOf(key))));
+      expect(keys.filter((key) => pending(key) === "reading")).toEqual(keys.filter((key) => { const trace = traceOf(key); return trace !== undefined && running.has(trace); }));
     }
     // A nest's line of a level no step opens is one the read can still bring.
     const nests = createHistory()(createFormatter()(exchanges(nested)));

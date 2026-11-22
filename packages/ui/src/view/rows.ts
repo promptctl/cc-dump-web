@@ -387,7 +387,8 @@ export function standingOf({ segments, stepOf }: History, read: Read, moment: Mo
   if (moment.at === "held" && moment.step === undefined) return comes;
   const opening = new Map([...openingsOf(segments).values()].map(({ own, level }) => [nestKey(level), own]));
   const pending = (key: string): Absent => {
-    const step = opening.get(key) ?? stepOf(traceOf(key));
+    const trace = traceOf(key);
+    const step = opening.get(key) ?? (trace === undefined ? undefined : stepOf(trace));
     if (step === undefined) return moment.at === "now" ? comes : { at: "gone", why: "step_unread" };
     if (!steps.has(step)) return { at: "gone", why: "step_unlisted" };
     return running(segments[step - 1]!) ? comes : { at: "gone", why: "step_ended" };

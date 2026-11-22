@@ -1,3 +1,4 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
@@ -74,8 +75,8 @@ describe("history", () => {
         reply: ["thread:t2/message.3/content.0"],
       },
     ]);
-    expect(history(process).stepOf("title")).toBe(3);
-    expect(history(process).stepOf("t3")).toBeUndefined();
+    expect(history(process).stepOf(parseTraceId("title"))).toBe(3);
+    expect(history(process).stepOf(parseTraceId("t3"))).toBeUndefined();
   });
 
   it("keeps a block resent with something different as its item's next version, where the item stands, and stepping back undoes it", () => {
@@ -177,8 +178,8 @@ describe("history", () => {
     }
   });
 
-  it("reads the trace a key starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow", () => {
-    expect(["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1"].map(traceOf)).toEqual(["t2", "t2", "t3", "aside", "t1"]);
+  it("reads the trace a key starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow, and none from a key no trace begins", () => {
+    expect(["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1", "nest:agent:a1", "nest:main"].map(traceOf)).toEqual(["t2", "t2", "t3", "aside", "t1", undefined, undefined]);
   });
 
   it("keeps the exchanges of a request not yet read as its own, and finds its thread once it is", () => {
