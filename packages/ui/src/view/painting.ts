@@ -20,8 +20,8 @@ export function useWhere(blockKey: string, at: string, searched: Searched): Wher
   const pattern = useContext(Painted);
   if (pattern === undefined) throw new Error("A text is shown outside a Conversation");
   const ranges = useMemo(() => find(pattern, searched), [pattern, searched]);
-  const current = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.start : undefined));
-  return { blockKey, at, ranges, current };
+  const index = useView(({ search: { current } }) => (current !== undefined && current.key === blockKey && current.at === at ? current.index : undefined));
+  return { blockKey, at, ranges, current: index === undefined ? undefined : ranges[index]?.start };
 }
 
 // What a block or region calls when clicked, before it shows the other way: the view holds where it is.

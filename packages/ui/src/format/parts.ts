@@ -23,12 +23,12 @@ export type Part =
 // A field: a name and its value, a text, or the fields it holds, shown under it. A header is one, its value a text.
 export type Field = [name: string, value: string | Field[]];
 
-// A field as the line it shows: its name at its depth among the fields holding it, and its value, none for a field that
-// holds fields, whose lines follow it a depth deeper.
-export type FieldLine = { name: string; value: string | undefined; depth: number };
-export function fieldLines(fields: Field[], depth = 0): FieldLine[] {
+// A field as the line it shows: its name under the names of the fields holding it, outermost first, and its value, none
+// for a field that holds fields, whose lines follow it one field deeper.
+export type FieldLine = { name: string; value: string | undefined; holders: string[] };
+export function fieldLines(fields: Field[], holders: string[] = []): FieldLine[] {
   return fields.flatMap(([name, value]) =>
-    typeof value === "string" ? [{ name, value, depth }] : [{ name, value: undefined, depth }, ...fieldLines(value, depth + 1)],
+    typeof value === "string" ? [{ name, value, holders }] : [{ name, value: undefined, holders }, ...fieldLines(value, [...holders, name])],
   );
 }
 

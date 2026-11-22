@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { forkMove, injectedMove, matchGone, matchMove, waitingOf, type ColumnState } from "./moves.ts";
 import type { Position } from "./position.ts";
 import type { ForkRow, Keys, Row } from "./rows.ts";
-import { address, createSearch, type Match } from "./search.ts";
+import { createSearch, type Match } from "./search.ts";
 import { WaitingLine } from "./WaitingLine.tsx";
 
 const standing = { depth: 0, dimmed: false };
@@ -45,7 +45,7 @@ const pattern = /needle/g;
 const found = createSearch()(rows, pattern);
 
 const at = (key: string): Position => ({ at: "row", key, offset: 0 });
-const match = (key: string): Match => ({ key, at: address.part(0), start: 4 });
+const match = (key: string): Match => ({ key, at: "text:#0", index: 0, order: 1 });
 const [listed, pending, gone] = [at("a"), at("later/x"), at("z/x")];
 
 describe("a move from the reader's place", () => {

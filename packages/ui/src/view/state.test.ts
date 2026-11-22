@@ -23,7 +23,7 @@ describe("opening a recording", () => {
   });
 
   it("opens it by its name, at its end with no current match, keeping the reader's choices", () => {
-    const match = { key: "t1/request/http", at: "text", start: 0 };
+    const match = { key: "t1/request/http", at: "text", index: 0, order: 0 };
     useView.setState({ opened: { "t1/request/http": true }, position: { at: "row", key: "t1", offset: 12 }, search: { query: "x", current: match } });
     view.open(agent);
     expect(useView.getState()).toMatchObject({
@@ -92,7 +92,7 @@ describe("a launch", () => {
 });
 
 describe("the search", () => {
-  const match = { key: "t1/request/http", at: "text", start: 0 };
+  const match = { key: "t1/request/http", at: "text", index: 0, order: 0 };
   beforeEach(() => {
     useSettings.persist.setOptions({ storage: createJSONStorage(() => ({ getItem: () => null, setItem: () => {}, removeItem: () => {} })) });
     useView.setState(useView.getInitialState(), true);
@@ -123,9 +123,9 @@ describe("the search", () => {
     expect(useView.getState().opened).toEqual({ "t1/tools": true, [row.key]: true, r: true });
     // The next match in the same region: nothing is chosen, so the choices are the record they were.
     const { opened } = useView.getState();
-    view.goTo({ match: { ...match, start: match.start + 1 }, folds: ["t1/tools", row.key, "r"] }, "t1");
+    view.goTo({ match: { ...match, index: match.index + 1 }, folds: ["t1/tools", row.key, "r"] }, "t1");
     expect(useView.getState().opened).toBe(opened);
-    expect(useView.getState().search.current).toEqual({ ...match, start: match.start + 1 });
+    expect(useView.getState().search.current).toEqual({ ...match, index: match.index + 1 });
     useView.setState({ opened: { "t1/tools": false } });
     view.goTo({ match, folds: ["t1/tools"] }, "t1");
     expect(useView.getState().opened).toEqual({ "t1/tools": true });
@@ -136,7 +136,7 @@ describe("a click on an entry of a text's contents", () => {
   beforeEach(() => useView.setState(useView.getInitialState(), true));
 
   it("opens the folds that show its heading, one the reader closed with them, and moves to its block's row, leaving now and the search as it was", () => {
-    const search = { query: "x", current: { key: "elsewhere", at: "name", start: 0 } };
+    const search = { query: "x", current: { key: "elsewhere", at: "name", index: 0, order: 0 } };
     useView.setState({ opened: { "p/2": false, other: false }, search });
     view.toHeading(row.key, ["p/2", "p/6"], "t4");
     expect(useView.getState()).toMatchObject({
@@ -193,12 +193,12 @@ describe("the moment", () => {
     view.place({ at: "end" }, "reader", "t10");
     expect(useView.getState().moment).toEqual({ at: "now" });
     // A step of the search is the reader's act too.
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
+    view.goTo({ match: { key: row.key, at: "name", index: 0, order: 0 }, folds: [] }, "t10");
     expect(useView.getState().moment).toEqual({ at: "left", trace: "t10" });
   });
 
   it("is a step chosen in time, which a reader's act keeps, until the end resumes following", () => {
-    view.goTo({ match: { key: row.key, at: "name", start: 0 }, folds: [] }, "t10");
+    view.goTo({ match: { key: row.key, at: "name", index: 0, order: 0 }, folds: [] }, "t10");
     view.moveInTime({ at: "chosen", trace: "t3" }, place);
     // The match current was another moment's.
     expect(useView.getState().search.current).toBeUndefined();
