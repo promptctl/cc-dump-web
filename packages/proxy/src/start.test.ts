@@ -1,8 +1,11 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { serve } from "@cc-dump/log";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { buffer } from "node:stream/consumers";
+import { fileURLToPath } from "node:url";
 import { LOOPBACK } from "@cc-dump/log/address";
 import { nextRequestEvent, send, serving, subscribe } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -108,5 +111,16 @@ describe("the reader port", () => {
     held.resolve();
     (await answered).resume();
     expect(await traffic()).toEqual({ in_flight: 0, last_request: arrived.last_request });
+  });
+});
+
+describe("the isolated proxy's arguments", () => {
+  it("refuses a run start that is no time, a month and a day out of range, naming the argument, and starts nothing", async () => {
+    const isolated = fileURLToPath(new URL("./isolated.ts", import.meta.url));
+    const child = spawn(process.execPath, [isolated, `http://${LOOPBACK}:1`, tmpdir(), "2026-13-45T09:00:00Z", "0", "0"], { stdio: ["ignore", "pipe", "ignore"] });
+    onTestFinished(() => void child.kill("SIGKILL"));
+    const lines: unknown[] = [];
+    for await (const line of createInterface(child.stdout)) lines.push(JSON.parse(line));
+    expect(lines).toMatchObject([{ event: "arguments", outcome: "error", error: expect.stringContaining('run-start: must be a UTC time like 2026-11-13T09:00:00Z, got "2026-13-45T09:00:00Z"') }]);
   });
 });

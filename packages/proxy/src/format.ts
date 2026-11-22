@@ -1,6 +1,5 @@
 import { ending, type Ending } from "@cc-dump/log/ending";
-import { Malformed } from "@cc-dump/log/failure";
-import { kinds, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
+import { kinds, list, nullable, object, parse, parsed, parseJson, tagged, value } from "@cc-dump/log/json";
 import { parseTraceId, type TraceId } from "@cc-dump/log/trace";
 
 // [LAW:one-source-of-truth] What the proxy's readers receive: the recording format, and the reader's own
@@ -118,9 +117,7 @@ export type ProxyInfo = { base_url: string; upstream: string; recordings: string
 // another shape is refused here, naming what does not fit, instead of travelling on as a field that is not there.
 
 export function parseListings(json: string): Listing[] {
-  const listings = parseJson(json, "recordings list");
-  if (!Array.isArray(listings)) throw new Malformed("recordings list: is not an array");
-  return listings.map((entry: unknown) => parse(listing, entry, "recordings list entry"));
+  return parse(list(listing), parseJson(json, "recordings list"), "recordings list");
 }
 
 export function parseListing(json: string): Listing {

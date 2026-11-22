@@ -82,7 +82,7 @@ describe("a stored item's read", () => {
     ]);
   });
 
-  it.each([["{"], [JSON.stringify({ name: "a" })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
+  it.each([["{"], [JSON.stringify({ name: "a" })], [JSON.stringify({ version: 0 })], [JSON.stringify({ stat: { name: "a" }, version: 0 })]])("reads an item that is not one, %s, as the store's first state, and replaces it at the next write", async (text) => {
     const { storeIn, events } = await reported();
     const { storage, held } = memoryStorage({ [name]: text });
     const store = storeIn(storage);

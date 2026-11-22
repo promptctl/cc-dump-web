@@ -15,10 +15,10 @@ export type Upstream = string & { readonly [parsed]: true };
 // [LAW:parse-dont-validate] [LAW:no-silent-failure] Requests go to the upstream's origin and path, so an address
 // carrying anything more (query, fragment, credentials) is refused here rather than forwarded to without it. The
 // refusal does not repeat the address: one refused for its credentials or query is one that may carry a secret.
-export function parseUpstream(value: unknown): Upstream {
-  const url = typeof value === "string" ? URL.parse(value) : null;
-  if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname)
-    throw new Malformed("upstream must be an http or https origin with an optional path");
+// Its words do not name the upstream's field, which its reader's path names.
+export function parseUpstream(text: string): Upstream {
+  const url = URL.parse(text);
+  if (!url || !Object.hasOwn(requestFor, url.protocol) || url.href !== url.origin + url.pathname) throw new Malformed("must be an http or https origin with an optional path");
   return url.href as Upstream;
 }
 

@@ -1,4 +1,4 @@
-import { fieldOf } from "@cc-dump/log/json";
+import { attempt, fieldOf, parseJson } from "@cc-dump/log/json";
 
 // What a media source is the source of: an image the view shows as one, or a document it names.
 export type Medium = "image" | "document";
@@ -80,12 +80,13 @@ export function fieldValue(value: unknown): string | Field[] {
 // an object's or a list's JSON shows as fields, and it begins with its bracket, so no other string is parsed.
 function heldJson(text: string): unknown {
   if (!/^[[{]/.test(text)) return text;
-  try {
-    const value: unknown = JSON.parse(text);
-    return JSON.stringify(value) === text ? value : text;
-  } catch {
-    return text;
-  }
+  return attempt(
+    () => {
+      const value = parseJson(text, "text");
+      return JSON.stringify(value) === text ? value : text;
+    },
+    () => text,
+  );
 }
 
 // A value as the part `id` showing it: its fields when it holds any, else the JSON text a field would show it as.

@@ -37,7 +37,9 @@ describe("createReassembly", () => {
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", metrics: { ms: 1 } },
+      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use" },
+      blocks: [],
+      unread: [{ at: ["message_stop", "0", "metrics"], value: { ms: 1 } }],
       tail: "",
     });
     for (let at = 0; at <= text.length; at++) {
@@ -60,7 +62,53 @@ describe("createReassembly", () => {
   it("shows a tool's input as its text until its block stops", () => {
     const text = stream("\n");
     const sofar = reassemble(text.slice(0, text.indexOf('"content_block_stop","index":1')), false);
-    expect((sofar.message!.content as object[])[1]).toMatchObject({ input: '{"command": "ls"}' });
+    expect((sofar.message!.content as object[])[1]).toEqual({ type: "tool_use", id: "toolu_1", name: "Bash", partial_json: '{"command": "ls"}' });
+  });
+
+  // The reasons the events of `events` after message_start were not applied, and the stream they built.
+  const notApplied = (...events: object[]) => {
+    const built = reassemble([messageStart, ...events].map((data) => event(data)).join(""), true);
+    return { reasons: built.blocks.map(({ parts }) => (parts[0] as { text: string }).text), built };
+  };
+
+  it("applies an event whole or not at all, saying why it did not", () => {
+    const start = { type: "content_block_start", index: 0, content_block: { type: "text", text: "a" } };
+    const { reasons, built } = notApplied(
+      start,
+      // A delta that extends a field of another block type, and one whose field does not read, change nothing.
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "x" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: 5 } },
+      { type: "content_block_delta", index: 0, delta: { type: "citations_delta", citation: { cited_text: "c" } } },
+      { type: "content_block_delta", index: 0.5, delta: { type: "text_delta", text: "b" } },
+      { type: "message_delta", delta: { stop_reason: 5 }, usage: {} },
+      { type: "message_stop" },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "late" } },
+      { type: "message_stop" },
+    );
+    expect(reasons).toEqual([
+      "thinking_delta does not extend a text block",
+      "delta: text: is not a string",
+      "index: is not an integer",
+      "delta: stop_reason: is not a string",
+      "content_block_delta after message_stop",
+      "message_stop after message_stop",
+    ]);
+    expect(built.message).toMatchObject({ content: [{ type: "text", text: "a", citations: [{ cited_text: "c" }] }], stop_reason: null });
+  });
+
+  it("keeps the fields of every event no read asks for, a key `__proto__` among them, under the event's type and its place among those of its type", () => {
+    const { built } = notApplied(
+      { type: "ping" },
+      JSON.parse('{"type": "ping", "__proto__": {"polluted": true}}'),
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" }, at: 1 },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "a", estimated_tokens: 3 } },
+    );
+    expect(built.unread.map(({ at, value }) => [at, value])).toEqual([
+      [["ping", "1", "__proto__"], { polluted: true }],
+      [["content_block_start", "0", "at"], 1],
+      [["content_block_delta", "0", "delta", "estimated_tokens"], 3],
+    ]);
+    expect(({} as { polluted?: true }).polluted).toBeUndefined();
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

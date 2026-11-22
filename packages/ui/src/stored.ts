@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Dropped, type Read } from "@cc-dump/log/json";
+import { kinds, object, parseJson, raw, value, type Read, type Refusal, type Unread } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -14,7 +14,7 @@ export type StoreName = "cc-dump.view" | "cc-dump.settings";
 // own read threw, its bug, so what it holds is not known either.
 export type StoredRead =
   | { stored: "none" }
-  | { stored: "read"; version: number; dropped: readonly Dropped[] }
+  | { stored: "read"; version: number; dropped: readonly Refusal[] }
   | { stored: "unreadable"; error: Malformed }
   | { stored: "failed"; error: unknown }
   | { stored: "threw"; error: unknown };
@@ -127,13 +127,17 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
   try {
     const envelope = envelopeOf(parseJson(text.ok, name));
     const state = read(envelope.value.state, envelope.value.version);
-    const dropped = [...envelope.dropped, ...state.dropped.map(({ at, why }) => ({ at: ["state", ...at], why }))];
+    const dropped = [...droppedUnread(envelope.unread), ...[...droppedUnread(state.unread), ...state.dropped].map(({ at, why }) => ({ at: ["state", ...at], why }))];
     return { read: { stored: "read", version: envelope.value.version, dropped }, state: { state: state.value, version } };
   } catch (error) {
     // [LAW:no-silent-failure] persist swallows what `getItem` throws, so this build's own bug is reported here.
     return error instanceof Malformed ? { read: { stored: "unreadable", error }, state: { state: initial, version } } : { read: { stored: "threw", error }, state: null };
   }
 }
+
+// [LAW:nothing-unseen] A field of an item this build does not read is dropped, and named, since it is gone once the item
+// is written again.
+const droppedUnread = (unread: readonly Unread[]): Refusal[] => unread.map(({ at }) => ({ at, why: "is not read by this build" }));
 
 const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
 const envelopeOf = (json: unknown) => envelope(json, []);

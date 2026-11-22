@@ -106,8 +106,8 @@ describe("the reader's messages", () => {
   });
 
   it("refuses a list or an end of another shape", () => {
-    expect(() => parseListings("{}")).toThrow("recordings list: is not an array");
-    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list entry: name: is not a string");
+    expect(() => parseListings("{}")).toThrow("recordings list: is not a list");
+    expect(() => parseListings('[{"name":7}]')).toThrow("recordings list: 0: name: is not a string");
     expect(() => parseListing("[]")).toThrow("recording: is not an object");
     expect(() => parseListing('{"name":7}')).toThrow("recording: name: is not a string");
     expect(() => parseRecordingEnd('{"unterminated_bytes":1.5}')).toThrow("recording end: unterminated_bytes: is not an integer");
@@ -127,7 +127,7 @@ describe("the reader's messages", () => {
     const status = { info, source: { state: "watching", changed_source: [] }, traffic: { in_flight: 0, last_request: null } };
     const refused = (changed: object) => () => parseProxyStatus(JSON.stringify({ ...status, ...changed }));
     expect(() => parseProxyStatus('{"state":"watching","changed_source":[]}')).toThrow("proxy status: source: is missing");
-    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is not one of watching, failed");
+    expect(refused({ source: { changed_source: [] } })).toThrow("proxy status: source: state: is missing");
     expect(refused({ source: { state: "watching", changed_source: [1] } })).toThrow("proxy status: source: changed_source: is not a list of strings");
     expect(refused({ source: { state: "failed", error: "EMFILE" } })).toThrow("proxy status: source: message: is missing");
     expect(refused({ traffic: undefined })).toThrow("proxy status: traffic: is missing");
