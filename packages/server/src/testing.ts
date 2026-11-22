@@ -8,7 +8,7 @@ import { eventLog, serving } from "@cc-dump/log/testing";
 import { ROUTES } from "@cc-dump/log/wire";
 import { tmuxSocketDir } from "@promptctl/tmux-control-mode-js";
 import { onTestFinished } from "vitest";
-import { sessionId, startTime, windowId, type TmuxWindow } from "./format.ts";
+import { sessionId, sessions, startTime, windowId, type TmuxWindow } from "./format.ts";
 import { createApp } from "./server.ts";
 import { createTerminal } from "./terminal.ts";
 import type { NewWindow, Tmux } from "./tmux.ts";
@@ -31,7 +31,7 @@ export async function app({
   const settingsPath = join(dir, "cc-dump/launch.json");
   const opened: NewWindow[] = [];
   const fake: Tmux = {
-    sessions: async () => ["work", "play"],
+    sessions: async () => sessions(["work", "play"]),
     newWindow: async (window) => (opened.push(window), { start_time: 1794801953, session_id: "$2", window_id: "@7", pane_id: "%9" }),
     ...tmux,
   };

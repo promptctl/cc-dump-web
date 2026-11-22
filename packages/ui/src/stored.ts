@@ -1,7 +1,7 @@
 import type { Ending } from "@cc-dump/log/ending";
 import { startTrace, type Facts, type Log, type Span } from "@cc-dump/log/event";
 import { Malformed } from "@cc-dump/log/failure";
-import { kinds, object, parseJson, raw, value, type Read, type Refusal, type Unread } from "@cc-dump/log/json";
+import { kinds, object, parseJson, raw, unreadRefusals, value, type Read, type Refusal, type Unread } from "@cc-dump/log/json";
 import type { PersistStorage, StorageValue } from "zustand/middleware";
 import { decided, failed } from "./log.ts";
 
@@ -137,7 +137,7 @@ function readItem<T>({ name, version, storage, initial, read }: Item<T>): { read
 
 // [LAW:nothing-unseen] A field of an item this build does not read is dropped, and named, since it is gone once the item
 // is written again.
-const droppedUnread = (unread: readonly Unread[]): Refusal[] => unread.map(({ at }) => ({ at, why: "is not read by this build" }));
+const droppedUnread = (unread: readonly Unread[]): Refusal[] => unreadRefusals(unread, () => "is not read by this build");
 
 const envelope = object<{ state: unknown; version: number }>({ state: raw, version: value(kinds.integer) });
 const envelopeOf = (json: unknown) => envelope(json, []);

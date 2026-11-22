@@ -7,12 +7,18 @@ import type { PaneId, WindowId } from "@promptctl/tmux-control-mode-js/window-te
 // F1). Imports nothing that needs node, so the UI takes these types, and their parsers, from here.
 
 // [LAW:parse-dont-validate] [LAW:single-enforcer] A session's name and an agent's command line, read here from a
-// request's body, the settings file and tmux's list alike. tmux runs a window's command as one line, with no NUL, which
-// ends a C string, and a session target names a session by name.
+// request's body, the settings file and tmux's list alike, and only so: a `Line` is a text that is not blank and holds
+// no newline and no NUL, as tmux runs a window's command as one line, a NUL ends a C string, and a session target names
+// a session by name.
+declare const read: unique symbol;
+export type Line = string & { readonly [read]: "line" };
 const line = parsed(kinds.string, (text) => {
   if (text.trim() === "" || /[\n\0]/.test(text)) throw new Malformed(`must be a line of text that is not blank, got ${JSON.stringify(text)}`);
-  return text;
+  // [LAW:types-are-the-program] exception: the one place a text becomes a Line, once it is one.
+  return text as Line;
 });
+// A text as a Line, or refused, naming `what` it is.
+export const asLine = (text: string, what: string): Line => parse(line, text, what);
 
 // [LAW:one-source-of-truth] The launch settings (docs/design/01-features.md, F1, F11), in launch.json and in `GET /launch`'s
 // answer alike: the settings the last launch asked for, which the next one starts from. They are stored before the
@@ -24,7 +30,7 @@ export const launchSettingsTable = {
 };
 export type LaunchSettings = SettingsOf<typeof launchSettingsTable>;
 // The names of the sessions on a tmux server: at least one, since tmux was attached to one to list them.
-export type Sessions = [string, ...string[]];
+export type Sessions = [Line, ...Line[]];
 
 // `GET /launch`: the settings, and the sessions on the user's tmux server.
 export type Launcher = { settings: LaunchSettings; sessions: Sessions };
@@ -35,8 +41,10 @@ export function launchSession({ settings, sessions }: Launcher): string {
   return settings.session !== null && sessions.includes(settings.session) ? settings.session : sessions[0];
 }
 
-// `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line.
-export type Launch = { session: string; command: string };
+// `POST /launch`'s body: open a window in `session` running `command`, the agent's whole command line; as the UI asks
+// for it, its text, and as the app server reads it, each a Line.
+export type LaunchAsked = { session: string; command: string };
+export type Launch = { session: Line; command: Line };
 
 // `POST /launch`'s answer: the window opened, its pane, and `recording`, the name of the recording the agent's process
 // records to (docs/design/01-features.md, F1), its file made by the time this is answered.
@@ -53,15 +61,17 @@ export function parseLaunch(json: string): Launch {
   return parse(launch, parseJson(json, "launch"), "launch");
 }
 
-// [LAW:parse-dont-validate] A list of session names as Sessions, or an error: tmux listed none.
-export function sessions(names: string[]): Sessions {
-  if (names.length === 0) throw new Malformed("tmux listed none");
-  return names as Sessions;
-}
+// [LAW:parse-dont-validate] A list of session names as Sessions, or refused: tmux listed none.
+const sessionList = mapped(list(line), (names): Sessions => {
+  const [first, ...rest] = names;
+  if (first === undefined) throw new Malformed("tmux listed none");
+  return [first, ...rest];
+});
+export const sessions = (names: string[]): Sessions => parse(sessionList, names, "tmux's sessions");
 
 // The launcher's settings are read by the settings files' own table, as a field of its message, which passes over a
 // setting it does not read, as another build's.
-const launcher = object({ settings: settings(launchSettingsTable), sessions: mapped(list(line), sessions) });
+const launcher = object({ settings: settings(launchSettingsTable), sessions: sessionList });
 
 export function parseLauncher(json: string): Launcher {
   return parse(launcher, parseJson(json, "launcher"), "launcher");

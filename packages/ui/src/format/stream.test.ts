@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Block } from "./blocks.ts";
 import { createReassembly } from "./stream.ts";
 
 // A stream's text reassembled all at once.
@@ -37,11 +38,11 @@ describe("createReassembly", () => {
     const whole = reassemble(text, true);
     // The stop's field shows its event was applied: a stream's last event is applied once its text is complete.
     expect(whole).toMatchObject({
-      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use" },
-      blocks: [],
-      unread: [{ at: ["message_stop", "0", "metrics"], value: { ms: 1 } }],
+      message: { content: [{ type: "text", text: "Hello, world." }, { type: "tool_use", input: { command: "ls" } }], stop_reason: "tool_use", usage: { input_tokens: 2, output_tokens: 9 } },
+      blocks: [{ name: "message_stop event", parts: [{ id: "unread", kind: "rest", fields: [["metrics", [["ms", "1"]]]] }, { id: "data" }] }],
       tail: "",
     });
+    expect(whole.errors).toHaveLength(1);
     for (let at = 0; at <= text.length; at++) {
       const reassembly = createReassembly();
       expect(reassembly.reassemble(text.slice(0, at), false), `split at ${at}`).toEqual(reassemble(text.slice(0, at), false));
@@ -96,19 +97,47 @@ describe("createReassembly", () => {
     expect(built.message).toMatchObject({ content: [{ type: "text", text: "a", citations: [{ cited_text: "c" }] }], stop_reason: null });
   });
 
-  it("keeps the fields of every event no read asks for, a key `__proto__` among them, under the event's type and its place among those of its type", () => {
+  // Each block's name and the fields its parts hold that no read asked for.
+  const unread = (blocks: Block[]) => blocks.map(({ name, parts }) => [name, parts.flatMap((part) => (part.kind === "rest" ? part.fields : []))]);
+
+  it("keeps the fields of an event no read asks for, a key `__proto__` among them, in the block of the event that sent them", () => {
     const { built } = notApplied(
       { type: "ping" },
       JSON.parse('{"type": "ping", "__proto__": {"polluted": true}}'),
       { type: "content_block_start", index: 0, content_block: { type: "text", text: "" }, at: 1 },
       { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "a", estimated_tokens: 3 } },
     );
-    expect(built.unread.map(({ at, value }) => [at, value])).toEqual([
-      [["ping", "1", "__proto__"], { polluted: true }],
-      [["content_block_start", "0", "at"], 1],
-      [["content_block_delta", "0", "delta", "estimated_tokens"], 3],
+    expect(unread(built.blocks)).toEqual([
+      ["ping event", [["__proto__", [["polluted", "true"]]]]],
+      ["content_block_start event", [["at", "1"]]],
+      ["content_block_delta event", [["delta", [["estimated_tokens", "3"]]]]],
     ]);
+    // The events that held them were applied.
+    expect(built.message).toMatchObject({ content: [{ type: "text", text: "a" }] });
     expect(({} as { polluted?: true }).polluted).toBeUndefined();
+  });
+
+  it("drops a field of an event that does not read and names it there, the rest of the event applied", () => {
+    const { reasons, built } = notApplied(
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: 5 } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "a" } },
+    );
+    expect(reasons).toEqual(["content_block: text: is not a string"]);
+    expect(built.message).toMatchObject({ content: [{ type: "text", text: "a" }] });
+  });
+
+  it("builds the message from a message_start whose usage is null, which gives it none", () => {
+    const start = { ...messageStart, message: { ...messageStart.message, usage: null } };
+    const built = reassemble([start, { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } }].map((data) => event(data)).join(""), true);
+    expect(built.blocks).toEqual([]);
+    expect(built.message).toMatchObject({ id: "msg_1", stop_reason: "end_turn", usage: { output_tokens: 1 } });
+  });
+
+  it("returns an error before the message starts and while it builds, and none after its stop", () => {
+    const error = { type: "error", error: { type: "overloaded_error", message: "Overloaded" } };
+    const built = reassemble([error, messageStart, error, { type: "message_stop" }, error].map((data) => event(data)).join(""), true);
+    expect(built.errors).toHaveLength(2);
+    expect(built.blocks.map(({ name, parts }) => [name, (parts[0] as { text: string }).text])).toEqual([["error event", "error after message_stop"]]);
   });
 
   it("refuses text that does not extend the text it reassembled", () => {

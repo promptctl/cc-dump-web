@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { Malformed } from "./failure.ts";
-import { entries, fields, kinds, list, nullable, object, optional, parse, parsed, parseExact, parseJson, readShown, tagged, tolerant, unreadFields, value, whole } from "./json.ts";
+import {
+  asSent,
+  entries,
+  fields,
+  kinds,
+  list,
+  mapped,
+  nullable,
+  object,
+  optional,
+  orElse,
+  parse,
+  parsed,
+  parseExact,
+  parseJson,
+  readShown,
+  rooted,
+  tagged,
+  tolerant,
+  Unreadable,
+  unreadFields,
+  value,
+  whole,
+} from "./json.ts";
 import { parseTraceId } from "./trace.ts";
 
 describe("parse", () => {
@@ -24,6 +47,46 @@ describe("parse", () => {
 
   it("fails with Malformed for text that is not JSON", () => {
     expect(() => parseJson("{", "event")).toThrow(Malformed);
+  });
+
+  it("refuses every field that does not read, each at its own path, as one Unreadable", () => {
+    const read = object({ a: value(kinds.string), b: object({ c: value(kinds.integer) }) });
+    const refused = (() => {
+      try {
+        parse(read, { a: 1, b: { c: "x" } }, "event");
+      } catch (error) {
+        return error;
+      }
+    })();
+    expect(refused).toBeInstanceOf(Unreadable);
+    expect((refused as Unreadable).refusals).toEqual([
+      { at: ["a"], why: "is not a string" },
+      { at: ["b", "c"], why: "is not an integer" },
+    ]);
+    expect((refused as Unreadable).message).toBe("event: a: is not a string; b: c: is not an integer");
+  });
+
+  it("refuses a field a read would drop, in a message and in a settings file, where none may be dropped", () => {
+    const read = object({ a: orElse(value(kinds.string), "fallback") });
+    expect(() => parse(read, { a: 1 }, "event")).toThrow("event: a: is not a string");
+    expect(() => parseExact(read, { a: 1 }, "settings")).toThrow("settings: a: is not a string");
+  });
+});
+
+describe("a reader's shape", () => {
+  it("keeps a reader optional through `mapped` and `nullable`, so a field neither sends is read as none", () => {
+    const read = fields({ a: mapped(optional(value(kinds.string)), (a) => a?.length), b: nullable(optional(value(kinds.string))) });
+    expect(read({}, []).value.fields).toEqual({ a: { is: "read", value: undefined, unread: [], dropped: [] }, b: { is: "read", value: undefined, unread: [], dropped: [] } });
+  });
+
+  it("gives `orElse`'s fallback for a value that does not read, dropping it by its path with why", () => {
+    expect(orElse(value(kinds.string), "none")(5, ["a"])).toEqual({ value: "none", unread: [], dropped: [{ at: ["a"], why: "is not a string" }] });
+    expect(orElse(value(kinds.string), "none")("x", ["a"]).value).toBe("x");
+  });
+
+  it("names what a `rooted` read refuses from the value's own root, wherever the value stands", () => {
+    const item = rooted(asSent(object({ a: value(kinds.string) })));
+    expect(list(item)([{ a: 1 }], ["items"]).value[0]!.read).toEqual({ is: "refused", refusals: [{ at: ["a"], why: "is not a string" }] });
   });
 });
 

@@ -34,21 +34,24 @@ export type Part = { id: string } & PartBody;
 // A field: a name and its value, a text, or the fields it holds, shown under it. A header is one, its value a text.
 export type Field = [name: string, value: string | Field[]];
 
+// [LAW:one-source-of-truth] A field shown as a part of its own, named for it.
+export const fieldPart = (name: string, text: string): Part => ({ id: name, kind: "fields", fields: [[name, text]] });
+
 // [LAW:types-are-the-program] Where a field stands among a part's fields: the name of each field holding it and its own,
 // each with its occurrence among its siblings of that name, in the order sent, as HTTP repeats a header (RFC 9110,
 // 5.3). Only a field added after its siblings of a name has an occurrence they did not, so a field's path stays its own
 // as fields are added around it.
 export type FieldPath = [name: string, occurrence: number][];
 
-// [LAW:one-source-of-truth] Each item's occurrence among the items before it of the same name, counting from 0, in the
-// order sent: how a field's path and a tool's key tell siblings of one name apart.
-export function occurrences<T>(items: readonly T[], nameOf: (item: T) => string): number[] {
+// [LAW:one-source-of-truth] Each item with its occurrence among the items before it of the same name, counting from 0,
+// in the order sent: how a field's path and a tool's key tell siblings of one name apart.
+export function occurrences<T>(items: readonly T[], nameOf: (item: T) => string): [item: T, occurrence: number][] {
   const seen = new Map<string, number>();
   return items.map((item) => {
     const name = nameOf(item);
     const occurrence = seen.get(name) ?? 0;
     seen.set(name, occurrence + 1);
-    return occurrence;
+    return [item, occurrence];
   });
 }
 
@@ -56,9 +59,8 @@ export function occurrences<T>(items: readonly T[], nameOf: (item: T) => string)
 // follow it a depth deeper.
 export type FieldLine = { name: string; value: string | undefined; path: FieldPath };
 export function fieldLines(fields: Field[], holding: FieldPath = []): FieldLine[] {
-  const counted = occurrences(fields, ([name]) => name);
-  return fields.flatMap(([name, value], index) => {
-    const path: FieldPath = [...holding, [name, counted[index]!]];
+  return occurrences(fields, ([name]) => name).flatMap(([[name, value], occurrence]) => {
+    const path: FieldPath = [...holding, [name, occurrence]];
     return typeof value === "string" ? [{ name, value, path }] : [{ name, value: undefined, path }, ...fieldLines(value, path)];
   });
 }

@@ -14,11 +14,11 @@ import {
   type SpawnOptions,
   type TmuxConnection,
 } from "@promptctl/tmux-control-mode-js";
-import { startTime, sessions, type Launched, type Sessions, type TmuxWindow } from "./format.ts";
+import { startTime, sessions, type Launched, type Line, type Sessions, type TmuxWindow } from "./format.ts";
 
 // A window to open in a session: the command its pane runs, through the user's shell, in `cwd`, an absolute directory,
 // with `env` set for it alone.
-export type NewWindow = { session: string; command: string; cwd: string; env: Record<string, string> };
+export type NewWindow = { session: Line; command: Line; cwd: string; env: Record<string, string> };
 
 // The window opened, by its address, and its pane.
 export type Window = Pick<Launched, keyof TmuxWindow | "pane_id">;

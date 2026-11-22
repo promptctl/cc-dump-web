@@ -147,8 +147,8 @@ describe("format", () => {
       ["reply", "assistant"],
     ]);
     expect(lines(group(formatted, "request"))).toEqual(["http HTTP request", "parameters parameters", "parameters cache breakpoints: 1"]);
-    // A delta's field no read asks for, its thinking's estimated tokens, is shown among the events' fields.
-    expect(lines(group(formatted, "response"))).toEqual(["http HTTP response", "usage stop reason: tool_use", "usage usage", "usage message", "http event fields"]);
+    // A delta's field no read asks for, its thinking's estimated tokens, is shown in the block of its event.
+    expect(lines(group(formatted, "response"))).toEqual(["http HTTP response", "usage stop reason: tool_use", "usage usage", "usage message", "http content_block_delta event"]);
     expect(lines(group(formatted, "tools"))).toEqual(["tools Read", "tools web_search_20250305"]);
     // A text block is named for its type, as every other block is: its heading says who spoke.
     expect(lines(group(formatted, "system"))).toEqual(["system text"]);
@@ -186,7 +186,7 @@ describe("format", () => {
       { id: "thinking", kind: "text", form: "markdown", text: "" },
       { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] },
     ]);
-    expect(events!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: [["content_block_delta", [["0", [["delta", [["estimated_tokens", "50"]]]]]]]] }]);
+    expect(events!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: [["delta", [["estimated_tokens", "50"]]]] });
     expect(text!.parts).toEqual([{ id: "text", kind: "text", form: "markdown", text: "Red and blue." }]);
     expect(toolUse!.parts).toContainEqual({ kind: "text", form: "verbatim", id: "command", label: "command", text: "ls" });
     expect(usage!.parts).toEqual([{ id: "usage", kind: "fields", fields: [["input_tokens", "2"], ["output_tokens", "90"]] }]);
@@ -235,6 +235,13 @@ describe("format", () => {
     expect(group(cut("aborted"), "response")).toEqual([{ key: "end", category: "http", name: "aborted", parts: [{ id: "end", kind: "text", form: "verbatim", text: "The agent left the exchange before it completed." }] }]);
     expect(group(cut("stopped"), "response")).toMatchObject([{ key: "end", category: "http", name: "stopped" }]);
     expect(group(cut("aborted"), "reply")).toEqual([]);
+  });
+
+  it("counts the cache breakpoint of a message whose role does not read, which is shown as it was sent", () => {
+    const breakpoint = { type: "ephemeral" };
+    const formatted = one(request("a", { model: "m", messages: [{ role: "narrator", content: [{ type: "text", text: "Hi.", cache_control: breakpoint }] }] }));
+    expect(group(formatted, "request").at(-1)).toMatchObject({ key: "cache", name: "cache breakpoints: 1", parts: [{ fields: [["message.0/content.0", fieldValue(breakpoint)]] }] });
+    expect(group(formatted, "message.0")).toMatchObject([{ key: "message", parts: [doesNotFit('role: is not one of user, assistant, system'), { id: "received" }] }]);
   });
 
   it("lifts the cache breakpoints out of the blocks into the request's, in the order the cache's prefix is built", () => {
@@ -851,13 +858,13 @@ describe("format", () => {
       ]),
     );
     expect(blocks.find(({ name }) => name === "thinking")!.parts).toEqual([{ id: "thinking", kind: "text", form: "markdown", text: "" }, { id: "signature", kind: "fields", fields: [["signature", "4 characters"]] }]);
-    const notApplied = blocks.filter(({ name }) => name.endsWith(" event")).map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
+    const notApplied = blocks.filter(({ parts }) => parts[0]?.label === "not applied").map(({ name, parts }) => `${name}: ${(parts[0] as { text: string }).text}`);
     expect(notApplied).toEqual([
       expect.stringMatching(/^content_block_stop event: the block's streamed input: is not JSON/),
       "content_block_start event: content block 1 has already started",
     ]);
-    // The stop's field is its event's, not the message's: it is shown among the events' fields.
-    expect(blocks.find(({ name }) => name === "event fields")!.parts).toEqual([{ kind: "rest", id: "unread", label: "fields", fields: [["message_stop", [["0", [["metrics", [["latency_ms", "812"]]]]]]]] }]);
+    // The stop's field is its event's, not the message's: it is shown in the block of the event that sent it.
+    expect(blocks.find(({ name }) => name === "message_stop event")!.parts[0]).toEqual({ kind: "rest", id: "unread", label: "fields", fields: [["metrics", [["latency_ms", "812"]]]] });
   });
 
   it("says a body is not UTF-8, as a compressed body is when its head and so its coding were not recorded", () => {

@@ -1,6 +1,7 @@
 import { endingVariants, type Ending } from "./ending.ts";
 import { Malformed } from "./failure.ts";
-import { attempt, kinds, parsed, parseJson, readShown, tagged, unreadFields, value, worded } from "./json.ts";
+import { describe } from "./describe.ts";
+import { attempt, kinds, parsed, parseJson, readShown, tagged, unreadFields, value } from "./json.ts";
 import { parseTraceId, type TraceId } from "./trace.ts";
 
 // A part's log as the logs panel reads it (docs/design/01-features.md, F9). Imports nothing that needs node, so the UI's
@@ -63,7 +64,7 @@ export function lineAt(position: LinePosition, data: string): LogLine {
   // Only a line the part wrote in a shape this build does not read is unread; any other error is this build's bug.
   return attempt(
     (): LogLine => ({ ...position, event: parseLoggedEvent(data) }),
-    (refusals) => ({ ...position, unread: data, error: worded(refusals) }),
+    (_, error) => ({ ...position, unread: data, error: describe(error) }),
   );
 }
 

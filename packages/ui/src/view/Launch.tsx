@@ -1,5 +1,5 @@
 import { describe } from "@cc-dump/log/describe";
-import { launchSession, type Launch as LaunchAsked, type Launched, type Launcher } from "@cc-dump/server/format";
+import { launchSession, type LaunchAsked, type Launched, type Launcher } from "@cc-dump/server/format";
 import { useEffect, useRef, useState } from "react";
 import type { Connection } from "../connection/connection.ts";
 import { useAnswer } from "./answer.ts";
@@ -64,7 +64,7 @@ function LaunchForm({ connection, ...started }: { connection: Launching } & Star
 function Choice({ launcher, launch, start }: { launcher: Launcher } & Started) {
   const { settings, sessions } = launcher;
   const [session, setSession] = useState(() => launchSession(launcher));
-  const [command, setCommand] = useState(settings.command);
+  const [command, setCommand] = useState<string>(settings.command);
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     start({ session, command });

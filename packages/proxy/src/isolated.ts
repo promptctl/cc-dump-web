@@ -17,7 +17,7 @@ const { Malformed } = await import("@cc-dump/log/failure");
 
 // [LAW:parse-dont-validate] Each argument becomes what the proxy takes, or the process fails naming it.
 function parseArguments(args: string[]) {
-  if (args.length !== 5) throw new Error("usage: isolated.ts <upstream> <recordings-dir> <run-start> <proxy-port> <reader-port>");
+  if (args.length !== 5) throw new Malformed(`usage: isolated.ts <upstream> <recordings-dir> <run-start> <proxy-port> <reader-port>, got ${args.length} arguments`);
   const [upstream, dir, runStart, proxyPort, readerPort] = args;
   const argument = <T>(name: string, text: string | undefined, as: (text: string) => T): T => parse(parsed(kinds.string, as), text, name);
   const port = (text: string) => {

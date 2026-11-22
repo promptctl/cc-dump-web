@@ -1,6 +1,6 @@
 import type { LogLine } from "@cc-dump/log/line";
 import type { Listing, ProxyStatus, RecordedEvent, RecordingEnd } from "@cc-dump/proxy/format";
-import type { Launch, Launched, Launcher, TmuxWindow } from "@cc-dump/server/format";
+import type { LaunchAsked, Launched, Launcher, TmuxWindow } from "@cc-dump/server/format";
 import type { TerminalConnection } from "@promptctl/tmux-control-mode-js/window-terminal";
 
 // [LAW:locality-or-seam] The UI's one way to the backend: it names recordings, reads them, follows the proxy's status
@@ -32,7 +32,7 @@ export type Connection = {
   // fails it in the app server's words, tmux's own when tmux refused, as when it has no server or no sessions.
   launcher: (signal: AbortSignal) => Promise<Launcher>;
   // Stores the settings asked for as the next launch's, then opens the agent's window. Fails as `launcher` does.
-  launch: (launch: Launch, signal: AbortSignal) => Promise<Launched>;
+  launch: (launch: LaunchAsked, signal: AbortSignal) => Promise<Launched>;
   // A new connection to `window` on the user's tmux server, which a terminal shows it through (F13), not yet connected:
   // its owner connects it and closes it.
   tmux: (window: TmuxWindow) => TmuxConnection;

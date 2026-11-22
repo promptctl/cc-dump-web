@@ -19,8 +19,9 @@ export function parseJson(text: string, what: string): unknown {
 
 const isObject = (json: unknown): json is Record<string, unknown> => typeof json === "object" && json !== null && !Array.isArray(json);
 
-// A field of a JSON value read leniently: the value its object holds as its own at `name`, and none when it is no
-// object, for a value shown, never for what a value states, which the readers below read.
+// A field of a JSON value looked up leniently: the value its object holds as its own at `name`, and none when it is no
+// object. For picking what a line previews of a value already read (ui/src/format/parts.ts); a fact is read by the
+// readers below, never by this.
 export function fieldOf(json: unknown, name: string): unknown {
   return isObject(json) && Object.hasOwn(json, name) ? json[name] : undefined;
 }
@@ -57,12 +58,13 @@ export const worded = (refusals: readonly Refusal[]): string => refusals.map(({ 
 export type Refusals = readonly [Refusal, ...Refusal[]];
 const some = (refusals: readonly Refusal[]): refusals is Refusals => refusals.length > 0;
 
-// [LAW:types-are-the-program] A read refused, with each of its refusals at its own path: a `Malformed`, so every reader
-// of a refusal takes it as one.
-export class Refused extends Malformed {
+// [LAW:types-are-the-program] A value that does not read, with each of its refusals at its own path from the value's
+// root: a `Malformed`, so every reader of a refusal takes it as one. `document`: the name of the document the value is
+// the root of, where an entry point read it, which its words begin with.
+export class Unreadable extends Malformed {
   readonly refusals: Refusals;
-  constructor(refusals: Refusals) {
-    super(worded(refusals));
+  constructor(refusals: Refusals, document?: string) {
+    super(document === undefined ? worded(refusals) : `${document}: ${worded(refusals)}`);
     this.refusals = refusals;
   }
 }
@@ -70,11 +72,15 @@ export class Refused extends Malformed {
 // [LAW:nothing-unseen] A field no reader asked for, at `at`, its value, and the fields read beside it, so a document
 // that refuses it can say what is read there.
 export type Unread = { readonly at: Path; readonly value: unknown; readonly known: readonly string[] };
+// [LAW:single-enforcer] Each field no reader asked for as a refusal of it, why in the words of the entry point whose
+// document gives an unread field that meaning: a settings file's, or a stored item's (ui/src/stored.ts).
+export const unreadRefusals = (unread: readonly Unread[], why: (field: Unread) => string): Refusal[] => unread.map((field) => ({ at: field.at, why: why(field) }));
 
 // [LAW:parse-dont-validate] A value read as this build reads it, the fields it did not read that its value does not
 // hold, and what a tolerant read dropped of it.
 export type Read<T> = { value: T; unread: readonly Unread[]; dropped: readonly Refusal[] };
-const got = <T>(value: T): Read<T> => ({ value, unread: [], dropped: [] });
+// A value read whole, with nothing unread or dropped.
+export const asRead = <T>(value: T): Read<T> => ({ value, unread: [], dropped: [] });
 
 // A read of the value at `at`: it is read, or refused with `Malformed`, in words that do not repeat `at`. Any other
 // error is the reader's own bug, and passes as it is. `absent`, for a reader that takes a field not there: its value.
@@ -83,12 +89,12 @@ export type Readers<T> = { readonly [K in keyof T]-?: Reader<T[K]> };
 
 // [LAW:single-enforcer] What `read` gives, or `refused` with why: only `Malformed` is a refusal, its own refusals kept
 // where it has them, else one at `at`.
-export function attempt<T>(read: () => T, refused: (refusals: Refusals) => T, at: Path = []): T {
+export function attempt<T>(read: () => T, refused: (refusals: Refusals, error: Malformed) => T, at: Path = []): T {
   try {
     return read();
   } catch (error) {
     if (!(error instanceof Malformed)) throw error;
-    return refused(error instanceof Refused ? error.refusals : [{ at, why: describe(error) }]);
+    return refused(error instanceof Unreadable ? error.refusals : [{ at, why: describe(error) }], error);
   }
 }
 
@@ -96,14 +102,14 @@ export function attempt<T>(read: () => T, refused: (refusals: Refusals) => T, at
 // refusal at its own path, or, for a field, not there. A fact reads only an outcome that read, so it never reaches a
 // field that failed.
 export type Taken<T> = ({ is: "read" } & Read<T>) | { is: "refused"; refusals: Refusals };
-export type Field<T> = Taken<T> | { is: "missing"; at: Path };
-export type Fields<T> = { readonly [K in keyof T]-?: Field<T[K]> };
+export type Outcome<T> = Taken<T> | { is: "missing"; at: Path };
+export type Fields<T> = { readonly [K in keyof T]-?: Outcome<T[K]> };
 
 // [LAW:one-source-of-truth] Why a field did not read: its refusals, or that it is missing.
-export const refusalsOf = (field: Exclude<Field<unknown>, { is: "read" }>): Refusals => (field.is === "missing" ? [{ at: field.at, why: "is missing" }] : field.refusals);
+export const refusalsOf = (field: Exclude<Outcome<unknown>, { is: "read" }>): Refusals => (field.is === "missing" ? [{ at: field.at, why: "is missing" }] : field.refusals);
 
 // The value a field read, given to `read`, or `otherwise` for one that did not.
-export const when = <T, R>(field: Field<T>, read: (value: T) => R, otherwise: R): R => (field.is === "read" ? read(field.value) : otherwise);
+export const when = <T, R>(field: Outcome<T>, read: (value: T) => R, otherwise: R): R => (field.is === "read" ? read(field.value) : otherwise);
 
 // The value at `here` read by `reader`, as its outcome.
 export const taken = <T>(reader: Reader<T>, json: unknown, here: Path): Taken<T> =>
@@ -130,15 +136,17 @@ export const fields =
   (json, at) => {
     if (!isObject(json)) throw new Malformed(`is not ${kinds.object.expected}`);
     const known = Object.keys(readers);
-    const read = (Object.entries(readers) as [string, Reader<unknown>][]).map(([key, reader]): [string, Field<unknown>] => {
+    // [LAW:types-are-the-program] exception: `Object.entries` forgets which key's reader each is, so each reader is
+    // taken as one of `unknown` and the outcomes as `T`'s, keyed as `readers` is.
+    const read = (Object.entries(readers) as [string, Reader<unknown>][]).map(([key, reader]): [string, Outcome<unknown>] => {
       const here = [...at, key];
       if (Object.hasOwn(json, key)) return [key, taken(reader, json[key], here)];
-      return [key, reader.absent === undefined ? { is: "missing", at: here } : { is: "read", ...got(reader.absent()) }];
+      return [key, reader.absent === undefined ? { is: "missing", at: here } : { is: "read", ...asRead(reader.absent()) }];
     });
     const unread = Object.keys(json)
       .filter((key) => !Object.hasOwn(readers, key))
       .map((key) => ({ at: [...at, key], value: json[key], known }));
-    return got(new Outcomes(Object.fromEntries(read) as Fields<T>, unread));
+    return asRead(new Outcomes(Object.fromEntries(read) as Fields<T>, unread));
   };
 
 // [LAW:types-are-the-program] A value whose every field read, at every depth: each object's outcomes become the object
@@ -151,7 +159,7 @@ export type Walked<T> = ({ is: "whole" } & Read<Whole<T>>) | { is: "refused"; re
 function walked(value: unknown, seen: { unread: Unread[]; dropped: Refusal[]; refused: Refusal[] }): unknown {
   if (value instanceof Outcomes) {
     seen.unread.push(...value.unread);
-    const read = (Object.entries(value.fields) as [string, Field<unknown>][]).map(([key, field]): [string, unknown] => {
+    const read = (Object.entries(value.fields) as [string, Outcome<unknown>][]).map(([key, field]): [string, unknown] => {
       if (field.is !== "read") {
         seen.refused.push(...refusalsOf(field));
         return [key, undefined];
@@ -170,9 +178,27 @@ function walked(value: unknown, seen: { unread: Unread[]; dropped: Refusal[]; re
 // The whole of `value`, when every outcome in it read, or every refusal in it.
 export function whole<T>(value: T): Walked<T> {
   const seen = { unread: [], dropped: [], refused: [] };
-  const read = walked(value, seen) as Whole<T>;
-  return some(seen.refused) ? { is: "refused", refusals: seen.refused } : { is: "whole", value: read, unread: seen.unread, dropped: seen.dropped };
+  const read = walked(value, seen);
+  if (some(seen.refused)) return { is: "refused", refusals: seen.refused };
+  // [LAW:types-are-the-program] exception: `walked` gives `undefined` for each field that did not read, and none did,
+  // so what it gave is `Whole<T>`, which no type carries through a walk of any value.
+  return { is: "whole", value: read as Whole<T>, unread: seen.unread, dropped: seen.dropped };
 }
+
+// [LAW:one-source-of-truth] The whole of a value read, when it and every outcome in it read, or every refusal in it:
+// what a read's outcome is, walked, its own unread fields and drops kept with those of what it holds.
+export const wholeOf = <T>(read: Taken<T>): Walked<T> => {
+  if (read.is === "refused") return read;
+  const walked = whole(read.value);
+  return walked.is === "refused" ? walked : { ...walked, unread: [...read.unread, ...walked.unread], dropped: [...read.dropped, ...walked.dropped] };
+};
+
+// A JSON text `what` read by `reader`, as its outcome: refused, why, where it is no JSON.
+export const readText = <T>(reader: Reader<T>, text: string, what: string): Taken<T> =>
+  attempt(
+    () => taken(reader, parseJson(text, what), []),
+    (refusals): Taken<T> => ({ is: "refused", refusals }),
+  );
 
 // An object whose fields hold together, each read by its reader: one missing or refused refuses the whole, naming each,
 // as a match without its count or a window without its session is none.
@@ -180,7 +206,7 @@ export const object =
   <T>(readers: Readers<T>): Reader<Whole<Outcomes<T>>> =>
   (json, at) => {
     const read = whole(fields(readers)(json, at).value);
-    if (read.is === "refused") throw new Refused(read.refusals);
+    if (read.is === "refused") throw new Unreadable(read.refusals);
     return { value: read.value, unread: read.unread, dropped: read.dropped };
   };
 
@@ -190,24 +216,34 @@ export const object =
 export const tolerant =
   <T>(readers: Readers<T>, fallback: T): Reader<T> =>
   (json, at) =>
+    // [LAW:types-are-the-program] exception: each key is one of `T`'s, as `fields` keys its outcomes as `readers` is,
+    // which `Object.entries` and `Object.fromEntries` forget.
     tolerated(readers, json, at, fallback, (each) => Object.fromEntries(each.map(([key, field]) => [key, when(field, (value) => value, fallback[key as keyof T])])) as T);
+
+// [LAW:parse-dont-validate] A field that is an independent choice of its object, read by `reader`, or, where it does not
+// read, `fallback`, its refusals dropped, so the object reads without it and the drop is named where it is read.
+export const orElse = <T>(reader: Reader<T>, fallback: T): Reader<T> => {
+  const read: Reader<T> = (json, at) => attempt(() => reader(json, at), (refusals): Read<T> => ({ value: fallback, unread: [], dropped: refusals }), at);
+  return reader.absent === undefined ? read : Object.assign(read, { absent: reader.absent });
+};
 
 // A map whose entries are each an independent choice, each read by `reader`: one refused is dropped alone.
 export const entries =
   <T>(reader: Reader<T>): Reader<Record<string, T>> =>
   (json, at) => {
-    const readers = Object.fromEntries((isObject(json) ? Object.keys(json) : []).map((key) => [key, reader])) as Readers<Record<string, T>>;
+    const readers: Readers<Record<string, T>> = Object.fromEntries((isObject(json) ? Object.keys(json) : []).map((key) => [key, reader]));
     return tolerated(readers, json, at, {}, (each) => Object.fromEntries(each.flatMap(([key, field]) => (field.is === "read" ? [[key, field.value]] : []))));
   };
 
 // [LAW:one-type-per-behavior] A tolerant read of `json`'s fields by `readers`: the value `valueOf` makes of their
 // outcomes, every field they did not read, and each refused one dropped, by its path; what is not an object, `fallback`,
 // dropped.
-function tolerated<T>(readers: Readers<T>, json: unknown, at: Path, fallback: T, valueOf: (each: [string, Field<T[keyof T]>][]) => T): Read<T> {
+function tolerated<T>(readers: Readers<T>, json: unknown, at: Path, fallback: T, valueOf: (each: [string, Outcome<T[keyof T]>][]) => T): Read<T> {
   return attempt(
     (): Read<T> => {
       const read = fields(readers)(json, at).value;
-      const each = Object.entries(read.fields) as [string, Field<T[keyof T]>][];
+      // [LAW:types-are-the-program] exception: `Object.entries` forgets that each outcome is of its key's field.
+      const each = Object.entries(read.fields) as [string, Outcome<T[keyof T]>][];
       return {
         value: valueOf(each),
         unread: [...read.unread, ...each.flatMap(([, field]) => (field.is === "read" ? field.unread : []))],
@@ -226,38 +262,41 @@ export const list =
     if (!Array.isArray(json)) throw new Malformed(`is not ${kinds.list.expected}`);
     const read = json.map((item: unknown, index) => taken(reader, item, [...at, index]));
     const refused = read.flatMap((item) => (item.is === "refused" ? item.refusals : []));
-    if (some(refused)) throw new Refused(refused);
+    if (some(refused)) throw new Unreadable(refused);
     const items = read.flatMap((item) => (item.is === "read" ? [item] : []));
     return { value: items.map(({ value }) => value), unread: items.flatMap(({ unread }) => unread), dropped: items.flatMap(({ dropped }) => dropped) };
   };
 
-// [LAW:types-are-the-program] A value of `kind`, as `parse` takes it, or refused in the kind's words or the parser's.
-export const parsed =
-  <K, T>(kind: Kind<K>, parse: (value: K) => T): Reader<T> =>
+// A value of `kind`, as it is, or refused in the kind's words.
+export const value =
+  <K>(kind: Kind<K>): Reader<K> =>
   (json) => {
     if (!kind.fits(json)) throw new Malformed(`is not ${kind.expected}`);
-    return got(parse(json));
+    return asRead(json);
   };
 
-// A value of `kind`, as it is.
-export const value = <K>(kind: Kind<K>): Reader<K> => parsed(kind, (json) => json);
-
-// The value `reader` reads, as `as` takes it, or refused in `as`'s words.
-export const mapped =
-  <T, U>(reader: Reader<T>, as: (value: T) => U): Reader<U> =>
-  (json, at) => {
+// [LAW:types-are-the-program] The value `reader` reads, as `as` takes it, or refused in `as`'s words. A field `reader`
+// takes when it is not there, `as` takes too, so optionality survives the mapping.
+export const mapped = <T, U>(reader: Reader<T>, as: (value: T) => U): Reader<U> => {
+  const read: Reader<U> = (json, at) => {
     const read = reader(json, at);
     return { ...read, value: as(read.value) };
   };
+  const { absent } = reader;
+  return absent === undefined ? read : Object.assign(read, { absent: () => as(absent()) });
+};
+
+// A value of `kind`, as `parse` takes it, or refused in the kind's words or the parser's.
+export const parsed = <K, T>(kind: Kind<K>, parse: (value: K) => T): Reader<T> => mapped(value(kind), parse);
 
 // A value of any JSON type, as it is: a field that must be there, whatever it holds.
-export const raw: Reader<unknown> = (json) => got(json);
+export const raw: Reader<unknown> = (json) => asRead(json);
 
-// A value that is `null`, or one `reader` reads.
-export const nullable =
-  <T>(reader: Reader<T>): Reader<T | null> =>
-  (json, at) =>
-    json === null ? got(null) : reader(json, at);
+// A value that is `null`, or one `reader` reads; not there, as `reader` takes it not there.
+export const nullable = <T>(reader: Reader<T>): Reader<T | null> => {
+  const read: Reader<T | null> = (json, at) => (json === null ? asRead(null) : reader(json, at));
+  return reader.absent === undefined ? read : Object.assign(read, { absent: reader.absent });
+};
 
 // A field that may not be there, read by `reader` when it is: the one reader that takes a field not there, as none.
 export const optional = <T>(reader: Reader<T>): Reader<T | undefined> => Object.assign((json: unknown, at: Path): Read<T | undefined> => reader(json, at), { absent: () => undefined });
@@ -270,39 +309,86 @@ export const absent: Reader<undefined> = Object.assign(
   { absent: () => undefined },
 );
 
-// A value that is one of two shapes, each read by its own reader: the first whose kind it is.
-export type Shape<T> = { kind: Kind<unknown>; read: Reader<T> };
-export const either =
-  <A, B>(first: Shape<A>, second: Shape<B>): Reader<A | B> =>
+// [LAW:one-type-per-behavior] A value that may be one of several JSON shapes, each read by the reader for its shape:
+// a string, a list or an object. A value of a shape none reads is refused, naming those that are read.
+export type Shapes<T> = { string?: Reader<T>; list?: Reader<T>; object?: Reader<T> };
+export const shaped =
+  <T>(shapes: Shapes<T>): Reader<T> =>
   (json, at) => {
-    if (first.kind.fits(json)) return first.read(json, at);
-    if (second.kind.fits(json)) return second.read(json, at);
-    throw new Malformed(`is not ${first.kind.expected} or ${second.kind.expected}`);
+    const shape = kinds.string.fits(json) ? "string" : kinds.list.fits(json) ? "list" : kinds.object.fits(json) ? "object" : undefined;
+    const reader = shape === undefined ? undefined : shapes[shape];
+    if (reader === undefined) throw new Malformed(`is not ${(["string", "list", "object"] as const).filter((each) => shapes[each] !== undefined).map((each) => kinds[each].expected).join(" or ")}`);
+    return reader(json, at);
   };
 
-// The field `name` of an object, read once by `kind`, and the object's other fields, for what the field decides to read
-// them: a union's tag, or a field lifted out of the object it is set on.
-export const apart =
-  <K>(name: string, kind: Kind<K>): Reader<{ is: K; rest: Record<string, unknown> }> =>
+// [LAW:single-enforcer] One of a union told apart by its field `tag`, a string, read once: the reader its value picks,
+// `variant`'s, reads the object's other fields. A union's every reader dispatches through this.
+export const taggedFields =
+  <T>(tag: string, variant: (is: string) => Reader<T>): Reader<T> =>
   (json, at) => {
     if (!isObject(json)) throw new Malformed(`is not ${kinds.object.expected}`);
-    const here = [...at, name];
-    if (!Object.hasOwn(json, name)) throw new Refused([{ at: here, why: "is missing" }]);
-    const { [name]: is, ...rest } = json;
-    const read = taken(value(kind), is, here);
-    if (read.is === "refused") throw new Refused(read.refusals);
-    return got({ is: read.value, rest });
+    const here = [...at, tag];
+    if (!Object.hasOwn(json, tag)) throw new Unreadable([{ at: here, why: "is missing" }]);
+    const { [tag]: is, ...rest } = json;
+    if (!kinds.string.fits(is)) throw new Unreadable([{ at: here, why: `is not ${kinds.string.expected}` }]);
+    return variant(is)(rest, at);
   };
 
-// One of a union told apart by its field `tag`: the variant its tag names, an `object` of its other fields.
+// [LAW:one-source-of-truth] An object whose field `key` decides how it reads, as a tool call's name decides how its
+// input does: `key` read once, by `reader`, and the object read by the reader `pick` gives for that outcome. `pick` is
+// given the outcome and `again`, the reader that gives the object's read of `key` that one outcome, so the key is read
+// once and stands among the object's fields as it read.
+export const readBy =
+  <K, T>(key: string, reader: Reader<K>, pick: (outcome: Outcome<K>, again: Reader<K>) => Reader<T>): Reader<T> =>
+  (json, at) => {
+    if (!isObject(json)) throw new Malformed(`is not ${kinds.object.expected}`);
+    const here = [...at, key];
+    const outcome: Outcome<K> = Object.hasOwn(json, key) ? taken(reader, json[key], here) : { is: "missing", at: here };
+    const again: Reader<K> = () => {
+      if (outcome.is === "read") return outcome;
+      throw new Unreadable(refusalsOf(outcome));
+    };
+    return pick(outcome, again)(json, at);
+  };
+
+// [LAW:nothing-unseen] A value as it was sent beside its read's outcome, which never refuses: for a value its reader
+// shows as it was sent where it does not read, each of a list's on its own, as a request's messages are.
+export type AsSent<T> = { sent: unknown; read: Taken<T> };
+export const asSent =
+  <T>(reader: Reader<T>): Reader<AsSent<T>> =>
+  (json, at) =>
+    asRead({ sent: json, read: taken(reader, json, at) });
+
+// A value read as a whole of its own: what its read names, its refusals and the fields it did not read, named from its
+// root, as a list's item that is shown on its own is.
+export const rooted =
+  <T>(reader: Reader<T>): Reader<T> =>
+  (json) =>
+    reader(json, []);
+
+// [LAW:nothing-unseen] A value read by `reader`, with the fields it did not read held beside it as the object they
+// were, below the value's own path: for an object every field of which is its own, read or not, as a tool's input is,
+// whose entry arranges some of its fields and shows the others as they were sent.
+export type Holding<T> = { read: T; others: Record<string, unknown> };
+export const holding =
+  <T>(reader: Reader<T>): Reader<Holding<T>> =>
+  (json, at) => {
+    const read = reader(json, at);
+    return { value: { read: read.value, others: unreadFields(read.unread, at) }, unread: [], dropped: read.dropped };
+  };
+
+// One of a union told apart by its field `tag`: the variant its tag names, an `object` of its other fields; a tag that
+// names none is refused, naming those it may.
 export const tagged =
   <K extends string, T extends Record<K, string>>(tag: K, variants: { [V in T[K]]: Readers<Omit<Extract<T, Record<K, V>>, K>> }): Reader<T> =>
   (json, at) => {
-    const { is, rest } = apart(tag, kinds.among(Object.keys(variants) as T[K][]))(json, at).value;
-    const read = object(variants[is] as Readers<unknown>)(rest, at);
-    // [LAW:types-are-the-program] exception: the variant `is` names, with its tag, is a member of `T`, which no type
-    // carries across a generic key.
-    return { ...read, value: { ...(read.value as object), [tag]: is } as unknown as T };
+    const names = Object.keys(variants);
+    return taggedFields(tag, (is) => {
+      if (!Object.hasOwn(variants, is)) throw new Unreadable([{ at: [...at, tag], why: `is not ${kinds.among(names).expected}` }]);
+      // [LAW:types-are-the-program] exception: `is` names one of `variants`, and the variant it names, with its tag, is
+      // a member of `T`, which no type carries from a string across a generic key.
+      return mapped(object(variants[is as T[K]] as Readers<unknown>), (fields) => ({ ...(fields as object), [tag]: is }) as unknown as T);
+    })(json, at);
   };
 
 // A field set on `into` as its own, whatever its key, `__proto__` among them.
@@ -325,35 +411,35 @@ export function unreadFields(unread: readonly Unread[], from: Path = []): Record
   return root;
 }
 
-// A document `what` read from its root by `read`, a refusal naming `what`.
-function under<T>(what: string, read: () => T): T {
-  try {
-    return read();
-  } catch (error) {
-    throw error instanceof Malformed ? new Malformed(`${what}: ${describe(error)}`) : error;
-  }
+// A document `what` read from its root by `reader`, or refused with `Unreadable` naming `what`, each refusal at its own
+// path from the root. [LAW:no-silent-failure] What a tolerant read in it dropped is refused here too: only a stored
+// item's read (ui/src/stored.ts) keeps going past a drop, naming it.
+function under<T>(what: string, reader: Reader<T>, json: unknown): Read<T> {
+  const read = attempt(
+    (): Taken<T> => taken(reader, json, []),
+    (refusals): Taken<T> => ({ is: "refused", refusals }),
+  );
+  if (read.is === "refused") throw new Unreadable(read.refusals, what);
+  if (some(read.dropped)) throw new Unreadable(read.dropped, what);
+  return read;
 }
 
-// [LAW:single-enforcer] A message `what` read whole by `reader`, or refused with `Malformed` naming `what`: the one way a
-// part reads a message another part sent. A field it does not read is another build's, and is passed over, as the
-// message stays as it was sent.
+// [LAW:single-enforcer] A message `what` read whole by `reader`: the one way a part reads a message another part sent.
+// A field it does not read is another build's, and is passed over, as the message stays as it was sent.
 export function parse<T>(reader: Reader<T>, json: unknown, what: string): T {
-  return under(what, () => reader(json, [])).value;
+  return under(what, reader, json).value;
 }
 
 // [LAW:no-silent-failure] A settings file `what` read whole by `reader`: a field it does not read, at any depth, is
 // refused, naming what is read there, since most often it is a setting misspelled.
 export function parseExact<T>(reader: Reader<T>, json: unknown, what: string): T {
-  return under(what, () => {
-    const read = reader(json, []);
-    const unread = read.unread.map(({ at, known }) => ({ at, why: `is not read here; read here: ${known.join(", ")}` }));
-    if (some(unread)) throw new Refused(unread);
-    return read.value;
-  });
+  const read = under(what, reader, json);
+  const unread = unreadRefusals(read.unread, ({ known }) => `is not read here; read here: ${known.join(", ")}`);
+  if (some(unread)) throw new Unreadable(unread, what);
+  return read.value;
 }
 
-// [LAW:nothing-unseen] A value read by `reader` with every field it did not read: the formatter's, which shows them,
-// and a log line's, whose facts they are.
+// [LAW:nothing-unseen] A log line read by `reader` with every field it did not read, which are its facts (line.ts).
 export function readShown<T>(reader: Reader<T>, json: unknown, what: string): Read<T> {
-  return under(what, () => reader(json, []));
+  return under(what, reader, json);
 }
