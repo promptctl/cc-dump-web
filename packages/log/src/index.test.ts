@@ -6,8 +6,8 @@ import { setTimeout } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { LOOPBACK } from "./address.ts";
-import { createLog, logged, loggedAfter, serve, type Event, type Work } from "./index.ts";
-import { eventLog, send, sendRaw, serving } from "./testing.ts";
+import { createLog, failed, logged, loggedAfter, serve, unitOfWork, type Event, type Work } from "./index.ts";
+import { eventLog, eventsWritten, send, sendRaw, serving } from "./testing.ts";
 import { parseTraceId } from "./trace.ts";
 
 const ended: Event = { event: "e", trace_id: parseTraceId("t"), started_at: "s", duration_ms: 0, outcome: "ok" };
@@ -88,7 +88,7 @@ describe("loggedAfter", () => {
     const { log, next } = eventLog();
     const before = Date.now();
 
-    loggedAfter(log, parseTraceId("t1"), "call", { method: "send-keys" }, 900, undefined);
+    loggedAfter(log, parseTraceId("t1"), "call", { method: "send-keys" }, 900, { outcome: "ok" });
     const event = await next();
     expect(event).toMatchObject({ event: "call", trace_id: "t1", method: "send-keys", duration_ms: 900, outcome: "ok" });
     expect(Date.parse(event.started_at)).toBeGreaterThanOrEqual(before - 900);
@@ -98,8 +98,90 @@ describe("loggedAfter", () => {
   it("records the failure it reports", async () => {
     const { log, next } = eventLog();
 
-    loggedAfter(log, parseTraceId("t1"), "call", {}, 0, new Error("denied"));
+    loggedAfter(log, parseTraceId("t1"), "call", {}, 0, failed(new Error("denied")));
     expect(await next()).toMatchObject({ event: "call", outcome: "error", error: expect.stringContaining("denied") });
+  });
+});
+
+describe("unitOfWork", () => {
+  const trace_id = parseTraceId("t1");
+  const span = { trace_id, end: () => ({ trace_id, started_at: "s", duration_ms: 0 }) };
+  const sinkGone = () => {
+    throw new Error("sink gone");
+  };
+
+  it("writes the first ending it is given, and no later one", async () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "read", { from: 0 }, span);
+
+    unit.end({ outcome: "aborted" }, () => ({ to: 4 }));
+    unit.end(failed(new Error("late")), () => ({ to: 9 }));
+    expect(events).toEqual([{ event: "read", from: 0, ...span.end(), to: 4, outcome: "aborted" }]);
+    expect(await unit.ended).toEqual({ outcome: "aborted" });
+  });
+
+  it("ends with the first failure reported, over the ending the work reached", async () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "request", {}, span);
+
+    unit.fail(new Error("first"));
+    unit.fail(new Error("second"));
+    unit.end({ outcome: "ok" });
+    expect(events).toMatchObject([{ outcome: "error", error: expect.stringContaining("first") }]);
+    expect(events[0]!.error).not.toContain("second");
+    expect(await unit.ended).toEqual({ outcome: "error", error: events[0]!.error });
+  });
+
+  it("writes the ending as its event judges it, and resolves `ended` with the unit's own", async () => {
+    const { events, log } = eventsWritten();
+    const unit = unitOfWork(log, "request", {}, span, () => failed(new Error("500 Internal Server Error")));
+
+    unit.end({ outcome: "ok" });
+    expect(events).toMatchObject([{ outcome: "error", error: expect.stringContaining("500") }]);
+    expect(await unit.ended).toEqual({ outcome: "ok" });
+  });
+
+  it("measures the facts found only for the ending it writes", () => {
+    const { log } = eventsWritten();
+    const unit = unitOfWork(log, "read", {}, span);
+    let measured = 0;
+
+    unit.end({ outcome: "ok" }, () => ({ measured: ++measured }));
+    unit.end({ outcome: "ok" }, () => ({ measured: ++measured }));
+    expect(measured).toBe(1);
+  });
+
+  it("stays open when measuring its facts or its span throws, for the failure its caller gives", () => {
+    const { events, log } = eventsWritten();
+    let spans = 0;
+    const unit = unitOfWork(log, "read", {}, { trace_id, end: () => (spans++ === 0 ? sinkGone() : span.end()) });
+
+    expect(() => unit.end({ outcome: "ok" })).toThrow("sink gone");
+    expect(() =>
+      unit.end({ outcome: "ok" }, () => {
+        throw new Error("EIO");
+      }),
+    ).toThrow("EIO");
+    unit.end(failed(new Error("EIO")));
+    expect(events).toMatchObject([{ event: "read", outcome: "error", error: expect.stringContaining("EIO") }]);
+  });
+
+  it("resolves `ended` before a write that throws, which surfaces as itself", async () => {
+    const unit = unitOfWork(sinkGone, "request", {}, span);
+
+    expect(() => unit.end({ outcome: "ok" })).toThrow("sink gone");
+    expect(await unit.ended).toEqual({ outcome: "ok" });
+  });
+
+  it("attempts no second write after a write that throws, whatever catch it reaches", () => {
+    let writes = 0;
+    const log = () => {
+      writes++;
+      sinkGone();
+    };
+
+    expect(() => logged(log, "setup", {}, () => 7)).toThrow("sink gone");
+    expect(writes).toBe(1);
   });
 });
 
@@ -251,13 +333,13 @@ describe("serve", () => {
 
   // Its close event is written once node's server has stopped listening. The freed port is not probed: any process
   // may bind it at once (parallel tests do), and a probe would reach that process's server.
-  it("records the port it bound and closing it", async () => {
+  it("records the port asked for, the port it bound, and closing it", async () => {
     const { log, next } = eventLog();
 
     const { port, close } = await serve(log, () => {}, 0);
     await close();
 
-    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", port });
+    expect(await next()).toMatchObject({ event: "listen", outcome: "ok", requested_port: 0, port });
     expect(await next()).toMatchObject({ event: "close", outcome: "ok", port, requests_open: 0 });
   });
 
@@ -310,7 +392,9 @@ describe("serve", () => {
     const { log, next } = eventLog();
 
     await expect(serve(log, () => {}, port)).rejects.toThrow(/EADDRINUSE/);
-    expect(await next()).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, port, error: expect.stringContaining("EADDRINUSE") });
+    const listen = await next();
+    expect(listen).toMatchObject({ event: "listen", outcome: "error", address: LOOPBACK, requested_port: port, error: expect.stringContaining("EADDRINUSE") });
+    expect(listen).not.toHaveProperty("port");
   });
 
   // macOS lets the bind to LOOPBACK share a port held on the wildcard, where Linux refuses it; sharing, serve's is the

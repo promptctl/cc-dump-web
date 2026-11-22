@@ -1,5 +1,5 @@
 import { admit, askedOf, refuseUpgrade, Refused } from "@cc-dump/log/answer";
-import { loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
+import { failed, loggedAfter, type Facts, type Log, type Upgrade, type Work } from "@cc-dump/log";
 import { describe } from "@cc-dump/log/describe";
 import { Malformed } from "@cc-dump/log/failure";
 import type { SpawnOptions } from "@promptctl/tmux-control-mode-js";
@@ -74,49 +74,48 @@ function windowOf({ pathname }: URL): TmuxWindow {
 function bridgeEvent(log: Log, work: Work) {
   return (event: BridgeObservabilityEvent) => {
     if (event.kind === "event-out") return;
-    const { facts, duration_ms, failure } = verdict(event);
-    if (failure?.of === "connection") work.fail(failure.error);
-    loggedAfter(log, work.trace_id, "tmux_bridge", facts, duration_ms, failure?.error);
+    const { facts, duration_ms, fault } = verdict(event);
+    if (fault.of === "connection") work.fail(fault.error);
+    loggedAfter(log, work.trace_id, "tmux_bridge", facts, duration_ms, fault.of === "none" ? { outcome: "ok" } : failed(fault.error));
   };
 }
 
 // [LAW:types-are-the-program] What one of the bridge's events says: its facts, how long it took (only a call's result
-// is timed), and the failure it reports, if any, with whose it is: one call's, or the connection's. Each event decides
+// is timed), and its fault: none, or a failure with whose it is, one call's or the connection's. Each event decides
 // only its own fact. The switch is exhaustive, so a kind the library adds is a type error here, never an event recorded
 // as fine.
-type Verdict = { facts: Facts; duration_ms: number; failure: { error: Error; of: "call" | "connection" } | undefined };
+type Fault = { of: "none" } | { of: "call" | "connection"; error: Error };
+type Verdict = { facts: Facts; duration_ms: number; fault: Fault };
+const none: Fault = { of: "none" };
 function verdict(event: Exclude<BridgeObservabilityEvent, { kind: "event-out" }>): Verdict {
-  const said = (error: Error | undefined, of: "call" | "connection" = "connection"): Verdict => ({
-    facts: event,
-    duration_ms: 0,
-    failure: error === undefined ? undefined : { error, of },
-  });
+  const said = (fault: Fault): Verdict => ({ facts: event, duration_ms: 0, fault });
+  const ofConnection = (error: Error): Fault => ({ of: "connection", error });
   switch (event.kind) {
     case "result": {
       const { durationMs, ok, ...facts } = event;
-      return { ...said(ok ? undefined : new Error(`call ${event.id} failed: ${event.code}`), "call"), facts, duration_ms: durationMs };
+      return { ...said(ok ? none : { of: "call", error: new Error(`call ${event.id} failed: ${event.code}`) }), facts, duration_ms: durationMs };
     }
     case "call":
-      return said(event.allowed ? undefined : new Error(`call ${event.id} (${event.method}) denied: ${event.denyReason}`), "call");
+      return said(event.allowed ? none : { of: "call", error: new Error(`call ${event.id} (${event.method}) denied: ${event.denyReason}`) });
     case "shutdown-requested":
     case "connection-opened":
-      return said(undefined);
+      return said(none);
     // BRIDGE_CLOSED is the bridge closing a connection whose end came from elsewhere, the reason saying where: the
     // server's shutdown, a page gone silent, or the page's tmux client ending, normally or not, which upstream-closed
     // reports. Any other code names a fault of the connection's.
     case "connection-closed":
-      return said(event.errorCode === undefined || event.errorCode === "BRIDGE_CLOSED" ? undefined : new Error(`${event.errorCode}: ${event.reason}`));
+      return said(event.errorCode === undefined || event.errorCode === "BRIDGE_CLOSED" ? none : ofConnection(new Error(`${event.errorCode}: ${event.reason}`)));
     // A client tmux ends is an exit: the window's session gone while the page was there. One gone before is the attach's
     // failure, which the bridge closes the connection on as BRIDGE_INTERNAL.
     case "upstream-closed":
-      return said(event.reason === "transport-error" ? new Error("the page's tmux client failed") : undefined);
+      return said(event.reason === "transport-error" ? ofConnection(new Error("the page's tmux client failed")) : none);
     case "protocol-error":
     case "client-dispose-failed":
     case "release-failed":
-      return said(new Error(event.message));
+      return said(ofConnection(new Error(event.message)));
     case "pane-resume-failed":
     case "cross-session-layout-release-failed":
     case "handshake-failure-unreported":
-      return said(new Error(`${event.code}: ${event.message}`));
+      return said(ofConnection(new Error(`${event.code}: ${event.message}`)));
   }
 }

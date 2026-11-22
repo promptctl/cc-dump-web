@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Ending, Event } from "@cc-dump/log";
 import { routes } from "@cc-dump/log/answer";
-import { arrivals, eventLog, serving } from "@cc-dump/log/testing";
+import { arrivals, eventLog, eventsWritten, serving } from "@cc-dump/log/testing";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { parseProxyStatus, type SourceStatus, type Traffic } from "./format.ts";
 import { fileHash } from "./source.ts";
@@ -43,10 +43,10 @@ async function watching(source: Map<string, string>, dir: string) {
 describe("watchSource", () => {
   it("starts watching with nothing changed, and says so", () => {
     const { source } = sourceFiles();
-    const logged: Event[] = [];
-    const watch = watchSource((event) => void logged.push(event), source);
+    const { events, log } = eventsWritten();
+    const watch = watchSource(log, source);
     expect(watch.state()).toEqual({ state: "watching", changed_source: [] });
-    expect(logged).toMatchObject([
+    expect(events).toMatchObject([
       { event: "watch_source", outcome: "ok", files: 2, directories: 1 },
       { event: "source_check", outcome: "ok", files_checked: 2, changed_source: [] },
     ]);
@@ -64,14 +64,28 @@ describe("watchSource", () => {
     expect(await next()).toEqual({ state: "watching", changed_source: [second] });
   });
 
-  it("fails, and says so, when a file cannot be checked", () => {
+  it("fails, and says so in the check's one event, when a file cannot be checked", () => {
     const { dir, source } = sourceFiles();
     const unreadable = join(dir, "unreadable");
     mkdirSync(unreadable);
-    const logged: Event[] = [];
-    const watch = watchSource((event) => void logged.push(event), new Map([...source, [unreadable, "0"]]));
+    const { events, log } = eventsWritten();
+    const watch = watchSource(log, new Map([...source, [unreadable, "0"]]));
     expect(watch.state()).toEqual({ state: "failed", message: expect.stringContaining("EISDIR") });
-    expect(logged.at(-1)).toMatchObject({ event: "source_check", outcome: "error", error: expect.stringContaining("EISDIR") });
+    expect(events.filter(({ event }) => event === "source_check")).toMatchObject([{ outcome: "error", error: expect.stringContaining("EISDIR") }]);
+  });
+
+  it("lets a check's event write that throws surface as itself, written once and not the check's failure", () => {
+    const { source } = sourceFiles();
+    const { events, log } = eventsWritten();
+    const writing = (event: Event) => {
+      log(event);
+      if (event.event === "source_check") throw new Error("sink gone");
+    };
+    expect(() => watchSource(writing, source)).toThrow("sink gone");
+    expect(events).toMatchObject([
+      { event: "watch_source", outcome: "ok" },
+      { event: "source_check", outcome: "ok", changed_source: [] },
+    ]);
   });
 });
 
