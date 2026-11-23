@@ -1,9 +1,10 @@
+import { parseTraceId } from "@cc-dump/log/trace";
 import { exchanges, readWith } from "../testing.ts";
 import type { RecordedEvent } from "@cc-dump/proxy/format";
 import { describe, expect, it } from "vitest";
 import { createFormatter } from "../format/format.ts";
 import { agentCall, assistant, launched, notification, reply, request, result, text, user } from "../../test/fixtures.ts";
-import { createHistory, sameFields, traceOf, type History } from "./history.ts";
+import { createHistory, namedBy, nestKey, sameFields, type History } from "./history.ts";
 import { presence } from "./position.ts";
 
 const main = { model: "m", system: [text("You are Claude Code.")], tools: [{ name: "Read", input_schema: {} }] };
@@ -74,8 +75,8 @@ describe("history", () => {
         reply: ["thread:t2/message.3/content.0"],
       },
     ]);
-    expect(history(process).stepOf("title")).toBe(3);
-    expect(history(process).stepOf("t3")).toBeUndefined();
+    expect(history(process).stepOf(parseTraceId("title"))).toBe(3);
+    expect(history(process).stepOf(parseTraceId("t3"))).toBeUndefined();
   });
 
   it("keeps a block resent with something different as its item's next version, where the item stands, and stepping back undoes it", () => {
@@ -177,8 +178,10 @@ describe("history", () => {
     }
   });
 
-  it("reads the trace a key starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow", () => {
-    expect(["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1"].map(traceOf)).toEqual(["t2", "t2", "t3", "aside", "t1"]);
+  it("reads what a key names: the trace it starts with, after a thread's prefix, as a fork's and a thread's lines name the step whose rows they follow; a nest's line's level; and nothing for a key of no row", () => {
+    const trace = (key: string) => ({ by: "trace", trace: key });
+    const keys = ["t2/fork", "thread:t2/message.1/content.0/thread", "thread:t3/message.4/content.0", "aside/request/http", "t1", nestKey({ kind: "agent", id: "a1" }), nestKey({ kind: "main" }), "no trace/x"];
+    expect(keys.map(namedBy)).toEqual([trace("t2"), trace("t2"), trace("t3"), trace("aside"), trace("t1"), { by: "level", level: "agent:a1" }, { by: "level", level: "main" }, { by: "none" }]);
   });
 
   it("keeps the exchanges of a request not yet read as its own, and finds its thread once it is", () => {
